@@ -1,0 +1,445 @@
+Metadata dump for: Y:\2_Connectome\Brainglobe\349_CNT_01_02\349_CNT_01_02_1.9x.ims
+============================================================
+
+--- HDF5 Structure ---
+DataSet [Group]
+  DataSet/ResolutionLevel 0 [Group]
+    DataSet/ResolutionLevel 0/TimePoint 0 [Group]
+      DataSet/ResolutionLevel 0/TimePoint 0/Channel 0 [Group]
+        DataSet/ResolutionLevel 0/TimePoint 0/Channel 0/Data [Dataset] shape=(1440, 3584, 3200) dtype=uint16
+        DataSet/ResolutionLevel 0/TimePoint 0/Channel 0/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 0/TimePoint 0/Channel 0/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+      DataSet/ResolutionLevel 0/TimePoint 0/Channel 1 [Group]
+        DataSet/ResolutionLevel 0/TimePoint 0/Channel 1/Data [Dataset] shape=(1440, 3584, 3200) dtype=uint16
+        DataSet/ResolutionLevel 0/TimePoint 0/Channel 1/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 0/TimePoint 0/Channel 1/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+  DataSet/ResolutionLevel 1 [Group]
+    DataSet/ResolutionLevel 1/TimePoint 0 [Group]
+      DataSet/ResolutionLevel 1/TimePoint 0/Channel 0 [Group]
+        DataSet/ResolutionLevel 1/TimePoint 0/Channel 0/Data [Dataset] shape=(736, 1792, 1664) dtype=uint16
+        DataSet/ResolutionLevel 1/TimePoint 0/Channel 0/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 1/TimePoint 0/Channel 0/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+      DataSet/ResolutionLevel 1/TimePoint 0/Channel 1 [Group]
+        DataSet/ResolutionLevel 1/TimePoint 0/Channel 1/Data [Dataset] shape=(736, 1792, 1664) dtype=uint16
+        DataSet/ResolutionLevel 1/TimePoint 0/Channel 1/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 1/TimePoint 0/Channel 1/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+  DataSet/ResolutionLevel 2 [Group]
+    DataSet/ResolutionLevel 2/TimePoint 0 [Group]
+      DataSet/ResolutionLevel 2/TimePoint 0/Channel 0 [Group]
+        DataSet/ResolutionLevel 2/TimePoint 0/Channel 0/Data [Dataset] shape=(384, 896, 896) dtype=uint16
+        DataSet/ResolutionLevel 2/TimePoint 0/Channel 0/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 2/TimePoint 0/Channel 0/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+      DataSet/ResolutionLevel 2/TimePoint 0/Channel 1 [Group]
+        DataSet/ResolutionLevel 2/TimePoint 0/Channel 1/Data [Dataset] shape=(384, 896, 896) dtype=uint16
+        DataSet/ResolutionLevel 2/TimePoint 0/Channel 1/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 2/TimePoint 0/Channel 1/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+  DataSet/ResolutionLevel 3 [Group]
+    DataSet/ResolutionLevel 3/TimePoint 0 [Group]
+      DataSet/ResolutionLevel 3/TimePoint 0/Channel 0 [Group]
+        DataSet/ResolutionLevel 3/TimePoint 0/Channel 0/Data [Dataset] shape=(192, 512, 384) dtype=uint16
+        DataSet/ResolutionLevel 3/TimePoint 0/Channel 0/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 3/TimePoint 0/Channel 0/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+      DataSet/ResolutionLevel 3/TimePoint 0/Channel 1 [Group]
+        DataSet/ResolutionLevel 3/TimePoint 0/Channel 1/Data [Dataset] shape=(192, 512, 384) dtype=uint16
+        DataSet/ResolutionLevel 3/TimePoint 0/Channel 1/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 3/TimePoint 0/Channel 1/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+  DataSet/ResolutionLevel 4 [Group]
+    DataSet/ResolutionLevel 4/TimePoint 0 [Group]
+      DataSet/ResolutionLevel 4/TimePoint 0/Channel 0 [Group]
+        DataSet/ResolutionLevel 4/TimePoint 0/Channel 0/Data [Dataset] shape=(96, 256, 256) dtype=uint16
+        DataSet/ResolutionLevel 4/TimePoint 0/Channel 0/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 4/TimePoint 0/Channel 0/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+      DataSet/ResolutionLevel 4/TimePoint 0/Channel 1 [Group]
+        DataSet/ResolutionLevel 4/TimePoint 0/Channel 1/Data [Dataset] shape=(96, 256, 256) dtype=uint16
+        DataSet/ResolutionLevel 4/TimePoint 0/Channel 1/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 4/TimePoint 0/Channel 1/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+  DataSet/ResolutionLevel 5 [Group]
+    DataSet/ResolutionLevel 5/TimePoint 0 [Group]
+      DataSet/ResolutionLevel 5/TimePoint 0/Channel 0 [Group]
+        DataSet/ResolutionLevel 5/TimePoint 0/Channel 0/Data [Dataset] shape=(64, 128, 128) dtype=uint16
+        DataSet/ResolutionLevel 5/TimePoint 0/Channel 0/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 5/TimePoint 0/Channel 0/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+      DataSet/ResolutionLevel 5/TimePoint 0/Channel 1 [Group]
+        DataSet/ResolutionLevel 5/TimePoint 0/Channel 1/Data [Dataset] shape=(64, 128, 128) dtype=uint16
+        DataSet/ResolutionLevel 5/TimePoint 0/Channel 1/Histogram [Dataset] shape=(256,) dtype=uint64
+        DataSet/ResolutionLevel 5/TimePoint 0/Channel 1/Histogram1024 [Dataset] shape=(1024,) dtype=uint64
+DataSetEvents [Group]
+DataSetInfo [Group]
+  DataSetInfo/Channel 0 [Group]
+  DataSetInfo/Channel 1 [Group]
+  DataSetInfo/Core Metadata [Group]
+  DataSetInfo/Image [Group]
+  DataSetInfo/Imaris [Group]
+  DataSetInfo/ImarisDataSet [Group]
+  DataSetInfo/Log [Group]
+  DataSetInfo/Original Metadata [Group]
+  DataSetInfo/Series Metadata [Group]
+  DataSetInfo/TimeInfo [Group]
+DataSetTimes [Group]
+  DataSetTimes/Time [Dataset] shape=(1,) dtype=[('ID', '<i8'), ('Birth', '<i8'), ('Death', '<i8'), ('IDTimeBegin', '<i8')]
+  DataSetTimes/TimeBegin [Dataset] shape=(1,) dtype=[('ID', '<i8'), ('ObjectTimeBegin', 'S256')]
+Thumbnail [Group]
+  Thumbnail/Data [Dataset] shape=(256, 1024) dtype=uint8
+
+
+--- ALL ATTRIBUTES ---
+
+[ROOT]
+  DataSetDirectoryName: [b'D' b'a' b't' b'a' b'S' b'e' b't']
+  DataSetInfoDirectoryName: [b'D' b'a' b't' b'a' b'S' b'e' b't' b'I' b'n' b'f' b'o']
+  ImarisDataSet: [b'I' b'm' b'a' b'r' b'i' b's' b'D' b'a' b't' b'a' b'S' b'e' b't']
+  ImarisVersion: [b'5' b'.' b'5' b'.' b'0']
+  NumberOfDataSets: [1]
+  ThumbnailDirectoryName: [b'T' b'h' b'u' b'm' b'b' b'n' b'a' b'i' b'l']
+
+============================================================
+DataSet/ResolutionLevel 0/TimePoint 0/Channel 0
+============================================================
+  HistogramMax: ['2', '7', '1', '3', '.', '0', '0', '0']
+  HistogramMax1024: ['2', '7', '1', '3', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['3', '0', '7', '8']
+  ImageSizeY: ['3', '5', '7', '8']
+  ImageSizeZ: ['1', '4', '2', '5']
+
+============================================================
+DataSet/ResolutionLevel 0/TimePoint 0/Channel 1
+============================================================
+  HistogramMax: ['6', '5', '5', '3', '5', '.', '0', '0', '0']
+  HistogramMax1024: ['6', '5', '5', '3', '5', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['3', '0', '7', '8']
+  ImageSizeY: ['3', '5', '7', '8']
+  ImageSizeZ: ['1', '4', '2', '5']
+
+============================================================
+DataSet/ResolutionLevel 1/TimePoint 0/Channel 0
+============================================================
+  HistogramMax: ['5', '5', '2', '.', '0', '0', '0']
+  HistogramMax1024: ['5', '5', '2', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['1', '5', '3', '9']
+  ImageSizeY: ['1', '7', '8', '9']
+  ImageSizeZ: ['7', '1', '2']
+
+============================================================
+DataSet/ResolutionLevel 1/TimePoint 0/Channel 1
+============================================================
+  HistogramMax: ['5', '5', '3', '4', '6', '.', '0', '0', '0']
+  HistogramMax1024: ['5', '5', '3', '4', '6', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['1', '5', '3', '9']
+  ImageSizeY: ['1', '7', '8', '9']
+  ImageSizeZ: ['7', '1', '2']
+
+============================================================
+DataSet/ResolutionLevel 2/TimePoint 0/Channel 0
+============================================================
+  HistogramMax: ['3', '7', '9', '.', '0', '0', '0']
+  HistogramMax1024: ['3', '7', '9', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['7', '6', '9']
+  ImageSizeY: ['8', '9', '4']
+  ImageSizeZ: ['3', '5', '6']
+
+============================================================
+DataSet/ResolutionLevel 2/TimePoint 0/Channel 1
+============================================================
+  HistogramMax: ['1', '8', '6', '3', '2', '.', '0', '0', '0']
+  HistogramMax1024: ['1', '8', '6', '3', '2', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['7', '6', '9']
+  ImageSizeY: ['8', '9', '4']
+  ImageSizeZ: ['3', '5', '6']
+
+============================================================
+DataSet/ResolutionLevel 3/TimePoint 0/Channel 0
+============================================================
+  HistogramMax: ['3', '1', '2', '.', '0', '0', '0']
+  HistogramMax1024: ['3', '1', '2', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['3', '8', '4']
+  ImageSizeY: ['4', '4', '7']
+  ImageSizeZ: ['1', '7', '8']
+
+============================================================
+DataSet/ResolutionLevel 3/TimePoint 0/Channel 1
+============================================================
+  HistogramMax: ['5', '8', '8', '0', '.', '0', '0', '0']
+  HistogramMax1024: ['5', '8', '8', '0', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['3', '8', '4']
+  ImageSizeY: ['4', '4', '7']
+  ImageSizeZ: ['1', '7', '8']
+
+============================================================
+DataSet/ResolutionLevel 4/TimePoint 0/Channel 0
+============================================================
+  HistogramMax: ['2', '2', '1', '.', '0', '0', '0']
+  HistogramMax1024: ['2', '2', '1', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['1', '9', '2']
+  ImageSizeY: ['2', '2', '3']
+  ImageSizeZ: ['8', '9']
+
+============================================================
+DataSet/ResolutionLevel 4/TimePoint 0/Channel 1
+============================================================
+  HistogramMax: ['1', '2', '2', '3', '.', '0', '0', '0']
+  HistogramMax1024: ['1', '2', '2', '3', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['1', '9', '2']
+  ImageSizeY: ['2', '2', '3']
+  ImageSizeZ: ['8', '9']
+
+============================================================
+DataSet/ResolutionLevel 5/TimePoint 0/Channel 0
+============================================================
+  HistogramMax: ['2', '0', '6', '.', '0', '0', '0']
+  HistogramMax1024: ['2', '0', '6', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['9', '6']
+  ImageSizeY: ['1', '1', '1']
+  ImageSizeZ: ['4', '4']
+
+============================================================
+DataSet/ResolutionLevel 5/TimePoint 0/Channel 1
+============================================================
+  HistogramMax: ['6', '5', '3', '.', '0', '0', '0']
+  HistogramMax1024: ['6', '5', '3', '.', '0', '0', '0']
+  HistogramMin: ['0', '.', '0', '0', '0']
+  HistogramMin1024: ['0', '.', '0', '0', '0']
+  ImageSizeX: ['9', '6']
+  ImageSizeY: ['1', '1', '1']
+  ImageSizeZ: ['4', '4']
+
+============================================================
+DataSetInfo/Channel 0
+============================================================
+  Color: ['1', '.', '0', '0', '0', ' ', '1', '.', '0', '0', '0', ' ', '1', '.', '0', '0', '0']
+  ColorMode: ['B', 'a', 's', 'e', 'C', 'o', 'l', 'o', 'r']
+  ColorOpacity: ['1', '.', '0', '0', '0']
+  ColorRange: ['1', '0', '5', '.', '0', '0', '0', ' ', '1', '0', '0', '0', '.', '0', '0', '0']
+  Description: ['(', 'd', 'e', 's', 'c', 'r', 'i', 'p', 't', 'i', 'o', 'n', ' ', 'n', 'o', 't', ' ', 's', 'p', 'e', 'c', 'i', 'f', 'i', 'e', 'd', ')']
+  GammaCorrection: ['1', '.', '0', '0', '0']
+  LSMEmissionWavelength: ['']
+  LSMExcitationWavelength: ['']
+  LSMPinhole: ['']
+  Name: ['(', 'n', 'a', 'm', 'e', ' ', 'n', 'o', 't', ' ', 's', 'p', 'e', 'c', 'i', 'f', 'i', 'e', 'd', ')']
+
+============================================================
+DataSetInfo/Channel 1
+============================================================
+  Color: ['1', '.', '0', '0', '0', ' ', '0', '.', '8', '0', '0', ' ', '0', '.', '0', '0', '0']
+  ColorMode: ['B', 'a', 's', 'e', 'C', 'o', 'l', 'o', 'r']
+  ColorOpacity: ['1', '.', '0', '0', '0']
+  ColorRange: ['1', '0', '5', '.', '0', '0', '0', ' ', '1', '0', '0', '0', '.', '0', '0', '0']
+  Description: ['(', 'd', 'e', 's', 'c', 'r', 'i', 'p', 't', 'i', 'o', 'n', ' ', 'n', 'o', 't', ' ', 's', 'p', 'e', 'c', 'i', 'f', 'i', 'e', 'd', ')']
+  GammaCorrection: ['1', '.', '0', '0', '0']
+  LSMEmissionWavelength: ['']
+  LSMExcitationWavelength: ['']
+  LSMPinhole: ['']
+  Name: ['(', 'n', 'a', 'm', 'e', ' ', 'n', 'o', 't', ' ', 's', 'p', 'e', 'c', 'i', 'f', 'i', 'e', 'd', ')']
+
+============================================================
+DataSetInfo/Core Metadata
+============================================================
+  BitsPerPixel: ['1', '6']
+  DimensionOrder: ['X', 'Y', 'C', 'Z', 'T']
+  IsInterleaved: ['t', 'r', 'u', 'e']
+  LittleEndian: ['t', 'r', 'u', 'e']
+  PixelType: ['u', 'i', 'n', 't', '1', '6']
+  SizeC: ['2']
+  SizeT: ['4']
+  SizeX: ['2', '3', '0', '4']
+  SizeY: ['2', '3', '0', '4']
+  SizeZ: ['1', '4', '2', '5']
+
+============================================================
+DataSetInfo/Image
+============================================================
+  Description: ['(', 'd', 'e', 's', 'c', 'r', 'i', 'p', 't', 'i', 'o', 'n', ' ', 'n', 'o', 't', ' ', 's', 'p', 'e', 'c', 'i', 'f', 'i', 'e', 'd', ')']
+  ExtMax0: ['3', '6', '5', '0', '.', '5', '5']
+  ExtMax1: ['4', '0', '7', '0', '.', '2']
+  ExtMax2: ['1', '4', '2', '5']
+  ExtMin0: ['5', '7', '2', '.', '5', '6']
+  ExtMin1: ['4', '9', '2', '.', '2', '0', '1']
+  ExtMin2: ['0']
+  LensPower: ['']
+  MicroscopeModality: ['']
+  Name: ['3', '4', '9', '_', 'A', 'S', 'L', 'M', '_', 'l', 'o', 'w', ' ', 'a', 't', ' ', '1', '.', '9', '_', '1', '0', 'Z', '_', 'L', 'L', ' ', '-', ' ', 'P', 'o', 's', ' ', '1', ' ', '1', ' ', '[', '1', ']']
+  NumericalAperture: ['']
+  OriginalFormat: ['S', 'l', 'i', 'd', 'e', 'B', 'o', 'o', 'k', ' ', '7', ' ', 'S', 'L', 'D', ' ', '(', 'n', 'a', 't', 'i', 'v', 'e', ')']
+  OriginalFormatFileIOVersion: ['I', 'm', 'a', 'r', 'i', 's', 'F', 'i', 'l', 'e', 'I', 'O', 'B', 'i', 'o', 'F', 'o', 'r', 'm', 'a', 't', 's', ' ', '7', '.', '3', '.', '0']
+  RecordingDate: ['2', '0', '2', '5', '-', '1', '1', '-', '2', '8', ' ', '1', '5', ':', '2', '3', ':', '3', '5', '.', '4', '8', '7']
+  ResampleDimensionX: ['t', 'r', 'u', 'e']
+  ResampleDimensionY: ['t', 'r', 'u', 'e']
+  ResampleDimensionZ: ['t', 'r', 'u', 'e']
+  Unit: ['u', 'm']
+  X: ['3', '0', '7', '8']
+  Y: ['3', '5', '7', '8']
+  Z: ['1', '4', '2', '5']
+
+============================================================
+DataSetInfo/Imaris
+============================================================
+  ImageId: ['1', '0', '0', '0', '0', '1']
+  ThumbnailMode: ['t', 'h', 'u', 'm', 'b', 'n', 'a', 'i', 'l', 'M', 'I', 'P']
+  ThumbnailSize: ['2', '5', '6']
+  Version: ['1', '0', '.', '2']
+
+============================================================
+DataSetInfo/ImarisDataSet
+============================================================
+  Creator: ['I', 'm', 'a', 'r', 'i', 's', ' ', 'x', '6', '4']
+  NumberOfImages: ['1']
+  Version: ['1', '0', '.', '2']
+
+============================================================
+DataSetInfo/Log
+============================================================
+  Entries: ['1']
+  Entry0: ['<', 'b', 'p', 'C', 'r', 'o', 'p', '3', 'D', 'C', 'o', 'm', 'm', 'a', 'n', 'd', ' ', 'a', 'c', 't', 'o', 'r', 'n', 'a', 'm', 'e', ' ', '=', ' ', '"', '"', ' ', 'a', 'c', 't', 'o', 'r', 'i', 'd', ' ', '=', ' ', '"', '0', '"', ' ', 'l', 'o', 'w', 'X', ' ', '=', ' ', '"', '0', '"', ' ', 'l', 'o', 'w', 'Y', ' ', '=', ' ', '"', '0', '"', ' ', 'l', 'o', 'w', 'Z', ' ', '=', ' ', '"', '0', '"', ' ', 'h', 'i', 'g', 'h', 'X', ' ', '=', ' ', '"', '2', '3', '0', '3', '"', ' ', 'h', 'i', 'g', 'h', 'Y', ' ', '=', ' ', '"', '1', '3', '7', '2', '"', ' ', 'h', 'i', 'g', 'h', 'Z', ' ', '=', ' ', '"', '1', '4', '2', '4', '"', '/', '>']
+
+============================================================
+DataSetInfo/TimeInfo
+============================================================
+  DatasetTimePoints: ['1']
+  FileTimePoints: ['1']
+  TimePoint1: ['2', '0', '2', '5', '-', '1', '1', '-', '2', '8', ' ', '1', '5', ':', '2', '3', ':', '3', '5', '.', '4', '8', '7']
+  TimePoint2: ['2', '0', '2', '5', '-', '1', '1', '-', '2', '6', ' ', '1', '5', ':', '2', '9', ':', '1', '9']
+  TimePoint3: ['2', '0', '2', '5', '-', '1', '1', '-', '2', '6', ' ', '1', '5', ':', '2', '9', ':', '2', '0']
+  TimePoint4: ['2', '0', '2', '5', '-', '1', '1', '-', '2', '6', ' ', '1', '5', ':', '2', '9', ':', '2', '1']
+
+
+============================================================
+LOOKING FOR VOXEL/CALIBRATION INFO...
+============================================================
+
+Potentially relevant attributes found:
+  DataSet/ResolutionLevel 0/TimePoint 0/Channel 0 -> ImageSizeX: ['3', '0', '7', '8']
+  DataSet/ResolutionLevel 0/TimePoint 0/Channel 0 -> ImageSizeY: ['3', '5', '7', '8']
+  DataSet/ResolutionLevel 0/TimePoint 0/Channel 0 -> ImageSizeZ: ['1', '4', '2', '5']
+  DataSet/ResolutionLevel 0/TimePoint 0/Channel 1 -> ImageSizeX: ['3', '0', '7', '8']
+  DataSet/ResolutionLevel 0/TimePoint 0/Channel 1 -> ImageSizeY: ['3', '5', '7', '8']
+  DataSet/ResolutionLevel 0/TimePoint 0/Channel 1 -> ImageSizeZ: ['1', '4', '2', '5']
+  DataSet/ResolutionLevel 1/TimePoint 0/Channel 0 -> ImageSizeX: ['1', '5', '3', '9']
+  DataSet/ResolutionLevel 1/TimePoint 0/Channel 0 -> ImageSizeY: ['1', '7', '8', '9']
+  DataSet/ResolutionLevel 1/TimePoint 0/Channel 0 -> ImageSizeZ: ['7', '1', '2']
+  DataSet/ResolutionLevel 1/TimePoint 0/Channel 1 -> ImageSizeX: ['1', '5', '3', '9']
+  DataSet/ResolutionLevel 1/TimePoint 0/Channel 1 -> ImageSizeY: ['1', '7', '8', '9']
+  DataSet/ResolutionLevel 1/TimePoint 0/Channel 1 -> ImageSizeZ: ['7', '1', '2']
+  DataSet/ResolutionLevel 2/TimePoint 0/Channel 0 -> ImageSizeX: ['7', '6', '9']
+  DataSet/ResolutionLevel 2/TimePoint 0/Channel 0 -> ImageSizeY: ['8', '9', '4']
+  DataSet/ResolutionLevel 2/TimePoint 0/Channel 0 -> ImageSizeZ: ['3', '5', '6']
+  DataSet/ResolutionLevel 2/TimePoint 0/Channel 1 -> ImageSizeX: ['7', '6', '9']
+  DataSet/ResolutionLevel 2/TimePoint 0/Channel 1 -> ImageSizeY: ['8', '9', '4']
+  DataSet/ResolutionLevel 2/TimePoint 0/Channel 1 -> ImageSizeZ: ['3', '5', '6']
+  DataSet/ResolutionLevel 3/TimePoint 0/Channel 0 -> ImageSizeX: ['3', '8', '4']
+  DataSet/ResolutionLevel 3/TimePoint 0/Channel 0 -> ImageSizeY: ['4', '4', '7']
+  DataSet/ResolutionLevel 3/TimePoint 0/Channel 0 -> ImageSizeZ: ['1', '7', '8']
+  DataSet/ResolutionLevel 3/TimePoint 0/Channel 1 -> ImageSizeX: ['3', '8', '4']
+  DataSet/ResolutionLevel 3/TimePoint 0/Channel 1 -> ImageSizeY: ['4', '4', '7']
+  DataSet/ResolutionLevel 3/TimePoint 0/Channel 1 -> ImageSizeZ: ['1', '7', '8']
+  DataSet/ResolutionLevel 4/TimePoint 0/Channel 0 -> ImageSizeX: ['1', '9', '2']
+  DataSet/ResolutionLevel 4/TimePoint 0/Channel 0 -> ImageSizeY: ['2', '2', '3']
+  DataSet/ResolutionLevel 4/TimePoint 0/Channel 0 -> ImageSizeZ: ['8', '9']
+  DataSet/ResolutionLevel 4/TimePoint 0/Channel 1 -> ImageSizeX: ['1', '9', '2']
+  DataSet/ResolutionLevel 4/TimePoint 0/Channel 1 -> ImageSizeY: ['2', '2', '3']
+  DataSet/ResolutionLevel 4/TimePoint 0/Channel 1 -> ImageSizeZ: ['8', '9']
+  DataSet/ResolutionLevel 5/TimePoint 0/Channel 0 -> ImageSizeX: ['9', '6']
+  DataSet/ResolutionLevel 5/TimePoint 0/Channel 0 -> ImageSizeY: ['1', '1', '1']
+  DataSet/ResolutionLevel 5/TimePoint 0/Channel 0 -> ImageSizeZ: ['4', '4']
+  DataSet/ResolutionLevel 5/TimePoint 0/Channel 1 -> ImageSizeX: ['9', '6']
+  DataSet/ResolutionLevel 5/TimePoint 0/Channel 1 -> ImageSizeY: ['1', '1', '1']
+  DataSet/ResolutionLevel 5/TimePoint 0/Channel 1 -> ImageSizeZ: ['4', '4']
+  DataSetInfo/Core Metadata -> BitsPerPixel: ['1', '6']
+  DataSetInfo/Core Metadata -> DimensionOrder: ['X', 'Y', 'C', 'Z', 'T']
+  DataSetInfo/Core Metadata -> PixelType: ['u', 'i', 'n', 't', '1', '6']
+  DataSetInfo/Core Metadata -> SizeC: ['2']
+  DataSetInfo/Core Metadata -> SizeT: ['4']
+  DataSetInfo/Core Metadata -> SizeX: ['2', '3', '0', '4']
+  DataSetInfo/Core Metadata -> SizeY: ['2', '3', '0', '4']
+  DataSetInfo/Core Metadata -> SizeZ: ['1', '4', '2', '5']
+  DataSetInfo/Image -> NumericalAperture: ['']
+  DataSetInfo/Image -> ResampleDimensionX: ['t', 'r', 'u', 'e']
+  DataSetInfo/Image -> ResampleDimensionY: ['t', 'r', 'u', 'e']
+  DataSetInfo/Image -> ResampleDimensionZ: ['t', 'r', 'u', 'e']
+  DataSetInfo/Imaris -> ThumbnailMode: ['t', 'h', 'u', 'm', 'b', 'n', 'a', 'i', 'l', 'M', 'I', 'P']
+  DataSetInfo/Imaris -> ThumbnailSize: ['2', '5', '6']
+  DataSetInfo/ImarisDataSet -> NumberOfImages: ['1']
+
+
+============================================================
+TRYING imaris-ims-file-reader...
+============================================================
+  ims.resolution: (1.0, 1.0, 1.0)
+  ims.metaData: {(0, 0, 0, 'shape'): (1, 1, 1425, 3578, 3078), (0, 0, 0, 'resolution'): (1.0, 1.0, 1.0), (0, 0, 0, 'HistogramMax'): 2713, (0, 0, 0, 'HistogramMin'): 0, (0, 0, 0, 'chunks'): (1, 1, 32, 128, 128), (0, 0, 0, 'shapeH5Array'): (1440, 3584, 3200), (0, 0, 0, 'dtype'): dtype('uint16'), (0, 0, 1, 'shape'): (1, 1, 1425, 3578, 3078), (0, 0, 1, 'resolution'): (1.0, 1.0, 1.0), (0, 0, 1, 'HistogramMax'): 65535, (0, 0, 1, 'HistogramMin'): 0, (0, 0, 1, 'chunks'): (1, 1, 32, 128, 128), (0, 0, 1, 'shapeH5Array'): (1440, 3584, 3200), (0, 0, 1, 'dtype'): dtype('uint16'), (1, 0, 0, 'shape'): (1, 1, 712, 1789, 1539), (1, 0, 0, 'resolution'): (2.001, 2.0, 2.0), (1, 0, 0, 'HistogramMax'): 552, (1, 0, 0, 'HistogramMin'): 0, (1, 0, 0, 'chunks'): (1, 1, 32, 128, 128), (1, 0, 0, 'shapeH5Array'): (736, 1792, 1664), (1, 0, 0, 'dtype'): dtype('uint16'), (1, 0, 1, 'shape'): (1, 1, 712, 1789, 1539), (1, 0, 1, 'resolution'): (2.001, 2.0, 2.0), (1, 0, 1, 'HistogramMax'): 55346, (1, 0, 1, 'HistogramMin'): 0, (1, 0, 1, 'chunks'): (1, 1, 32, 128, 128), (1, 0, 1, 'shapeH5Array'): (736, 1792, 1664), (1, 0, 1, 'dtype'): dtype('uint16'), (2, 0, 0, 'shape'): (1, 1, 356, 894, 769), (2, 0, 0, 'resolution'): (4.003, 4.002, 4.003), (2, 0, 0, 'HistogramMax'): 379, (2, 0, 0, 'HistogramMin'): 0, (2, 0, 0, 'chunks'): (1, 1, 32, 128, 128), (2, 0, 0, 'shapeH5Array'): (384, 896, 896), (2, 0, 0, 'dtype'): dtype('uint16'), (2, 0, 1, 'shape'): (1, 1, 356, 894, 769), (2, 0, 1, 'resolution'): (4.003, 4.002, 4.003), (2, 0, 1, 'HistogramMax'): 18632, (2, 0, 1, 'HistogramMin'): 0, (2, 0, 1, 'chunks'): (1, 1, 32, 128, 128), (2, 0, 1, 'shapeH5Array'): (384, 896, 896), (2, 0, 1, 'dtype'): dtype('uint16'), (3, 0, 0, 'shape'): (1, 1, 178, 447, 384), (3, 0, 0, 'resolution'): (8.006, 8.004, 8.016), (3, 0, 0, 'HistogramMax'): 312, (3, 0, 0, 'HistogramMin'): 0, (3, 0, 0, 'chunks'): (1, 1, 32, 128, 128), (3, 0, 0, 'shapeH5Array'): (192, 512, 384), (3, 0, 0, 'dtype'): dtype('uint16'), (3, 0, 1, 'shape'): (1, 1, 178, 447, 384), (3, 0, 1, 'resolution'): (8.006, 8.004, 8.016), (3, 0, 1, 'HistogramMax'): 5880, (3, 0, 1, 'HistogramMin'): 0, (3, 0, 1, 'chunks'): (1, 1, 32, 128, 128), (3, 0, 1, 'shapeH5Array'): (192, 512, 384), (3, 0, 1, 'dtype'): dtype('uint16'), (4, 0, 0, 'shape'): (1, 1, 89, 223, 192), (4, 0, 0, 'resolution'): (16.011, 16.045, 16.031), (4, 0, 0, 'HistogramMax'): 221, (4, 0, 0, 'HistogramMin'): 0, (4, 0, 0, 'chunks'): (1, 1, 32, 128, 128), (4, 0, 0, 'shapeH5Array'): (96, 256, 256), (4, 0, 0, 'dtype'): dtype('uint16'), (4, 0, 1, 'shape'): (1, 1, 89, 223, 192), (4, 0, 1, 'resolution'): (16.011, 16.045, 16.031), (4, 0, 1, 'HistogramMax'): 1223, (4, 0, 1, 'HistogramMin'): 0, (4, 0, 1, 'chunks'): (1, 1, 32, 128, 128), (4, 0, 1, 'shapeH5Array'): (96, 256, 256), (4, 0, 1, 'dtype'): dtype('uint16'), (5, 0, 0, 'shape'): (1, 1, 44, 111, 96), (5, 0, 0, 'resolution'): (32.386, 32.234, 32.062), (5, 0, 0, 'HistogramMax'): 206, (5, 0, 0, 'HistogramMin'): 0, (5, 0, 0, 'chunks'): (1, 1, 32, 128, 128), (5, 0, 0, 'shapeH5Array'): (64, 128, 128), (5, 0, 0, 'dtype'): dtype('uint16'), (5, 0, 1, 'shape'): (1, 1, 44, 111, 96), (5, 0, 1, 'resolution'): (32.386, 32.234, 32.062), (5, 0, 1, 'HistogramMax'): 653, (5, 0, 1, 'HistogramMin'): 0, (5, 0, 1, 'chunks'): (1, 1, 32, 128, 128), (5, 0, 1, 'shapeH5Array'): (64, 128, 128), (5, 0, 1, 'dtype'): dtype('uint16')}
+  ims.shape: (1, 2, 1425, 3578, 3078)
+  ims.chunks: (1, 1, 32, 128, 128)
+  ims.Channels: 2
+  ims.TimePoints: 1
+  ims.ResolutionLevels: 6
+
+  Detailed metaData:
+    (0, 0, 0, 'shape'): (1, 1, 1425, 3578, 3078)
+    (0, 0, 0, 'resolution'): (1.0, 1.0, 1.0)
+    (0, 0, 0, 'HistogramMax'): 2713
+    (0, 0, 0, 'HistogramMin'): 0
+    (0, 0, 0, 'chunks'): (1, 1, 32, 128, 128)
+    (0, 0, 0, 'shapeH5Array'): (1440, 3584, 3200)
+    (0, 0, 0, 'dtype'): uint16
+    (0, 0, 1, 'shape'): (1, 1, 1425, 3578, 3078)
+    (0, 0, 1, 'resolution'): (1.0, 1.0, 1.0)
+    (0, 0, 1, 'HistogramMax'): 65535
+    (0, 0, 1, 'HistogramMin'): 0
+    (0, 0, 1, 'chunks'): (1, 1, 32, 128, 128)
+    (0, 0, 1, 'shapeH5Array'): (1440, 3584, 3200)
+    (0, 0, 1, 'dtype'): uint16
+    (1, 0, 0, 'shape'): (1, 1, 712, 1789, 1539)
+    (1, 0, 0, 'resolution'): (2.001, 2.0, 2.0)
+    (1, 0, 0, 'HistogramMax'): 552
+    (1, 0, 0, 'HistogramMin'): 0
+    (1, 0, 0, 'chunks'): (1, 1, 32, 128, 128)
+    (1, 0, 0, 'shapeH5Array'): (736, 1792, 1664)
+    (1, 0, 0, 'dtype'): uint16
+    (1, 0, 1, 'shape'): (1, 1, 712, 1789, 1539)
+    (1, 0, 1, 'resolution'): (2.001, 2.0, 2.0)
+    (1, 0, 1, 'HistogramMax'): 55346
+    (1, 0, 1, 'HistogramMin'): 0
+    (1, 0, 1, 'chunks'): (1, 1, 32, 128, 128)
+    (1, 0, 1, 'shapeH5Array'): (736, 1792, 1664)
+    (1, 0, 1, 'dtype'): uint16
+    (2, 0, 0, 'shape'): (1, 1, 356, 894, 769)
+    (2, 0, 0, 'resolution'): (4.003, 4.002, 4.003)
+    (2, 0, 0, 'HistogramMax'): 379
+    (2, 0, 0, 'HistogramMin'): 0
+    (2, 0, 0, 'chunks'): (1, 1, 32, 128, 128)
+    (2, 0, 0, 'shapeH5Array'): (384, 896, 896)
+    (2, 0, 0, 'dtype'): uint16
+    (2, 0, 1, 'shape'): (1, 1, 356, 894, 769)
+    (2, 0, 1, 'resolution'): (4.003, 4.002, 4.003)
+    (2, 0, 1, 'HistogramMax'): 18632
+    (2, 0, 1, 'HistogramMin'): 0
+    (2, 0, 1, 'chunks'): (1, 1, 32, 128, 128)
+    (2, 0, 1, 'shapeH5Array'): (384, 896, 896)
+    (2, 0, 1, 'dtype'): uint16
+    (3, 0, 0, 'shape'): (1, 1, 178, 447, 384)
+    (3, 0, 0, 'resolution'): (8.006, 8.004, 8.016)
+    (3, 0, 0, 'HistogramMax'): 312
+    (3, 0, 0, 'HistogramMin'): 0
+    (3, 0, 0, 'chunks'): (1, 1, 32, 128, 128)
+    (3, 0, 0, 'shapeH5Array'): (192, 512, 384)
+    (3, 0, 0, 'dtype'): uint16
+    (3, 0, 1, 'shape'): (1, 1, 178, 447, 384)

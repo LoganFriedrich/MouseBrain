@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "braintools"
+version = "0.1.0"
+description = "SCI-Connectome BrainGlobe pipeline tools for tissue analysis"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Logan Friedrich", email = "logan.friedrich@marquette.edu"}
+]
+keywords = ["brainglobe", "napari", "neuroscience", "cell-detection", "histology"]
+
+dependencies = [
+    # Core napari
+    "napari[all]>=0.4.18",
+
+    # BrainGlobe stack
+    "brainreg>=1.0.0",
+    "brainglobe-atlasapi",
+    "brainglobe-utils",
+    "brainglobe-segmentation",
+    "cellfinder>=1.0.0",
+
+    # ML backends (IMPORTANT: version-pinned to avoid breaking changes)
+    "tensorflow>=2.10.0,<2.16",
+    "keras>=2.10.0,<3.0",  # keras 3.x has breaking API changes
+
+    # Data handling (IMPORTANT: zarr pinned to v2 API)
+    "numpy",
+    "scipy",
+    "pandas",
+    "tifffile",
+    "h5py",
+    "zarr>=2.13,<3.0",  # zarr 3.x has breaking API changes (open vs open_array)
+    "dask[array]",
+    "imaris-ims-file-reader",  # For reading .ims files
+    "matplotlib",  # For QC plots
+    "natsort",  # For natural sorting of filenames
+
+    # Qt/GUI
+    "qtpy",
+
+    # Utilities
+    "rich",
+    "tqdm",
+]
+
+# NOTE: PyTorch is NOT listed here because it requires special installation.
+# Run install.ps1 which handles torch installation from the correct index.
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-qt",
+    "black",
+    "ruff",
+]
+
+[project.scripts]
+braintool = "braintools.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

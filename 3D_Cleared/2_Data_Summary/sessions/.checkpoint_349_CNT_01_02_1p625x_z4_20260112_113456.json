@@ -1,0 +1,106 @@
+{
+  "brain": "349_CNT_01_02_1p625x_z4",
+  "session_id": "20260112_113456",
+  "hierarchy": {
+    "brain_id": "349",
+    "subject": "CNT_01_02",
+    "cohort": "CNT_01",
+    "project_code": "CNT",
+    "project_name": "Connectome",
+    "imaging_params": "1p625x_z4"
+  },
+  "start": "2026-01-12T11:34:56.606609",
+  "detection_runs": [],
+  "param_changes": [],
+  "curations": [],
+  "exports": [
+    "\\\\134.48.78.185\\blac\\2_Connectome\\3_Nuclei_Detection\\2_Data_Summary\\optimization_runs\\349_CNT_01_02_1p625x_z4\\349_CNT_01_02_1p625x_z4_20260112_113557_screenshot.png",
+    "\\\\134.48.78.185\\blac\\2_Connectome\\3_Nuclei_Detection\\2_Data_Summary\\optimization_runs\\349_CNT_01_02_1p625x_z4\\349_CNT_01_02_1p625x_z4_20260112_113557_settings.json"
+  ],
+  "notes": [],
+  "current_params": {
+    "ball_xy_size": 10.0,
+    "ball_z_size": 10.0,
+    "ball_overlap_fraction": 0.5,
+    "soma_diameter": 10.0,
+    "soma_spread_factor": 1.0,
+    "threshold": 8.0,
+    "tiled_threshold": 8.0,
+    "log_sigma_size": 0.2,
+    "max_cluster_size": 100000000,
+    "use_gpu": false,
+    "batch_size": 0,
+    "n_free_cpus": 74
+  },
+  "events": [
+    {
+      "timestamp": "2026-01-12T11:34:56.606609",
+      "type": "session_start",
+      "data": {
+        "brain": "349_CNT_01_02_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-12T11:34:56.606609",
+      "type": "params_initial",
+      "data": {
+        "ball_xy_size": 10.0,
+        "ball_z_size": 10.0,
+        "ball_overlap_fraction": 0.5,
+        "soma_diameter": 10.0,
+        "soma_spread_factor": 1.0,
+        "threshold": 8.0,
+        "tiled_threshold": 8.0,
+        "log_sigma_size": 0.2,
+        "max_cluster_size": 100000000,
+        "use_gpu": false,
+        "batch_size": 0,
+        "n_free_cpus": 74
+      }
+    },
+    {
+      "timestamp": "2026-01-12T11:35:08.452041",
+      "type": "brain_loaded",
+      "data": {
+        "source": "cropped",
+        "brain": "349_CNT_01_02_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-12T11:35:31.726744",
+      "type": "region_count",
+      "data": {
+        "brain": "349_CNT_01_02_1p625x_z4",
+        "total_cells": 0,
+        "regions_counted": 0,
+        "output_path": ""
+      }
+    },
+    {
+      "timestamp": "2026-01-12T11:35:57.577731",
+      "type": "export",
+      "data": {
+        "path": "\\\\134.48.78.185\\blac\\2_Connectome\\3_Nuclei_Detection\\2_Data_Summary\\optimization_runs\\349_CNT_01_02_1p625x_z4\\349_CNT_01_02_1p625x_z4_20260112_113557_screenshot.png",
+        "type": "results"
+      }
+    },
+    {
+      "timestamp": "2026-01-12T11:35:57.577731",
+      "type": "export",
+      "data": {
+        "path": "\\\\134.48.78.185\\blac\\2_Connectome\\3_Nuclei_Detection\\2_Data_Summary\\optimization_runs\\349_CNT_01_02_1p625x_z4\\349_CNT_01_02_1p625x_z4_20260112_113557_settings.json",
+        "type": "results"
+      }
+    },
+    {
+      "timestamp": "2026-01-12T11:36:06.707940",
+      "type": "region_count",
+      "data": {
+        "brain": "349_CNT_01_02_1p625x_z4",
+        "total_cells": 0,
+        "regions_counted": 0,
+        "output_path": ""
+      }
+    }
+  ]
+}

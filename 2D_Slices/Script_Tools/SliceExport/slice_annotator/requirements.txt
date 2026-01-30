@@ -1,0 +1,16 @@
+# Slice Annotator - ND2 Annotation & Export Suite
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+napari>=0.4.17
+numpy>=1.20
+dask>=2022.1
+nd2>=0.5.0
+tifffile>=2022.1
+qtpy>=2.0
+pillow>=9.0
+natsort>=8.0
+
+# Optional but recommended
+zarr>=2.10
+imageio>=2.9

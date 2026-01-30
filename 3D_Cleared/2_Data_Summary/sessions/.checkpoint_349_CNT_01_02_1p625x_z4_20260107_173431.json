@@ -1,0 +1,171 @@
+{
+  "brain": "349_CNT_01_02_1p625x_z4",
+  "session_id": "20260107_173431",
+  "hierarchy": {
+    "brain_id": "349",
+    "subject": "CNT_01_02",
+    "cohort": "CNT_01",
+    "project_code": "CNT",
+    "project_name": "Connectome",
+    "imaging_params": "1p625x_z4"
+  },
+  "start": "2026-01-07T17:34:31.657319",
+  "detection_runs": [
+    {
+      "run_id": "det_20260107_173747_3295fc",
+      "params": {
+        "ball_xy_size": 10.0,
+        "ball_z_size": 10.0,
+        "soma_diameter": 10.0,
+        "threshold": 8.0
+      },
+      "preset": "custom",
+      "cell_count": 1171,
+      "z_range": [
+        0,
+        50
+      ],
+      "reference_match": null,
+      "timestamp": "2026-01-07T17:38:34.747852"
+    },
+    {
+      "run_id": "det_20260107_174242_c829a3",
+      "params": {
+        "ball_xy_size": 10.0,
+        "ball_z_size": 10.0,
+        "soma_diameter": 10.0,
+        "threshold": 8.0
+      },
+      "preset": "custom",
+      "cell_count": 29793,
+      "z_range": [
+        0,
+        50
+      ],
+      "reference_match": null,
+      "timestamp": "2026-01-07T17:52:35.293856"
+    }
+  ],
+  "param_changes": [
+    {
+      "param": "max_cluster_size",
+      "from": 10000,
+      "to": 100000000,
+      "timestamp": "2026-01-07T17:42:37.369377"
+    }
+  ],
+  "curations": [],
+  "exports": [
+    "\\\\134.48.78.185\\blac\\2_Connectome\\3_Nuclei_Detection\\2_Data_Summary\\optimization_runs\\349_CNT_01_02_1p625x_z4\\qc_images\\QC_det_20260107_173747_3295fc.png"
+  ],
+  "notes": [],
+  "current_params": {
+    "ball_xy_size": 10.0,
+    "ball_z_size": 10.0,
+    "ball_overlap_fraction": 0.5,
+    "soma_diameter": 10.0,
+    "soma_spread_factor": 1.0,
+    "threshold": 8.0,
+    "tiled_threshold": 8.0,
+    "log_sigma_size": 0.2,
+    "max_cluster_size": 100000000,
+    "use_gpu": false,
+    "batch_size": 0,
+    "n_free_cpus": 74
+  },
+  "events": [
+    {
+      "timestamp": "2026-01-07T17:34:31.657319",
+      "type": "session_start",
+      "data": {
+        "brain": "349_CNT_01_02_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-07T17:34:31.657319",
+      "type": "params_initial",
+      "data": {
+        "ball_xy_size": 10.0,
+        "ball_z_size": 10.0,
+        "ball_overlap_fraction": 0.5,
+        "soma_diameter": 10.0,
+        "soma_spread_factor": 1.0,
+        "threshold": 8.0,
+        "tiled_threshold": 8.0,
+        "log_sigma_size": 0.2,
+        "max_cluster_size": 10000,
+        "use_gpu": false,
+        "batch_size": 0,
+        "n_free_cpus": 74
+      }
+    },
+    {
+      "timestamp": "2026-01-07T17:34:42.754947",
+      "type": "brain_loaded",
+      "data": {
+        "source": "cropped",
+        "brain": "349_CNT_01_02_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-07T17:38:34.747852",
+      "type": "detection_run",
+      "data": {
+        "run_id": "det_20260107_173747_3295fc",
+        "params": {
+          "ball_xy_size": 10.0,
+          "ball_z_size": 10.0,
+          "soma_diameter": 10.0,
+          "threshold": 8.0
+        },
+        "preset": "custom",
+        "cell_count": 1171,
+        "z_range": [
+          0,
+          50
+        ],
+        "reference_match": null,
+        "timestamp": "2026-01-07T17:38:34.747852"
+      }
+    },
+    {
+      "timestamp": "2026-01-07T17:38:35.758790",
+      "type": "export",
+      "data": {
+        "path": "\\\\134.48.78.185\\blac\\2_Connectome\\3_Nuclei_Detection\\2_Data_Summary\\optimization_runs\\349_CNT_01_02_1p625x_z4\\qc_images\\QC_det_20260107_173747_3295fc.png",
+        "type": "qc_image"
+      }
+    },
+    {
+      "timestamp": "2026-01-07T17:42:37.369377",
+      "type": "param_change",
+      "data": {
+        "param": "max_cluster_size",
+        "from": 10000,
+        "to": 100000000,
+        "timestamp": "2026-01-07T17:42:37.369377"
+      }
+    },
+    {
+      "timestamp": "2026-01-07T17:52:35.293856",
+      "type": "detection_run",
+      "data": {
+        "run_id": "det_20260107_174242_c829a3",
+        "params": {
+          "ball_xy_size": 10.0,
+          "ball_z_size": 10.0,
+          "soma_diameter": 10.0,
+          "threshold": 8.0
+        },
+        "preset": "custom",
+        "cell_count": 29793,
+        "z_range": [
+          0,
+          50
+        ],
+        "reference_match": null,
+        "timestamp": "2026-01-07T17:52:35.293856"
+      }
+    }
+  ]
+}

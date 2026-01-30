@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.spec
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Large data files
+*.ims
+*.nd2
+*.tif
+*.tiff
+*.nii
+*.nii.gz
+*.h5
+*.hdf5
+*.keras
+*.crdownload
+
+# Brain processing output folders
+3D_Cleared/1_Brains/**/0_Raw_IMS/
+3D_Cleared/1_Brains/**/1_Extracted_Full/
+3D_Cleared/1_Brains/**/2_Cropped_For_Registration/
+3D_Cleared/1_Brains/**/3_Registered_Atlas/
+3D_Cleared/1_Brains/**/4_Cell_Candidates/
+3D_Cleared/1_Brains/**/5_Classified_Cells/
+3D_Cleared/1_Brains/**/6_Region_Analysis/
+3D_Cleared/1_Brains/**/_crop_optimization/
+
+# Trained models
+3D_Cleared/util_Brainglobe/Trained_Models/
+
+# Imaris cache
+.imaris_cache/
+
+# Excel data
+*.xlsx
+*.xls
+
+# Metadata (regenerated)
+metadata.json
+QC_*.png
+VOXEL_SIZES.txt
+.crop_position.json
+
+# Logs
+*.log
+
+# User config
+.sci_connectome/
+
+# Claude
+.claude/
+
+# Pano downloads
+*.crdownload
+
+# Zip archives
+*.zip

@@ -1,0 +1,381 @@
+coordinate_raw_axis_0,coordinate_raw_axis_1,coordinate_raw_axis_2,coordinate_atlas_axis_0,coordinate_atlas_axis_1,coordinate_atlas_axis_2,structure_name,hemisphere
+11,749,778,563,712,380,Striatum,right
+8,877,224,651,718,901,Piriform-amygdalar area,left
+7,867,226,643,719,899,Piriform-amygdalar area,left
+9,882,219,656,717,906,Piriform-amygdalar area,left
+16,941,237,710,721,888,"Cortical amygdalar area, posterior part, lateral zone",left
+20,967,215,734,721,909,Piriform-amygdalar area,left
+18,958,229,725,724,896,"Cortical amygdalar area, posterior part, lateral zone",left
+17,950,218,717,720,907,Piriform-amygdalar area,left
+32,900,658,690,716,492,Tuberal nucleus,right
+41,858,753,658,674,411,root,right
+42,863,754,663,674,409,root,right
+34,893,554,681,720,578,Arcuate hypothalamic nucleus,left
+36,854,752,654,683,410,root,right
+38,858,753,658,681,410,root,right
+38,896,551,685,715,580,Arcuate hypothalamic nucleus,left
+44,872,756,670,671,408,root,right
+44,744,402,554,666,724,Magnocellular nucleus,left
+44,875,757,673,671,408,root,right
+43,853,751,654,671,411,root,right
+43,873,757,669,673,407,root,right
+45,861,753,660,669,411,root,right
+46,912,547,700,707,582,Arcuate hypothalamic nucleus,left
+61,1072,1006,829,664,165,Postpiriform transition area,right
+49,886,550,679,696,581,Arcuate hypothalamic nucleus,left
+52,863,752,665,656,412,optic tract,right
+52,892,758,686,660,407,root,right
+53,856,751,658,655,412,optic tract,right
+54,854,750,657,653,414,optic tract,right
+54,862,752,663,654,412,optic tract,right
+54,891,758,687,657,407,fiber tracts,right
+54,914,195,689,645,935,Piriform area,left
+55,908,193,683,641,940,Piriform area,left
+55,911,193,687,642,940,Piriform area,left
+57,859,751,662,647,413,optic tract,right
+57,860,752,662,647,413,optic tract,right
+57,910,193,686,636,940,Piriform area,left
+56,861,752,662,649,413,optic tract,right
+56,864,753,665,650,413,optic tract,right
+59,583,337,416,636,786,Substantia innominata,left
+59,877,755,675,646,410,optic tract,right
+59,910,193,686,634,940,Piriform area,left
+58,861,752,662,647,413,optic tract,right
+58,908,193,684,636,940,Piriform area,left
+58,956,552,739,699,578,Arcuate hypothalamic nucleus,left
+60,582,337,415,634,786,Substantia innominata,left
+62,847,550,649,673,582,Hypothalamus,left
+62,958,552,742,694,578,Arcuate hypothalamic nucleus,left
+64,846,550,648,669,582,Hypothalamus,left
+64,957,552,740,690,578,Arcuate hypothalamic nucleus,left
+81,1473,673,1178,731,500,Inferior olivary complex,right
+151,1011,193,780,534,927,lateral ventricle,left
+90,1426,557,1146,697,584,Inferior olivary complex,left
+88,750,554,570,627,580,Hypothalamus,left
+88,1459,502,1170,717,624,Inferior olivary complex,left
+89,1417,579,1138,690,567,Nucleus raphe obscurus,right
+91,1426,657,1146,693,514,Magnocellular reticular nucleus,right
+93,1417,580,1139,686,567,Nucleus raphe obscurus,right
+93,1445,568,1159,702,575,Nucleus raphe pallidus,left
+92,708,560,532,619,575,"Periventricular hypothalamic nucleus, preoptic part",left
+96,1418,617,1140,680,543,Magnocellular reticular nucleus,right
+96,1445,568,1160,696,575,Inferior olivary complex,left
+96,1458,667,1170,702,506,Medulla,right
+99,1488,645,1191,714,522,Medulla,right
+99,1431,551,1151,685,587,Medulla,left
+99,1440,536,1157,690,598,Medulla,left
+99,1445,602,1160,691,552,Medulla,right
+99,1458,667,1170,698,507,Medulla,right
+98,1462,579,1173,703,567,Nucleus raphe pallidus,right
+98,1471,603,1179,708,550,Inferior olivary complex,right
+101,1417,617,1139,673,543,Magnocellular reticular nucleus,right
+100,1415,616,1139,673,543,Magnocellular reticular nucleus,right
+100,1419,581,1142,676,567,Nucleus raphe obscurus,right
+100,1437,623,1154,684,537,Magnocellular reticular nucleus,right
+100,1418,617,1141,674,543,Magnocellular reticular nucleus,right
+100,1441,558,1157,687,582,Inferior olivary complex,left
+100,1456,537,1169,696,598,Inferior olivary complex,left
+100,1488,619,1191,713,539,Medulla,right
+100,1494,659,1195,715,511,Inferior olivary complex,right
+100,1500,501,1200,717,625,Inferior olivary complex,left
+106,1407,568,1134,661,576,Medulla,left
+106,1415,603,1140,665,552,Magnocellular reticular nucleus,right
+106,1406,567,1132,660,576,Medulla,left
+106,1433,614,1151,674,545,Magnocellular reticular nucleus,right
+106,1435,557,1155,677,584,Magnocellular reticular nucleus,left
+106,1452,580,1166,685,567,Inferior olivary complex,right
+106,1512,651,1208,716,516,Inferior olivary complex,right
+103,1444,569,1160,685,575,Inferior olivary complex,left
+103,1414,580,1138,668,568,Nucleus raphe obscurus,right
+103,1415,603,1139,669,551,Magnocellular reticular nucleus,right
+103,1442,558,1159,684,582,Medulla,left
+103,1455,537,1169,692,598,Inferior olivary complex,left
+103,1485,635,1188,706,528,Inferior olivary complex,right
+103,1508,644,1205,718,522,Inferior olivary complex,right
+104,1456,536,1169,690,598,Medulla,left
+104,1406,567,1132,662,576,Medulla,left
+104,1418,581,1141,668,568,Nucleus raphe obscurus,right
+104,1417,617,1139,667,543,Magnocellular reticular nucleus,right
+104,1428,563,1149,674,578,Medulla,left
+104,1460,592,1172,692,559,Inferior olivary complex,right
+104,1478,519,1185,701,609,Inferior olivary complex,left
+104,1501,627,1199,713,533,Inferior olivary complex,right
+102,1471,569,1180,702,575,Medulla,left
+102,1488,687,1191,709,492,Medulla,right
+102,1489,676,1191,709,501,Medulla,right
+105,1457,653,1169,687,519,Magnocellular reticular nucleus,right
+105,1454,537,1168,687,598,Medulla,left
+105,1470,594,1179,695,557,Inferior olivary complex,right
+108,1405,567,1131,655,576,Gigantocellular reticular nucleus,left
+108,1015,156,783,593,971,Piriform area,left
+108,1475,543,1184,694,592,Inferior olivary complex,left
+107,1470,569,1179,693,575,Inferior olivary complex,left
+107,1441,559,1158,677,581,Medulla,left
+107,1449,587,1163,681,562,Inferior olivary complex,right
+107,1482,556,1188,699,584,Inferior olivary complex,left
+107,1509,637,1205,712,528,Inferior olivary complex,right
+110,1497,625,1197,703,537,Inferior olivary complex,right
+110,1512,561,1209,710,581,Inferior olivary complex,left
+110,1014,156,782,591,971,Piriform area,left
+110,1429,604,1149,666,552,Magnocellular reticular nucleus,right
+110,1499,627,1200,705,534,Inferior olivary complex,right
+109,1017,155,783,593,971,Piriform area,left
+114,1483,599,1189,690,554,Inferior olivary complex,right
+114,1406,568,1132,648,576,Gigantocellular reticular nucleus,left
+114,1461,648,1172,677,523,Magnocellular reticular nucleus,right
+114,1470,553,1180,683,586,Medulla,left
+114,1498,627,1199,697,534,Inferior olivary complex,right
+112,1451,581,1166,675,568,Nucleus raphe obscurus,right
+112,1451,587,1166,675,562,Medulla,right
+112,1472,599,1180,686,554,Inferior olivary complex,right
+112,1482,527,1188,691,603,Inferior olivary complex,left
+112,1515,507,1212,707,618,Inferior olivary complex,left
+111,1016,155,783,590,970,Piriform area,left
+111,1454,545,1168,679,592,Magnocellular reticular nucleus,left
+111,1475,543,1184,690,592,Medulla,left
+111,1480,527,1187,692,603,Inferior olivary complex,left
+111,1483,604,1189,694,551,Inferior olivary complex,right
+113,540,559,383,571,572,Striatum,left
+117,1506,568,1205,698,575,Inferior olivary complex,left
+117,1466,600,1176,677,554,crossed tectospinal pathway,right
+117,1501,621,1200,695,540,Inferior olivary complex,right
+115,1456,560,1169,673,581,crossed tectospinal pathway,left
+115,1472,599,1180,682,554,Medulla,right
+115,1484,526,1190,688,604,Medulla,left
+116,1481,527,1187,684,603,Medulla,left
+116,669,218,481,551,911,Piriform area,left
+116,363,516,210,624,597,olfactory nerve layer of main olfactory bulb,left
+116,1477,580,1184,682,567,Inferior olivary complex,right
+116,1482,604,1188,685,551,Medulla,right
+116,1504,525,1204,696,606,Inferior olivary complex,left
+118,649,219,465,552,907,Piriform area,left
+118,1475,635,1183,680,530,Magnocellular reticular nucleus,right
+118,1513,507,1210,697,618,Inferior olivary complex,left
+119,1482,568,1188,681,575,Inferior olivary complex,left
+119,1493,667,1195,686,509,Gigantocellular reticular nucleus,right
+120,646,219,464,549,908,Piriform area,left
+120,1467,599,1178,672,554,crossed tectospinal pathway,right
+120,1473,532,1182,674,600,Magnocellular reticular nucleus,left
+120,654,219,471,548,908,Piriform area,left
+120,1519,526,1216,697,605,Medulla,left
+123,1483,597,1189,676,557,crossed tectospinal pathway,right
+123,1502,621,1202,685,540,Medulla,right
+121,466,562,313,569,567,Anterior olfactory nucleus,right
+121,1476,630,1183,674,535,Magnocellular reticular nucleus,right
+125,365,515,211,613,598,olfactory nerve layer of main olfactory bulb,left
+124,467,562,316,565,567,Anterior olfactory nucleus,right
+124,1518,526,1215,690,605,Medulla,left
+124,370,516,217,610,598,olfactory nerve layer of main olfactory bulb,left
+124,471,561,320,564,569,Anterior olfactory nucleus,right
+124,472,560,320,564,569,Anterior olfactory nucleus,right
+124,1466,595,1176,665,557,crossed tectospinal pathway,right
+124,1470,645,1179,667,526,Magnocellular reticular nucleus,right
+124,1485,551,1190,674,586,crossed tectospinal pathway,left
+126,1476,594,1184,668,558,crossed tectospinal pathway,right
+126,369,515,216,609,598,olfactory nerve layer of main olfactory bulb,left
+126,1481,595,1187,670,557,crossed tectospinal pathway,right
+126,469,561,316,563,569,Anterior olfactory nucleus,right
+128,471,561,320,559,569,Anterior olfactory nucleus,right
+128,1477,557,1184,664,584,crossed tectospinal pathway,left
+130,1595,456,1273,709,664,Medulla,left
+131,367,515,217,602,599,Main olfactory bulb,left
+131,1466,612,1176,655,547,Magnocellular reticular nucleus,right
+132,364,514,213,602,601,Main olfactory bulb,left
+132,1466,613,1176,653,548,Magnocellular reticular nucleus,right
+132,1534,585,1226,687,564,Inferior olivary complex,right
+136,369,515,218,594,600,Main olfactory bulb,left
+136,426,546,276,565,578,Olfactory areas,left
+133,1474,588,1182,657,563,crossed tectospinal pathway,right
+134,366,514,216,599,601,Main olfactory bulb,left
+135,362,513,212,599,603,Main olfactory bulb,left
+135,1576,559,1257,700,582,Inferior olivary complex,left
+138,363,513,215,595,603,Main olfactory bulb,left
+139,366,514,217,592,602,Main olfactory bulb,left
+139,1530,649,1223,674,522,Gigantocellular reticular nucleus,right
+140,415,546,266,564,577,Olfactory areas,left
+142,434,545,285,555,581,Olfactory areas,left
+143,584,221,419,528,907,"Agranular insular area, ventral part, layer 2/3",left
+148,482,557,333,530,575,"Taenia tecta, dorsal part",left
+154,1001,181,770,526,940,Lateral amygdalar nucleus,left
+153,1001,182,770,526,938,Lateral amygdalar nucleus,left
+153,1002,181,771,526,940,Lateral amygdalar nucleus,left
+156,1000,181,770,522,939,Lateral amygdalar nucleus,left
+156,1001,180,770,522,939,Lateral amygdalar nucleus,left
+155,998,202,768,523,915,Lateral amygdalar nucleus,left
+166,992,183,763,508,933,Lateral amygdalar nucleus,left
+168,300,567,157,569,556,olfactory nerve layer of main olfactory bulb,right
+258,1232,258,982,457,872,"Entorhinal area, medial part, dorsal zone, layer 1",left
+172,1038,166,800,518,951,"Endopiriform nucleus, dorsal part",left
+171,296,567,154,567,556,olfactory nerve layer of main olfactory bulb,right
+171,996,178,766,503,939,Lateral amygdalar nucleus,left
+171,1039,166,802,520,951,"Endopiriform nucleus, dorsal part",left
+176,984,186,756,493,930,Lateral amygdalar nucleus,left
+173,989,182,760,499,935,Lateral amygdalar nucleus,left
+174,290,567,149,565,556,olfactory nerve layer of main olfactory bulb,right
+174,294,567,153,564,557,olfactory nerve layer of main olfactory bulb,right
+177,984,185,756,492,932,Lateral amygdalar nucleus,left
+181,1033,162,795,506,954,lateral ventricle,left
+187,1001,165,770,487,952,Lateral amygdalar nucleus,left
+241,175,444,70,489,709,olfactory nerve layer of main olfactory bulb,left
+241,187,443,79,488,709,Main olfactory bulb,left
+241,194,445,84,487,708,Main olfactory bulb,left
+189,1000,165,770,485,952,Lateral amygdalar nucleus,left
+190,999,165,770,484,952,Lateral amygdalar nucleus,left
+192,1000,163,770,481,951,Lateral amygdalar nucleus,left
+196,759,1078,583,420,86,"Supplemental somatosensory area, layer 1",right
+193,999,164,770,479,951,Lateral amygdalar nucleus,left
+203,278,566,145,526,564,olfactory nerve layer of main olfactory bulb,right
+203,760,1078,584,410,86,"Supplemental somatosensory area, layer 1",right
+211,230,552,105,528,581,olfactory nerve layer of main olfactory bulb,left
+211,1138,1098,901,443,83,"Entorhinal area, lateral part, layer 1",right
+208,231,552,106,531,580,olfactory nerve layer of main olfactory bulb,left
+208,1138,1098,900,447,83,"Entorhinal area, lateral part, layer 2",right
+214,213,450,89,525,699,Main olfactory bulb,left
+214,230,552,106,524,581,olfactory nerve layer of main olfactory bulb,left
+216,227,451,104,519,695,Main olfactory bulb,left
+216,240,454,115,517,692,Main olfactory bulb,left
+212,224,451,99,525,695,Main olfactory bulb,left
+219,224,451,101,516,696,Main olfactory bulb,left
+219,241,453,116,512,694,Main olfactory bulb,left
+219,694,1056,527,390,104,"Supplemental somatosensory area, layer 1",right
+219,1059,1101,843,412,78,Ectorhinal area/Layer 2/3,right
+218,235,453,112,515,695,Main olfactory bulb,left
+220,231,452,109,512,695,Main olfactory bulb,left
+220,695,1056,529,388,104,"Supplemental somatosensory area, layer 1",right
+224,1286,462,1023,480,665,"Pontine reticular nucleus, caudal part",left
+222,212,450,91,514,699,Main olfactory bulb,left
+225,217,450,96,507,699,Main olfactory bulb,left
+225,1018,1102,811,394,73,"Temporal association areas, layer 2/3",right
+223,694,1056,528,384,104,"Supplemental somatosensory area, layer 1",right
+223,1050,1101,836,404,77,Ectorhinal area/Layer 2/3,right
+229,204,449,87,505,703,Main olfactory bulb,left
+230,187,444,74,505,708,olfactory nerve layer of main olfactory bulb,left
+230,249,454,125,495,693,Main olfactory bulb,left
+230,698,1056,532,373,104,"Supplemental somatosensory area, layer 1",right
+228,186,444,71,507,708,olfactory nerve layer of main olfactory bulb,left
+228,698,1056,532,375,104,"Supplemental somatosensory area, layer 1",right
+231,1024,1101,816,387,75,"Temporal association areas, layer 2/3",right
+232,179,444,68,502,709,olfactory nerve layer of main olfactory bulb,left
+232,231,452,112,495,696,Main olfactory bulb,left
+232,242,454,121,493,693,Main olfactory bulb,left
+233,193,445,79,499,708,Main olfactory bulb,left
+233,176,444,66,500,709,olfactory nerve layer of main olfactory bulb,left
+233,181,443,69,500,709,olfactory nerve layer of main olfactory bulb,left
+233,185,444,72,500,709,olfactory nerve layer of main olfactory bulb,left
+235,189,444,76,497,709,Main olfactory bulb,left
+235,225,452,106,493,697,Main olfactory bulb,left
+234,237,453,116,492,696,Main olfactory bulb,left
+234,1138,1091,905,410,89,"Perirhinal area, layer 1",right
+239,154,544,49,497,597,Main olfactory bulb,left
+237,194,445,82,495,708,Main olfactory bulb,left
+237,1140,1090,908,407,91,"Perirhinal area, layer 1",right
+238,204,449,91,492,703,Main olfactory bulb,left
+238,175,550,67,498,590,olfactory nerve layer of main olfactory bulb,left
+238,177,444,68,495,709,olfactory nerve layer of main olfactory bulb,left
+238,186,443,76,494,709,Main olfactory bulb,left
+240,169,443,63,492,709,olfactory nerve layer of main olfactory bulb,left
+240,176,444,69,491,709,olfactory nerve layer of main olfactory bulb,left
+240,196,446,85,489,706,Main olfactory bulb,left
+242,167,443,63,490,709,olfactory nerve layer of main olfactory bulb,left
+242,169,443,63,490,709,olfactory nerve layer of main olfactory bulb,left
+242,172,444,66,490,709,olfactory nerve layer of main olfactory bulb,left
+242,177,444,70,489,709,olfactory nerve layer of main olfactory bulb,left
+243,193,445,83,486,709,Main olfactory bulb,left
+244,189,444,81,485,709,Main olfactory bulb,left
+244,169,443,65,486,709,olfactory nerve layer of main olfactory bulb,left
+244,174,550,67,490,592,Main olfactory bulb,left
+244,180,444,74,485,709,Main olfactory bulb,left
+249,170,443,69,479,709,Main olfactory bulb,left
+246,189,444,81,483,709,Main olfactory bulb,left
+246,194,445,86,482,709,Main olfactory bulb,left
+245,174,444,69,486,709,olfactory nerve layer of main olfactory bulb,left
+245,173,443,68,486,709,olfactory nerve layer of main olfactory bulb,left
+245,197,446,87,484,706,Main olfactory bulb,left
+248,172,443,70,481,709,Main olfactory bulb,left
+252,175,444,75,475,709,Main olfactory bulb,left
+252,1228,262,978,463,867,"Entorhinal area, medial part, dorsal zone, layer 1",left
+250,1289,970,1056,445,202,Paraflocculus,right
+256,1256,229,1001,465,908,"Entorhinal area, medial part, dorsal zone, layer 1",left
+257,178,444,79,467,709,Main olfactory bulb,left
+261,1233,257,983,453,874,"Entorhinal area, medial part, dorsal zone, layer 1",left
+261,1175,1088,943,381,96,"Entorhinal area, lateral part, layer 1",right
+264,1185,1087,950,377,96,"Entorhinal area, lateral part, layer 1",right
+264,1184,1087,950,377,96,"Entorhinal area, lateral part, layer 1",right
+269,1189,1086,955,373,99,"Entorhinal area, lateral part, layer 1",right
+269,164,550,64,457,597,Main olfactory bulb,left
+269,172,550,71,457,597,Main olfactory bulb,left
+269,190,553,84,455,595,Main olfactory bulb,left
+266,165,550,64,461,597,Main olfactory bulb,left
+266,188,553,82,459,595,Main olfactory bulb,left
+266,1190,1086,956,377,99,"Entorhinal area, lateral part, layer 1",right
+267,169,550,67,459,597,Main olfactory bulb,left
+274,172,550,71,449,599,Main olfactory bulb,left
+273,163,551,65,449,597,Main olfactory bulb,left
+273,1249,242,1000,438,892,"Entorhinal area, medial part, dorsal zone, layer 1",left
+275,131,548,39,447,601,Main olfactory bulb,left
+275,166,550,67,447,599,Main olfactory bulb,left
+275,170,550,70,447,599,Main olfactory bulb,left
+277,134,548,41,445,601,Main olfactory bulb,left
+276,136,548,43,445,601,Main olfactory bulb,left
+279,132,548,40,441,601,Main olfactory bulb,left
+280,129,548,37,438,602,Main olfactory bulb,left
+281,135,548,44,437,602,Main olfactory bulb,left
+283,131,548,40,435,602,Main olfactory bulb,left
+286,137,548,44,431,603,Main olfactory bulb,left
+285,140,548,47,434,603,Main olfactory bulb,left
+287,131,548,41,429,603,Main olfactory bulb,left
+288,138,548,46,428,603,Main olfactory bulb,left
+290,131,548,41,425,603,Main olfactory bulb,left
+322,1210,83,963,374,1040,"Entorhinal area, lateral part, layer 1",left
+333,1327,1015,1113,333,166,Crus 1,right
+334,1348,948,1133,343,228,Crus 1,right
+336,1347,949,1134,339,228,Crus 1,right
+336,1348,948,1134,339,228,Crus 1,right
+337,1349,947,1134,337,229,Crus 1,right
+339,1494,943,1268,363,234,Crus 2,right
+339,1496,939,1270,364,238,Crus 2,right
+370,1418,217,1183,328,944,Crus 2,left
+344,1352,943,1139,328,233,Crus 1,right
+340,1340,954,1127,331,223,Crus 1,right
+340,1341,953,1127,331,225,Crus 1,right
+340,1351,944,1138,334,233,Crus 1,right
+342,121,547,26,335,610,Olfactory areas,left
+349,1431,188,1189,354,963,Crus 2,left
+347,1363,931,1150,327,245,Crus 1,right
+354,1275,243,1048,335,900,Simple lobule,left
+352,1429,190,1187,349,962,Crus 2,left
+362,1439,204,1199,339,954,Crus 2,left
+382,753,709,570,137,436,"Primary motor area, Layer 5",right
+364,1439,204,1199,336,955,Crus 2,left
+363,1437,205,1196,337,954,Crus 2,left
+371,1421,215,1184,326,945,Crus 2,left
+376,1419,217,1185,320,947,Crus 2,left
+378,1415,219,1182,318,943,Crus 2,left
+380,768,761,587,141,378,"Primary somatosensory area, lower limb, layer 5",right
+383,726,709,546,137,435,"Primary motor area, Layer 5",right
+381,722,433,553,169,723,"Primary motor area, Layer 5",left
+389,754,717,571,126,426,"Primary motor area, Layer 5",right
+397,788,710,602,111,434,"Primary somatosensory area, lower limb, layer 5",right
+394,714,466,540,141,697,"Primary motor area, Layer 5",left
+394,769,714,583,116,428,"Primary somatosensory area, lower limb, layer 5",right
+398,784,470,603,133,694,"Primary motor area, Layer 5",left
+402,746,414,572,139,748,"Primary somatosensory area, lower limb, layer 5",left
+402,760,430,583,135,733,"Primary somatosensory area, lower limb, layer 5",left
+407,767,450,588,123,716,"Primary somatosensory area, lower limb, layer 5",left
+403,811,443,630,132,720,"Primary somatosensory area, lower limb, layer 5",left
+405,767,449,589,127,717,"Primary somatosensory area, lower limb, layer 5",left
+405,817,435,634,132,728,"Primary somatosensory area, lower limb, layer 5",left
+404,768,449,589,127,717,"Primary somatosensory area, lower limb, layer 5",left
+408,750,452,571,120,715,"Primary somatosensory area, lower limb, layer 4",left
+409,752,447,573,119,719,"Primary somatosensory area, lower limb, layer 4",left
+409,792,448,610,119,719,"Primary somatosensory area, lower limb, layer 5",left
+414,793,485,608,106,685,"Primary motor area, Layer 5",left
+413,766,490,583,106,679,"Primary motor area, Layer 5",left
+413,784,420,604,122,747,"Primary somatosensory area, lower limb, layer 5",left
+413,783,475,601,109,693,"Primary somatosensory area, lower limb, layer 5",left
+416,786,451,604,108,718,"Primary somatosensory area, lower limb, layer 4",left
+416,804,460,621,107,710,"Primary somatosensory area, lower limb, layer 5",left
+417,808,476,624,102,694,"Primary somatosensory area, lower limb, layer 5",left
+417,829,450,644,109,719,"Primary somatosensory area, trunk, layer 5",left
+415,781,465,598,108,705,"Primary somatosensory area, lower limb, layer 5",left
+415,799,490,615,103,679,"Primary motor area, Layer 5",left

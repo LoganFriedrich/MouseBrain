@@ -1,0 +1,18 @@
+================================================================================
+ELIFE COMPARISON SUMMARY - DESCENDING TRACING
+Generated: 2026-01-26 14:25
+================================================================================
+
+eLife Reference (cervical C4, uninjured, n=4): 22,387 cells
+
+BRAIN COUNTS:
+Brain                       Raw  Corrected eLife-mapped   vs eLife
+-----------------------------------------------------------------
+349                      25,930     25,505       24,560       +10%
+
+SUSPICIOUS REGION SUMMARY:
+  349: 425 suspicious (1.6% of raw)
+
+NOTE: Suspicious regions include cerebellar cortex, white matter,
+      olfactory, cortical L1-3, and other regions without spinal projections.
+      These are flagged for DESCENDING (retrograde spinal) tracing only.

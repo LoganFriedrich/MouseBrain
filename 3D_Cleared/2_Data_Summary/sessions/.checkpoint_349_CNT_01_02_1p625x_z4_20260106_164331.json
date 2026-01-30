@@ -1,0 +1,179 @@
+{
+  "brain": "349_CNT_01_02_1p625x_z4",
+  "session_id": "20260106_164331",
+  "hierarchy": {
+    "brain_id": "349",
+    "subject": "CNT_01_02",
+    "cohort": "CNT_01",
+    "project_code": "CNT",
+    "project_name": "Connectome",
+    "imaging_params": "1p625x_z4"
+  },
+  "start": "2026-01-06T16:43:31.811970",
+  "detection_runs": [
+    {
+      "run_id": "det_20260106_164700_c82297",
+      "params": {
+        "ball_xy_size": 10.0,
+        "ball_z_size": 10.0,
+        "soma_diameter": 10.0,
+        "threshold": 8.0
+      },
+      "preset": "custom",
+      "cell_count": 771,
+      "z_range": [
+        0,
+        50
+      ],
+      "reference_match": null,
+      "timestamp": "2026-01-06T16:48:23.976062"
+    },
+    {
+      "run_id": "det_20260106_164900_d49511",
+      "params": {
+        "ball_xy_size": 10.0,
+        "ball_z_size": 10.0,
+        "soma_diameter": 10.0,
+        "threshold": 8.0
+      },
+      "preset": "custom",
+      "cell_count": 29787,
+      "z_range": [
+        0,
+        1218
+      ],
+      "reference_match": null,
+      "timestamp": "2026-01-06T16:58:41.932192"
+    }
+  ],
+  "param_changes": [
+    {
+      "param": "max_cluster_size",
+      "from": 10000,
+      "to": 100000000,
+      "timestamp": "2026-01-06T16:46:58.789399"
+    }
+  ],
+  "curations": [],
+  "exports": [
+    "\\\\134.48.78.185\\blac\\2_Connectome\\3_Nuclei_Detection\\2_Data_Summary\\optimization_runs\\349_CNT_01_02_1p625x_z4\\qc_images\\QC_det_20260106_164700_c82297.png"
+  ],
+  "notes": [],
+  "current_params": {
+    "ball_xy_size": 10.0,
+    "ball_z_size": 10.0,
+    "ball_overlap_fraction": 0.5,
+    "soma_diameter": 10.0,
+    "soma_spread_factor": 1.0,
+    "threshold": 8.0,
+    "tiled_threshold": 8.0,
+    "log_sigma_size": 0.2,
+    "max_cluster_size": 100000000,
+    "n_splitting_iter": 10,
+    "split_ball_xy": 6.0,
+    "split_ball_z": 15.0,
+    "split_ball_overlap": 0.8,
+    "use_gpu": false,
+    "batch_size": 0,
+    "n_free_cpus": 74
+  },
+  "events": [
+    {
+      "timestamp": "2026-01-06T16:43:31.811970",
+      "type": "session_start",
+      "data": {
+        "brain": "349_CNT_01_02_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-06T16:43:31.811970",
+      "type": "params_initial",
+      "data": {
+        "ball_xy_size": 10.0,
+        "ball_z_size": 10.0,
+        "ball_overlap_fraction": 0.5,
+        "soma_diameter": 10.0,
+        "soma_spread_factor": 1.0,
+        "threshold": 8.0,
+        "tiled_threshold": 8.0,
+        "log_sigma_size": 0.2,
+        "max_cluster_size": 10000,
+        "n_splitting_iter": 10,
+        "split_ball_xy": 6.0,
+        "split_ball_z": 15.0,
+        "split_ball_overlap": 0.8,
+        "use_gpu": false,
+        "batch_size": 0,
+        "n_free_cpus": 74
+      }
+    },
+    {
+      "timestamp": "2026-01-06T16:43:45.229130",
+      "type": "brain_loaded",
+      "data": {
+        "source": "cropped",
+        "brain": "349_CNT_01_02_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-06T16:46:58.789399",
+      "type": "param_change",
+      "data": {
+        "param": "max_cluster_size",
+        "from": 10000,
+        "to": 100000000,
+        "timestamp": "2026-01-06T16:46:58.789399"
+      }
+    },
+    {
+      "timestamp": "2026-01-06T16:48:23.976062",
+      "type": "detection_run",
+      "data": {
+        "run_id": "det_20260106_164700_c82297",
+        "params": {
+          "ball_xy_size": 10.0,
+          "ball_z_size": 10.0,
+          "soma_diameter": 10.0,
+          "threshold": 8.0
+        },
+        "preset": "custom",
+        "cell_count": 771,
+        "z_range": [
+          0,
+          50
+        ],
+        "reference_match": null,
+        "timestamp": "2026-01-06T16:48:23.976062"
+      }
+    },
+    {
+      "timestamp": "2026-01-06T16:48:24.754844",
+      "type": "export",
+      "data": {
+        "path": "\\\\134.48.78.185\\blac\\2_Connectome\\3_Nuclei_Detection\\2_Data_Summary\\optimization_runs\\349_CNT_01_02_1p625x_z4\\qc_images\\QC_det_20260106_164700_c82297.png",
+        "type": "qc_image"
+      }
+    },
+    {
+      "timestamp": "2026-01-06T16:58:41.932192",
+      "type": "detection_run",
+      "data": {
+        "run_id": "det_20260106_164900_d49511",
+        "params": {
+          "ball_xy_size": 10.0,
+          "ball_z_size": 10.0,
+          "soma_diameter": 10.0,
+          "threshold": 8.0
+        },
+        "preset": "custom",
+        "cell_count": 29787,
+        "z_range": [
+          0,
+          1218
+        ],
+        "reference_match": null,
+        "timestamp": "2026-01-06T16:58:41.932192"
+      }
+    }
+  ]
+}

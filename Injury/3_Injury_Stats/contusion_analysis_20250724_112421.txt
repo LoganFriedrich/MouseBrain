@@ -1,0 +1,158 @@
+﻿=== Contusion_Stats.py - Complete Contusion Analysis Log ===
+Started: 2025-07-24 11:24:21
+============================================================
+
+[LOGGING] Starting complete contusion analysis - saving to: contusion_analysis_20250724_112421.txt
+
+Dataset shape: (34, 5)
+
+Column names:
+['Survived', 'Stage_Height', 'Actual_kd', 'Actual_displacement', 'Actual_Velocity']
+
+First few rows:
+  Survived  Stage_Height  Actual_kd  Actual_displacement  Actual_Velocity
+0        N          37.0         62                  388              120
+1        N           1.0         65                  440              120
+2        N           5.0         67                  476              120
+3        N           5.0         61                  705              122
+4        N          40.0         65                  529              120
+
+Data types:
+Survived                object
+Stage_Height           float64
+Actual_kd                int64
+Actual_displacement      int64
+Actual_Velocity          int64
+dtype: object
+
+Basic statistics:
+       Stage_Height  Actual_kd  Actual_displacement  Actual_Velocity
+count     34.000000  34.000000            34.000000        34.000000
+mean      25.608824  62.735294           525.117647       120.058824
+std       12.404529   2.219867            83.971050         1.013281
+min        1.000000  59.000000           335.000000       117.000000
+25%       22.000000  61.000000           476.000000       120.000000
+50%       25.000000  63.000000           529.000000       120.000000
+75%       33.875000  64.000000           582.000000       120.000000
+max       49.000000  68.000000           705.000000       122.000000
+
+Missing values per column:
+Survived               0
+Stage_Height           0
+Actual_kd              0
+Actual_displacement    0
+Actual_Velocity        0
+dtype: int64
+
+Survival distribution:
+Survived
+Y    24
+N    10
+Name: count, dtype: int64
+Survival rate: 70.59%
+
+============================================================
+=== COMPARISON: SURVIVORS vs NON-SURVIVORS ===
+============================================================
+
+Stage_Height:
+  Survivors: Mean=26.30, Std=10.67
+  Non-survivors: Mean=23.95, Std=16.40
+  T-test p-value: 0.6222
+
+Actual_kd:
+  Survivors: Mean=62.38, Std=2.28
+  Non-survivors: Mean=63.60, Std=1.90
+  T-test p-value: 0.1452
+
+Actual_displacement:
+  Survivors: Mean=530.21, Std=68.73
+  Non-survivors: Mean=512.90, Std=116.39
+  T-test p-value: 0.5917
+
+Actual_Velocity:
+  Survivors: Mean=120.00, Std=1.14
+  Non-survivors: Mean=120.20, Std=0.63
+  T-test p-value: 0.6076
+
+============================================================
+=== CREATING VISUALIZATIONS ===
+============================================================
+Creating plots... (Check your screen for visual output)
+
+============================================================
+=== DETAILED STATISTICAL TESTS ===
+============================================================
+
+Stage_Height:
+  Normality tests - Survivors: p=0.5002, Non-survivors: p=0.5110
+  T-test p-value: 0.6222
+  Significant: No
+
+Actual_kd:
+  Normality tests - Survivors: p=0.2462, Non-survivors: p=0.4200
+  T-test p-value: 0.1452
+  Significant: No
+
+Actual_displacement:
+  Normality tests - Survivors: p=0.3501, Non-survivors: p=0.4598
+  T-test p-value: 0.5917
+  Significant: No
+
+Actual_Velocity:
+  Normality tests - Survivors: p=0.0000, Non-survivors: p=0.0000
+  Mann-Whitney U p-value: 0.7540
+  Significant: No
+
+============================================================
+===== FOCUSED ANALYSIS: SURVIVAL vs ACTUAL_KD =====
+============================================================
+=== DATA OVERVIEW ===
+Total subjects: 34
+Survivors (Y): 24
+Non-survivors (N): 10
+
+=== ACTUAL_KD BY SURVIVAL GROUP ===
+Survivors:
+  Count: 24
+  Mean: 62.38
+  Std: 2.28
+  Range: 59.0 - 68.0
+
+Non-survivors:
+  Count: 10
+  Mean: 63.60
+  Std: 1.90
+  Range: 61.0 - 67.0
+
+Difference in means: -1.23
+
+=== STATISTICAL TEST RESULTS ===
+T-statistic: -1.4932
+P-value: 0.1452
+Result: NOT SIGNIFICANT (p ≥ 0.05)
+Effect size (Cohen's d): -0.562
+Effect size interpretation: medium
+
+Creating Actual_kd visualization... (Check your screen)
+
+============================================================
+=== FINAL SUMMARY ===
+============================================================
+RESULT: No significant difference in Actual_kd between survivors and non-survivors
+
+p = 0.1452, d = -0.562 - moderate effect, possibly a real signal
+
+Achieved power: 50-60%
+
+============================================================
+=== ANALYSIS COMPLETE ===
+============================================================
+All statistical results have been logged to the text file.
+Plots are displayed on screen but not saved to the log.
+Check the generated log file for a complete record of all statistical output.
+
+
+============================================================
+Analysis completed: 2025-07-24 11:24:30
+============================================================
