@@ -6,6 +6,7 @@ Usage:
     braintool              # Launch napari
     braintool --crop BRAIN # Launch manual crop for specific brain
     braintool --check      # Check dependencies
+    braintool --paths      # Show configured paths
     braintool --help       # Show help
 """
 
@@ -97,38 +98,94 @@ def show_paths():
 
 
 def check_dependencies():
-    """Check that all required dependencies are available."""
-    print("Checking BrainTools dependencies...")
-    print("-" * 40)
+    """Check that all required dependencies are available, grouped by install extra."""
+    from braintools import __version__
+    print(f"BrainTools v{__version__} — Dependency Check")
+    print("=" * 55)
 
-    deps = [
+    # Core (always required)
+    core_deps = [
         ("napari", "napari"),
         ("numpy", "numpy"),
+        ("scipy", "scipy"),
+        ("pandas", "pandas"),
+        ("tifffile", "tifffile"),
+        ("h5py", "h5py"),
+        ("matplotlib", "matplotlib"),
+        ("natsort", "natsort"),
+        ("qtpy", "qtpy"),
+    ]
+
+    # 3D pipeline extras
+    deps_3d = [
         ("brainreg", "brainreg"),
+        ("brainglobe-atlasapi", "brainglobe_atlasapi"),
+        ("brainglobe-utils", "brainglobe_utils"),
         ("cellfinder", "cellfinder"),
-        ("torch", "torch"),
         ("tensorflow", "tensorflow"),
         ("keras", "keras"),
-        ("sci_connectome_napari", "sci_connectome_napari"),
+        ("zarr", "zarr"),
+        ("dask", "dask"),
+        ("imaris-ims-file-reader", "imaris_ims_file_reader"),
+        ("torch (manual install)", "torch"),
+    ]
+
+    # 2D pipeline extras
+    deps_2d = [
+        ("scikit-image", "skimage"),
+        ("stardist", "stardist"),
+        ("brainglobe-atlasapi", "brainglobe_atlasapi"),
+        ("pillow", "PIL"),
+        ("nd2", "nd2"),
+    ]
+
+    # 2D alignment extras
+    deps_2d_align = [
+        ("DeepSlice", "DeepSlice"),
+        ("SimpleITK", "SimpleITK"),
+    ]
+
+    # napari plugins
+    plugins = [
+        ("3D plugin (pipeline_3d)", "braintools.pipeline_3d"),
+        ("2D plugin (pipeline_2d)", "braintools.pipeline_2d"),
     ]
 
     all_ok = True
-    for name, module in deps:
-        try:
-            __import__(module)
-            print(f"  [OK] {name}")
-        except ImportError as e:
-            print(f"  [X]  {name}: {e}")
+
+    sections = [
+        ("Core (always required)", core_deps),
+        ("3D Pipeline — pip install braintools[3d]", deps_3d),
+        ("2D Pipeline — pip install braintools[2d]", deps_2d),
+        ("2D Alignment — pip install braintools[2d-alignment]", deps_2d_align),
+        ("napari Plugins", plugins),
+    ]
+
+    for section_name, deps in sections:
+        print(f"\n{section_name}:")
+        section_ok = True
+        for name, module in deps:
+            try:
+                __import__(module)
+                print(f"  [OK] {name}")
+            except ImportError:
+                print(f"  [--] {name}")
+                section_ok = False
+        if not section_ok and section_name.startswith("Core"):
             all_ok = False
 
-    print("-" * 40)
+    print("\n" + "=" * 55)
     if all_ok:
-        print("All dependencies OK!")
-        return 0
+        print("Core dependencies OK. Optional extras shown above.")
     else:
-        print("Some dependencies missing.")
-        print("Run: pip install -e .[cuda] --extra-index-url https://download.pytorch.org/whl/cu118")
-        return 1
+        print("Some CORE dependencies missing.")
+        print("Run: pip install -e .")
+    print("\nInstall extras:")
+    print("  pip install -e \".[3d]\"           # 3D cleared brain pipeline")
+    print("  pip install -e \".[2d]\"           # 2D slice analysis")
+    print("  pip install -e \".[all]\"          # Everything")
+
+    return 0 if all_ok else 1
 
 
 def launch_napari():
@@ -175,7 +232,6 @@ def launch_manual_crop(brain_name):
         brain_folder = None
         debug("Searching for brain with glob pattern...")
 
-        # Use glob to find matching brain folders (much faster over network)
         pattern = f"*/*{brain_name}*"
         debug(f"  Pattern: {pattern}")
         matches = list(BRAINS_ROOT.glob(pattern))
@@ -188,7 +244,6 @@ def launch_manual_crop(brain_name):
         if not brain_folder:
             print(f"Error: Brain '{brain_name}' not found in {BRAINS_ROOT}")
             print("\nAvailable brains:")
-            # Use glob for faster listing
             for folder in sorted(BRAINS_ROOT.glob("*/*")):
                 if folder.is_dir() and not folder.name.startswith('.'):
                     print(f"  - {folder.name}")
@@ -213,7 +268,11 @@ def launch_manual_crop(brain_name):
         # Try to open the manual crop widget with this brain
         try:
             debug("Importing ManualCropWidget...")
-            from sci_connectome_napari.manual_crop_widget import ManualCropWidget
+            # Try new location first, fall back to old
+            try:
+                from braintools.pipeline_3d.manual_crop_widget import ManualCropWidget
+            except ImportError:
+                from sci_connectome_napari.manual_crop_widget import ManualCropWidget
             debug("ManualCropWidget imported")
 
             debug("Creating ManualCropWidget instance...")
@@ -234,7 +293,7 @@ def launch_manual_crop(brain_name):
                         break
         except Exception as e:
             print(f"Warning: Could not auto-open crop widget: {e}")
-            print("Use Plugins → SCI-Connectome Pipeline → Manual Crop")
+            print("Use Plugins > SCI-Connectome Pipeline > Manual Crop")
             import traceback
             traceback.print_exc()
 

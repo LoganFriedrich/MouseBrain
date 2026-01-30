@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "braintools"
-version = "0.1.0"
-description = "SCI-Connectome BrainGlobe pipeline tools for tissue analysis"
+version = "0.2.0"
+description = "SCI-Connectome tissue analysis tools — 3D cleared brain and 2D slice pipelines"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
@@ -18,28 +18,14 @@ dependencies = [
     # Core napari
     "napari[all]>=0.4.18",
 
-    # BrainGlobe stack
-    "brainreg>=1.0.0",
-    "brainglobe-atlasapi",
-    "brainglobe-utils",
-    "brainglobe-segmentation",
-    "cellfinder>=1.0.0",
-
-    # ML backends (IMPORTANT: version-pinned to avoid breaking changes)
-    "tensorflow>=2.10.0,<2.16",
-    "keras>=2.10.0,<3.0",  # keras 3.x has breaking API changes
-
-    # Data handling (IMPORTANT: zarr pinned to v2 API)
+    # Data handling
     "numpy",
     "scipy",
     "pandas",
     "tifffile",
     "h5py",
-    "zarr>=2.13,<3.0",  # zarr 3.x has breaking API changes (open vs open_array)
-    "dask[array]",
-    "imaris-ims-file-reader",  # For reading .ims files
-    "matplotlib",  # For QC plots
-    "natsort",  # For natural sorting of filenames
+    "matplotlib",
+    "natsort",
 
     # Qt/GUI
     "qtpy",
@@ -53,9 +39,44 @@ dependencies = [
 # Run install.ps1 which handles torch installation from the correct index.
 
 [project.optional-dependencies]
+3d = [
+    # BrainGlobe stack
+    "brainreg>=1.0.0",
+    "brainglobe-atlasapi",
+    "brainglobe-utils",
+    "brainglobe-segmentation",
+    "cellfinder>=1.0.0",
+    # ML backends (IMPORTANT: version-pinned to avoid breaking changes)
+    "tensorflow>=2.10.0,<2.16",
+    "keras>=2.10.0,<3.0",  # keras 3.x has breaking API changes
+    # Data formats (IMPORTANT: zarr pinned to v2 API)
+    "zarr>=2.13,<3.0",  # zarr 3.x has breaking API changes (open vs open_array)
+    "dask[array]",
+    "imaris-ims-file-reader",  # For reading .ims files
+]
+2d = [
+    # Slice analysis
+    "scikit-image>=0.21",
+    "stardist>=0.8",
+    "brainglobe-atlasapi",
+    "pillow>=9.0",
+    "nd2",
+    "dask>=2022.1",
+]
+2d-alignment = [
+    "braintools[2d]",
+    "DeepSlice",
+    "SimpleITK-SimpleElastix",
+]
+all = [
+    "braintools[3d]",
+    "braintools[2d]",
+    "braintools[2d-alignment]",
+]
 dev = [
     "pytest",
     "pytest-qt",
+    "pytest-cov",
     "black",
     "ruff",
 ]
@@ -63,5 +84,14 @@ dev = [
 [project.scripts]
 braintool = "braintools.cli:main"
 
+# Register both napari plugins from one package
+[project.entry-points."napari.manifest"]
+sci-connectome-pipeline = "braintools.pipeline_3d:napari.yaml"
+brainslice-2d = "braintools.pipeline_2d:napari.yaml"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"braintools.pipeline_3d" = ["napari.yaml"]
+"braintools.pipeline_2d" = ["napari.yaml"]
