@@ -1,0 +1,81 @@
+{
+  "brain": "349_CNT_01_02_1p625x_z4",
+  "session_id": "20260109_171147",
+  "hierarchy": {
+    "brain_id": "349",
+    "subject": "CNT_01_02",
+    "cohort": "CNT_01",
+    "project_code": "CNT",
+    "project_name": "Connectome",
+    "imaging_params": "1p625x_z4"
+  },
+  "start": "2026-01-09T17:11:47.104730",
+  "detection_runs": [],
+  "param_changes": [],
+  "curations": [],
+  "exports": [],
+  "notes": [],
+  "current_params": {
+    "ball_xy_size": 10.0,
+    "ball_z_size": 10.0,
+    "ball_overlap_fraction": 0.5,
+    "soma_diameter": 10.0,
+    "soma_spread_factor": 1.0,
+    "threshold": 8.0,
+    "tiled_threshold": 8.0,
+    "log_sigma_size": 0.2,
+    "max_cluster_size": 100000000,
+    "use_gpu": false,
+    "batch_size": 0,
+    "n_free_cpus": 74
+  },
+  "events": [
+    {
+      "timestamp": "2026-01-09T17:11:47.104730",
+      "type": "session_start",
+      "data": {
+        "brain": "349_CNT_01_02_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-09T17:11:47.104730",
+      "type": "params_initial",
+      "data": {
+        "ball_xy_size": 10.0,
+        "ball_z_size": 10.0,
+        "ball_overlap_fraction": 0.5,
+        "soma_diameter": 10.0,
+        "soma_spread_factor": 1.0,
+        "threshold": 8.0,
+        "tiled_threshold": 8.0,
+        "log_sigma_size": 0.2,
+        "max_cluster_size": 100000000,
+        "use_gpu": false,
+        "batch_size": 0,
+        "n_free_cpus": 74
+      }
+    },
+    {
+      "timestamp": "2026-01-09T17:11:57.917230",
+      "type": "brain_loaded",
+      "data": {
+        "source": "cropped",
+        "brain": "349_CNT_01_02_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-09T17:49:29.193492",
+      "type": "classification_run",
+      "data": {
+        "run_id": "cla_20260109_171210_c78fa7",
+        "model": "20251222/model.keras",
+        "cells_found": 28525,
+        "rejected": 0,
+        "acceptance_rate": 100.0,
+        "cube_size": 50,
+        "batch_size": 32,
+        "timestamp": "2026-01-09T17:49:29.193492"
+      }
+    }
+  ]
+}

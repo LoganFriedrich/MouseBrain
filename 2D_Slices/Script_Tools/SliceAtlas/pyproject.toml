@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brainslice"
+version = "0.1.0"
+description = "BrainSlice - Brain slice annotation, atlas alignment, and cell quantification tool"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "SCI-Connectome Team"}
+]
+keywords = ["neuroscience", "brain", "atlas", "cell-detection", "napari"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "scikit-image>=0.21",
+    "tifffile",
+    "napari>=0.4.18",
+    "stardist>=0.8",
+    "brainglobe-atlasapi",
+    "pillow>=9.0",
+    "natsort>=8.0",
+]
+
+[project.optional-dependencies]
+nd2 = ["nd2"]
+alignment = [
+    "DeepSlice",
+    "SimpleITK-SimpleElastix",
+]
+all = [
+    "nd2",
+    "aicsimageio",
+    "tensorflow>=2.10",
+    "DeepSlice",
+    "SimpleITK-SimpleElastix",
+]
+dev = [
+    "pytest",
+    "pytest-cov",
+]
+
+[project.entry-points."napari.manifest"]
+brainslice = "brainslice.napari_plugin:napari.yaml"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["brainslice*"]
+
+[tool.setuptools.package-data]
+"brainslice.napari_plugin" = ["napari.yaml"]

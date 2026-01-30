@@ -1,0 +1,58 @@
+NEW:
+conda create -p "brainglobe-env"
+
+conda activate brainglobe-env
+
+pip install brainglobe
+
+
+
+TO USE:
+conda activate brainglobe-env
+
+napari
+
+in braingreg, set max processors to 74 (there are 104 so this leaves 30 for processing so we don't flood max_worker limit and cause a fail after 2 hours of processing)
+
+
+
+
+USE NOTES:
+For historical files, use IAL & use  Cells (GFP) and background (NOT "input")
+
+iar for new brains
+
+
+
+
+
+
+
+
+
+
+
+OLD:
+conda create -p "G:\Program_Files\Conda\envs\brainglobe-env" python=3.12
+
+conda activate G:\Program_Files\Conda\envs\brainglobe-env
+
+conda install -c anaconda pip
+
+python -m pip install brainglobe
+
+
+to use:
+
+cd "G:\Program_Files\Conda\envs\brainglobe-env"
+
+conda activate G:\Program_Files\Conda\envs\brainglobe-env
+
+napari
+
+in braingreg, set max processors to 74 (there are 104 so this leaves 30 for processing so we don't flood max_worker limit and cause a fail after 2 hours of processing)
+
+
+
+
+

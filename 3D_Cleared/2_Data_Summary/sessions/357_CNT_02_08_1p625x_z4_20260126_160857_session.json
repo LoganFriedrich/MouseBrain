@@ -1,0 +1,73 @@
+{
+  "brain": "357_CNT_02_08_1p625x_z4",
+  "session_id": "20260126_160857",
+  "hierarchy": {
+    "brain_id": "357",
+    "subject": "CNT_02_08",
+    "cohort": "CNT_02",
+    "project_code": "CNT",
+    "project_name": "Connectome",
+    "imaging_params": "1p625x_z4"
+  },
+  "start": "2026-01-26T16:08:57.155593",
+  "end": "2026-01-27T08:28:05.482701",
+  "detection_runs": [],
+  "param_changes": [],
+  "curations": [],
+  "exports": [],
+  "notes": [],
+  "final_params": {
+    "ball_xy_size": 6.0,
+    "ball_z_size": 15.0,
+    "ball_overlap_fraction": 0.6,
+    "soma_diameter": 16.0,
+    "soma_spread_factor": 1.4,
+    "threshold": 10.0,
+    "tiled_threshold": 10.0,
+    "log_sigma_size": 0.2,
+    "max_cluster_size": 100000,
+    "use_gpu": false,
+    "batch_size": 0,
+    "n_free_cpus": 2
+  },
+  "events": [
+    {
+      "timestamp": "2026-01-26T16:08:57.155593",
+      "type": "session_start",
+      "data": {
+        "brain": "357_CNT_02_08_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-26T16:08:57.155593",
+      "type": "params_initial",
+      "data": {
+        "ball_xy_size": 6.0,
+        "ball_z_size": 15.0,
+        "ball_overlap_fraction": 0.6,
+        "soma_diameter": 16.0,
+        "soma_spread_factor": 1.4,
+        "threshold": 10.0,
+        "tiled_threshold": 10.0,
+        "log_sigma_size": 0.2,
+        "max_cluster_size": 100000,
+        "use_gpu": false,
+        "batch_size": 0,
+        "n_free_cpus": 2
+      }
+    },
+    {
+      "timestamp": "2026-01-26T16:09:15.554407",
+      "type": "brain_loaded",
+      "data": {
+        "source": "cropped",
+        "brain": "357_CNT_02_08_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-27T08:28:05.482701",
+      "type": "session_end",
+      "data": {}
+    }
+  ]
+}

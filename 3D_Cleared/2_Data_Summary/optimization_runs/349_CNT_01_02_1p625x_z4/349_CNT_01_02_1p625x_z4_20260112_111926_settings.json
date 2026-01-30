@@ -1,0 +1,18 @@
+{
+  "brain": "349_CNT_01_02_1p625x_z4",
+  "timestamp": "20260112_111926",
+  "voxel_size_um": {
+    "x": 3.9877300613496933,
+    "y": 3.9877300613496933,
+    "z": 4.0
+  },
+  "orientation": "iar",
+  "detection_params": {
+    "ball_xy_size": 10.0,
+    "ball_z_size": 10.0,
+    "soma_diameter": 10.0,
+    "threshold": 8.0
+  },
+  "last_run_id": null,
+  "last_run_cells": 0
+}

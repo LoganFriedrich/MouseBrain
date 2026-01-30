@@ -1,0 +1,106 @@
+{
+  "brain": "349_CNT_01_02_1p625x_z4",
+  "session_id": "20260108_113647",
+  "hierarchy": {
+    "brain_id": "349",
+    "subject": "CNT_01_02",
+    "cohort": "CNT_01",
+    "project_code": "CNT",
+    "project_name": "Connectome",
+    "imaging_params": "1p625x_z4"
+  },
+  "start": "2026-01-08T11:36:47.179242",
+  "detection_runs": [
+    {
+      "run_id": "det_20260108_114043_981ed4",
+      "params": {
+        "ball_xy_size": 10.0,
+        "ball_z_size": 10.0,
+        "soma_diameter": 10.0,
+        "threshold": 8.0
+      },
+      "preset": "custom",
+      "cell_count": 1232,
+      "z_range": [
+        0,
+        50
+      ],
+      "reference_match": null,
+      "timestamp": "2026-01-08T11:42:39.748824"
+    }
+  ],
+  "param_changes": [],
+  "curations": [],
+  "exports": [],
+  "notes": [],
+  "current_params": {
+    "ball_xy_size": 10.0,
+    "ball_z_size": 10.0,
+    "ball_overlap_fraction": 0.5,
+    "soma_diameter": 10.0,
+    "soma_spread_factor": 1.0,
+    "threshold": 8.0,
+    "tiled_threshold": 8.0,
+    "log_sigma_size": 0.2,
+    "max_cluster_size": 100000000,
+    "use_gpu": false,
+    "batch_size": 0,
+    "n_free_cpus": 74
+  },
+  "events": [
+    {
+      "timestamp": "2026-01-08T11:36:47.179242",
+      "type": "session_start",
+      "data": {
+        "brain": "349_CNT_01_02_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-08T11:36:47.180242",
+      "type": "params_initial",
+      "data": {
+        "ball_xy_size": 10.0,
+        "ball_z_size": 10.0,
+        "ball_overlap_fraction": 0.5,
+        "soma_diameter": 10.0,
+        "soma_spread_factor": 1.0,
+        "threshold": 8.0,
+        "tiled_threshold": 8.0,
+        "log_sigma_size": 0.2,
+        "max_cluster_size": 100000000,
+        "use_gpu": false,
+        "batch_size": 0,
+        "n_free_cpus": 74
+      }
+    },
+    {
+      "timestamp": "2026-01-08T11:37:00.128435",
+      "type": "brain_loaded",
+      "data": {
+        "source": "cropped",
+        "brain": "349_CNT_01_02_1p625x_z4"
+      }
+    },
+    {
+      "timestamp": "2026-01-08T11:42:39.748824",
+      "type": "detection_run",
+      "data": {
+        "run_id": "det_20260108_114043_981ed4",
+        "params": {
+          "ball_xy_size": 10.0,
+          "ball_z_size": 10.0,
+          "soma_diameter": 10.0,
+          "threshold": 8.0
+        },
+        "preset": "custom",
+        "cell_count": 1232,
+        "z_range": [
+          0,
+          50
+        ],
+        "reference_match": null,
+        "timestamp": "2026-01-08T11:42:39.748824"
+      }
+    }
+  ]
+}
