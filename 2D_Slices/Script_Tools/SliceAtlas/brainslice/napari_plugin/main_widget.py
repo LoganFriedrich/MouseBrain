@@ -50,6 +50,9 @@ class BrainSliceWidget(QWidget):
         self._tissue_mask = None
         self._coloc_background = None
         self._coloc_threshold = None
+        self._coloc_summary = None
+        self._background_diagnostics = None
+        self._tissue_pixels = None
         self._diag_canvas = None
 
         # Tracker
@@ -449,7 +452,9 @@ class BrainSliceWidget(QWidget):
             'Fold Change Histogram',
             'Intensity vs Area',
             'Overlay Image',
+            'Annotated Overlay',
             'Background Mask',
+            'GMM Diagnostic',
         ])
         self.diag_plot_combo.currentIndexChanged.connect(self._update_diagnostic_plot)
         diag_ctrl_layout.addWidget(self.diag_plot_combo)
@@ -1134,6 +1139,9 @@ class BrainSliceWidget(QWidget):
             self._tissue_mask = tissue_mask
             self._coloc_background = summary['background_used']
             self._coloc_threshold = summary.get('threshold_value', self.thresh_value_spin.value())
+            self._background_diagnostics = getattr(self.coloc_worker, 'background_diagnostics', None)
+            self._tissue_pixels = getattr(self.coloc_worker, 'tissue_pixels', None)
+            self._coloc_summary = summary
 
             # Update tracker
             if self.tracker and self.last_run_id:
@@ -1222,9 +1230,11 @@ class BrainSliceWidget(QWidget):
 
         from ..core.visualization import (
             create_overlay_image,
+            create_annotated_overlay,
             create_background_mask_overlay,
             create_fold_change_histogram,
             create_intensity_scatter,
+            create_gmm_diagnostic,
         )
 
         plot_type = self.diag_plot_combo.currentText()
@@ -1250,11 +1260,23 @@ class BrainSliceWidget(QWidget):
                     fig = create_overlay_image(green, labels, self.cell_measurements)
                 else:
                     return
+            elif plot_type == 'Annotated Overlay':
+                green = self._get_current_slice(self.green_channel)
+                labels = self._get_current_slice(self.nuclei_labels)
+                if green is not None and labels is not None:
+                    fig = create_annotated_overlay(green, labels, self.cell_measurements)
+                else:
+                    return
             elif plot_type == 'Background Mask':
                 green = self._get_current_slice(self.green_channel)
                 labels = self._get_current_slice(self.nuclei_labels)
                 if green is not None and labels is not None and self._tissue_mask is not None:
                     fig = create_background_mask_overlay(green, labels, self._tissue_mask)
+                else:
+                    return
+            elif plot_type == 'GMM Diagnostic':
+                if self._tissue_pixels is not None and self._background_diagnostics is not None:
+                    fig = create_gmm_diagnostic(self._tissue_pixels, self._background_diagnostics)
                 else:
                     return
             else:
@@ -1311,10 +1333,13 @@ class BrainSliceWidget(QWidget):
                 threshold=threshold,
                 background=background,
                 roi_counts=self._roi_counts_data,
+                background_diagnostics=getattr(self, '_background_diagnostics', None),
+                tissue_pixels=getattr(self, '_tissue_pixels', None),
+                summary=getattr(self, '_coloc_summary', None),
                 prefix=prefix,
             )
 
-            self.status_label.setText(f"Saved {len(saved)} QC images to {Path(output_dir).name}/")
+            self.status_label.setText(f"Saved {len(saved)} files to {Path(output_dir).name}/")
             QMessageBox.information(self, "Success", f"Saved {len(saved)} QC images")
 
         except Exception as e:
