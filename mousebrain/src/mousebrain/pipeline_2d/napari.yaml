@@ -1,0 +1,15 @@
+name: brainslice-2d
+display_name: BrainSlice 2D
+contributions:
+  commands:
+    - id: brainslice-2d.sliceatlas
+      python_name: mousebrain.pipeline_2d.sliceatlas.napari_plugin.main_widget:BrainSliceWidget
+      title: BrainSlice - Slice Analysis
+    - id: brainslice-2d.annotator
+      python_name: mousebrain.pipeline_2d.annotator.widgets.main_widget:SliceAnnotatorWidget
+      title: Slice Annotator
+  widgets:
+    - command: brainslice-2d.sliceatlas
+      display_name: 1. BrainSlice
+    - command: brainslice-2d.annotator
+      display_name: 2. Slice Annotator
