@@ -50,7 +50,7 @@ class ColocalizationAnalyzer:
 
     def __init__(
         self,
-        background_method: str = 'percentile',
+        background_method: str = 'gmm',
         background_percentile: float = 10.0,
     ):
         """
@@ -58,13 +58,18 @@ class ColocalizationAnalyzer:
 
         Args:
             background_method: Method for background estimation
-                - 'percentile': Use percentile of tissue intensity (recommended)
+                - 'gmm': Gaussian mixture model (recommended) — fits 1-2 components
+                  to tissue intensity, uses the lower component as background.
+                  Provides confidence via component separation.
+                - 'percentile': Use percentile of tissue intensity
                 - 'mode': Use mode of tissue intensity distribution
                 - 'mean': Use mean of tissue (excluding high outliers)
             background_percentile: Percentile to use for percentile method
         """
         self.background_method = background_method
         self.background_percentile = background_percentile
+        # Populated after estimate_background() when using 'gmm'
+        self.background_diagnostics = None
 
     def estimate_tissue_mask(
         self,
@@ -97,6 +102,95 @@ class ColocalizationAnalyzer:
 
         return tissue_mask
 
+    def _estimate_background_gmm(self, tissue_pixels: np.ndarray) -> float:
+        """
+        Estimate background using a Gaussian Mixture Model.
+
+        Fits 1- and 2-component GMMs to tissue-outside-nuclei intensity.
+        If a 2-component model is better (by BIC), the lower-mean component
+        is taken as true background. If 1-component fits better, the tissue
+        is uniform and we use that single component's mean.
+
+        Stores diagnostics in self.background_diagnostics with:
+            - n_components: 1 or 2 (which model won)
+            - background_mean: mean of the background component
+            - background_std: std of the background component
+            - bic_1: BIC for 1-component model
+            - bic_2: BIC for 2-component model
+            - separation: (higher_mean - lower_mean) / lower_std — how well-
+              separated the components are. Higher = more confident.
+              Only present when n_components=2.
+            - background_weight: mixing weight of the background component
+            - signal_bleed_mean: mean of the higher component (if 2-component)
+
+        Returns:
+            Background intensity (mean of the background component)
+        """
+        from sklearn.mixture import GaussianMixture
+
+        # Subsample if very large (GMM on millions of pixels is slow)
+        if len(tissue_pixels) > 200_000:
+            rng = np.random.default_rng(42)
+            sample = rng.choice(tissue_pixels, size=200_000, replace=False)
+        else:
+            sample = tissue_pixels
+
+        X = sample.reshape(-1, 1).astype(np.float64)
+
+        # Fit 1-component
+        gmm1 = GaussianMixture(n_components=1, random_state=42)
+        gmm1.fit(X)
+        bic1 = gmm1.bic(X)
+
+        # Fit 2-component
+        gmm2 = GaussianMixture(n_components=2, random_state=42)
+        gmm2.fit(X)
+        bic2 = gmm2.bic(X)
+
+        if bic2 < bic1:
+            # 2-component model is better — tissue has two populations
+            means = gmm2.means_.flatten()
+            stds = np.sqrt(gmm2.covariances_.flatten())
+            weights = gmm2.weights_.flatten()
+
+            # Lower-mean component is background
+            bg_idx = np.argmin(means)
+            sig_idx = 1 - bg_idx
+
+            background = float(means[bg_idx])
+            separation = float((means[sig_idx] - means[bg_idx]) / (stds[bg_idx] + 1e-10))
+
+            self.background_diagnostics = {
+                'n_components': 2,
+                'background_mean': float(means[bg_idx]),
+                'background_std': float(stds[bg_idx]),
+                'background_weight': float(weights[bg_idx]),
+                'signal_bleed_mean': float(means[sig_idx]),
+                'signal_bleed_std': float(stds[sig_idx]),
+                'signal_bleed_weight': float(weights[sig_idx]),
+                'separation': separation,
+                'bic_1': float(bic1),
+                'bic_2': float(bic2),
+                'confidence': 'high' if separation > 2.0 else 'moderate' if separation > 1.0 else 'low',
+            }
+        else:
+            # 1-component model is better — tissue is uniform
+            background = float(gmm1.means_.flatten()[0])
+            std = float(np.sqrt(gmm1.covariances_.flatten()[0]))
+
+            self.background_diagnostics = {
+                'n_components': 1,
+                'background_mean': background,
+                'background_std': std,
+                'background_weight': 1.0,
+                'bic_1': float(bic1),
+                'bic_2': float(bic2),
+                'separation': None,
+                'confidence': 'high',  # uniform tissue = unambiguous background
+            }
+
+        return background
+
     def estimate_background(
         self,
         signal_image: np.ndarray,
@@ -120,6 +214,8 @@ class ColocalizationAnalyzer:
         Returns:
             Background intensity value (float)
         """
+        self.background_diagnostics = None
+
         # Get tissue mask if not provided
         if tissue_mask is None:
             tissue_mask = self.estimate_tissue_mask(nuclei_labels, dilation_iterations)
@@ -141,7 +237,19 @@ class ColocalizationAnalyzer:
             tissue_pixels = signal_image.ravel()
 
         # Estimate background based on method
-        if self.background_method == 'percentile':
+        if self.background_method == 'gmm':
+            if len(tissue_pixels) < 100:
+                # Too few pixels for GMM, fall back to percentile
+                background = np.percentile(tissue_pixels, self.background_percentile)
+                self.background_diagnostics = {
+                    'n_components': 0,
+                    'confidence': 'low',
+                    'fallback': 'percentile (too few tissue pixels for GMM)',
+                }
+            else:
+                background = self._estimate_background_gmm(tissue_pixels)
+
+        elif self.background_method == 'percentile':
             background = np.percentile(tissue_pixels, self.background_percentile)
 
         elif self.background_method == 'mode':
@@ -295,7 +403,7 @@ class ColocalizationAnalyzer:
         positive = df['is_positive'].sum()
         negative = total - positive
 
-        return {
+        summary = {
             'total_cells': int(total),
             'positive_cells': int(positive),
             'negative_cells': int(negative),
@@ -304,6 +412,12 @@ class ColocalizationAnalyzer:
             'median_fold_change': float(df['fold_change'].median()) if len(df) > 0 else 0.0,
             'background_used': float(df['background'].iloc[0]) if len(df) > 0 else 0.0,
         }
+
+        # Include GMM diagnostics if available
+        if self.background_diagnostics is not None:
+            summary['background_diagnostics'] = self.background_diagnostics
+
+        return summary
 
 
 def analyze_colocalization(

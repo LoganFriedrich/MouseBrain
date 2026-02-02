@@ -208,6 +208,13 @@ class ColocalizationWorker(QThread):
 
             summary = analyzer.get_summary_statistics(classified)
 
+            # Store diagnostics for the widget to pick up after signal
+            self.background_diagnostics = analyzer.background_diagnostics
+            # Store tissue pixels used for background estimation (for GMM plot)
+            nuclei_mask = self.nuclei_labels > 0
+            tissue_outside = tissue_mask & (~nuclei_mask)
+            self.tissue_pixels = self.signal_image[tissue_outside] if tissue_outside.any() else self.signal_image[tissue_mask]
+
             msg = (f"Analysis complete: {summary['positive_cells']} positive, "
                    f"{summary['negative_cells']} negative "
                    f"({summary['positive_fraction']*100:.1f}% positive)")
