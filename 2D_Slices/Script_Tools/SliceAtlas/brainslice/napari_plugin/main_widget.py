@@ -351,7 +351,7 @@ class BrainSliceWidget(QWidget):
         method_layout = QHBoxLayout()
         method_layout.addWidget(QLabel("Method:"))
         self.bg_method_combo = QComboBox()
-        self.bg_method_combo.addItems(['percentile', 'mode', 'mean'])
+        self.bg_method_combo.addItems(['gmm', 'percentile', 'mode', 'mean'])
         method_layout.addWidget(self.bg_method_combo)
         bg_layout.addLayout(method_layout)
 
@@ -440,6 +440,33 @@ class BrainSliceWidget(QWidget):
 
         roi_group.setLayout(roi_layout)
         layout.addWidget(roi_group)
+
+        # --- Run History ---
+        history_group = QGroupBox("Run History")
+        history_layout = QVBoxLayout()
+
+        self.run_history_table = QTableWidget()
+        self.run_history_table.setColumnCount(5)
+        self.run_history_table.setHorizontalHeaderLabels(
+            ["Run ID", "Date", "Positive", "Fraction", "Method"]
+        )
+        self.run_history_table.setMaximumHeight(150)
+        self.run_history_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.run_history_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        history_layout.addWidget(self.run_history_table)
+
+        history_btn_layout = QHBoxLayout()
+        self.load_run_btn = QPushButton("Load Selected Run")
+        self.load_run_btn.clicked.connect(self._load_selected_run)
+        history_btn_layout.addWidget(self.load_run_btn)
+
+        self.refresh_history_btn = QPushButton("Refresh")
+        self.refresh_history_btn.clicked.connect(self._refresh_run_history)
+        history_btn_layout.addWidget(self.refresh_history_btn)
+        history_layout.addLayout(history_btn_layout)
+
+        history_group.setLayout(history_layout)
+        layout.addWidget(history_group)
 
         # Diagnostics Group
         diag_group = QGroupBox("Diagnostics")
@@ -1143,17 +1170,32 @@ class BrainSliceWidget(QWidget):
             self._tissue_pixels = getattr(self.coloc_worker, 'tissue_pixels', None)
             self._coloc_summary = summary
 
+            # Auto-save measurements CSV alongside the image
+            measurements_path = None
+            if self.current_file is not None:
+                results_dir = self.current_file.parent / "BrainSlice_Results"
+                results_dir.mkdir(parents=True, exist_ok=True)
+                stem = self.current_file.stem
+                run_tag = self.last_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+                measurements_path = results_dir / f"{stem}_{run_tag}_measurements.csv"
+                measurements.to_csv(measurements_path, index=False)
+
             # Update tracker
             if self.tracker and self.last_run_id:
-                self.tracker.update_status(
-                    self.last_run_id,
+                update_kwargs = dict(
                     status='completed',
                     coloc_positive_cells=summary['positive_cells'],
                     coloc_negative_cells=summary['negative_cells'],
                     coloc_positive_fraction=summary['positive_fraction'],
                     coloc_background_value=summary['background_used'],
                 )
+                if measurements_path is not None:
+                    update_kwargs['measurements_path'] = str(measurements_path)
+                self.tracker.update_status(self.last_run_id, **update_kwargs)
                 self.session_run_ids.append(self.last_run_id)
+
+            # Refresh run history panel
+            self._refresh_run_history()
 
             # Visualize results - color nuclei by positive/negative
             self._visualize_colocalization(measurements)
@@ -1346,6 +1388,139 @@ class BrainSliceWidget(QWidget):
             import traceback
             traceback.print_exc()
             QMessageBox.warning(self, "Error", f"Failed to save QC images: {e}")
+
+    # ----- Run History Methods -----
+
+    def _refresh_run_history(self):
+        """Populate the run history table from the tracker."""
+        self.run_history_table.setRowCount(0)
+
+        if not self.tracker:
+            return
+
+        # Get sample_id to filter runs
+        sample_id = self.sample_id_edit.text()
+        if not sample_id and self.current_file:
+            sample_id = self.current_file.stem
+
+        if not sample_id:
+            return
+
+        runs = self.tracker.search(
+            sample_id=sample_id,
+            run_type='colocalization',
+            status='completed',
+            limit=20,
+        )
+
+        for run in runs:
+            row = self.run_history_table.rowCount()
+            self.run_history_table.insertRow(row)
+
+            run_id = run.get('run_id', '')
+            created = run.get('created_at', '')[:16]  # trim seconds
+            pos = run.get('coloc_positive_cells', '?')
+            frac = run.get('coloc_positive_fraction', '')
+            if frac:
+                try:
+                    frac = f"{float(frac)*100:.1f}%"
+                except ValueError:
+                    pass
+            method = run.get('coloc_background_method', '')
+
+            # Mark session runs and best
+            display_id = run_id
+            if run_id in self.session_run_ids:
+                display_id = f"● {run_id}"
+            if run.get('marked_best') == 'True':
+                display_id = f"★ {run_id}"
+
+            self.run_history_table.setItem(row, 0, QTableWidgetItem(display_id))
+            self.run_history_table.setItem(row, 1, QTableWidgetItem(created))
+            self.run_history_table.setItem(row, 2, QTableWidgetItem(str(pos)))
+            self.run_history_table.setItem(row, 3, QTableWidgetItem(str(frac)))
+            self.run_history_table.setItem(row, 4, QTableWidgetItem(method))
+
+        self.run_history_table.resizeColumnsToContents()
+
+    def _load_selected_run(self):
+        """Load a historical run's measurements from disk and visualize."""
+        selected = self.run_history_table.selectedItems()
+        if not selected:
+            QMessageBox.warning(self, "No Selection", "Select a run from the history table.")
+            return
+
+        row = selected[0].row()
+        display_id = self.run_history_table.item(row, 0).text()
+        # Strip markers (● ★)
+        run_id = display_id.lstrip('● ★ ').strip()
+
+        if not self.tracker:
+            return
+
+        run = self.tracker.get_run(run_id)
+        if not run:
+            QMessageBox.warning(self, "Error", f"Run {run_id} not found in tracker.")
+            return
+
+        measurements_path = run.get('measurements_path', '')
+        if not measurements_path or not Path(measurements_path).exists():
+            QMessageBox.warning(
+                self, "No Data",
+                f"Measurements CSV not found for run {run_id}.\n"
+                f"Path: {measurements_path or '(not recorded)'}\n\n"
+                "Only runs that saved measurements to disk can be reloaded."
+            )
+            return
+
+        try:
+            import pandas as pd
+            measurements = pd.read_csv(measurements_path)
+
+            # Validate required columns
+            required = {'label', 'centroid_y', 'centroid_x', 'is_positive', 'fold_change'}
+            if not required.issubset(set(measurements.columns)):
+                QMessageBox.warning(
+                    self, "Invalid Data",
+                    f"CSV is missing required columns.\nFound: {list(measurements.columns)}"
+                )
+                return
+
+            # Store and visualize
+            self.cell_measurements = measurements
+            self._coloc_background = float(run.get('coloc_background_value', 0))
+            self._coloc_threshold = float(run.get('coloc_threshold_value', 2.0))
+            self._coloc_summary = {
+                'total_cells': len(measurements),
+                'positive_cells': int(measurements['is_positive'].sum()),
+                'negative_cells': int((~measurements['is_positive']).sum()),
+                'positive_fraction': float(measurements['is_positive'].mean()),
+                'mean_fold_change': float(measurements['fold_change'].mean()),
+                'median_fold_change': float(measurements['fold_change'].median()),
+                'background_used': self._coloc_background,
+            }
+
+            # Visualize
+            self._visualize_colocalization(measurements)
+            self._update_diagnostic_plot()
+
+            # Update result label
+            s = self._coloc_summary
+            self.coloc_result_label.setText(
+                f"Loaded run {run_id}\n"
+                f"Positive: {s['positive_cells']} ({s['positive_fraction']*100:.1f}%)\n"
+                f"Negative: {s['negative_cells']}\n"
+                f"Background: {s['background_used']:.1f}\n"
+                f"Mean fold change: {s['mean_fold_change']:.2f}"
+            )
+
+            self.status_label.setText(f"Loaded historical run {run_id}")
+            self.quant_btn.setEnabled(True)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Error", f"Failed to load run: {e}")
 
     # ----- ROI Counting Methods -----
 
