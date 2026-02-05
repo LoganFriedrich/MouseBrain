@@ -44,6 +44,33 @@ desktop.ini
 *.keras
 *.crdownload
 
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+*.flv
+*.webm
+*.m4v
+*.mpg
+*.mpeg
+*.3gp
+*.ogv
+
+# Image files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+*.ico
+*.raw
+*.psd
+*.heic
+*.heif
+
 # Brain processing output folders
 3D_Cleared/1_Brains/**/0_Raw_IMS/
 3D_Cleared/1_Brains/**/1_Extracted_Full/
@@ -63,6 +90,13 @@ desktop.ini
 # Excel data
 *.xlsx
 *.xls
+
+# CSV files (ignore generated data, keep reference files)
+*.csv
+!**/elife*.csv
+!**/calibration_runs.csv
+!**/region_counts.csv
+!**/experiments.csv
 
 # Metadata (regenerated)
 metadata.json

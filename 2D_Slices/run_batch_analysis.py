@@ -220,18 +220,17 @@ def create_overlay(signal_img, labels, df, sample_name):
     boundaries = find_boundaries(labels, mode='outer')
 
     pos_labels = set(df[df['is_positive']]['label'])
-    neg_labels = set(df[~df['is_positive']]['label'])
 
-    # Color boundaries
+    # Vectorized: one boundary pass, then color by membership
+    all_boundaries = find_boundaries(labels, mode='outer')
     overlay = np.zeros((*labels.shape, 4), dtype=np.float32)
-    for lbl in np.unique(labels):
-        if lbl == 0:
-            continue
-        cell_boundary = find_boundaries(labels == lbl, mode='outer')
-        if lbl in pos_labels:
-            overlay[cell_boundary] = [0, 1, 0, 0.8]  # Lime green
-        else:
-            overlay[cell_boundary] = [1, 0, 0, 0.5]  # Red, dimmer
+    # Get label at each boundary pixel (dilate labels by 1 to cover boundary)
+    from scipy.ndimage import maximum_filter
+    label_at_boundary = maximum_filter(labels, size=3)
+    pos_mask = np.isin(label_at_boundary, list(pos_labels)) & all_boundaries
+    neg_mask = all_boundaries & ~pos_mask
+    overlay[pos_mask] = [0, 1, 0, 0.8]   # Lime green
+    overlay[neg_mask] = [1, 0, 0, 0.5]   # Red, dimmer
 
     ax.imshow(overlay)
 
@@ -253,16 +252,15 @@ def create_annotated_overlay(signal_img, labels, df, sample_name, top_n=30):
     ax.imshow(signal_img, cmap='gray', vmin=vmin, vmax=vmax)
 
     from skimage.segmentation import find_boundaries
-    overlay = np.zeros((*labels.shape, 4), dtype=np.float32)
+    from scipy.ndimage import maximum_filter
     pos_labels = set(df[df['is_positive']]['label'])
-    for lbl in np.unique(labels):
-        if lbl == 0:
-            continue
-        cell_boundary = find_boundaries(labels == lbl, mode='outer')
-        if lbl in pos_labels:
-            overlay[cell_boundary] = [0, 1, 0, 0.8]
-        else:
-            overlay[cell_boundary] = [1, 0, 0, 0.4]
+    all_boundaries = find_boundaries(labels, mode='outer')
+    overlay = np.zeros((*labels.shape, 4), dtype=np.float32)
+    label_at_boundary = maximum_filter(labels, size=3)
+    pos_mask = np.isin(label_at_boundary, list(pos_labels)) & all_boundaries
+    neg_mask = all_boundaries & ~pos_mask
+    overlay[pos_mask] = [0, 1, 0, 0.8]
+    overlay[neg_mask] = [1, 0, 0, 0.4]
     ax.imshow(overlay)
 
     # Arrow annotations for top positive cells
@@ -436,7 +434,6 @@ def main():
     print(f"\n{'='*70}")
     print(f"BATCH COMPLETE")
     print(f"{'='*70}")
-    successful = summary_df[~summary_df.get('error', pd.Series(dtype=str)).notna() | summary_df.get('error', pd.Series(dtype=str)).isna()]
     if 'nuclei' in summary_df.columns:
         valid = summary_df.dropna(subset=['nuclei'])
         print(f"  Processed: {len(valid)}/{len(nd2_files)}")
