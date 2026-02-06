@@ -1,0 +1,28 @@
+================================================================================
+MODEL CLASSIFICATION COMPARISON REPORT
+Generated: 2026-02-06 07:35:24
+================================================================================
+
+Model A (Jan23_100ep): Y:\2_Connectome\Tissue\3D_Cleared\util_Brainglobe\Trained_Models\model_20260123_142837\model.keras
+Model B (Jan28_40ep): Y:\2_Connectome\Tissue\3D_Cleared\util_Brainglobe\Trained_Models\model_20260128_manual\model-epoch.37-loss-0.057.keras
+
+--------------------------------------------------------------------------------
+Brain                                    Model           Candidates   Accepted   Rejected     Rej%
+--------------------------------------------------------------------------------
+================================================================================
+DELTA ANALYSIS (Model B vs Model A)
+================================================================================
+
+================================================================================
+INTERPRETATION
+================================================================================
+
+If edge/meningeal rejection is working correctly:
+  - Rejection % should be > 0% (unlike the Jan 10 model which was 0%)
+  - Peripheral false positives appear in rejected.xml
+  - Real interior cells remain in cells.xml
+
+To visually verify, load in napari:
+  1. Load brain signal channel
+  2. Load cells.xml and rejected.xml from each compare_* folder
+  3. Check that rejected points cluster at brain periphery/meninges
