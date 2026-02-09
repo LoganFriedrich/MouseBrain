@@ -62,7 +62,7 @@ def timestamp():
 
 
 def run_cellfinder_train(
-    yaml_path: Path,
+    yaml_paths: list,
     output_dir: Path,
     epochs: int = DEFAULT_EPOCHS,
     learning_rate: float = DEFAULT_LEARNING_RATE,
@@ -177,8 +177,8 @@ Examples:
         """
     )
 
-    parser.add_argument('--yaml', '-y', type=Path,
-                        help='Path to training.yml (auto-detects cells/non-cells paths)')
+    parser.add_argument('--yaml', '-y', type=Path, nargs='+',
+                        help='Path(s) to training.yml file(s). Multiple sources supported.')
     parser.add_argument('--cells', '-c', type=Path,
                         help='Path to cells training data')
     parser.add_argument('--non-cells', '-n', type=Path,

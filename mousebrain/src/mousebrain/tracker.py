@@ -48,7 +48,7 @@ import json
 from mousebrain.config import CALIBRATION_RUNS_CSV as DEFAULT_TRACKER_PATH, parse_brain_name
 
 # Experiment types
-EXP_TYPES = ["detection", "training", "classification", "registration", "counts"]
+EXP_TYPES = ["detection", "training", "classification", "registration", "counts", "prefilter"]
 
 # CSV columns (order matters for readability)
 CSV_COLUMNS = [
@@ -101,6 +101,14 @@ CSV_COLUMNS = [
     "class_batch_size",
     "class_cells_found",
     "class_rejected",
+
+    # Pre-filter parameters (atlas-based candidate filtering)
+    "prefilter_total",            # Total candidates before filtering
+    "prefilter_interior",         # Candidates inside brain
+    "prefilter_outside",          # Candidates at region_id=0 (outside brain)
+    "prefilter_suspicious",       # Candidates in suspicious regions
+    "prefilter_flag_suspicious",  # Whether suspicious filtering was enabled
+    "prefilter_tracing_type",     # descending/ascending/unknown
 
     # Counting parameters
     "count_regions",
@@ -425,6 +433,49 @@ class ExperimentTracker:
             "output_path": output_path,
             "model_path": model_path,
             "parent_experiment": parent_experiment,
+            "notes": notes,
+            "script_version": script_version,
+            "hostname": self._get_hostname(),
+        }
+
+        row = self._add_hierarchy_fields(row, brain)
+        self._write_row(row)
+        return exp_id
+
+    def log_prefilter(
+        self,
+        brain: str,
+        total: int = 0,
+        interior: int = 0,
+        outside: int = 0,
+        suspicious: int = 0,
+        flag_suspicious: bool = False,
+        tracing_type: str = "descending",
+        parent_experiment: Optional[str] = None,
+        input_path: Optional[str] = None,
+        output_path: Optional[str] = None,
+        notes: Optional[str] = None,
+        status: str = "started",
+        script_version: str = "1.0.0",
+    ) -> str:
+        """Log an atlas pre-filter run. Hierarchy fields auto-populated from brain name."""
+        exp_id = self._generate_exp_id("prefilter", brain)
+
+        row = {
+            "exp_id": exp_id,
+            "exp_type": "prefilter",
+            "brain": brain,
+            "created_at": datetime.now().isoformat(),
+            "status": status,
+            "prefilter_total": total,
+            "prefilter_interior": interior,
+            "prefilter_outside": outside,
+            "prefilter_suspicious": suspicious,
+            "prefilter_flag_suspicious": flag_suspicious,
+            "prefilter_tracing_type": tracing_type,
+            "parent_experiment": parent_experiment,
+            "input_path": input_path,
+            "output_path": output_path,
             "notes": notes,
             "script_version": script_version,
             "hostname": self._get_hostname(),
