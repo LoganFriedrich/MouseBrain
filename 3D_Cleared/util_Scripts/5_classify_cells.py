@@ -378,6 +378,8 @@ Examples:
     python 5_classify_cells.py                               # Interactive
     python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4 --model model.h5
     python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4  # Uses default model
+    python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4 --prefilter  # Pre-filter first
+    python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4 --routine    # Auto pre-filter + paradigm model
         """
     )
     
@@ -395,9 +397,18 @@ Examples:
     parser.add_argument('--root', type=Path, default=DEFAULT_BRAINGLOBE_ROOT)
     parser.add_argument('--routine', action='store_true',
                         help='Routine processing mode: auto-use paradigm-best model if available')
+    parser.add_argument('--prefilter', action='store_true',
+                        help='Run atlas pre-filter before classification (removes outside-brain candidates)')
+    parser.add_argument('--flag-suspicious', action='store_true',
+                        help='Also flag suspicious regions during pre-filter')
 
     args = parser.parse_args()
-    
+
+    # Routine mode enables pre-filter by default
+    if args.routine and not args.prefilter:
+        args.prefilter = True
+        print("[Routine Mode] Auto-enabling pre-filter")
+
     print("=" * 60)
     print("BrainGlobe Cell Classification")
     print(f"Version: {SCRIPT_VERSION}")
@@ -510,9 +521,68 @@ Examples:
         voxel.get('y', 4),
         voxel.get('x', 4),
     )
-    
+
     output_path = pipeline_folder / FOLDER_CLASSIFICATION
-    
+
+    # Optional pre-filter step
+    if args.prefilter:
+        print(f"\n[{timestamp()}] Running atlas pre-filter...")
+        try:
+            from util_atlas_prefilter import prefilter_candidates
+
+            registration_path = pipeline_folder / "3_Registered_Atlas"
+            if not registration_path.exists():
+                print("WARNING: No registration folder found, skipping pre-filter")
+            else:
+                result = prefilter_candidates(
+                    candidates_xml=candidates,
+                    registration_path=registration_path,
+                    flag_suspicious=args.flag_suspicious,
+                )
+
+                total = result['stats']['total']
+                interior = result['stats']['interior']
+                outside = result['stats']['outside']
+                suspicious = result['stats'].get('suspicious', 0)
+
+                print(f"    Total candidates: {total}")
+                print(f"    Interior (inside brain): {interior}")
+                print(f"    Outside brain (removed): {outside}")
+                if suspicious > 0:
+                    print(f"    Suspicious regions: {suspicious}")
+                if total > 0:
+                    print(f"    Pre-filter removed {outside/total*100:.1f}% of candidates")
+
+                # Save interior candidates as the new input for classification
+                prefiltered_dir = pipeline_folder / FOLDER_DETECTION / "prefiltered"
+                prefiltered_dir.mkdir(parents=True, exist_ok=True)
+                prefiltered_xml = prefiltered_dir / "interior_candidates.xml"
+
+                # Use helper function to save XML
+                from util_atlas_prefilter import _coords_to_xml
+                _coords_to_xml(result['interior_coords'], prefiltered_xml)
+
+                # Use prefiltered candidates for classification
+                candidates = prefiltered_xml
+                print(f"    Using {interior} pre-filtered candidates for classification")
+
+                # Log pre-filter to tracker
+                tracker.log_prefilter(
+                    brain=brain_name,
+                    total=total,
+                    interior=interior,
+                    outside=outside,
+                    suspicious=suspicious,
+                    flag_suspicious=args.flag_suspicious,
+                    output_path=str(prefiltered_xml),
+                    status="completed",
+                )
+        except ImportError:
+            print("WARNING: util_atlas_prefilter.py not found, skipping pre-filter")
+        except Exception as e:
+            print(f"WARNING: Pre-filter failed: {e}")
+            print("Continuing with unfiltered candidates...")
+
     if args.dry_run:
         print("\n=== DRY RUN ===")
         print(f"Brain: {brain_name}")

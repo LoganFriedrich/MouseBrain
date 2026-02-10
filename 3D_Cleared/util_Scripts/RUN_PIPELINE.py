@@ -96,6 +96,7 @@ def get_brain_status(brain_path):
         'registered': (p / "3_Registered_Atlas" / "brainreg.json").exists() if (p / "3_Registered_Atlas").exists() else False,
         'approved': (p / "3_Registered_Atlas" / ".registration_approved").exists() if (p / "3_Registered_Atlas").exists() else False,
         'detected': len(list((p / "4_Cell_Candidates").glob("*.xml"))) > 0 if (p / "4_Cell_Candidates").exists() else False,
+        'prefiltered': (p / "4_Cell_Candidates" / "prefilter_report.json").exists() if (p / "4_Cell_Candidates").exists() else False,
         'classified': (p / "5_Classified_Cells" / "cells.xml").exists() if (p / "5_Classified_Cells").exists() else False,
         'counted': len(list((p / "6_Region_Analysis").glob("*.csv"))) > 0 if (p / "6_Region_Analysis").exists() else False,
     }
@@ -121,18 +122,22 @@ def get_brain_status(brain_path):
         status['step'] = 'detect'
         status['step_name'] = 'Detect cells'
         status['step_num'] = 5
+    elif not status['prefiltered']:
+        status['step'] = 'prefilter'
+        status['step_name'] = 'Pre-filter candidates (atlas)'
+        status['step_num'] = 6
     elif not status['classified']:
         status['step'] = 'classify'
         status['step_name'] = 'Classify cells'
-        status['step_num'] = 6
+        status['step_num'] = 7
     elif not status['counted']:
         status['step'] = 'count'
         status['step_name'] = 'Count cells by region'
-        status['step_num'] = 7
+        status['step_num'] = 8
     else:
         status['step'] = 'done'
         status['step_name'] = 'Complete!'
-        status['step_num'] = 8
+        status['step_num'] = 9
 
     return status
 
@@ -164,7 +169,7 @@ def show_brain_status(brain):
     print("=" * 60)
 
     # Progress bar
-    steps = ['Extract', 'Crop', 'Register', 'Approve', 'Detect', 'Classify', 'Count']
+    steps = ['Extract', 'Crop', 'Register', 'Approve', 'Detect', 'Pre-filter', 'Classify', 'Count']
     progress = ""
     for i, step in enumerate(steps):
         if i < status['step_num'] - 1:
@@ -174,7 +179,7 @@ def show_brain_status(brain):
         else:
             progress += f"  {step}  "
 
-    print(f"\nProgress: Step {status['step_num']} of 7")
+    print(f"\nProgress: Step {status['step_num']} of 8")
     print(f"Current: {status['step_name']}")
 
     print("\n" + "-" * 60)
@@ -187,6 +192,7 @@ def show_brain_status(brain):
         ("Registered to atlas", status['registered']),
         ("Registration approved", status['approved']),
         ("Cells detected", status['detected']),
+        ("Candidates pre-filtered", status['prefiltered']),
         ("Cells classified", status['classified']),
         ("Regions counted", status['counted']),
     ]
@@ -233,6 +239,8 @@ def show_brain_status(brain):
         if status['approved']:
             available.append(('detect', 'Detect cells'))
         if status['detected']:
+            available.append(('prefilter', 'Pre-filter candidates'))
+        if status['prefiltered'] or status['detected']:
             available.append(('classify', 'Classify cells'))
         if status['classified']:
             available.append(('count', 'Count by region'))
@@ -299,6 +307,22 @@ def show_brain_status(brain):
         if choice is not None:
             run_script('4_detect_cells.py', ['--brain', brain_name, '--preset', presets[choice]])
 
+    elif status['step'] == 'prefilter':
+        print("\nPre-filtering candidates using atlas registration...")
+        print("This removes candidates outside the brain (meningeal/surface).")
+
+        choice = ask("Pre-filter options:", [
+            "Standard (remove outside-brain only)",
+            "With suspicious region flagging",
+            "Skip pre-filtering (go straight to classify)",
+        ])
+
+        if choice == 0:
+            run_script('util_atlas_prefilter.py', ['--brain', brain_name])
+        elif choice == 1:
+            run_script('util_atlas_prefilter.py', ['--brain', brain_name, '--flag-suspicious'])
+        # choice == 2 means skip, do nothing
+
     elif status['step'] == 'classify':
         run_script('5_classify_cells.py', ['--brain', brain_name])
 
@@ -341,7 +365,7 @@ def main_menu():
 
             # Simple progress indicator
             progress = status['step_num'] - 1
-            bar = "[" + "=" * progress + ">" + " " * (7 - progress) + "]" if progress < 7 else "[=======]"
+            bar = "[" + "=" * progress + ">" + " " * (8 - progress) + "]" if progress < 8 else "[========]"
 
             if status['step'] == 'done':
                 state = "COMPLETE"

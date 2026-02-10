@@ -76,7 +76,7 @@ def run_cellfinder_train(
     Run cellfinder training using the BrainGlobe Python API directly.
 
     Args:
-        yaml_path: Path to training.yml config file
+        yaml_paths: List of paths to training.yml config file(s)
         output_dir: Where to save the trained model
         epochs: Number of training epochs
         learning_rate: Learning rate
@@ -92,7 +92,9 @@ def run_cellfinder_train(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n[{timestamp()}] Running cellfinder training via Python API...")
-    print(f"    YAML: {yaml_path}")
+    print(f"    YAML sources: {len(yaml_paths)}")
+    for yp in yaml_paths:
+        print(f"      - {yp}")
     print(f"    Output: {output_dir}")
     print(f"    Epochs: {epochs}")
     print(f"    Learning rate: {learning_rate}")
@@ -114,7 +116,7 @@ def run_cellfinder_train(
         # Enable save_progress to write training.csv for monitoring
         train_run(
             output_dir=output_dir,
-            yaml_file=[str(yaml_path)],
+            yaml_file=[str(p) for p in yaml_paths],
             n_free_cpus=n_free_cpus,
             trained_model=str(continue_from) if continue_from else None,
             model_weights=None,  # Will use default
@@ -204,18 +206,22 @@ Examples:
 
     # Handle --yaml option: parse training.yml to get cells/non-cells paths
     if args.yaml:
-        if not args.yaml.exists():
-            print(f"ERROR: YAML file not found: {args.yaml}")
-            sys.exit(1)
+        yaml_paths = args.yaml if isinstance(args.yaml, list) else [args.yaml]
 
+        # Validate all paths exist
+        for yp in yaml_paths:
+            if not yp.exists():
+                print(f"ERROR: YAML file not found: {yp}")
+                sys.exit(1)
+
+        # Parse first YAML to get cells/non-cells paths for counting
         try:
             import yaml
-            with open(args.yaml) as f:
+            with open(yaml_paths[0]) as f:
                 config = yaml.safe_load(f)
         except ImportError:
-            # Fallback: parse YAML manually for simple format
             config = {'data': []}
-            with open(args.yaml) as f:
+            with open(yaml_paths[0]) as f:
                 current_item = {}
                 for line in f:
                     line = line.strip()
@@ -223,7 +229,6 @@ Examples:
                         if current_item:
                             config['data'].append(current_item)
                         current_item = {}
-                        # Parse first key-value on same line as dash
                         if ':' in line[2:]:
                             key, val = line[2:].split(':', 1)
                             current_item[key.strip()] = val.strip().strip("'\"")
@@ -233,29 +238,32 @@ Examples:
                 if current_item:
                     config['data'].append(current_item)
 
-        # Extract cells and non-cells paths from config
         for item in config.get('data', []):
             if item.get('type') == 'cell':
                 args.cells = Path(item.get('cube_dir', ''))
             elif item.get('type') == 'no_cell':
                 args.non_cells = Path(item.get('cube_dir', ''))
 
-        print(f"Loaded from YAML: {args.yaml}")
-        print(f"  Cells: {args.cells}")
-        print(f"  Non-cells: {args.non_cells}")
+        print(f"Loaded {len(yaml_paths)} YAML source(s)")
+        for yp in yaml_paths:
+            print(f"  - {yp}")
 
-    # Determine YAML path - either provided directly or infer from cells/non-cells
-    yaml_path = args.yaml
-    if not yaml_path:
+    # Determine YAML paths - either provided directly or infer from cells/non-cells
+    if args.yaml:
+        yaml_paths = args.yaml if isinstance(args.yaml, list) else [args.yaml]
+    else:
+        yaml_paths = None
+
+    if not yaml_paths:
         # If --cells and --non-cells provided, look for training.yml in parent
         if args.cells and args.non_cells:
             # Look for training.yml in the parent folder of cells/
             potential_yaml = args.cells.parent / "training.yml"
             if potential_yaml.exists():
-                yaml_path = potential_yaml
+                yaml_paths = [potential_yaml]
             else:
                 # Create a temporary training.yml
-                yaml_path = args.cells.parent / "training.yml"
+                yaml_paths = [args.cells.parent / "training.yml"]
                 yaml_content = f"""data:
 - bg_channel: 1
   cell_def: ''
@@ -268,16 +276,18 @@ Examples:
   signal_channel: 0
   type: no_cell
 """
-                with open(yaml_path, 'w') as f:
+                with open(yaml_paths[0], 'w') as f:
                     f.write(yaml_content)
-                print(f"Created training.yml: {yaml_path}")
+                print(f"Created training.yml: {yaml_paths[0]}")
         else:
             print("ERROR: Must provide --yaml or both --cells and --non-cells")
             sys.exit(1)
 
     # Validate inputs
-    if not yaml_path.exists():
-        print(f"ERROR: YAML file not found: {yaml_path}")
+    if not all(yp.exists() for yp in yaml_paths):
+        for yp in yaml_paths:
+            if not yp.exists():
+                print(f"ERROR: YAML file not found: {yp}")
         sys.exit(1)
 
     # If cells/non-cells not set, try to get from yaml for counting
@@ -307,7 +317,9 @@ Examples:
 
     if args.dry_run:
         print("\n=== DRY RUN ===")
-        print(f"YAML: {yaml_path}")
+        print(f"YAML sources: {len(yaml_paths)}")
+        for yp in yaml_paths:
+            print(f"  - {yp}")
         print(f"Cells: {args.cells}")
         print(f"Non-cells: {args.non_cells}")
         print(f"Output: {output_dir}")
@@ -322,7 +334,7 @@ Examples:
     # Initialize tracker
     tracker = ExperimentTracker()
 
-    brain_name = args.name or (args.cells.parent.name if args.cells else yaml_path.parent.name)
+    brain_name = args.name or (args.cells.parent.name if args.cells else yaml_paths[0].parent.name)
 
     exp_id = tracker.log_training(
         brain=brain_name,
@@ -330,7 +342,7 @@ Examples:
         learning_rate=args.learning_rate,
         augment=not args.no_augment,
         pretrained=str(args.continue_from) if args.continue_from else None,
-        input_path=str(yaml_path.parent),
+        input_path=str(yaml_paths[0].parent),
         output_path=str(output_dir),
         notes=args.notes,
         status="started",
@@ -343,7 +355,7 @@ Examples:
 
     # Run training
     success, duration, best_loss, best_accuracy = run_cellfinder_train(
-        yaml_path=yaml_path,
+        yaml_paths=yaml_paths,
         output_dir=output_dir,
         epochs=args.epochs,
         learning_rate=args.learning_rate,
