@@ -431,6 +431,10 @@ class TuningWidget(QWidget):
         self._cells_xml = None  # Path to auto-save XML for cells
         self._non_cells_xml = None  # Path to auto-save XML for non-cells
 
+        # Pre-filter state
+        self._prefilter_result = None
+        self._prefilter_source_exp_id = None
+
         # Classification selection for region counting
         self._selected_class_run = None
         self._selected_cells_xml = None
@@ -658,20 +662,23 @@ class TuningWidget(QWidget):
         # Tab 4: Detection Tuning
         self.tabs.addTab(self.create_detection_tab(), "4. Detection")
 
-        # Tab 5: Detection Comparison (NEW)
+        # Tab 5: Detection Comparison
         self.tabs.addTab(self.create_detection_compare_tab(), "5. Det Compare")
 
-        # Tab 6: Classification
-        self.tabs.addTab(self.create_classification_tab(), "6. Classify")
+        # Tab 6: Atlas Pre-Filter (NEW)
+        self.tabs.addTab(self.create_prefilter_tab(), "6. Pre-Filter")
 
-        # Tab 7: Classification Comparison (NEW)
-        self.tabs.addTab(self.create_classification_compare_tab(), "7. Class Compare")
+        # Tab 7: Classification (was 6)
+        self.tabs.addTab(self.create_classification_tab(), "7. Classify")
 
-        # Tab 8: Curation & Training
-        self.tabs.addTab(self.create_curation_tab(), "8. Curate/Train")
+        # Tab 8: Classification Comparison (was 7)
+        self.tabs.addTab(self.create_classification_compare_tab(), "8. Class Compare")
 
-        # Tab 9: Results
-        self.tabs.addTab(self.create_results_tab(), "9. Results")
+        # Tab 9: Curation & Training (was 8)
+        self.tabs.addTab(self.create_curation_tab(), "9. Curate/Train")
+
+        # Tab 10: Results (was 9)
+        self.tabs.addTab(self.create_results_tab(), "10. Results")
 
         # Auto-refresh when switching tabs
         self.tabs.currentChanged.connect(self._on_tab_changed)
@@ -2823,8 +2830,619 @@ class TuningWidget(QWidget):
         content_layout.addStretch()
         return widget
 
+    def create_prefilter_tab(self):
+        """Tab 6: Atlas Pre-Filter - Remove outside-brain candidates before classification."""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        widget.setLayout(layout)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        content = QWidget()
+        content_layout = QVBoxLayout()
+        content.setLayout(content_layout)
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+
+        info = QLabel(
+            "Filter cell candidates using the registered atlas.\n"
+            "Removes candidates outside the brain (meninges/surface)\n"
+            "and optionally flags biologically suspicious regions."
+        )
+        info.setWordWrap(True)
+        content_layout.addWidget(info)
+
+        # =================================================================
+        # SECTION 1: SELECT DETECTION RUN
+        # =================================================================
+        source_group = QGroupBox("1. Select Detection Run")
+        source_layout = QVBoxLayout()
+        source_group.setLayout(source_layout)
+
+        self.prefilter_runs_list = QListWidget()
+        self.prefilter_runs_list.setMinimumHeight(100)
+        self.prefilter_runs_list.setMaximumHeight(160)
+        self.prefilter_runs_list.setSelectionMode(QListWidget.SingleSelection)
+        source_layout.addWidget(self.prefilter_runs_list)
+
+        load_btns = QHBoxLayout()
+
+        load_best_btn = QPushButton("Load Best")
+        load_best_btn.setStyleSheet("background-color: #00FF00; color: black; font-weight: bold;")
+        load_best_btn.clicked.connect(self._prefilter_load_best)
+        load_btns.addWidget(load_best_btn)
+
+        load_selected_btn = QPushButton("Load Selected")
+        load_selected_btn.clicked.connect(self._prefilter_load_selected)
+        load_btns.addWidget(load_selected_btn)
+
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self._refresh_prefilter_runs)
+        load_btns.addWidget(refresh_btn)
+
+        source_layout.addLayout(load_btns)
+
+        self.prefilter_source_label = QLabel("No detection loaded")
+        self.prefilter_source_label.setStyleSheet("color: gray; font-style: italic;")
+        source_layout.addWidget(self.prefilter_source_label)
+
+        content_layout.addWidget(source_group)
+
+        # =================================================================
+        # SECTION 2: FILTER OPTIONS
+        # =================================================================
+        options_group = QGroupBox("2. Filter Options")
+        options_layout = QVBoxLayout()
+        options_group.setLayout(options_layout)
+
+        self.prefilter_suspicious_cb = QCheckBox("Also flag suspicious regions")
+        self.prefilter_suspicious_cb.setToolTip(
+            "Flag candidates in regions biologically unlikely\n"
+            "for the selected tracing type:\n"
+            "  Descending: cerebellar cortex, white matter,\n"
+            "  olfactory, cortical layers 1-3, basal ganglia, etc."
+        )
+        options_layout.addWidget(self.prefilter_suspicious_cb)
+
+        tracing_row = QHBoxLayout()
+        tracing_row.addWidget(QLabel("Tracing type:"))
+        self.prefilter_tracing_combo = QComboBox()
+        self.prefilter_tracing_combo.addItems(["descending", "ascending", "unknown"])
+        self.prefilter_tracing_combo.setToolTip(
+            "Descending = retrograde from spinal cord (default)\n"
+            "Ascending = ATLAS tracing (afferent pathways)\n"
+            "Unknown = no region-based filtering"
+        )
+        tracing_row.addWidget(self.prefilter_tracing_combo)
+        options_layout.addLayout(tracing_row)
+
+        content_layout.addWidget(options_group)
+
+        # =================================================================
+        # SECTION 3: RUN PRE-FILTER
+        # =================================================================
+        run_group = QGroupBox("3. Run Pre-Filter")
+        run_layout = QVBoxLayout()
+        run_group.setLayout(run_layout)
+
+        self.prefilter_run_btn = QPushButton("Run Atlas Pre-Filter")
+        self.prefilter_run_btn.setStyleSheet(
+            "QPushButton { padding: 10px; font-weight: bold; "
+            "background-color: #FF9800; color: white; }"
+        )
+        self.prefilter_run_btn.clicked.connect(self.run_prefilter)
+        run_layout.addWidget(self.prefilter_run_btn)
+
+        self.prefilter_status = QLabel("")
+        self.prefilter_status.setWordWrap(True)
+        self.prefilter_status.setStyleSheet("color: #FF9800; font-style: italic;")
+        run_layout.addWidget(self.prefilter_status)
+
+        content_layout.addWidget(run_group)
+
+        # =================================================================
+        # SECTION 4: RESULTS
+        # =================================================================
+        results_group = QGroupBox("4. Results")
+        results_layout = QVBoxLayout()
+        results_group.setLayout(results_layout)
+
+        self.prefilter_results_label = QLabel("Run pre-filter to see results.")
+        self.prefilter_results_label.setWordWrap(True)
+        self.prefilter_results_label.setStyleSheet("font-family: monospace;")
+        results_layout.addWidget(self.prefilter_results_label)
+
+        action_layout = QHBoxLayout()
+
+        self.prefilter_save_btn = QPushButton("Save Filtered Lists")
+        self.prefilter_save_btn.setStyleSheet("background-color: #4CAF50; color: white;")
+        self.prefilter_save_btn.clicked.connect(self._save_prefilter_results)
+        self.prefilter_save_btn.setEnabled(False)
+        action_layout.addWidget(self.prefilter_save_btn)
+
+        self.prefilter_to_training_btn = QPushButton("Outside -> Non-Cells Training")
+        self.prefilter_to_training_btn.setToolTip(
+            "Copy outside-brain candidates to the non-cells training bucket.\n"
+            "Teaches the classifier that meningeal signals are not cells."
+        )
+        self.prefilter_to_training_btn.setStyleSheet("background-color: #8B0000; color: white;")
+        self.prefilter_to_training_btn.clicked.connect(self._send_outside_to_training)
+        self.prefilter_to_training_btn.setEnabled(False)
+        action_layout.addWidget(self.prefilter_to_training_btn)
+
+        results_layout.addLayout(action_layout)
+        content_layout.addWidget(results_group)
+
+        # =================================================================
+        # SECTION 5: PREVIOUS RUNS
+        # =================================================================
+        history_group = QGroupBox("5. Previous Pre-Filter Runs")
+        history_layout = QVBoxLayout()
+        history_group.setLayout(history_layout)
+
+        self.prefilter_history_list = QListWidget()
+        self.prefilter_history_list.setMaximumHeight(120)
+        history_layout.addWidget(self.prefilter_history_list)
+
+        load_prev_btn = QPushButton("Load Previous Result")
+        load_prev_btn.clicked.connect(self._load_previous_prefilter)
+        history_layout.addWidget(load_prev_btn)
+
+        content_layout.addWidget(history_group)
+
+        content_layout.addStretch()
+        return widget
+
+    # ==========================================================================
+    # PRE-FILTER SUPPORTING METHODS
+    # ==========================================================================
+
+    def _refresh_prefilter_runs(self):
+        """Populate the detection runs list for pre-filtering."""
+        self.prefilter_runs_list.clear()
+
+        if not self.current_brain or not self.tracker:
+            return
+
+        brain_name = self.current_brain.name if hasattr(self.current_brain, 'name') else str(self.current_brain)
+
+        try:
+            runs = self.tracker.search(brain=brain_name, exp_type="detection")
+            for run in reversed(runs):  # newest first
+                status = run.get('status', '')
+                cells = run.get('det_cells_found', '?')
+                exp_id = run.get('exp_id', '')
+                created = run.get('created_at', '')[:16]
+                is_best = run.get('marked_best', '') == 'True'
+
+                prefix = "* " if is_best else "  "
+                label = f"{prefix}{created}  {cells} candidates  [{status}]  {exp_id}"
+                item = QListWidgetItem(label)
+                item.setData(Qt.UserRole, exp_id)
+                if is_best:
+                    item.setForeground(QColor('#00FF00'))
+                self.prefilter_runs_list.addItem(item)
+
+            # Also refresh pre-filter history
+            self._refresh_prefilter_history()
+        except Exception as e:
+            print(f"[SCI-Connectome] Error refreshing prefilter runs: {e}")
+
+    def _refresh_prefilter_history(self):
+        """Populate previous pre-filter runs list."""
+        self.prefilter_history_list.clear()
+
+        if not self.current_brain or not self.tracker:
+            return
+
+        brain_name = self.current_brain.name if hasattr(self.current_brain, 'name') else str(self.current_brain)
+
+        try:
+            runs = self.tracker.search(brain=brain_name, exp_type="prefilter")
+            for run in reversed(runs):
+                total = run.get('prefilter_total', '?')
+                interior = run.get('prefilter_interior', '?')
+                outside = run.get('prefilter_outside', '?')
+                exp_id = run.get('exp_id', '')
+                created = run.get('created_at', '')[:16]
+
+                label = f"{created}  {interior}/{total} interior  ({outside} outside)  {exp_id}"
+                item = QListWidgetItem(label)
+                item.setData(Qt.UserRole, exp_id)
+                self.prefilter_history_list.addItem(item)
+        except Exception as e:
+            print(f"[SCI-Connectome] Error refreshing prefilter history: {e}")
+
+    def _prefilter_load_best(self):
+        """Load the best detection run for pre-filtering."""
+        if not self.current_brain or not self.tracker:
+            QMessageBox.warning(self, "No Brain", "Load a brain first.")
+            return
+
+        brain_name = self.current_brain.name if hasattr(self.current_brain, 'name') else str(self.current_brain)
+
+        try:
+            runs = self.tracker.search(brain=brain_name, exp_type="detection")
+            best_run = None
+            for run in runs:
+                if run.get('marked_best', '') == 'True':
+                    best_run = run
+                    break
+
+            if not best_run:
+                # Fall back to most recent completed
+                for run in reversed(runs):
+                    if run.get('status') == 'completed':
+                        best_run = run
+                        break
+
+            if best_run:
+                self._prefilter_source_exp_id = best_run['exp_id']
+                output_path = best_run.get('output_path', '')
+                cells_found = best_run.get('det_cells_found', '?')
+                self.prefilter_source_label.setText(
+                    f"Loaded: {best_run['exp_id']} ({cells_found} candidates)"
+                )
+                self.prefilter_source_label.setStyleSheet("color: #00FF00; font-weight: bold;")
+            else:
+                QMessageBox.information(self, "No Runs", "No detection runs found for this brain.")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not load best run: {e}")
+
+    def _prefilter_load_selected(self):
+        """Load the selected detection run for pre-filtering."""
+        selected = self.prefilter_runs_list.currentItem()
+        if not selected:
+            QMessageBox.warning(self, "No Selection", "Select a detection run from the list.")
+            return
+
+        exp_id = selected.data(Qt.UserRole)
+        self._prefilter_source_exp_id = exp_id
+        self.prefilter_source_label.setText(f"Loaded: {exp_id}")
+        self.prefilter_source_label.setStyleSheet("color: #00BFFF; font-weight: bold;")
+
+    def run_prefilter(self):
+        """Run atlas pre-filtering on loaded detection candidates."""
+        import napari
+        from qtpy.QtWidgets import QApplication
+
+        if not self.current_brain:
+            QMessageBox.warning(self, "No Brain", "Load a brain first.")
+            return
+
+        brain_path = self.current_brain
+        brain_name = brain_path.name if hasattr(brain_path, 'name') else str(brain_path)
+
+        # Find registration folder
+        registration_path = brain_path / "3_Registered_Atlas"
+        if not registration_path.exists():
+            QMessageBox.warning(self, "No Registration",
+                "3_Registered_Atlas folder not found.\n"
+                "Run registration (step 3) first.")
+            return
+
+        # Find candidates XML
+        candidates_xml = None
+
+        # If a detection exp_id is selected, find its output
+        if self._prefilter_source_exp_id and self.tracker:
+            try:
+                runs = self.tracker.search(exp_id=self._prefilter_source_exp_id)
+                if runs:
+                    output_path = runs[0].get('output_path', '')
+                    if output_path:
+                        from pathlib import Path
+                        out_dir = Path(output_path)
+                        # Look for the XML in the output dir
+                        for xml_name in ['Detected_cells.xml', 'cells.xml']:
+                            candidate = out_dir / xml_name
+                            if candidate.exists():
+                                candidates_xml = candidate
+                                break
+                        if not candidates_xml:
+                            # Check if output_path IS the XML
+                            if out_dir.suffix == '.xml' and out_dir.exists():
+                                candidates_xml = out_dir
+            except Exception:
+                pass
+
+        # Fallback: find latest detection XML
+        if candidates_xml is None:
+            det_dir = brain_path / "4_Cell_Candidates"
+            if det_dir.exists():
+                xml_files = sorted(det_dir.glob("Detected_*.xml"), reverse=True)
+                if xml_files:
+                    candidates_xml = xml_files[0]
+
+        if candidates_xml is None or not candidates_xml.exists():
+            QMessageBox.warning(self, "No Candidates",
+                "No detection candidates found.\n"
+                "Run detection (step 4) first.")
+            return
+
+        self.prefilter_status.setText(f"Running pre-filter on {candidates_xml.name}...")
+        QApplication.processEvents()
+
+        try:
+            # Import and run the pre-filter
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+            from util_atlas_prefilter import prefilter_candidates
+
+            flag_suspicious = self.prefilter_suspicious_cb.isChecked()
+            tracing_type = self.prefilter_tracing_combo.currentText()
+
+            result = prefilter_candidates(
+                candidates_xml=candidates_xml,
+                registration_path=registration_path,
+                flag_suspicious=flag_suspicious,
+                tracing_type=tracing_type,
+            )
+
+            self._prefilter_result = result
+
+            # Display results as napari layers
+            self._display_prefilter_results(result)
+
+            # Update stats display
+            stats = result['stats']
+            total = stats['total']
+            interior = stats['interior']
+            outside = stats['outside']
+            suspicious = stats['suspicious']
+
+            text = (
+                f"Total candidates:     {total:>8,}\n"
+                f"Interior (keep):      {interior:>8,}  ({interior/total*100:.1f}%)\n"
+                f"Outside brain (drop): {outside:>8,}  ({outside/total*100:.1f}%)"
+            )
+            if flag_suspicious:
+                text += f"\nSuspicious (flag):    {suspicious:>8,}  ({suspicious/total*100:.1f}%)"
+
+            self.prefilter_results_label.setText(text)
+            self.prefilter_save_btn.setEnabled(True)
+            self.prefilter_to_training_btn.setEnabled(True)
+            self.prefilter_status.setText("Pre-filter complete!")
+
+            # Log to tracker
+            if self.tracker:
+                try:
+                    self.tracker.log_prefilter(
+                        brain=brain_name,
+                        total=total,
+                        interior=interior,
+                        outside=outside,
+                        suspicious=suspicious,
+                        flag_suspicious=flag_suspicious,
+                        tracing_type=tracing_type,
+                        parent_experiment=self._prefilter_source_exp_id,
+                        input_path=str(candidates_xml),
+                        output_path=str(brain_path / "4_Cell_Candidates"),
+                        status="completed",
+                    )
+                except Exception as e:
+                    print(f"[SCI-Connectome] Could not log prefilter to tracker: {e}")
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.prefilter_status.setText(f"Error: {e}")
+            QMessageBox.warning(self, "Pre-Filter Error", f"Pre-filter failed:\n{e}")
+
+    def _display_prefilter_results(self, result):
+        """Add pre-filter result layers to napari viewer."""
+        import napari
+        import numpy as np
+
+        # Remove existing prefilter layers
+        layers_to_remove = []
+        for layer in self.viewer.layers:
+            if hasattr(layer, 'name') and ('Interior Candidates' in layer.name or
+                                            'Outside/Meningeal' in layer.name or
+                                            'Suspicious Region' in layer.name):
+                layers_to_remove.append(layer)
+        for layer in layers_to_remove:
+            self.viewer.layers.remove(layer)
+
+        # Interior candidates (green)
+        if result['interior_coords']:
+            coords = np.array(result['interior_coords'])
+            self.viewer.add_points(
+                coords,
+                name=f"Interior Candidates ({len(coords)})",
+                face_color='transparent',
+                edge_color='#00FF00',
+                symbol='o',
+                size=14,
+                opacity=0.2,
+                edge_width=0.1,
+            )
+
+        # Outside brain (red)
+        if result['outside_coords']:
+            coords = np.array(result['outside_coords'])
+            self.viewer.add_points(
+                coords,
+                name=f"Outside/Meningeal ({len(coords)})",
+                face_color='transparent',
+                edge_color='#FF0000',
+                symbol='x',
+                size=14,
+                opacity=0.2,
+                edge_width=0.1,
+            )
+
+        # Suspicious regions (magenta)
+        if result['suspicious_coords']:
+            coords = np.array(result['suspicious_coords'])
+            self.viewer.add_points(
+                coords,
+                name=f"Suspicious Region ({len(coords)})",
+                face_color='transparent',
+                edge_color='#FF00FF',
+                symbol='triangle_up',
+                size=14,
+                opacity=0.2,
+                edge_width=0.1,
+            )
+
+    def _save_prefilter_results(self):
+        """Save pre-filter results as XML files."""
+        if not self._prefilter_result:
+            QMessageBox.warning(self, "No Results", "Run pre-filter first.")
+            return
+
+        from datetime import datetime
+        from pathlib import Path
+
+        brain_path = self.current_brain
+        brain_name = brain_path.name if hasattr(brain_path, 'name') else str(brain_path)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = brain_path / "4_Cell_Candidates" / f"prefiltered_{ts}"
+
+        try:
+            import sys
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            from util_atlas_prefilter import save_prefilter_results
+
+            saved = save_prefilter_results(self._prefilter_result, output_dir, brain_name)
+
+            QMessageBox.information(self, "Saved",
+                f"Pre-filter results saved to:\n{output_dir}\n\n"
+                f"Interior: {len(self._prefilter_result['interior_coords'])} candidates\n"
+                f"Outside: {len(self._prefilter_result['outside_coords'])} candidates\n"
+                f"Use interior_candidates.xml for classification.")
+        except Exception as e:
+            QMessageBox.warning(self, "Save Error", f"Could not save results:\n{e}")
+
+    def _send_outside_to_training(self):
+        """Copy outside-brain candidates to the non-cells training bucket."""
+        if not self._prefilter_result or not self._prefilter_result['outside_coords']:
+            QMessageBox.warning(self, "No Data", "No outside-brain candidates to send.")
+            return
+
+        # Get or create training layers
+        train_non_cells = self._get_layer_by_type('train_non_cells')
+        if train_non_cells is None:
+            # Create the training layers first
+            self.create_training_layers()
+            train_non_cells = self._get_layer_by_type('train_non_cells')
+
+        if train_non_cells is None:
+            QMessageBox.warning(self, "Error", "Could not create training layers.")
+            return
+
+        import numpy as np
+        outside_coords = np.array(self._prefilter_result['outside_coords'])
+        existing = train_non_cells.data
+        combined = np.vstack([existing, outside_coords]) if len(existing) > 0 else outside_coords
+        train_non_cells.data = combined
+
+        count = len(outside_coords)
+        QMessageBox.information(self, "Added to Training",
+            f"Added {count} outside-brain candidates to Non-Cells training bucket.\n\n"
+            f"These will teach the classifier that meningeal signals are not cells.\n"
+            f"Total non-cells in bucket: {len(combined)}")
+
+    def _load_previous_prefilter(self):
+        """Load a previous pre-filter result."""
+        selected = self.prefilter_history_list.currentItem()
+        if not selected:
+            QMessageBox.warning(self, "No Selection", "Select a previous run from the list.")
+            return
+
+        exp_id = selected.data(Qt.UserRole)
+        if not self.tracker:
+            return
+
+        try:
+            runs = self.tracker.search(exp_id=exp_id)
+            if not runs:
+                QMessageBox.warning(self, "Not Found", f"Run {exp_id} not found in tracker.")
+                return
+
+            run = runs[0]
+            output_path = run.get('output_path', '')
+            if not output_path:
+                QMessageBox.warning(self, "No Output", "No output path recorded for this run.")
+                return
+
+            from pathlib import Path
+            import xml.etree.ElementTree as ET
+            import numpy as np
+
+            out_dir = Path(output_path)
+
+            # Find the prefiltered subfolder
+            prefiltered_dirs = sorted(out_dir.glob("prefiltered_*"), reverse=True)
+            if not prefiltered_dirs:
+                # Maybe the output_path IS the prefiltered dir
+                if (out_dir / "interior_candidates.xml").exists():
+                    prefiltered_dir = out_dir
+                else:
+                    QMessageBox.warning(self, "Not Found",
+                        f"No prefiltered results found in {output_path}")
+                    return
+            else:
+                prefiltered_dir = prefiltered_dirs[0]
+
+            # Load coords from XMLs
+            def load_coords_from_xml(xml_path):
+                if not xml_path.exists():
+                    return []
+                tree = ET.parse(str(xml_path))
+                root = tree.getroot()
+                coords = []
+                for marker in root.iter('Marker'):
+                    x = int(marker.find('MarkerX').text)
+                    y = int(marker.find('MarkerY').text)
+                    z = int(marker.find('MarkerZ').text)
+                    coords.append((z, y, x))
+                return coords
+
+            interior = load_coords_from_xml(prefiltered_dir / "interior_candidates.xml")
+            outside = load_coords_from_xml(prefiltered_dir / "outside_candidates.xml")
+            suspicious = load_coords_from_xml(prefiltered_dir / "suspicious_candidates.xml")
+
+            result = {
+                'interior_coords': interior,
+                'outside_coords': outside,
+                'suspicious_coords': suspicious,
+                'suspicious_details': {},
+                'stats': {
+                    'total': len(interior) + len(outside) + len(suspicious),
+                    'interior': len(interior),
+                    'outside': len(outside),
+                    'suspicious': len(suspicious),
+                },
+            }
+
+            self._prefilter_result = result
+            self._display_prefilter_results(result)
+
+            total = result['stats']['total']
+            self.prefilter_results_label.setText(
+                f"Loaded previous: {exp_id}\n"
+                f"Total candidates:     {total:>8,}\n"
+                f"Interior (keep):      {len(interior):>8,}  ({len(interior)/max(total,1)*100:.1f}%)\n"
+                f"Outside brain (drop): {len(outside):>8,}  ({len(outside)/max(total,1)*100:.1f}%)"
+                + (f"\nSuspicious (flag):    {len(suspicious):>8,}  ({len(suspicious)/max(total,1)*100:.1f}%)" if suspicious else "")
+            )
+            self.prefilter_save_btn.setEnabled(True)
+            self.prefilter_to_training_btn.setEnabled(True)
+            self.prefilter_status.setText(f"Loaded: {exp_id}")
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Error", f"Could not load previous result:\n{e}")
+
     def create_classification_tab(self):
-        """Tab 6: Classification - Apply model to candidates."""
+        """Tab 7: Classification - Apply model to candidates."""
         widget = QWidget()
         layout = QVBoxLayout()
         widget.setLayout(layout)
@@ -3265,6 +3883,72 @@ class TuningWidget(QWidget):
         content_layout.addWidget(viz_group)
 
         # =================================================================
+        # TRAINING DATA SOURCES (multi-brain accumulation)
+        # =================================================================
+        sources_group = QGroupBox("Training Data Sources")
+        sources_layout = QVBoxLayout()
+        sources_group.setLayout(sources_layout)
+
+        sources_layout.addWidget(QLabel(
+            "Select which training data to include when training.\n"
+            "Check multiple sources to train on combined data from different brains."
+        ))
+
+        # Shared pool status
+        self.shared_pool_label = QLabel("Shared pool: (click Refresh)")
+        self.shared_pool_label.setStyleSheet("font-weight: bold; color: #4CAF50;")
+        sources_layout.addWidget(self.shared_pool_label)
+
+        # Source selection table
+        self.training_sources_table = QTableWidget()
+        self.training_sources_table.setColumnCount(4)
+        self.training_sources_table.setHorizontalHeaderLabels(
+            ["Source", "Cells", "Non-Cells", "Path"]
+        )
+        self.training_sources_table.setMinimumHeight(100)
+        self.training_sources_table.setMaximumHeight(200)
+        self.training_sources_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.training_sources_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.training_sources_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.training_sources_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.training_sources_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        sources_layout.addWidget(self.training_sources_table)
+
+        src_btns = QHBoxLayout()
+
+        refresh_sources_btn = QPushButton("Refresh Sources")
+        refresh_sources_btn.clicked.connect(self._refresh_training_sources)
+        src_btns.addWidget(refresh_sources_btn)
+
+        merge_btn = QPushButton("Merge Selected -> Shared Pool")
+        merge_btn.setToolTip(
+            "Copy training cubes from selected per-brain sources\n"
+            "into the shared training pool for this imaging paradigm."
+        )
+        merge_btn.clicked.connect(self._merge_to_shared_pool)
+        src_btns.addWidget(merge_btn)
+
+        sources_layout.addLayout(src_btns)
+
+        # Start Fresh button (destructive - clears shared pool)
+        fresh_btn = QPushButton("Start Training Data Fresh")
+        fresh_btn.setStyleSheet("background-color: #D32F2F; color: white;")
+        fresh_btn.setToolTip(
+            "Clear all training cubes from the shared pool for this paradigm.\n"
+            "Use this only if you want to completely retrain from scratch.\n"
+            "Per-brain training data is NOT deleted."
+        )
+        fresh_btn.clicked.connect(self._start_training_fresh)
+        sources_layout.addWidget(fresh_btn)
+
+        self.training_summary_label = QLabel("")
+        self.training_summary_label.setWordWrap(True)
+        self.training_summary_label.setStyleSheet("color: #9C27B0; font-style: italic;")
+        sources_layout.addWidget(self.training_summary_label)
+
+        content_layout.addWidget(sources_group)
+
+        # =================================================================
         # START TRAINING
         # =================================================================
         train_group = QGroupBox("Train Custom Network")
@@ -3272,12 +3956,12 @@ class TuningWidget(QWidget):
         train_group.setLayout(train_layout)
 
         train_layout.addWidget(QLabel(
-            "Once you have sufficient training data (100+ each recommended),\n"
-            "train a custom network tuned to your specific tissue."
+            "Train using checked sources above, or specify a folder below.\n"
+            "100+ cells and non-cells each recommended."
         ))
 
         self.training_data_path = QLineEdit()
-        self.training_data_path.setPlaceholderText("Path to training data folder...")
+        self.training_data_path.setPlaceholderText("Path to training data folder (override)...")
         train_layout.addWidget(self.training_data_path)
 
         browse_btn = QPushButton("Browse...")
@@ -4617,11 +5301,15 @@ class TuningWidget(QWidget):
             print("[SCI-Connectome] Warning: No background layer found, will only export signal channel")
             bg_data = None
 
-        # Set up training data directory
+        # Set up training data directory - always use shared pool by paradigm
         if self.training_data_dir is None:
+            from config import parse_brain_name
             brain_name = self.current_brain.name if hasattr(self.current_brain, 'name') else str(self.current_brain)
-            brain_path = BRAINS_ROOT / brain_name
-            self.training_data_dir = brain_path / "training_data"
+            parsed = parse_brain_name(brain_name)
+            imaging_paradigm = parsed.get('imaging_params', 'default') or 'default'
+            self.training_data_dir = MODELS_DIR / imaging_paradigm / "training_data"
+            self.training_data_dir.mkdir(parents=True, exist_ok=True)
+            print(f"[SCI-Connectome] Training data auto-set to shared pool: {self.training_data_dir}")
 
         cells_dir = self.training_data_dir / "cells"
         non_cells_dir = self.training_data_dir / "non_cells"
@@ -4891,43 +5579,363 @@ class TuningWidget(QWidget):
         if folder:
             self.training_data_path.setText(folder)
 
-    def start_training(self):
-        """Start network training with auto-detection of all paths.
+    # =================================================================
+    # TRAINING DATA SOURCES - multi-brain accumulation
+    # =================================================================
 
-        Streamlined workflow:
-        1. Auto-finds training data from training_data_dir or training_data_path
-        2. Finds most recent model to continue from (or starts fresh)
-        3. Optionally runs classification when training completes
+    def _refresh_training_sources(self):
+        """Discover all training data sources (shared pool + per-brain).
+
+        Scans:
+        - Shared pool: MODELS_DIR/{paradigm}/training_data/
+        - Per-brain: BRAINS_ROOT/{mouse}/{brain}/training_data/
+        """
+        print("[DEBUG] Button clicked: _refresh_training_sources")
+        self.training_sources_table.setRowCount(0)
+
+        sources = []  # list of (name, cells_count, non_cells_count, path, is_shared)
+
+        # --- 1. Shared pool(s) in MODELS_DIR ---
+        if MODELS_DIR.exists():
+            for paradigm_dir in sorted(MODELS_DIR.iterdir()):
+                if not paradigm_dir.is_dir():
+                    continue
+                td = paradigm_dir / "training_data"
+                if not td.exists():
+                    continue
+                cells_dir = td / "cells"
+                non_cells_dir = td / "non_cells"
+                n_cells = len(list(cells_dir.glob("*.tif*"))) if cells_dir.exists() else 0
+                n_non = len(list(non_cells_dir.glob("*.tif*"))) if non_cells_dir.exists() else 0
+                if n_cells > 0 or n_non > 0:
+                    sources.append((
+                        f"Shared: {paradigm_dir.name}",
+                        n_cells, n_non, str(td), True
+                    ))
+
+        # --- 2. Per-brain training_data folders ---
+        if BRAINS_ROOT.exists():
+            for mouse_dir in sorted(BRAINS_ROOT.iterdir()):
+                if not mouse_dir.is_dir():
+                    continue
+                for brain_dir in sorted(mouse_dir.iterdir()):
+                    if not brain_dir.is_dir():
+                        continue
+                    td = brain_dir / "training_data"
+                    if not td.exists():
+                        continue
+                    cells_dir = td / "cells"
+                    non_cells_dir = td / "non_cells"
+                    n_cells = len(list(cells_dir.glob("*.tif*"))) if cells_dir.exists() else 0
+                    n_non = len(list(non_cells_dir.glob("*.tif*"))) if non_cells_dir.exists() else 0
+                    if n_cells > 0 or n_non > 0:
+                        sources.append((
+                            f"Brain: {brain_dir.name}",
+                            n_cells, n_non, str(td), False
+                        ))
+
+        # Populate table with checkboxes
+        self.training_sources_table.setRowCount(len(sources))
+        total_cells = 0
+        total_non = 0
+        n_checked = 0
+
+        for row, (name, n_cells, n_non, path, is_shared) in enumerate(sources):
+            # Source name with checkbox
+            check_widget = QWidget()
+            check_layout = QHBoxLayout(check_widget)
+            check_layout.setContentsMargins(4, 0, 0, 0)
+            cb = QCheckBox(name)
+            # Auto-check shared pools and current brain
+            if is_shared:
+                cb.setChecked(True)
+                n_checked += 1
+                total_cells += n_cells
+                total_non += n_non
+            elif self.current_brain and str(self.current_brain.name) in name:
+                cb.setChecked(True)
+                n_checked += 1
+                total_cells += n_cells
+                total_non += n_non
+            cb.stateChanged.connect(self._update_training_summary)
+            check_layout.addWidget(cb)
+            self.training_sources_table.setCellWidget(row, 0, check_widget)
+
+            # Cells count
+            cells_item = QTableWidgetItem(str(n_cells))
+            cells_item.setFlags(cells_item.flags() & ~Qt.ItemIsEditable)
+            self.training_sources_table.setItem(row, 1, cells_item)
+
+            # Non-cells count
+            non_item = QTableWidgetItem(str(n_non))
+            non_item.setFlags(non_item.flags() & ~Qt.ItemIsEditable)
+            self.training_sources_table.setItem(row, 2, non_item)
+
+            # Path (stored for later retrieval)
+            path_item = QTableWidgetItem(path)
+            path_item.setFlags(path_item.flags() & ~Qt.ItemIsEditable)
+            self.training_sources_table.setItem(row, 3, path_item)
+
+        # Update shared pool label
+        shared_count = sum(1 for s in sources if s[4])
+        brain_count = sum(1 for s in sources if not s[4])
+        self.shared_pool_label.setText(
+            f"Found: {shared_count} shared pool(s), {brain_count} per-brain source(s)"
+        )
+
+        # Update summary
+        self._update_training_summary()
+        print(f"[SCI-Connectome] Found {len(sources)} training sources")
+
+    def _update_training_summary(self):
+        """Update the training summary label based on checked sources."""
+        total_cells = 0
+        total_non = 0
+        n_checked = 0
+
+        for row in range(self.training_sources_table.rowCount()):
+            widget = self.training_sources_table.cellWidget(row, 0)
+            if widget:
+                cb = widget.findChild(QCheckBox)
+                if cb and cb.isChecked():
+                    n_checked += 1
+                    cells_item = self.training_sources_table.item(row, 1)
+                    non_item = self.training_sources_table.item(row, 2)
+                    if cells_item:
+                        total_cells += int(cells_item.text())
+                    if non_item:
+                        total_non += int(non_item.text())
+
+        self.training_summary_label.setText(
+            f"Selected: {n_checked} source(s) | "
+            f"Total: {total_cells} cells, {total_non} non-cells"
+        )
+
+    def _get_selected_yaml_paths(self):
+        """Return list of training.yml paths from checked sources in the table."""
+        yaml_paths = []
+
+        for row in range(self.training_sources_table.rowCount()):
+            widget = self.training_sources_table.cellWidget(row, 0)
+            if not widget:
+                continue
+            cb = widget.findChild(QCheckBox)
+            if not cb or not cb.isChecked():
+                continue
+
+            path_item = self.training_sources_table.item(row, 3)
+            if not path_item:
+                continue
+
+            td_path = Path(path_item.text())
+            yaml_path = td_path / "training.yml"
+
+            # Create training.yml if missing but data exists
+            if not yaml_path.exists():
+                self._ensure_training_yaml(td_path)
+
+            if yaml_path.exists():
+                yaml_paths.append(yaml_path)
+            else:
+                print(f"[SCI-Connectome] Warning: No training.yml at {td_path}")
+
+        return yaml_paths
+
+    def _ensure_training_yaml(self, training_data_dir: Path):
+        """Create training.yml if it doesn't exist but cells/non_cells dirs do."""
+        cells_dir = training_data_dir / "cells"
+        non_cells_dir = training_data_dir / "non_cells"
+
+        if not cells_dir.exists() and not non_cells_dir.exists():
+            return
+
+        yaml_path = training_data_dir / "training.yml"
+        yaml_content = (
+            "data:\n"
+            f"- bg_channel: 1\n"
+            f"  cell_def: ''\n"
+            f"  cube_dir: {cells_dir}\n"
+            f"  signal_channel: 0\n"
+            f"  type: cell\n"
+            f"- bg_channel: 1\n"
+            f"  cell_def: ''\n"
+            f"  cube_dir: {non_cells_dir}\n"
+            f"  signal_channel: 0\n"
+            f"  type: no_cell\n"
+        )
+
+        with open(yaml_path, 'w') as f:
+            f.write(yaml_content)
+        print(f"[SCI-Connectome] Created {yaml_path}")
+
+    def _merge_to_shared_pool(self):
+        """Copy training cubes from selected per-brain sources to the shared pool.
+
+        Deduplicates by filename (same coordinate = same cube).
+        """
+        print("[DEBUG] Button clicked: _merge_to_shared_pool")
+        import shutil
+
+        # Determine shared pool path from current brain's imaging paradigm
+        if not self.current_brain:
+            QMessageBox.warning(self, "No Brain", "Load a brain first to determine the shared pool location.")
+            return
+
+        from config import parse_brain_name
+        brain_name = self.current_brain.name if hasattr(self.current_brain, 'name') else str(self.current_brain)
+        parsed = parse_brain_name(brain_name)
+        imaging_paradigm = parsed.get('imaging_params', 'default') or 'default'
+
+        shared_dir = MODELS_DIR / imaging_paradigm / "training_data"
+        shared_cells = shared_dir / "cells"
+        shared_non_cells = shared_dir / "non_cells"
+        shared_cells.mkdir(parents=True, exist_ok=True)
+        shared_non_cells.mkdir(parents=True, exist_ok=True)
+
+        copied_cells = 0
+        copied_non = 0
+        skipped = 0
+
+        for row in range(self.training_sources_table.rowCount()):
+            widget = self.training_sources_table.cellWidget(row, 0)
+            if not widget:
+                continue
+            cb = widget.findChild(QCheckBox)
+            if not cb or not cb.isChecked():
+                continue
+            # Skip shared pool sources (don't copy shared to shared)
+            if cb.text().startswith("Shared:"):
+                continue
+
+            path_item = self.training_sources_table.item(row, 3)
+            if not path_item:
+                continue
+
+            src_dir = Path(path_item.text())
+
+            # Copy cells
+            src_cells = src_dir / "cells"
+            if src_cells.exists():
+                for tif in src_cells.glob("*.tif*"):
+                    dest = shared_cells / tif.name
+                    if dest.exists():
+                        skipped += 1
+                    else:
+                        shutil.copy2(str(tif), str(dest))
+                        copied_cells += 1
+
+            # Copy non-cells
+            src_non = src_dir / "non_cells"
+            if src_non.exists():
+                for tif in src_non.glob("*.tif*"):
+                    dest = shared_non_cells / tif.name
+                    if dest.exists():
+                        skipped += 1
+                    else:
+                        shutil.copy2(str(tif), str(dest))
+                        copied_non += 1
+
+        # Ensure shared pool has training.yml
+        self._ensure_training_yaml(shared_dir)
+
+        # Refresh the table to reflect new counts
+        self._refresh_training_sources()
+
+        QMessageBox.information(
+            self, "Merge Complete",
+            f"Merged to: {shared_dir}\n\n"
+            f"Cells copied: {copied_cells}\n"
+            f"Non-cells copied: {copied_non}\n"
+            f"Skipped (already exist): {skipped}"
+        )
+        print(f"[SCI-Connectome] Merged training data: {copied_cells} cells, {copied_non} non-cells to {shared_dir}")
+
+    def _start_training_fresh(self):
+        """Clear all training cubes from the shared pool for current paradigm.
+
+        Deletes cells/ and non_cells/ in the shared pool directory.
+        Per-brain training data is NOT touched.
+        """
+        import shutil
+
+        if not self.current_brain:
+            QMessageBox.warning(self, "No Brain", "Load a brain first to determine the shared pool location.")
+            return
+
+        from config import parse_brain_name
+        brain_name = self.current_brain.name if hasattr(self.current_brain, 'name') else str(self.current_brain)
+        parsed = parse_brain_name(brain_name)
+        imaging_paradigm = parsed.get('imaging_params', 'default') or 'default'
+
+        shared_dir = MODELS_DIR / imaging_paradigm / "training_data"
+
+        if not shared_dir.exists():
+            QMessageBox.information(self, "Nothing to Clear",
+                f"No shared training pool exists yet for '{imaging_paradigm}'.")
+            return
+
+        # Count what would be deleted
+        cells_dir = shared_dir / "cells"
+        non_cells_dir = shared_dir / "non_cells"
+        n_cells = len(list(cells_dir.glob("*.tif*"))) if cells_dir.exists() else 0
+        n_non = len(list(non_cells_dir.glob("*.tif*"))) if non_cells_dir.exists() else 0
+
+        if n_cells == 0 and n_non == 0:
+            QMessageBox.information(self, "Nothing to Clear",
+                f"Shared pool for '{imaging_paradigm}' is already empty.")
+            return
+
+        # Confirm with user
+        reply = QMessageBox.question(
+            self, "Clear Shared Training Pool?",
+            f"This will DELETE all training cubes in the shared pool:\n"
+            f"  {shared_dir}\n\n"
+            f"  Cells: {n_cells} cubes\n"
+            f"  Non-cells: {n_non} cubes\n\n"
+            f"Per-brain training data will NOT be deleted.\n"
+            f"You can re-merge per-brain data afterward.\n\n"
+            f"Are you sure?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        # Delete contents (not the directory itself)
+        if cells_dir.exists():
+            shutil.rmtree(str(cells_dir))
+            cells_dir.mkdir()
+        if non_cells_dir.exists():
+            shutil.rmtree(str(non_cells_dir))
+            non_cells_dir.mkdir()
+
+        # Remove stale training.yml
+        yaml_path = shared_dir / "training.yml"
+        if yaml_path.exists():
+            yaml_path.unlink()
+
+        # Refresh table
+        self._refresh_training_sources()
+
+        QMessageBox.information(
+            self, "Pool Cleared",
+            f"Shared training pool for '{imaging_paradigm}' has been cleared.\n\n"
+            f"Deleted: {n_cells} cell cubes, {n_non} non-cell cubes.\n"
+            f"You can now curate fresh training data or re-merge from per-brain sources."
+        )
+        print(f"[SCI-Connectome] Cleared shared pool: {n_cells} cells, {n_non} non-cells deleted from {shared_dir}")
+
+    def start_training(self):
+        """Start network training with multi-source YAML support.
+
+        Workflow:
+        1. Check for selected YAML sources in the training sources table
+        2. Fall back to single training_data_dir or training_data_path
+        3. Launch training via util_train_model.py with --yaml args
+        4. Optionally runs classification when training completes
         """
         print("[DEBUG] Button clicked: start_training")
-        # Auto-detect training data location
-        training_base = None
-        if self.training_data_dir and self.training_data_dir.exists():
-            training_base = self.training_data_dir
-        elif self.training_data_path.text():
-            training_base = Path(self.training_data_path.text())
-
-        if not training_base or not training_base.exists():
-            QMessageBox.warning(self, "No Training Data",
-                "Training data folder not found.\n\n"
-                "Click 'Create Training Layers', curate some candidates,\n"
-                "then click 'Create Training Dataset' first.")
-            return
-
-        cells_path = training_base / "cells"
-        non_cells_path = training_base / "non_cells"
-
-        # Check for TIFF cubes
-        n_cells = len(list(cells_path.glob("*.tif*"))) if cells_path.exists() else 0
-        n_non_cells = len(list(non_cells_path.glob("*.tif*"))) if non_cells_path.exists() else 0
-
-        if n_cells == 0 or n_non_cells == 0:
-            QMessageBox.warning(self, "Missing Training Data",
-                f"Training data cubes not found:\n"
-                f"  Cells: {n_cells} cubes\n"
-                f"  Non-cells: {n_non_cells} cubes\n\n"
-                f"Click 'Create Training Dataset' first to export cubes.")
-            return
 
         script = SCRIPTS_DIR / "util_train_model.py"
         if not script.exists():
@@ -4935,13 +5943,68 @@ class TuningWidget(QWidget):
                 f"Training script not found:\n{script}")
             return
 
-        # Build command - always train fresh on all accumulated data
-        # This is the proper ML approach: no double-counting from continue-from
-        cmd = [
-            sys.executable, str(script),
-            "--cells", str(cells_path),
-            "--non-cells", str(non_cells_path)
-        ]
+        # --- Strategy 1: Multi-source from training sources table ---
+        yaml_paths = self._get_selected_yaml_paths()
+
+        if yaml_paths:
+            # Count total samples across all selected sources
+            n_cells = 0
+            n_non_cells = 0
+            for yp in yaml_paths:
+                td = yp.parent
+                cells_dir = td / "cells"
+                non_cells_dir = td / "non_cells"
+                n_cells += len(list(cells_dir.glob("*.tif*"))) if cells_dir.exists() else 0
+                n_non_cells += len(list(non_cells_dir.glob("*.tif*"))) if non_cells_dir.exists() else 0
+
+            if n_cells == 0 or n_non_cells == 0:
+                QMessageBox.warning(self, "Missing Training Data",
+                    f"Selected sources contain insufficient data:\n"
+                    f"  Cells: {n_cells} cubes\n"
+                    f"  Non-cells: {n_non_cells} cubes\n\n"
+                    f"Both cells and non-cells are required.")
+                return
+
+            # Build command with multiple --yaml args
+            cmd = [sys.executable, str(script), "--yaml"]
+            cmd.extend([str(yp) for yp in yaml_paths])
+            data_note = f"{len(yaml_paths)} source(s): {n_cells} cells, {n_non_cells} non-cells"
+
+        else:
+            # --- Strategy 2: Fall back to single directory ---
+            training_base = None
+            if self.training_data_dir and self.training_data_dir.exists():
+                training_base = self.training_data_dir
+            elif self.training_data_path.text():
+                training_base = Path(self.training_data_path.text())
+
+            if not training_base or not training_base.exists():
+                QMessageBox.warning(self, "No Training Data",
+                    "No training sources selected and no training data folder found.\n\n"
+                    "Either check sources in the 'Training Data Sources' table,\n"
+                    "or click 'Create Training Layers' and curate candidates first.")
+                return
+
+            cells_path = training_base / "cells"
+            non_cells_path = training_base / "non_cells"
+
+            n_cells = len(list(cells_path.glob("*.tif*"))) if cells_path.exists() else 0
+            n_non_cells = len(list(non_cells_path.glob("*.tif*"))) if non_cells_path.exists() else 0
+
+            if n_cells == 0 or n_non_cells == 0:
+                QMessageBox.warning(self, "Missing Training Data",
+                    f"Training data cubes not found:\n"
+                    f"  Cells: {n_cells} cubes\n"
+                    f"  Non-cells: {n_non_cells} cubes\n\n"
+                    f"Click 'Create Training Dataset' first to export cubes.")
+                return
+
+            cmd = [
+                sys.executable, str(script),
+                "--cells", str(cells_path),
+                "--non-cells", str(non_cells_path)
+            ]
+            data_note = f"1 source: {n_cells} cells, {n_non_cells} non-cells"
 
         # Store current model count before training
         self._models_before_training = self._count_models()
@@ -4949,43 +6012,35 @@ class TuningWidget(QWidget):
         # Check if auto-classify is enabled
         auto_classify = getattr(self, 'auto_classify_after_training', None)
         if auto_classify and auto_classify.isChecked():
-            # Store current detection for later classification
             self._training_detection_exp_id = getattr(self, 'last_run_id', None)
             print(f"[SCI-Connectome] Training started. Will auto-classify detection: {self._training_detection_exp_id}")
 
             self._training_process = subprocess.Popen(cmd)
 
-            # Start a timer to check for training completion
             from qtpy.QtCore import QTimer
             self._training_check_timer = QTimer()
             self._training_check_timer.timeout.connect(self._check_training_complete)
-            self._training_check_timer.start(5000)  # Check every 5 seconds
+            self._training_check_timer.start(5000)
 
-            continue_note = f"Continuing from: {recent_model.name}" if recent_model else "Starting fresh (no prior model)"
             QMessageBox.information(
                 self, "Training Started",
                 f"Training started in background.\n\n"
-                f"Data: {n_cells} cells, {n_non_cells} non-cells\n"
-                f"{continue_note}\n\n"
+                f"Data: {data_note}\n"
+                f"Training fresh on all accumulated data.\n\n"
                 f"Classification will run automatically when training completes.\n"
                 f"You can continue working while training runs."
             )
         else:
-            # Simple training without auto-classify
             subprocess.Popen(cmd)
-
-            continue_note = f"Continuing from: {recent_model.name}" if recent_model else "Starting fresh (no prior model)"
             QMessageBox.information(
                 self, "Training Started",
                 f"Training started in background.\n\n"
-                f"Data: {n_cells} cells, {n_non_cells} non-cells\n"
-                f"{continue_note}\n\n"
+                f"Data: {data_note}\n"
+                f"Training fresh on all accumulated data.\n\n"
                 f"Check the console for progress."
             )
 
-        print(f"[SCI-Connectome] Training started: {n_cells} cells, {n_non_cells} non-cells")
-        if recent_model:
-            print(f"[SCI-Connectome] Continuing from model: {recent_model}")
+        print(f"[SCI-Connectome] Training started: {data_note}")
 
     def _find_most_recent_model(self):
         """Find the most recent model file to continue training from."""
@@ -6996,6 +8051,37 @@ class TuningWidget(QWidget):
             'opacity': 0.2,
             'border_width': 0.1,
             'description': 'Training bucket: confirmed non-cells'
+        },
+
+        # ----------------------------------------------------------------------
+        # PRE-FILTER (atlas-based candidate filtering)
+        # ----------------------------------------------------------------------
+        'prefilter_interior': {
+            'face': 'transparent',
+            'edge': '#00FF00',
+            'symbol': 'o',
+            'size': 14,
+            'opacity': 0.2,
+            'border_width': 0.1,
+            'description': 'Interior candidates (inside brain)'
+        },
+        'prefilter_outside': {
+            'face': 'transparent',
+            'edge': '#FF0000',
+            'symbol': 'x',
+            'size': 14,
+            'opacity': 0.2,
+            'border_width': 0.1,
+            'description': 'Outside brain (meningeal/surface)'
+        },
+        'prefilter_suspicious': {
+            'face': 'transparent',
+            'edge': '#FF00FF',
+            'symbol': 'triangle_up',
+            'size': 14,
+            'opacity': 0.2,
+            'border_width': 0.1,
+            'description': 'Suspicious region (biologically unlikely)'
         },
 
         # ----------------------------------------------------------------------

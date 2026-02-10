@@ -197,6 +197,7 @@ class ColocalizationAnalyzer:
         nuclei_labels: np.ndarray,
         tissue_mask: Optional[np.ndarray] = None,
         dilation_iterations: int = 20,
+        cell_body_dilation: int = 8,
     ) -> float:
         """
         Estimate brain tissue background intensity.
@@ -205,28 +206,45 @@ class ColocalizationAnalyzer:
         extracellular/empty space. This prevents false positives where
         any signal looks "bright" compared to the black background.
 
+        The exclusion zone around each nucleus is dilated by cell_body_dilation
+        to exclude the cytoplasm/cell body, which extends beyond the nucleus
+        boundary and may contain signal fluorescence. Without this, signal
+        from positive cell bodies contaminates the background estimate upward.
+
         Args:
             signal_image: Signal channel (e.g., green/eYFP)
             nuclei_labels: Label image of detected nuclei
             tissue_mask: Optional pre-computed tissue mask
             dilation_iterations: Dilation for tissue mask estimation
+            cell_body_dilation: Dilation of nuclei mask to approximate cell
+                body extent. Excludes cytoplasm from background sampling.
+                Default 8 pixels (~1 cell radius beyond nucleus edge).
 
         Returns:
             Background intensity value (float)
         """
+        ndimage = _get_ndimage()
         self.background_diagnostics = None
 
         # Get tissue mask if not provided
         if tissue_mask is None:
             tissue_mask = self.estimate_tissue_mask(nuclei_labels, dilation_iterations)
 
-        # Get tissue pixels that are OUTSIDE nuclei
-        # (we want background tissue, not the signal-containing cells)
+        # Get tissue pixels that are OUTSIDE the cell body zone
+        # We dilate nuclei by cell_body_dilation to approximate the full cell
+        # body extent (nucleus + cytoplasm), so that signal from positive
+        # cells' cytoplasm doesn't contaminate the background estimate.
         nuclei_mask = nuclei_labels > 0
-        tissue_outside_nuclei = tissue_mask & (~nuclei_mask)
+        if cell_body_dilation > 0:
+            cell_body_mask = ndimage.binary_dilation(
+                nuclei_mask, iterations=cell_body_dilation
+            )
+        else:
+            cell_body_mask = nuclei_mask
+        tissue_outside_cells = tissue_mask & (~cell_body_mask)
 
         # Get intensity values in this region
-        tissue_pixels = signal_image[tissue_outside_nuclei]
+        tissue_pixels = signal_image[tissue_outside_cells]
 
         if len(tissue_pixels) == 0:
             # Fallback: use all tissue
@@ -334,6 +352,9 @@ class ColocalizationAnalyzer:
         background: float,
         method: str = 'fold_change',
         threshold: float = 2.0,
+        signal_image: Optional[np.ndarray] = None,
+        nuclei_labels: Optional[np.ndarray] = None,
+        area_fraction: float = 0.5,
     ):
         """
         Classify each nucleus as positive or negative for signal.
@@ -343,15 +364,27 @@ class ColocalizationAnalyzer:
             background: Background intensity from estimate_background()
             method: Classification method
                 - 'fold_change': positive if mean >= threshold * background
+                - 'area_fraction': positive if >= area_fraction of nucleus
+                  pixels exceed background * threshold. Requires signal_image
+                  and nuclei_labels. This is the most robust method as it
+                  checks spatial extent of signal within each nucleus.
                 - 'absolute': positive if mean >= threshold (absolute value)
                 - 'percentile': positive if mean >= threshold percentile of all nuclei
-            threshold: Threshold value (interpretation depends on method)
+            threshold: Threshold value (interpretation depends on method).
+                For area_fraction: fold-change each pixel must exceed.
+            signal_image: Signal channel image (required for area_fraction method)
+            nuclei_labels: Label image (required for area_fraction method)
+            area_fraction: Fraction of nucleus area that must exceed the
+                threshold to be classified as positive (default 0.5 = 50%).
+                Only used with method='area_fraction'.
 
         Returns:
             DataFrame with added columns:
             - background: background value used
             - fold_change: mean_intensity / background
             - is_positive: True/False classification
+            - positive_pixel_fraction: (area_fraction method only) fraction
+              of nucleus pixels that exceeded threshold
         """
         pd = _get_pandas()
         df = measurements.copy()
@@ -365,6 +398,25 @@ class ColocalizationAnalyzer:
         # Classify based on method
         if method == 'fold_change':
             df['is_positive'] = df['fold_change'] >= threshold
+
+        elif method == 'area_fraction':
+            if signal_image is None or nuclei_labels is None:
+                raise ValueError(
+                    "area_fraction method requires signal_image and nuclei_labels"
+                )
+
+            intensity_cutoff = background * threshold
+            positive_fractions = []
+
+            for label_id in df['label']:
+                mask = nuclei_labels == label_id
+                pixel_values = signal_image[mask]
+                n_above = np.sum(pixel_values >= intensity_cutoff)
+                frac = n_above / len(pixel_values) if len(pixel_values) > 0 else 0.0
+                positive_fractions.append(float(frac))
+
+            df['positive_pixel_fraction'] = positive_fractions
+            df['is_positive'] = df['positive_pixel_fraction'] >= area_fraction
 
         elif method == 'absolute':
             df['is_positive'] = df['mean_intensity'] >= threshold
@@ -427,6 +479,8 @@ def analyze_colocalization(
     background_percentile: float = 10.0,
     threshold_method: str = 'fold_change',
     threshold_value: float = 2.0,
+    cell_body_dilation: int = 8,
+    area_fraction: float = 0.5,
 ) -> Tuple[Any, Dict[str, Any]]:  # Returns (DataFrame, summary_dict)
     """
     Convenience function for complete colocalization analysis.
@@ -437,7 +491,13 @@ def analyze_colocalization(
         background_method: Method for background estimation
         background_percentile: Percentile for background (if using percentile method)
         threshold_method: Method for positive/negative classification
+            'fold_change': mean intensity >= threshold * background
+            'area_fraction': >= area_fraction of nucleus pixels exceed threshold * background
         threshold_value: Threshold for classification
+        cell_body_dilation: Pixels to dilate nuclei when excluding from background
+            sampling. Prevents cell body signal from contaminating background.
+        area_fraction: For area_fraction method, fraction of nucleus that must
+            exceed threshold to be positive (default 0.5 = 50%).
 
     Returns:
         Tuple of (measurements_df, summary_dict)
@@ -447,12 +507,18 @@ def analyze_colocalization(
         background_percentile=background_percentile,
     )
 
-    background = analyzer.estimate_background(signal_image, nuclei_labels)
+    background = analyzer.estimate_background(
+        signal_image, nuclei_labels,
+        cell_body_dilation=cell_body_dilation,
+    )
     measurements = analyzer.measure_nuclei_intensities(signal_image, nuclei_labels)
     classified = analyzer.classify_positive_negative(
         measurements, background,
         method=threshold_method,
-        threshold=threshold_value
+        threshold=threshold_value,
+        signal_image=signal_image if threshold_method == 'area_fraction' else None,
+        nuclei_labels=nuclei_labels if threshold_method == 'area_fraction' else None,
+        area_fraction=area_fraction,
     )
     summary = analyzer.get_summary_statistics(classified)
 
