@@ -53,6 +53,7 @@ class BrainSliceWidget(QWidget):
         self._coloc_summary = None
         self._background_diagnostics = None
         self._tissue_pixels = None
+        self._coloc_background_surface = None
         self._diag_canvas = None
 
         # Tracker
@@ -271,42 +272,154 @@ class BrainSliceWidget(QWidget):
         layout = QVBoxLayout()
         widget.setLayout(layout)
 
-        # Model selection
-        model_group = QGroupBox("StarDist Model")
-        model_layout = QVBoxLayout()
+        # ── Backend & Model Selection ──
+        backend_group = QGroupBox("Detection Backend")
+        backend_layout = QVBoxLayout()
+
+        backend_row = QHBoxLayout()
+        backend_row.addWidget(QLabel("Backend:"))
+        self.backend_combo = QComboBox()
+        self.backend_combo.addItems(['StarDist', 'Cellpose'])
+        self.backend_combo.currentTextChanged.connect(self._on_backend_changed)
+        backend_row.addWidget(self.backend_combo)
+        backend_layout.addLayout(backend_row)
+
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("Model:"))
         self.model_combo = QComboBox()
         self.model_combo.addItems([
             '2D_versatile_fluo',
             '2D_versatile_he',
             '2D_paper_dsb2018',
         ])
-        model_layout.addWidget(self.model_combo)
-        model_group.setLayout(model_layout)
-        layout.addWidget(model_group)
+        model_row.addWidget(self.model_combo)
+        backend_layout.addLayout(model_row)
 
-        # Detection parameters
+        backend_group.setLayout(backend_layout)
+        layout.addWidget(backend_group)
+
+        # ── Preprocessing ──
+        preproc_group = QGroupBox("Preprocessing")
+        preproc_layout = QVBoxLayout()
+
+        # Background subtraction
+        bgsub_row = QHBoxLayout()
+        self.preproc_bgsub_check = QCheckBox("Background subtraction")
+        self.preproc_bgsub_check.setToolTip(
+            "Subtract slowly-varying illumination. Helps detect dim nuclei\n"
+            "in unevenly-lit regions. Recommended for most images."
+        )
+        bgsub_row.addWidget(self.preproc_bgsub_check)
+        bgsub_row.addWidget(QLabel("sigma:"))
+        self.preproc_bgsub_sigma_spin = QDoubleSpinBox()
+        self.preproc_bgsub_sigma_spin.setRange(10.0, 200.0)
+        self.preproc_bgsub_sigma_spin.setSingleStep(10.0)
+        self.preproc_bgsub_sigma_spin.setValue(50.0)
+        bgsub_row.addWidget(self.preproc_bgsub_sigma_spin)
+        preproc_layout.addLayout(bgsub_row)
+
+        # CLAHE
+        clahe_row = QHBoxLayout()
+        self.preproc_clahe_check = QCheckBox("CLAHE")
+        self.preproc_clahe_check.setToolTip(
+            "Contrast Limited Adaptive Histogram Equalization.\n"
+            "Enhances local contrast so dim nuclei near bright ones become visible."
+        )
+        clahe_row.addWidget(self.preproc_clahe_check)
+        clahe_row.addWidget(QLabel("clip:"))
+        self.preproc_clahe_clip_spin = QDoubleSpinBox()
+        self.preproc_clahe_clip_spin.setRange(0.005, 0.10)
+        self.preproc_clahe_clip_spin.setSingleStep(0.005)
+        self.preproc_clahe_clip_spin.setDecimals(3)
+        self.preproc_clahe_clip_spin.setValue(0.02)
+        clahe_row.addWidget(self.preproc_clahe_clip_spin)
+        preproc_layout.addLayout(clahe_row)
+
+        # Gaussian blur
+        gauss_row = QHBoxLayout()
+        self.preproc_gauss_check = QCheckBox("Gaussian blur")
+        self.preproc_gauss_check.setToolTip(
+            "Light denoising. Smooths speckle noise and small debris.\n"
+            "sigma=1.0 is light, 2.0 is moderate."
+        )
+        gauss_row.addWidget(self.preproc_gauss_check)
+        gauss_row.addWidget(QLabel("sigma:"))
+        self.preproc_gauss_sigma_spin = QDoubleSpinBox()
+        self.preproc_gauss_sigma_spin.setRange(0.5, 5.0)
+        self.preproc_gauss_sigma_spin.setSingleStep(0.5)
+        self.preproc_gauss_sigma_spin.setValue(1.0)
+        gauss_row.addWidget(self.preproc_gauss_sigma_spin)
+        preproc_layout.addLayout(gauss_row)
+
+        # Preview button
+        self.preproc_preview_btn = QPushButton("Preview Preprocessing")
+        self.preproc_preview_btn.setToolTip("Show preprocessing result in napari")
+        self.preproc_preview_btn.clicked.connect(self._preview_preprocessing)
+        self.preproc_preview_btn.setEnabled(False)
+        preproc_layout.addWidget(self.preproc_preview_btn)
+
+        preproc_group.setLayout(preproc_layout)
+        layout.addWidget(preproc_group)
+
+        # ── Detection Parameters ──
         param_group = QGroupBox("Detection Parameters")
         param_layout = QVBoxLayout()
 
-        # Probability threshold
+        # StarDist parameters
+        self.stardist_params_widget = QWidget()
+        stardist_layout = QVBoxLayout()
+        stardist_layout.setContentsMargins(0, 0, 0, 0)
+
         prob_layout = QHBoxLayout()
         prob_layout.addWidget(QLabel("Prob Threshold:"))
         self.prob_spin = QDoubleSpinBox()
         self.prob_spin.setRange(0.0, 1.0)
         self.prob_spin.setSingleStep(0.05)
         self.prob_spin.setValue(0.5)
+        self.prob_spin.setToolTip("Lower = more detections (more false positives)")
         prob_layout.addWidget(self.prob_spin)
-        param_layout.addLayout(prob_layout)
+        stardist_layout.addLayout(prob_layout)
 
-        # NMS threshold
         nms_layout = QHBoxLayout()
         nms_layout.addWidget(QLabel("NMS Threshold:"))
         self.nms_spin = QDoubleSpinBox()
         self.nms_spin.setRange(0.0, 1.0)
         self.nms_spin.setSingleStep(0.05)
         self.nms_spin.setValue(0.4)
+        self.nms_spin.setToolTip("Controls overlap tolerance between adjacent nuclei")
         nms_layout.addWidget(self.nms_spin)
-        param_layout.addLayout(nms_layout)
+        stardist_layout.addLayout(nms_layout)
+
+        self.stardist_params_widget.setLayout(stardist_layout)
+        param_layout.addWidget(self.stardist_params_widget)
+
+        # Cellpose parameters (hidden by default)
+        self.cellpose_params_widget = QWidget()
+        cellpose_layout = QVBoxLayout()
+        cellpose_layout.setContentsMargins(0, 0, 0, 0)
+
+        diam_layout = QHBoxLayout()
+        diam_layout.addWidget(QLabel("Diameter:"))
+        self.diameter_spin = QSpinBox()
+        self.diameter_spin.setRange(0, 500)
+        self.diameter_spin.setValue(30)
+        self.diameter_spin.setToolTip(
+            "Expected nucleus diameter in pixels. 0 = auto-estimate.\n"
+            "Typical: 10-30 for confocal, 30-80 for widefield."
+        )
+        diam_layout.addWidget(self.diameter_spin)
+        cellpose_layout.addLayout(diam_layout)
+
+        self.cellpose_params_widget.setLayout(cellpose_layout)
+        self.cellpose_params_widget.setVisible(False)
+        param_layout.addWidget(self.cellpose_params_widget)
+
+        param_group.setLayout(param_layout)
+        layout.addWidget(param_group)
+
+        # ── Post-Detection Filters ──
+        filter_group = QGroupBox("Post-Detection Filters")
+        filter_layout = QVBoxLayout()
 
         # Size filtering
         size_layout = QHBoxLayout()
@@ -320,23 +433,107 @@ class BrainSliceWidget(QWidget):
         size_layout.addWidget(self.min_area_spin)
         size_layout.addWidget(QLabel("-"))
         size_layout.addWidget(self.max_area_spin)
-        param_layout.addLayout(size_layout)
+        filter_layout.addLayout(size_layout)
 
-        param_group.setLayout(param_layout)
-        layout.addWidget(param_group)
+        # Solidity filter
+        solidity_layout = QHBoxLayout()
+        solidity_layout.addWidget(QLabel("Min Solidity:"))
+        self.min_solidity_spin = QDoubleSpinBox()
+        self.min_solidity_spin.setRange(0.0, 1.0)
+        self.min_solidity_spin.setSingleStep(0.05)
+        self.min_solidity_spin.setValue(0.0)
+        self.min_solidity_spin.setToolTip(
+            "Solidity = area / convex_hull_area.\n"
+            "Debris/artifacts typically < 0.7, real nuclei > 0.8.\n"
+            "0 = no filtering."
+        )
+        solidity_layout.addWidget(self.min_solidity_spin)
+        filter_layout.addLayout(solidity_layout)
 
-        # Run button
+        # Border-touching removal
+        self.remove_border_check = QCheckBox("Remove border-touching nuclei")
+        self.remove_border_check.setToolTip(
+            "Remove partial nuclei that touch image edges.\n"
+            "These have incorrect area and intensity measurements."
+        )
+        filter_layout.addWidget(self.remove_border_check)
+
+        filter_group.setLayout(filter_layout)
+        layout.addWidget(filter_group)
+
+        # ── Run Button ──
         self.detect_btn = QPushButton("Run Detection")
         self.detect_btn.clicked.connect(self._run_detection)
         self.detect_btn.setEnabled(False)
         layout.addWidget(self.detect_btn)
 
-        # Results
+        # ── Results & Metrics ──
         self.detect_result_label = QLabel("")
         layout.addWidget(self.detect_result_label)
 
+        self.detect_metrics_label = QLabel("")
+        self.detect_metrics_label.setWordWrap(True)
+        self.detect_metrics_label.setStyleSheet("color: #888888; font-size: 11px;")
+        layout.addWidget(self.detect_metrics_label)
+
         layout.addStretch()
         return widget
+
+    def _on_backend_changed(self, backend_text: str):
+        """Toggle visibility of backend-specific parameters."""
+        is_stardist = backend_text == 'StarDist'
+        self.stardist_params_widget.setVisible(is_stardist)
+        self.cellpose_params_widget.setVisible(not is_stardist)
+
+        # Update model list
+        self.model_combo.clear()
+        if is_stardist:
+            self.model_combo.addItems([
+                '2D_versatile_fluo',
+                '2D_versatile_he',
+                '2D_paper_dsb2018',
+            ])
+        else:
+            self.model_combo.addItems([
+                'nuclei',
+                'cyto',
+                'cyto2',
+                'cyto3',
+            ])
+
+    def _on_thresh_method_changed(self, method: str):
+        """Toggle visibility of area_fraction parameter."""
+        self.area_fraction_widget.setVisible(method == 'area_fraction')
+
+    def _preview_preprocessing(self):
+        """Show preprocessing effect on current nuclear channel in napari."""
+        image = self._get_current_slice(self.red_channel)
+        if image is None:
+            return
+
+        from ..core.detection import preprocess_for_detection
+
+        preprocessed = preprocess_for_detection(
+            image,
+            background_subtraction=self.preproc_bgsub_check.isChecked(),
+            bg_sigma=self.preproc_bgsub_sigma_spin.value(),
+            clahe=self.preproc_clahe_check.isChecked(),
+            clahe_clip_limit=self.preproc_clahe_clip_spin.value(),
+            gaussian_sigma=(self.preproc_gauss_sigma_spin.value()
+                            if self.preproc_gauss_check.isChecked() else 0.0),
+        )
+
+        # Remove old preview layer
+        for layer in list(self.viewer.layers):
+            if 'Preprocessed' in layer.name:
+                self.viewer.layers.remove(layer)
+
+        self.viewer.add_image(
+            preprocessed,
+            name="Preprocessed (nuclear)",
+            colormap='gray',
+            blending='additive',
+        )
 
     def _create_coloc_tab(self) -> QWidget:
         """Create the Colocalize tab for intensity measurement."""
@@ -375,6 +572,25 @@ class BrainSliceWidget(QWidget):
         dilation_layout.addWidget(self.bg_dilation_spin)
         bg_layout.addLayout(dilation_layout)
 
+        # Local background estimation
+        self.bg_local_check = QCheckBox("Local background estimation")
+        self.bg_local_check.setToolTip(
+            "Estimate background spatially across the tissue instead of\n"
+            "a single tissue-wide value. Recommended when background\n"
+            "varies across the section (e.g., uneven illumination)."
+        )
+        bg_layout.addWidget(self.bg_local_check)
+
+        local_bg_row = QHBoxLayout()
+        local_bg_row.addWidget(QLabel("Block size:"))
+        self.bg_block_size_spin = QSpinBox()
+        self.bg_block_size_spin.setRange(64, 1024)
+        self.bg_block_size_spin.setSingleStep(64)
+        self.bg_block_size_spin.setValue(256)
+        self.bg_block_size_spin.setToolTip("Size of spatial blocks for local estimation (pixels)")
+        local_bg_row.addWidget(self.bg_block_size_spin)
+        bg_layout.addLayout(local_bg_row)
+
         bg_group.setLayout(bg_layout)
         layout.addWidget(bg_group)
 
@@ -385,7 +601,8 @@ class BrainSliceWidget(QWidget):
         thresh_method_layout = QHBoxLayout()
         thresh_method_layout.addWidget(QLabel("Method:"))
         self.thresh_method_combo = QComboBox()
-        self.thresh_method_combo.addItems(['fold_change', 'absolute', 'percentile'])
+        self.thresh_method_combo.addItems(['fold_change', 'area_fraction', 'absolute', 'percentile'])
+        self.thresh_method_combo.currentTextChanged.connect(self._on_thresh_method_changed)
         thresh_method_layout.addWidget(self.thresh_method_combo)
         thresh_layout.addLayout(thresh_method_layout)
 
@@ -397,6 +614,23 @@ class BrainSliceWidget(QWidget):
         self.thresh_value_spin.setSingleStep(0.5)
         thresh_value_layout.addWidget(self.thresh_value_spin)
         thresh_layout.addLayout(thresh_value_layout)
+
+        # Area fraction parameter (visible only when area_fraction method selected)
+        area_frac_layout = QHBoxLayout()
+        area_frac_layout.addWidget(QLabel("Area Fraction:"))
+        self.area_fraction_spin = QDoubleSpinBox()
+        self.area_fraction_spin.setRange(0.1, 1.0)
+        self.area_fraction_spin.setSingleStep(0.05)
+        self.area_fraction_spin.setValue(0.5)
+        self.area_fraction_spin.setToolTip(
+            "Fraction of nucleus pixels that must exceed threshold.\n"
+            "0.5 = at least 50% of pixels must be bright enough."
+        )
+        area_frac_layout.addWidget(self.area_fraction_spin)
+        self.area_fraction_widget = QWidget()
+        self.area_fraction_widget.setLayout(area_frac_layout)
+        self.area_fraction_widget.setVisible(False)
+        thresh_layout.addWidget(self.area_fraction_widget)
 
         thresh_group.setLayout(thresh_layout)
         layout.addWidget(thresh_group)
@@ -481,6 +715,7 @@ class BrainSliceWidget(QWidget):
             'Overlay Image',
             'Annotated Overlay',
             'Background Mask',
+            'Background Surface',
             'GMM Diagnostic',
         ])
         self.diag_plot_combo.currentIndexChanged.connect(self._update_diagnostic_plot)
@@ -749,8 +984,9 @@ class BrainSliceWidget(QWidget):
                 f"Channels: {metadata.get('channels', 'Unknown')}"
             )
 
-            # Enable detection
+            # Enable detection and preprocessing preview
             self.detect_btn.setEnabled(True)
+            self.preproc_preview_btn.setEnabled(True)
 
             # Notify inset widget that base is loaded
             self.inset_widget.on_base_loaded()
@@ -874,8 +1110,9 @@ class BrainSliceWidget(QWidget):
                 f"Channels: {metadata.get('channels', 'Unknown')}"
             )
 
-            # Enable detection
+            # Enable detection and preprocessing preview
             self.detect_btn.setEnabled(True)
+            self.preproc_preview_btn.setEnabled(True)
 
             # Notify inset widget that base is loaded
             self.inset_widget.on_base_loaded()
@@ -892,14 +1129,32 @@ class BrainSliceWidget(QWidget):
 
         self.status_label.setText("Running detection...")
         self.detect_btn.setEnabled(False)
+        self.detect_metrics_label.setText("")
 
+        # Build params dict with all new controls
+        backend = self.backend_combo.currentText().lower()
         params = {
+            'backend': backend,
             'model': self.model_combo.currentText(),
+            # StarDist params
             'prob_thresh': self.prob_spin.value(),
             'nms_thresh': self.nms_spin.value(),
+            # Cellpose params
+            'diameter': self.diameter_spin.value(),
+            # Preprocessing
+            'background_subtraction': self.preproc_bgsub_check.isChecked(),
+            'bg_sigma': self.preproc_bgsub_sigma_spin.value(),
+            'clahe': self.preproc_clahe_check.isChecked(),
+            'clahe_clip_limit': self.preproc_clahe_clip_spin.value(),
+            'gaussian_sigma': (self.preproc_gauss_sigma_spin.value()
+                               if self.preproc_gauss_check.isChecked() else 0.0),
+            # Filters
+            'filter_size': True,
             'min_area': self.min_area_spin.value(),
             'max_area': self.max_area_spin.value(),
-            'filter_size': True,
+            'min_solidity': self.min_solidity_spin.value(),
+            'remove_border': self.remove_border_check.isChecked(),
+            'auto_n_tiles': True,
         }
 
         # Log to tracker
@@ -1050,7 +1305,7 @@ class BrainSliceWidget(QWidget):
         """Handle detection progress updates."""
         self.status_label.setText(message)
 
-    def _on_detect_finished(self, success: bool, message: str, count: int, labels):
+    def _on_detect_finished(self, success: bool, message: str, count: int, labels, metrics=None):
         """Handle detection completion."""
         self.detect_btn.setEnabled(True)
 
@@ -1078,13 +1333,69 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(message)
             self.detect_result_label.setText(f"Detected {count} nuclei")
 
+            # Display detection metrics
+            if metrics:
+                self._display_detection_metrics(metrics)
+
             # Enable colocalization
             self.coloc_btn.setEnabled(True)
 
         else:
             self.status_label.setText(f"Error: {message}")
+            self.detect_metrics_label.setText("")
             if self.tracker and self.last_run_id:
                 self.tracker.update_status(self.last_run_id, status='failed')
+
+    def _display_detection_metrics(self, metrics: dict):
+        """Display detection metrics in the UI."""
+        lines = []
+        raw = metrics.get('raw_count', 0)
+        filtered = metrics.get('filtered_count', 0)
+
+        if raw != filtered:
+            lines.append(f"Raw detections: {raw} -> Filtered: {filtered}")
+            removed_parts = []
+            for key, label in [
+                ('removed_by_size', 'size'),
+                ('removed_by_border', 'border'),
+                ('removed_by_confidence', 'confidence'),
+                ('removed_by_morphology', 'morphology'),
+            ]:
+                n = metrics.get(key, 0)
+                if n > 0:
+                    removed_parts.append(f"{label}: -{n}")
+            if removed_parts:
+                lines.append("  Removed: " + ", ".join(removed_parts))
+
+        # Size stats
+        size_stats = metrics.get('size_stats')
+        if size_stats:
+            lines.append(
+                f"Size: mean={size_stats['mean']:.0f}px  "
+                f"median={size_stats['median']:.0f}px  "
+                f"std={size_stats['std']:.0f}px"
+            )
+
+        # Confidence stats
+        conf_stats = metrics.get('confidence_stats')
+        if conf_stats:
+            lines.append(
+                f"Confidence: mean={conf_stats['mean']:.2f}  "
+                f"min={conf_stats['min']:.2f}"
+            )
+
+        # Backend and preprocessing info
+        backend = metrics.get('backend', 'stardist')
+        preproc = metrics.get('preprocessing', {})
+        if preproc:
+            active = [k for k, v in preproc.items()
+                      if v and k not in ('bg_sigma', 'clahe_clip_limit', 'gaussian_sigma')]
+            if active:
+                lines.append(f"Backend: {backend} | Preprocess: {', '.join(active)}")
+        else:
+            lines.append(f"Backend: {backend}")
+
+        self.detect_metrics_label.setText("\n".join(lines))
 
     def _run_colocalization(self):
         """Run colocalization analysis."""
@@ -1107,6 +1418,9 @@ class BrainSliceWidget(QWidget):
             'threshold_method': self.thresh_method_combo.currentText(),
             'threshold_value': self.thresh_value_spin.value(),
             'dilation_iterations': self.bg_dilation_spin.value(),
+            'area_fraction': self.area_fraction_spin.value(),
+            'use_local_background': self.bg_local_check.isChecked(),
+            'bg_block_size': self.bg_block_size_spin.value(),
         }
 
         # Log to tracker
@@ -1139,11 +1453,22 @@ class BrainSliceWidget(QWidget):
             self.coloc_btn.setEnabled(True)
             return
 
-        self.coloc_worker = ColocalizationWorker(
-            signal_image,
-            labels,
-            params,
-        )
+        # When using area_fraction method, pass signal_image and labels to worker
+        # so it can forward them to classify_positive_negative
+        if params['threshold_method'] == 'area_fraction':
+            self.coloc_worker = ColocalizationWorker(
+                signal_image,
+                labels,
+                params,
+                signal_image_for_area=signal_image,
+                labels_for_area=labels,
+            )
+        else:
+            self.coloc_worker = ColocalizationWorker(
+                signal_image,
+                labels,
+                params,
+            )
         self.coloc_worker.progress.connect(self._on_coloc_progress)
         self.coloc_worker.finished.connect(self._on_coloc_finished)
         self.coloc_worker.start()
@@ -1168,6 +1493,7 @@ class BrainSliceWidget(QWidget):
             self._coloc_threshold = summary.get('threshold_value', self.thresh_value_spin.value())
             self._background_diagnostics = getattr(self.coloc_worker, 'background_diagnostics', None)
             self._tissue_pixels = getattr(self.coloc_worker, 'tissue_pixels', None)
+            self._coloc_background_surface = getattr(self.coloc_worker, 'background_surface', None)
             self._coloc_summary = summary
 
             # Auto-save measurements CSV alongside the image
@@ -1274,6 +1600,7 @@ class BrainSliceWidget(QWidget):
             create_overlay_image,
             create_annotated_overlay,
             create_background_mask_overlay,
+            create_background_surface_plot,
             create_fold_change_histogram,
             create_intensity_scatter,
             create_gmm_diagnostic,
@@ -1319,6 +1646,13 @@ class BrainSliceWidget(QWidget):
             elif plot_type == 'GMM Diagnostic':
                 if self._tissue_pixels is not None and self._background_diagnostics is not None:
                     fig = create_gmm_diagnostic(self._tissue_pixels, self._background_diagnostics)
+                else:
+                    return
+            elif plot_type == 'Background Surface':
+                bg_surface = getattr(self, '_coloc_background_surface', None)
+                if bg_surface is not None:
+                    labels = self._get_current_slice(self.nuclei_labels)
+                    fig = create_background_surface_plot(bg_surface, labels)
                 else:
                     return
             else:

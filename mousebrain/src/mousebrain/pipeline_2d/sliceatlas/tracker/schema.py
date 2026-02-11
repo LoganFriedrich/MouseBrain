@@ -50,6 +50,12 @@ CSV_COLUMNS = [
     "det_min_area",
     "det_max_area",
     "det_nuclei_found",
+    "det_backend",  # 'stardist' or 'cellpose'
+    "det_preprocessing",  # JSON string of preprocessing params used
+    "det_raw_count",  # count before any filtering
+    "det_removed_by_size",  # count removed by size filter
+    "det_removed_by_border",  # count removed by border filter
+    "det_removed_by_morphology",  # count removed by morphology filter
 
     # Colocalization parameters
     "coloc_signal_channel",  # Which channel to measure (e.g., "green", 1)
@@ -96,7 +102,9 @@ REGISTRATION_COLUMNS = [
 
 DETECTION_COLUMNS = [
     "det_channel", "det_model", "det_prob_thresh", "det_nms_thresh",
-    "det_scale", "det_min_area", "det_max_area", "det_nuclei_found"
+    "det_scale", "det_min_area", "det_max_area", "det_nuclei_found",
+    "det_backend", "det_preprocessing", "det_raw_count",
+    "det_removed_by_size", "det_removed_by_border", "det_removed_by_morphology"
 ]
 
 COLOCALIZATION_COLUMNS = [

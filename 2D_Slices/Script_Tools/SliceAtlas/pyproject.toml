@@ -39,6 +39,7 @@ dependencies = [
 
 [project.optional-dependencies]
 nd2 = ["nd2"]
+cellpose = ["cellpose>=3.0"]
 alignment = [
     "DeepSlice",
     "SimpleITK-SimpleElastix",
@@ -47,6 +48,7 @@ all = [
     "nd2",
     "aicsimageio",
     "tensorflow>=2.10",
+    "cellpose>=3.0",
     "DeepSlice",
     "SimpleITK-SimpleElastix",
 ]

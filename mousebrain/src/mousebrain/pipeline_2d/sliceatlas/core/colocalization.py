@@ -5,7 +5,7 @@ Measures signal intensity in detected nuclei and classifies as positive/negative
 based on comparison to tissue background.
 
 Usage:
-    from brainslice.core.colocalization import ColocalizationAnalyzer
+    from mousebrain.pipeline_2d.sliceatlas.core.colocalization import ColocalizationAnalyzer
 
     analyzer = ColocalizationAnalyzer()
     background = analyzer.estimate_background(green_channel, nuclei_labels)
@@ -286,6 +286,133 @@ class ColocalizationAnalyzer:
 
         return float(background)
 
+    # ══════════════════════════════════════════════════════════════════════
+    # STEP 2b (optional): Local/regional background estimation
+    # ══════════════════════════════════════════════════════════════════════
+
+    def estimate_local_background(
+        self,
+        signal_image: np.ndarray,
+        nuclei_labels: np.ndarray,
+        tissue_mask: Optional[np.ndarray] = None,
+        dilation_iterations: int = 20,
+        cell_body_dilation: int = 8,
+        block_size: int = 256,
+        min_tissue_pixels: int = 100,
+    ) -> np.ndarray:
+        """
+        Estimate spatially-varying background across the tissue.
+
+        Divides the tissue into spatial blocks, estimates background per
+        block, then interpolates to produce a smooth background surface.
+        This handles the known limitation of tissue-wide background:
+        when autofluorescence varies spatially (e.g., cortex vs hippocampus),
+        a single background value produces systematic errors.
+
+        Args:
+            signal_image: Signal channel image
+            nuclei_labels: Label image from detection
+            tissue_mask: Optional pre-computed tissue mask
+            dilation_iterations: For tissue mask estimation
+            cell_body_dilation: For excluding cell bodies from background
+            block_size: Size of spatial blocks in pixels
+            min_tissue_pixels: Minimum tissue pixels per block for a valid estimate
+
+        Returns:
+            2D array (same shape as signal_image) with local background values.
+            Pixels outside tissue get the nearest block's estimate.
+        """
+        ndimage = _get_ndimage()
+
+        if tissue_mask is None:
+            tissue_mask = self.estimate_tissue_mask(nuclei_labels, dilation_iterations)
+
+        # Build cell body exclusion mask
+        nuclei_mask = nuclei_labels > 0
+        if cell_body_dilation > 0:
+            cell_body_mask = ndimage.binary_dilation(nuclei_mask, iterations=cell_body_dilation)
+        else:
+            cell_body_mask = nuclei_mask
+        bg_sample_mask = tissue_mask & (~cell_body_mask)
+
+        h, w = signal_image.shape
+        # Grid of block centers
+        cy_list = list(range(block_size // 2, h, block_size))
+        cx_list = list(range(block_size // 2, w, block_size))
+
+        points = []  # (y, x) centers with valid estimates
+        values = []  # background value at each center
+
+        for cy in cy_list:
+            for cx in cx_list:
+                # Block bounds
+                y0 = max(0, cy - block_size // 2)
+                y1 = min(h, cy + block_size // 2)
+                x0 = max(0, cx - block_size // 2)
+                x1 = min(w, cx + block_size // 2)
+
+                block_mask = bg_sample_mask[y0:y1, x0:x1]
+                block_pixels = signal_image[y0:y1, x0:x1][block_mask]
+
+                if len(block_pixels) < min_tissue_pixels:
+                    continue
+
+                # Estimate background for this block using configured method
+                if self.background_method == 'gmm' and len(block_pixels) >= 100:
+                    bg_val = self._estimate_background_gmm(block_pixels)
+                elif self.background_method == 'percentile' or (self.background_method == 'gmm' and len(block_pixels) < 100):
+                    bg_val = float(np.percentile(block_pixels, self.background_percentile))
+                elif self.background_method == 'mode':
+                    hist, bin_edges = np.histogram(block_pixels, bins=256)
+                    mode_idx = np.argmax(hist)
+                    bg_val = float((bin_edges[mode_idx] + bin_edges[mode_idx + 1]) / 2)
+                elif self.background_method == 'mean':
+                    cutoff = np.percentile(block_pixels, 95)
+                    bg_val = float(np.mean(block_pixels[block_pixels < cutoff]))
+                else:
+                    bg_val = float(np.percentile(block_pixels, self.background_percentile))
+
+                points.append((cy, cx))
+                values.append(bg_val)
+
+        if len(points) == 0:
+            # No valid blocks — fall back to global estimate
+            global_bg = self.estimate_background(
+                signal_image, nuclei_labels, tissue_mask,
+                dilation_iterations, cell_body_dilation)
+            return np.full(signal_image.shape, global_bg, dtype=np.float32)
+
+        if len(points) == 1:
+            # Only one valid block — uniform background
+            return np.full(signal_image.shape, values[0], dtype=np.float32)
+
+        # Interpolate between block centers to create smooth surface
+        from scipy.interpolate import griddata
+
+        points_arr = np.array(points)
+        values_arr = np.array(values)
+
+        # Create coordinate grid for full image
+        yy, xx = np.mgrid[0:h, 0:w]
+        grid_coords = np.column_stack([yy.ravel(), xx.ravel()])
+
+        # Interpolate (linear with nearest for extrapolation)
+        bg_surface = griddata(
+            points_arr, values_arr, grid_coords,
+            method='linear', fill_value=np.nan,
+        ).reshape(h, w)
+
+        # Fill NaN regions (outside convex hull) with nearest neighbor
+        nan_mask = np.isnan(bg_surface)
+        if nan_mask.any():
+            bg_nearest = griddata(
+                points_arr, values_arr, grid_coords,
+                method='nearest',
+            ).reshape(h, w)
+            bg_surface[nan_mask] = bg_nearest[nan_mask]
+
+        return bg_surface.astype(np.float32)
+
     def measure_nuclei_intensities(
         self,
         signal_image: np.ndarray,
@@ -349,7 +476,7 @@ class ColocalizationAnalyzer:
     def classify_positive_negative(
         self,
         measurements,  # DataFrame
-        background: float,
+        background,  # float or 2D ndarray (from estimate_local_background)
         method: str = 'fold_change',
         threshold: float = 2.0,
         signal_image: Optional[np.ndarray] = None,
@@ -361,7 +488,10 @@ class ColocalizationAnalyzer:
 
         Args:
             measurements: DataFrame from measure_nuclei_intensities()
-            background: Background intensity from estimate_background()
+            background: Background intensity — either a scalar float from
+                estimate_background() or a 2D array from estimate_local_background().
+                When 2D, each nucleus gets its own background value looked up
+                at its centroid position.
             method: Classification method
                 - 'fold_change': positive if mean >= threshold * background
                 - 'area_fraction': positive if >= area_fraction of nucleus
@@ -380,7 +510,7 @@ class ColocalizationAnalyzer:
 
         Returns:
             DataFrame with added columns:
-            - background: background value used
+            - background: background value used (per-nucleus if local)
             - fold_change: mean_intensity / background
             - is_positive: True/False classification
             - positive_pixel_fraction: (area_fraction method only) fraction
@@ -389,11 +519,21 @@ class ColocalizationAnalyzer:
         pd = _get_pandas()
         df = measurements.copy()
 
-        df['background'] = background
-
-        # Calculate fold change (even if not using it for classification)
-        # Add small epsilon to avoid division by zero
-        df['fold_change'] = df['mean_intensity'] / (background + 1e-10)
+        # Handle 2D background surface (from estimate_local_background)
+        if isinstance(background, np.ndarray) and background.ndim == 2:
+            # Look up per-nucleus background at each centroid
+            per_nucleus_bg = []
+            h, w = background.shape
+            for _, row in df.iterrows():
+                y = int(np.clip(round(row['centroid_y']), 0, h - 1))
+                x = int(np.clip(round(row['centroid_x']), 0, w - 1))
+                per_nucleus_bg.append(float(background[y, x]))
+            df['background'] = per_nucleus_bg
+            df['fold_change'] = df['mean_intensity'] / (df['background'] + 1e-10)
+        else:
+            # Scalar background (existing behavior)
+            df['background'] = float(background)
+            df['fold_change'] = df['mean_intensity'] / (float(background) + 1e-10)
 
         # Classify based on method
         if method == 'fold_change':
@@ -405,12 +545,15 @@ class ColocalizationAnalyzer:
                     "area_fraction method requires signal_image and nuclei_labels"
                 )
 
-            intensity_cutoff = background * threshold
             positive_fractions = []
 
-            for label_id in df['label']:
+            for idx, row in df.iterrows():
+                label_id = row['label']
                 mask = nuclei_labels == label_id
                 pixel_values = signal_image[mask]
+                # Use per-nucleus background for cutoff when local bg is used
+                cell_bg = row['background']
+                intensity_cutoff = cell_bg * threshold
                 n_above = np.sum(pixel_values >= intensity_cutoff)
                 frac = n_above / len(pixel_values) if len(pixel_values) > 0 else 0.0
                 positive_fractions.append(float(frac))
