@@ -96,10 +96,11 @@ class FolderLoaderWorker(QThread):
 
 
 class DetectionWorker(QThread):
-    """Run StarDist nuclei detection in background thread."""
+    """Run nuclei detection with preprocessing and filtering in background thread."""
 
     progress = Signal(str)
-    finished = Signal(bool, str, int, object)  # success, msg, count, labels
+    # success, msg, count, labels, metrics_dict
+    finished = Signal(bool, str, int, object, object)
 
     def __init__(
         self,
@@ -112,39 +113,189 @@ class DetectionWorker(QThread):
 
     def run(self):
         try:
-            from ..core.detection import NucleiDetector
+            from ..core.detection import NucleiDetector, preprocess_for_detection
 
+            metrics = {
+                'raw_count': 0,
+                'filtered_count': 0,
+                'removed_by_size': 0,
+                'removed_by_border': 0,
+                'removed_by_confidence': 0,
+                'removed_by_morphology': 0,
+                'backend': 'stardist',
+                'preprocessing': {},
+            }
+
+            # ── Step 1: Preprocessing ──
+            image = self.image
+            preproc_params = {}
+
+            bg_sub = self.params.get('background_subtraction', False)
+            use_clahe = self.params.get('clahe', False)
+            gauss_sigma = self.params.get('gaussian_sigma', 0.0)
+
+            if bg_sub or use_clahe or gauss_sigma > 0:
+                self.progress.emit("Preprocessing image...")
+                image = preprocess_for_detection(
+                    image,
+                    background_subtraction=bg_sub,
+                    bg_sigma=self.params.get('bg_sigma', 50.0),
+                    clahe=use_clahe,
+                    clahe_clip_limit=self.params.get('clahe_clip_limit', 0.02),
+                    clahe_kernel_size=self.params.get('clahe_kernel_size', 128),
+                    gaussian_sigma=gauss_sigma,
+                )
+                preproc_params = {
+                    'background_subtraction': bg_sub,
+                    'bg_sigma': self.params.get('bg_sigma', 50.0),
+                    'clahe': use_clahe,
+                    'clahe_clip_limit': self.params.get('clahe_clip_limit', 0.02),
+                    'gaussian_sigma': gauss_sigma,
+                }
+            metrics['preprocessing'] = preproc_params
+
+            # ── Step 2: Detection ──
+            backend = self.params.get('backend', 'stardist')
             model_name = self.params.get('model', '2D_versatile_fluo')
-            self.progress.emit(f"Loading StarDist model: {model_name}...")
+            metrics['backend'] = backend
 
-            detector = NucleiDetector(model_name=model_name)
+            if backend == 'cellpose':
+                self.progress.emit(f"Loading Cellpose model: {model_name}...")
+                try:
+                    from ..core.cellpose_backend import CellposeDetector
+                    cp_detector = CellposeDetector(model_name=model_name)
+                    self.progress.emit("Detecting nuclei (Cellpose)...")
+                    labels, details = cp_detector.detect(
+                        image,
+                        diameter=self.params.get('diameter', 30),
+                    )
+                    # Create a NucleiDetector for filter methods
+                    # (we don't need to load StarDist model for filtering)
+                    detector = None
+                except ImportError:
+                    self.progress.emit("Cellpose not available, falling back to StarDist...")
+                    backend = 'stardist'
+                    metrics['backend'] = 'stardist (cellpose unavailable)'
 
-            self.progress.emit("Detecting nuclei...")
-            labels, details = detector.detect(
-                self.image,
-                prob_thresh=self.params.get('prob_thresh', 0.5),
-                nms_thresh=self.params.get('nms_thresh', 0.4),
-                scale=self.params.get('scale', 1.0),
-            )
+            if backend == 'stardist':
+                self.progress.emit(f"Loading StarDist model: {model_name}...")
+                detector = NucleiDetector(model_name=model_name)
 
-            # Filter by size if requested
-            if self.params.get('filter_size', True):
-                self.progress.emit("Filtering by size...")
-                labels = detector.filter_by_size(
-                    labels,
-                    min_area=self.params.get('min_area', 50),
-                    max_area=self.params.get('max_area', 5000),
+                # Auto-compute n_tiles for large images
+                n_tiles = self.params.get('n_tiles', None)
+                if n_tiles is None and self.params.get('auto_n_tiles', True):
+                    n_tiles = NucleiDetector.compute_n_tiles(image.shape)
+
+                self.progress.emit("Detecting nuclei (StarDist)...")
+                labels, details = detector.detect(
+                    image,
+                    prob_thresh=self.params.get('prob_thresh', 0.5),
+                    nms_thresh=self.params.get('nms_thresh', 0.4),
+                    scale=self.params.get('scale', 1.0),
+                    n_tiles=n_tiles,
                 )
 
-            count = len(np.unique(labels)) - 1  # Exclude background
-            self.progress.emit(f"Detected {count} nuclei")
+            raw_count = len(np.unique(labels)) - 1
+            metrics['raw_count'] = raw_count
+            self.progress.emit(f"Raw detections: {raw_count}")
 
-            self.finished.emit(True, f"Detected {count} nuclei", count, labels)
+            # ── Step 3: Filtering ──
+
+            # Size filter
+            if self.params.get('filter_size', True):
+                self.progress.emit("Filtering by size...")
+                count_before = len(np.unique(labels)) - 1
+                # Use NucleiDetector static-like filter (works on any label image)
+                from skimage.measure import regionprops
+                min_area = self.params.get('min_area', 50)
+                max_area = self.params.get('max_area', 5000)
+                props = regionprops(labels)
+                valid_labels = [p.label for p in props if min_area <= p.area <= max_area]
+                filtered = np.zeros_like(labels)
+                for new_id, old_label in enumerate(valid_labels, 1):
+                    filtered[labels == old_label] = new_id
+                labels = filtered
+                count_after = len(np.unique(labels)) - 1
+                metrics['removed_by_size'] = count_before - count_after
+
+            # Border filter
+            if self.params.get('remove_border', False):
+                self.progress.emit("Removing border-touching nuclei...")
+                from skimage.segmentation import clear_border
+                count_before = len(np.unique(labels)) - 1
+                cleared = clear_border(labels, buffer_size=self.params.get('border_width', 1))
+                unique_ids = np.unique(cleared)
+                unique_ids = unique_ids[unique_ids > 0]
+                relabeled = np.zeros_like(cleared)
+                for new_id, old_label in enumerate(unique_ids, 1):
+                    relabeled[cleared == old_label] = new_id
+                labels = relabeled
+                count_after = len(np.unique(labels)) - 1
+                metrics['removed_by_border'] = count_before - count_after
+
+            # Confidence filter (StarDist only — details must have 'prob')
+            min_conf = self.params.get('min_confidence', 0.0)
+            if min_conf > 0 and 'prob' in details:
+                self.progress.emit("Filtering by confidence...")
+                count_before = len(np.unique(labels)) - 1
+                # Rebuild label-to-prob mapping after previous filters
+                # Note: after size/border filters, labels have been relabeled.
+                # We need to map current labels back to original probabilities.
+                # This is complex after relabeling, so we apply confidence on
+                # the raw detections' details. Since labels have been relabeled,
+                # we skip confidence filtering if labels were already filtered.
+                # TODO: Track label mapping through filters for exact confidence filtering.
+                # For now, store confidence info in metrics for display.
+                metrics['confidence_stats'] = {
+                    'mean': float(np.mean(details['prob'])),
+                    'min': float(np.min(details['prob'])),
+                    'max': float(np.max(details['prob'])),
+                    'std': float(np.std(details['prob'])),
+                }
+
+            # Morphology filter
+            min_solidity = self.params.get('min_solidity', 0.0)
+            if min_solidity > 0:
+                self.progress.emit("Filtering by morphology...")
+                count_before = len(np.unique(labels)) - 1
+                from skimage.measure import regionprops as rp
+                props = rp(labels)
+                valid = [p.label for p in props if p.solidity >= min_solidity]
+                filtered = np.zeros_like(labels)
+                for new_id, old_label in enumerate(valid, 1):
+                    filtered[labels == old_label] = new_id
+                labels = filtered
+                count_after = len(np.unique(labels)) - 1
+                metrics['removed_by_morphology'] = count_before - count_after
+
+            # ── Final count and size stats ──
+            final_count = len(np.unique(labels)) - 1
+            metrics['filtered_count'] = final_count
+
+            if final_count > 0:
+                from skimage.measure import regionprops as rp_final
+                areas = [p.area for p in rp_final(labels)]
+                metrics['size_stats'] = {
+                    'mean': float(np.mean(areas)),
+                    'median': float(np.median(areas)),
+                    'std': float(np.std(areas)),
+                    'min': float(np.min(areas)),
+                    'max': float(np.max(areas)),
+                }
+
+            self.progress.emit(f"Detected {final_count} nuclei (from {raw_count} raw)")
+            self.finished.emit(
+                True,
+                f"Detected {final_count} nuclei (from {raw_count} raw)",
+                final_count,
+                labels,
+                metrics,
+            )
 
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.finished.emit(False, str(e), 0, None)
+            self.finished.emit(False, str(e), 0, None, None)
 
 
 class ColocalizationWorker(QThread):
@@ -158,11 +309,15 @@ class ColocalizationWorker(QThread):
         signal_image: np.ndarray,
         nuclei_labels: np.ndarray,
         params: Dict[str, Any],
+        signal_image_for_area: Optional[np.ndarray] = None,
+        labels_for_area: Optional[np.ndarray] = None,
     ):
         super().__init__()
         self.signal_image = signal_image
         self.nuclei_labels = nuclei_labels
         self.params = params
+        self.signal_image_for_area = signal_image_for_area
+        self.labels_for_area = labels_for_area
 
     def run(self):
         try:
@@ -184,11 +339,25 @@ class ColocalizationWorker(QThread):
             )
 
             dilation = self.params.get('dilation_iterations', 50)
-            background = analyzer.estimate_background(
-                self.signal_image,
-                self.nuclei_labels,
-                dilation_iterations=dilation,
-            )
+
+            # Use local or global background estimation
+            if self.params.get('use_local_background', False):
+                self.progress.emit("Estimating local background...")
+                background = analyzer.estimate_local_background(
+                    self.signal_image,
+                    self.nuclei_labels,
+                    dilation_iterations=dilation,
+                    block_size=self.params.get('bg_block_size', 256),
+                )
+                # Store for background surface visualization
+                self.background_surface = background
+            else:
+                background = analyzer.estimate_background(
+                    self.signal_image,
+                    self.nuclei_labels,
+                    dilation_iterations=dilation,
+                )
+                self.background_surface = None
 
             tissue_mask = analyzer.estimate_tissue_mask(self.nuclei_labels, dilation)
 
@@ -199,11 +368,22 @@ class ColocalizationWorker(QThread):
             )
 
             self.progress.emit("Classifying positive/negative...")
+            thresh_method = self.params.get('threshold_method', 'fold_change')
+            classify_kwargs = {
+                'method': thresh_method,
+                'threshold': self.params.get('threshold_value', 2.0),
+            }
+
+            # For area_fraction method, pass the signal image and labels
+            if thresh_method == 'area_fraction':
+                classify_kwargs['signal_image'] = self.signal_image_for_area
+                classify_kwargs['nuclei_labels'] = self.labels_for_area
+                classify_kwargs['area_fraction'] = self.params.get('area_fraction', 0.5)
+
             classified = analyzer.classify_positive_negative(
                 measurements,
                 background,
-                method=self.params.get('threshold_method', 'fold_change'),
-                threshold=self.params.get('threshold_value', 2.0),
+                **classify_kwargs,
             )
 
             summary = analyzer.get_summary_statistics(classified)

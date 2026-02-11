@@ -1,5 +1,8 @@
 """
-Pure matplotlib visualization module for colocalization QC.
+Publication-quality visualization for colocalization QC.
+
+Generates fluorescence composite overlays (red channel in R, green channel in G)
+with classified cell boundaries, annotation arrows, and diagnostic plots.
 
 No Qt dependencies. Each function returns a matplotlib Figure that can be
 displayed in a Qt widget or saved to disk.
@@ -16,18 +19,123 @@ from pathlib import Path
 import pandas as pd
 
 
-def create_overlay_image(green_channel, nuclei_labels, measurements_df, figsize=(12, 10)):
+# ══════════════════════════════════════════════════════════════════════════
+# Internal helpers
+# ══════════════════════════════════════════════════════════════════════════
+
+def _normalize_channel(channel, gamma=0.7, pmin=0.5, pmax=99.5):
     """
-    Create overlay showing green channel with colored nucleus boundaries.
+    Normalize an image channel to 0–1 with contrast stretch and gamma.
+
+    Uses percentile-based contrast stretching to handle outlier pixels
+    (e.g., hot pixels, saturated artifacts) without blowing out the image.
+    Gamma < 1.0 brightens dim features (good for fluorescence).
+    """
+    img = channel.astype(np.float64)
+    lo = np.percentile(img, pmin)
+    hi = np.percentile(img, pmax)
+    if hi - lo < 1e-8:
+        return np.zeros_like(img)
+    img = np.clip((img - lo) / (hi - lo), 0, 1)
+    if gamma != 1.0:
+        img = np.power(img, gamma)
+    return img
+
+
+def _make_composite(red_channel=None, green_channel=None, gamma=0.7):
+    """
+    Create an RGB fluorescence composite from one or both channels.
+
+    - red_channel → mapped to the R plane (like looking through a red filter)
+    - green_channel → mapped to the G plane
+    - Where both overlap, you see yellow/orange (natural compositing)
+
+    If only green_channel is provided, falls back to a dim greyscale base
+    with slight green tint, so the green signal is still visible.
+    """
+    if red_channel is not None and green_channel is not None:
+        r = _normalize_channel(red_channel, gamma=gamma)
+        g = _normalize_channel(green_channel, gamma=gamma)
+        b = np.zeros_like(r)
+        return np.stack([r, g, b], axis=-1)
+    elif green_channel is not None:
+        # No red channel — use dim greyscale so boundaries are visible
+        g = _normalize_channel(green_channel, gamma=gamma)
+        return np.stack([g * 0.3, g, g * 0.1], axis=-1)
+    elif red_channel is not None:
+        r = _normalize_channel(red_channel, gamma=gamma)
+        return np.stack([r, r * 0.15, r * 0.15], axis=-1)
+    else:
+        raise ValueError("At least one channel must be provided")
+
+
+def _draw_boundaries(rgb, nuclei_labels, measurements_df, thickness=1):
+    """
+    Draw classified cell boundaries onto an RGB image (in-place).
+
+    Colocalized (positive) cells: bright gold (#FFD700) thick boundary
+    Negative cells: dim semi-transparent cyan (#4488AA) thin boundary
+
+    Returns the modified rgb array.
+    """
+    from scipy import ndimage
+
+    boundaries = find_boundaries(nuclei_labels, mode='outer')
+
+    # Thicken boundaries if requested
+    if thickness > 1:
+        boundaries = ndimage.binary_dilation(boundaries, iterations=thickness - 1)
+
+    positive_labels = set(measurements_df[measurements_df['is_positive']]['label'].values)
+    negative_labels = set(measurements_df[~measurements_df['is_positive']]['label'].values)
+
+    boundary_mask = boundaries & (nuclei_labels > 0)
+
+    for label_id in np.unique(nuclei_labels[boundary_mask]):
+        if label_id == 0:
+            continue
+        lmask = boundary_mask & (nuclei_labels == label_id)
+
+        if label_id in positive_labels:
+            # Gold/yellow boundary — bright, stands out on dark background
+            rgb[lmask] = [1.0, 0.84, 0.0]  # #FFD700
+        elif label_id in negative_labels:
+            # Dim cyan — visible but unobtrusive
+            alpha = 0.5
+            rgb[lmask] = rgb[lmask] * (1 - alpha) + np.array([0.27, 0.53, 0.67]) * alpha
+
+    return rgb
+
+
+def _dark_style_axes(ax, title='', fontsize=13):
+    """Apply dark theme to an axes for fluorescence images."""
+    ax.set_facecolor('black')
+    ax.set_title(title, fontsize=fontsize, pad=10, color='white', fontweight='bold')
+    ax.axis('off')
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Main overlay images
+# ══════════════════════════════════════════════════════════════════════════
+
+def create_overlay_image(green_channel, nuclei_labels, measurements_df,
+                         red_channel=None, figsize=(14, 11)):
+    """
+    Fluorescence composite with classified cell boundaries.
+
+    Shows both channels as a microscope-style composite (red in R, green in G),
+    with cell boundaries drawn in gold (positive) or dim cyan (negative).
 
     Parameters
     ----------
     green_channel : ndarray (Y, X)
-        Signal intensity image (uint8 or uint16)
+        Signal intensity image (e.g., eYFP/488nm)
     nuclei_labels : ndarray (Y, X)
         Integer label image from StarDist (0=background)
     measurements_df : DataFrame
         Must contain columns: label, is_positive
+    red_channel : ndarray (Y, X), optional
+        Nuclear channel (e.g., 561nm). If None, uses greyscale base.
     figsize : tuple
         Figure size in inches
 
@@ -36,57 +144,157 @@ def create_overlay_image(green_channel, nuclei_labels, measurements_df, figsize=
     Figure
         Matplotlib figure object
     """
-    fig = Figure(figsize=figsize)
+    fig = Figure(figsize=figsize, facecolor='black')
     ax = fig.add_subplot(111)
 
-    # Normalize green channel for display
-    green_norm = green_channel.astype(float)
-    green_norm = (green_norm - green_norm.min()) / (green_norm.max() - green_norm.min() + 1e-8)
+    # Build fluorescence composite
+    composite = _make_composite(red_channel, green_channel, gamma=0.7)
 
-    # Create RGB overlay image
-    rgb_overlay = np.stack([green_norm, green_norm, green_norm], axis=-1)
+    # Draw boundaries (2px thick for visibility)
+    _draw_boundaries(composite, nuclei_labels, measurements_df, thickness=2)
 
-    # Find boundaries
-    boundaries = find_boundaries(nuclei_labels, mode='outer')
+    ax.imshow(composite, interpolation='bilinear')
 
-    # Separate positive and negative labels
-    positive_labels = set(measurements_df[measurements_df['is_positive']]['label'].values)
-    negative_labels = set(measurements_df[~measurements_df['is_positive']]['label'].values)
+    n_pos = measurements_df['is_positive'].sum()
+    n_neg = (~measurements_df['is_positive']).sum()
+    n_total = len(measurements_df)
+    pct = 100 * n_pos / n_total if n_total > 0 else 0
 
-    # Create label-to-color mapping
-    boundary_mask = boundaries & (nuclei_labels > 0)
-    boundary_label_ids = nuclei_labels[boundary_mask]
+    channels = "Red + Green composite" if red_channel is not None else "Green channel"
+    _dark_style_axes(ax,
+        f"Colocalization — {n_pos} positive (gold), {n_neg} negative (cyan)\n"
+        f"{pct:.1f}% colocalized  |  {channels}",
+        fontsize=13)
 
-    # Color boundaries
-    for label_id in np.unique(boundary_label_ids):
-        if label_id == 0:
-            continue
+    # Legend in bottom-left
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], color='#FFD700', lw=3, label=f'Colocalized ({n_pos})'),
+        Line2D([0], [0], color='#4488AA', lw=2, alpha=0.7, label=f'Negative ({n_neg})'),
+    ]
+    ax.legend(handles=legend_elements, loc='lower left', fontsize=10,
+              facecolor='black', edgecolor='#444444', labelcolor='white',
+              framealpha=0.8)
 
-        label_boundary_mask = boundary_mask & (nuclei_labels == label_id)
-
-        if label_id in positive_labels:
-            # Lime green for positive
-            rgb_overlay[label_boundary_mask] = [0, 1.0, 0]  # #00FF00
-        elif label_id in negative_labels:
-            # Red for negative
-            rgb_overlay[label_boundary_mask] = [1.0, 0, 0]  # #FF0000
-
-    # Display
-    ax.imshow(rgb_overlay)
-    ax.axis('off')
-
-    n_pos = len(positive_labels)
-    n_neg = len(negative_labels)
-    ax.set_title(f"Colocalization Overlay — {n_pos} positive (lime), {n_neg} negative (red)",
-                 fontsize=14, pad=10)
-
-    fig.tight_layout()
+    fig.tight_layout(pad=0.5)
     return fig
 
 
-def create_background_mask_overlay(green_channel, nuclei_labels, tissue_mask, figsize=(10, 8)):
+def create_annotated_overlay(green_channel, nuclei_labels, measurements_df,
+                              red_channel=None, max_annotations=25,
+                              figsize=(16, 13)):
     """
-    Show tissue mask and excluded nuclei regions for background estimation.
+    Fluorescence composite with arrow annotations on colocalized cells.
+
+    Shows both channels as composite, with gold boundaries on positive cells,
+    plus arrow callouts showing fold-change values on the brightest positives.
+    This is the "proof image" — visual evidence of which cells were classified.
+
+    Parameters
+    ----------
+    green_channel : ndarray (Y, X)
+        Signal intensity image
+    nuclei_labels : ndarray (Y, X)
+        Integer label image from StarDist
+    measurements_df : DataFrame
+        Must contain: label, centroid_y, centroid_x, is_positive, fold_change
+    red_channel : ndarray (Y, X), optional
+        Nuclear channel. If None, uses greyscale base.
+    max_annotations : int
+        Max arrow annotations (avoids clutter)
+    figsize : tuple
+        Figure size in inches
+
+    Returns
+    -------
+    Figure
+        Matplotlib figure
+    """
+    fig = Figure(figsize=figsize, facecolor='black')
+    ax = fig.add_subplot(111)
+
+    # Build composite and draw boundaries
+    composite = _make_composite(red_channel, green_channel, gamma=0.7)
+    _draw_boundaries(composite, nuclei_labels, measurements_df, thickness=2)
+
+    ax.imshow(composite, interpolation='bilinear')
+
+    # Annotate top positive cells with arrows
+    pos_df = measurements_df[measurements_df['is_positive']].copy()
+    n_pos = len(pos_df)
+
+    if n_pos > 0:
+        pos_df = pos_df.sort_values('fold_change', ascending=False)
+        annotate_df = pos_df.head(max_annotations)
+
+        h, w = green_channel.shape[:2]
+        for _, row in annotate_df.iterrows():
+            cy = row.get('centroid_y_base', row.get('centroid_y', 0))
+            cx = row.get('centroid_x_base', row.get('centroid_x', 0))
+            fc = row['fold_change']
+
+            # Smart offset: push arrow away from image edges
+            offset_y = -50 if cy > h * 0.25 else 50
+            offset_x = -50 if cx > w * 0.25 else 50
+
+            ax.annotate(
+                f'{fc:.1f}x',
+                xy=(cx, cy),
+                xytext=(cx + offset_x, cy + offset_y),
+                fontsize=8, fontweight='bold', color='#FFD700',
+                arrowprops=dict(
+                    arrowstyle='-|>',
+                    color='white',
+                    lw=1.5,
+                    connectionstyle='arc3,rad=0.15',
+                ),
+                bbox=dict(
+                    boxstyle='round,pad=0.3',
+                    facecolor='black',
+                    edgecolor='#FFD700',
+                    alpha=0.85,
+                    linewidth=1.0,
+                ),
+            )
+
+    n_neg = (~measurements_df['is_positive']).sum()
+    n_total = len(measurements_df)
+    pct = 100 * n_pos / n_total if n_total > 0 else 0
+    n_shown = min(max_annotations, n_pos)
+
+    _dark_style_axes(ax,
+        f"Colocalization Proof — {n_pos}/{n_total} cells positive ({pct:.1f}%)\n"
+        f"Arrows: top {n_shown} by fold-change  |  Gold = colocalized, Cyan = negative",
+        fontsize=13)
+
+    # Legend
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], color='#FFD700', lw=3, label=f'Colocalized ({n_pos})'),
+        Line2D([0], [0], color='#4488AA', lw=2, alpha=0.7, label=f'Negative ({n_neg})'),
+        Line2D([0], [0], marker='>', color='white', markersize=8,
+               markerfacecolor='white', linestyle='None',
+               label=f'Annotated ({n_shown})'),
+    ]
+    ax.legend(handles=legend_elements, loc='lower left', fontsize=10,
+              facecolor='black', edgecolor='#444444', labelcolor='white',
+              framealpha=0.8)
+
+    fig.tight_layout(pad=0.5)
+    return fig
+
+
+def create_background_mask_overlay(green_channel, nuclei_labels, tissue_mask,
+                                    cell_body_dilation=8, figsize=(14, 11)):
+    """
+    Visualize the three zones used for background estimation:
+
+    1. BLUE: Tissue region (where background is sampled from)
+    2. RED: Nuclei (excluded from background)
+    3. ORANGE: Cell body exclusion zone (dilated around nuclei — excluded
+       because cytoplasm of positive cells would contaminate background)
+
+    The actual background sampling region is: blue AND NOT (red OR orange).
 
     Parameters
     ----------
@@ -96,6 +304,8 @@ def create_background_mask_overlay(green_channel, nuclei_labels, tissue_mask, fi
         Integer label image
     tissue_mask : ndarray (Y, X), bool
         True where tissue is estimated
+    cell_body_dilation : int
+        Number of dilation iterations used for cell body exclusion
     figsize : tuple
         Figure size in inches
 
@@ -104,34 +314,69 @@ def create_background_mask_overlay(green_channel, nuclei_labels, tissue_mask, fi
     Figure
         Matplotlib figure object
     """
-    fig = Figure(figsize=figsize)
+    from scipy import ndimage
+
+    fig = Figure(figsize=figsize, facecolor='black')
     ax = fig.add_subplot(111)
 
-    # Normalize green channel
-    green_norm = green_channel.astype(float)
-    green_norm = (green_norm - green_norm.min()) / (green_norm.max() - green_norm.min() + 1e-8)
+    # Dim greyscale base
+    green_norm = _normalize_channel(green_channel, gamma=0.8)
+    rgb = np.stack([green_norm * 0.3, green_norm * 0.3, green_norm * 0.3], axis=-1)
 
-    # Create RGB overlay
-    rgb_overlay = np.stack([green_norm, green_norm, green_norm], axis=-1)
-
-    # Overlay tissue mask as semi-transparent blue
-    tissue_mask_bool = tissue_mask.astype(bool)
-    rgb_overlay[tissue_mask_bool] = rgb_overlay[tissue_mask_bool] * 0.8 + np.array([0, 0, 1.0]) * 0.2
-
-    # Overlay nuclei as semi-transparent red
     nuclei_mask = nuclei_labels > 0
-    rgb_overlay[nuclei_mask] = rgb_overlay[nuclei_mask] * 0.7 + np.array([1.0, 0, 0]) * 0.3
 
-    ax.imshow(rgb_overlay)
-    ax.axis('off')
-    ax.set_title("Background Estimation Mask — blue=tissue, red=excluded nuclei",
-                 fontsize=14, pad=10)
+    # Build cell body exclusion zone (the dilation ring around nuclei)
+    if cell_body_dilation > 0:
+        cell_body_mask = ndimage.binary_dilation(nuclei_mask, iterations=cell_body_dilation)
+        exclusion_ring = cell_body_mask & (~nuclei_mask)  # Ring only (not nucleus itself)
+    else:
+        cell_body_mask = nuclei_mask
+        exclusion_ring = np.zeros_like(nuclei_mask)
 
-    fig.tight_layout()
+    # The actual background sampling region
+    sampling_region = tissue_mask & (~cell_body_mask)
+
+    # Layer 1: Tissue sampling region = blue tint
+    rgb[sampling_region] = rgb[sampling_region] * 0.4 + np.array([0.15, 0.35, 0.8]) * 0.6
+
+    # Layer 2: Exclusion ring (cell body dilation) = orange tint
+    rgb[exclusion_ring] = rgb[exclusion_ring] * 0.3 + np.array([1.0, 0.55, 0.1]) * 0.7
+
+    # Layer 3: Nuclei = red
+    rgb[nuclei_mask] = rgb[nuclei_mask] * 0.3 + np.array([1.0, 0.15, 0.15]) * 0.7
+
+    ax.imshow(np.clip(rgb, 0, 1), interpolation='bilinear')
+
+    n_nuclei = np.max(nuclei_labels)
+    n_tissue = np.sum(sampling_region)
+    n_excluded = np.sum(cell_body_mask)
+    _dark_style_axes(ax,
+        f"Background Estimation Zones — {n_nuclei} nuclei, "
+        f"dilation={cell_body_dilation}px\n"
+        f"Blue = sampling region ({n_tissue:,} px), "
+        f"Orange = cell body exclusion, Red = nuclei",
+        fontsize=12)
+
+    # Legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='#2659CC', label='Background sampling region'),
+        Patch(facecolor='#FF8C1A', label=f'Cell body exclusion ({cell_body_dilation}px dilation)'),
+        Patch(facecolor='#FF2626', label='Nuclei (excluded)'),
+    ]
+    ax.legend(handles=legend_elements, loc='lower left', fontsize=10,
+              facecolor='black', edgecolor='#444444', labelcolor='white',
+              framealpha=0.8)
+
+    fig.tight_layout(pad=0.5)
     return fig
 
 
-def create_fold_change_histogram(measurements_df, threshold, background, figsize=(8, 5)):
+# ══════════════════════════════════════════════════════════════════════════
+# Diagnostic plots (dark-themed)
+# ══════════════════════════════════════════════════════════════════════════
+
+def create_fold_change_histogram(measurements_df, threshold, background, figsize=(9, 5.5)):
     """
     Histogram of fold change values with threshold line.
 
@@ -151,60 +396,63 @@ def create_fold_change_histogram(measurements_df, threshold, background, figsize
     Figure
         Matplotlib figure object
     """
-    fig = Figure(figsize=figsize)
+    fig = Figure(figsize=figsize, facecolor='#1a1a2e')
     ax = fig.add_subplot(111)
+    ax.set_facecolor('#16213e')
 
     fold_changes = measurements_df['fold_change'].values
     is_positive = measurements_df['is_positive'].values
 
-    # Create histogram bins
     n_bins = 50
-    hist_range = (fold_changes.min(), fold_changes.max())
+    hist_range = (fold_changes.min(), min(fold_changes.max(), threshold * 5))
 
-    # Plot histogram with colored bars
     counts, bins, patches = ax.hist(fold_changes, bins=n_bins, range=hist_range,
-                                     edgecolor='black', linewidth=0.5)
+                                     edgecolor='#333333', linewidth=0.5)
 
-    # Color bars based on threshold
     bin_centers = (bins[:-1] + bins[1:]) / 2
     for patch, bin_center in zip(patches, bin_centers):
         if bin_center >= threshold:
-            patch.set_facecolor('green')
+            patch.set_facecolor('#FFD700')
+            patch.set_alpha(0.85)
         else:
-            patch.set_facecolor('red')
+            patch.set_facecolor('#4488AA')
+            patch.set_alpha(0.7)
 
-    # Add threshold line
-    ax.axvline(threshold, color='black', linestyle='--', linewidth=2, label=f'Threshold ({threshold}x)')
+    ax.axvline(threshold, color='white', linestyle='--', linewidth=2,
+               label=f'Threshold ({threshold}x)', alpha=0.9)
+    ax.axvline(1.0, color='#666666', linestyle=':', linewidth=1.5,
+               label='Fold Change = 1.0')
 
-    # Add fold_change=1.0 line
-    ax.axvline(1.0, color='gray', linestyle=':', linewidth=1.5, label='Fold Change = 1.0')
-
-    # Calculate statistics
-    n_positive = is_positive.sum()
-    n_negative = (~is_positive).sum()
+    n_positive = int(is_positive.sum())
+    n_negative = int((~is_positive).sum())
     total = len(is_positive)
     pct_positive = 100 * n_positive / total if total > 0 else 0
-    pct_negative = 100 * n_negative / total if total > 0 else 0
 
-    # Add text annotation
-    text_str = f"Positive: {n_positive} ({pct_positive:.1f}%)\nNegative: {n_negative} ({pct_negative:.1f}%)"
-    ax.text(0.98, 0.98, text_str, transform=ax.transAxes,
+    text_str = (f"Colocalized:  {n_positive}  ({pct_positive:.1f}%)\n"
+                f"Negative:     {n_negative}\n"
+                f"Total:        {total}")
+    ax.text(0.97, 0.95, text_str, transform=ax.transAxes,
             verticalalignment='top', horizontalalignment='right',
-            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-            fontsize=10)
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='black',
+                      edgecolor='#FFD700', alpha=0.85, linewidth=1),
+            fontsize=10, fontfamily='monospace', color='white')
 
-    ax.set_xlabel("Fold Change over Background", fontsize=11)
-    ax.set_ylabel("Count", fontsize=11)
-    ax.set_title(f"Fold Change Distribution (bg={background:.1f}, threshold={threshold}x)",
-                 fontsize=12, pad=10)
-    ax.legend(loc='upper left', fontsize=9)
-    ax.grid(True, alpha=0.3)
+    ax.set_xlabel("Fold Change over Background", fontsize=11, color='white')
+    ax.set_ylabel("Count", fontsize=11, color='white')
+    ax.set_title(f"Fold Change Distribution  (bg={background:.1f}, threshold={threshold}x)",
+                 fontsize=12, pad=10, color='white', fontweight='bold')
+    ax.legend(loc='upper left', fontsize=9, facecolor='black',
+              edgecolor='#444444', labelcolor='white', framealpha=0.8)
+    ax.tick_params(colors='white')
+    ax.grid(True, alpha=0.15, color='white')
+    for spine in ax.spines.values():
+        spine.set_color('#444444')
 
     fig.tight_layout()
     return fig
 
 
-def create_intensity_scatter(measurements_df, background, threshold, figsize=(8, 6)):
+def create_intensity_scatter(measurements_df, background, threshold, figsize=(9, 6)):
     """
     Scatter plot of nucleus area vs mean intensity.
 
@@ -224,43 +472,46 @@ def create_intensity_scatter(measurements_df, background, threshold, figsize=(8,
     Figure
         Matplotlib figure object
     """
-    fig = Figure(figsize=figsize)
+    fig = Figure(figsize=figsize, facecolor='#1a1a2e')
     ax = fig.add_subplot(111)
+    ax.set_facecolor('#16213e')
 
-    # Separate positive and negative
     positive_df = measurements_df[measurements_df['is_positive']]
     negative_df = measurements_df[~measurements_df['is_positive']]
 
-    # Plot positive cells
-    if len(positive_df) > 0:
-        ax.scatter(positive_df['area'], positive_df['mean_intensity'],
-                  c='lime', alpha=0.6, s=20, label=f'Positive (n={len(positive_df)})')
-
-    # Plot negative cells
     if len(negative_df) > 0:
         ax.scatter(negative_df['area'], negative_df['mean_intensity'],
-                  c='red', alpha=0.6, s=20, label=f'Negative (n={len(negative_df)})')
+                  c='#4488AA', alpha=0.4, s=15, edgecolors='none',
+                  label=f'Negative (n={len(negative_df)})')
 
-    # Add background line
-    ax.axhline(background, color='blue', linestyle='--', linewidth=1.5,
-               label=f'Background ({background:.1f})')
+    if len(positive_df) > 0:
+        ax.scatter(positive_df['area'], positive_df['mean_intensity'],
+                  c='#FFD700', alpha=0.7, s=25, edgecolors='white',
+                  linewidth=0.3,
+                  label=f'Colocalized (n={len(positive_df)})')
 
-    # Add threshold line
+    ax.axhline(background, color='#5599FF', linestyle='--', linewidth=1.5,
+               label=f'Background ({background:.1f})', alpha=0.8)
+
     threshold_intensity = background * threshold
-    ax.axhline(threshold_intensity, color='black', linestyle='--', linewidth=1.5,
-               label=f'Threshold ({threshold_intensity:.1f})')
+    ax.axhline(threshold_intensity, color='white', linestyle='--', linewidth=1.5,
+               label=f'Threshold ({threshold_intensity:.1f})', alpha=0.8)
 
-    ax.set_xlabel("Nucleus Area (pixels)", fontsize=11)
-    ax.set_ylabel("Mean Signal Intensity", fontsize=11)
-    ax.set_title("Intensity vs Size", fontsize=12, pad=10)
-    ax.legend(loc='best', fontsize=9)
-    ax.grid(True, alpha=0.3)
+    ax.set_xlabel("Nucleus Area (pixels)", fontsize=11, color='white')
+    ax.set_ylabel("Mean Signal Intensity", fontsize=11, color='white')
+    ax.set_title("Intensity vs Size", fontsize=12, pad=10, color='white', fontweight='bold')
+    ax.legend(loc='best', fontsize=9, facecolor='black',
+              edgecolor='#444444', labelcolor='white', framealpha=0.8)
+    ax.tick_params(colors='white')
+    ax.grid(True, alpha=0.15, color='white')
+    for spine in ax.spines.values():
+        spine.set_color('#444444')
 
     fig.tight_layout()
     return fig
 
 
-def create_roi_summary_bar(roi_counts_list, figsize=(8, 5)):
+def create_roi_summary_bar(roi_counts_list, figsize=(9, 5.5)):
     """
     Grouped bar chart of positive/negative counts per ROI.
 
@@ -268,7 +519,6 @@ def create_roi_summary_bar(roi_counts_list, figsize=(8, 5)):
     ----------
     roi_counts_list : list of dict
         Each dict has keys: roi, total, positive, negative, fraction
-        Skip rows where roi == "TOTAL"
     figsize : tuple
         Figure size in inches
 
@@ -277,176 +527,154 @@ def create_roi_summary_bar(roi_counts_list, figsize=(8, 5)):
     Figure
         Matplotlib figure object
     """
-    fig = Figure(figsize=figsize)
+    fig = Figure(figsize=figsize, facecolor='#1a1a2e')
     ax = fig.add_subplot(111)
+    ax.set_facecolor('#16213e')
 
-    # Filter out TOTAL row
     roi_data = [r for r in roi_counts_list if r['roi'] != 'TOTAL']
 
     if len(roi_data) == 0:
         ax.text(0.5, 0.5, 'No ROI data available',
-                ha='center', va='center', transform=ax.transAxes, fontsize=12)
+                ha='center', va='center', transform=ax.transAxes,
+                fontsize=12, color='white')
         return fig
 
-    # Extract data
     roi_names = [r['roi'] for r in roi_data]
     positive_counts = [r['positive'] for r in roi_data]
     negative_counts = [r['negative'] for r in roi_data]
     fractions = [r['fraction'] for r in roi_data]
 
-    # Bar positions
     x = np.arange(len(roi_names))
     width = 0.35
 
-    # Create bars
-    bars_pos = ax.bar(x - width/2, positive_counts, width, label='Positive', color='green', alpha=0.8)
-    bars_neg = ax.bar(x + width/2, negative_counts, width, label='Negative', color='red', alpha=0.8)
+    bars_pos = ax.bar(x - width/2, positive_counts, width,
+                      label='Colocalized', color='#FFD700', alpha=0.85,
+                      edgecolor='#333333')
+    bars_neg = ax.bar(x + width/2, negative_counts, width,
+                      label='Negative', color='#4488AA', alpha=0.75,
+                      edgecolor='#333333')
 
-    # Add fraction labels on top of positive bars
-    for i, (bar, frac) in enumerate(zip(bars_pos, fractions)):
+    for bar, frac in zip(bars_pos, fractions):
         height = bar.get_height()
         ax.text(bar.get_x() + bar.get_width()/2, height,
-                f'{frac:.1%}', ha='center', va='bottom', fontsize=8)
+                f'{frac:.1%}', ha='center', va='bottom', fontsize=9,
+                color='white', fontweight='bold')
 
-    # Formatting
-    ax.set_xlabel('ROI', fontsize=11)
-    ax.set_ylabel('Cell Count', fontsize=11)
-    ax.set_title('ROI Cell Counts', fontsize=12, pad=10)
+    ax.set_xlabel('ROI', fontsize=11, color='white')
+    ax.set_ylabel('Cell Count', fontsize=11, color='white')
+    ax.set_title('ROI Cell Counts', fontsize=12, pad=10, color='white', fontweight='bold')
     ax.set_xticks(x)
-    ax.set_xticklabels(roi_names, rotation=45, ha='right')
-    ax.legend(loc='upper right', fontsize=9)
-    ax.grid(True, alpha=0.3, axis='y')
+    ax.set_xticklabels(roi_names, rotation=45, ha='right', color='white')
+    ax.legend(loc='upper right', fontsize=9, facecolor='black',
+              edgecolor='#444444', labelcolor='white', framealpha=0.8)
+    ax.tick_params(colors='white')
+    ax.grid(True, alpha=0.15, color='white', axis='y')
+    for spine in ax.spines.values():
+        spine.set_color('#444444')
 
     fig.tight_layout()
     return fig
 
 
-def create_annotated_overlay(green_channel, nuclei_labels, measurements_df,
-                             max_annotations=30, figsize=(14, 12)):
+def create_background_surface_plot(background_surface, nuclei_labels=None,
+                                    figsize=(10, 8)):
     """
-    Create overlay with arrow annotations pointing to colocalized (positive) cells.
+    Heatmap of the interpolated 2D local background surface.
 
-    Shows the green channel with all nuclei boundaries colored (lime=positive,
-    red=negative), plus arrow callouts on a subset of positive cells showing
-    their fold-change value. This provides visual proof of which specific cells
-    were classified as colocalized.
+    Shows how background intensity varies spatially across the tissue,
+    with optional nucleus centroid overlay.
 
     Parameters
     ----------
-    green_channel : ndarray (Y, X)
-        Signal intensity image
-    nuclei_labels : ndarray (Y, X)
-        Integer label image from StarDist
-    measurements_df : DataFrame
-        Must contain: label, centroid_y, centroid_x, is_positive, fold_change
-    max_annotations : int
-        Max number of arrow annotations to draw (avoids clutter)
+    background_surface : ndarray (Y, X)
+        2D background intensity array from estimate_local_background()
+    nuclei_labels : ndarray (Y, X), optional
+        Label image — if provided, nucleus centroids are overlaid as dots
     figsize : tuple
         Figure size in inches
 
     Returns
     -------
     Figure
-        Matplotlib figure with annotated arrows
+        Matplotlib figure
     """
-    from matplotlib.patches import FancyArrowPatch
+    from scipy import ndimage
 
-    fig = Figure(figsize=figsize)
+    fig = Figure(figsize=figsize, facecolor='#1a1a2e')
     ax = fig.add_subplot(111)
 
-    # Normalize green channel
-    green_norm = green_channel.astype(float)
-    green_norm = (green_norm - green_norm.min()) / (green_norm.max() - green_norm.min() + 1e-8)
-    rgb_overlay = np.stack([green_norm, green_norm, green_norm], axis=-1)
+    # Plot the background surface as a heatmap
+    im = ax.imshow(background_surface, cmap='inferno', interpolation='bilinear')
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Background Intensity', fontsize=10, color='white')
+    cbar.ax.tick_params(colors='white')
 
-    # Draw boundaries
-    boundaries = find_boundaries(nuclei_labels, mode='outer')
-    positive_labels = set(measurements_df[measurements_df['is_positive']]['label'].values)
-    negative_labels = set(measurements_df[~measurements_df['is_positive']]['label'].values)
-
-    boundary_mask = boundaries & (nuclei_labels > 0)
-    for label_id in np.unique(nuclei_labels[boundary_mask]):
-        if label_id == 0:
-            continue
-        lmask = boundary_mask & (nuclei_labels == label_id)
-        if label_id in positive_labels:
-            rgb_overlay[lmask] = [0, 1.0, 0]
-        elif label_id in negative_labels:
-            rgb_overlay[lmask] = [1.0, 0, 0]
-
-    ax.imshow(rgb_overlay)
-
-    # Annotate top positive cells with arrows
-    pos_df = measurements_df[measurements_df['is_positive']].copy()
-    if len(pos_df) > 0:
-        pos_df = pos_df.sort_values('fold_change', ascending=False)
-        annotate_df = pos_df.head(max_annotations)
-
-        h, w = green_channel.shape[:2]
-        for _, row in annotate_df.iterrows():
-            cy, cx = row['centroid_y'], row['centroid_x']
-            fc = row['fold_change']
-
-            # Offset arrow start away from the cell
-            offset_y = -40 if cy > h * 0.3 else 40
-            offset_x = -40 if cx > w * 0.3 else 40
-
-            ax.annotate(
-                f'{fc:.1f}x',
-                xy=(cx, cy),
-                xytext=(cx + offset_x, cy + offset_y),
-                fontsize=7, fontweight='bold', color='white',
-                arrowprops=dict(arrowstyle='->', color='yellow', lw=1.5),
-                bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7),
+    # Overlay nucleus centroids if labels provided
+    if nuclei_labels is not None:
+        unique_labels = np.unique(nuclei_labels)
+        unique_labels = unique_labels[unique_labels > 0]
+        if len(unique_labels) > 0:
+            centroids = ndimage.center_of_mass(
+                nuclei_labels > 0, nuclei_labels, unique_labels
             )
+            cy = [c[0] for c in centroids]
+            cx = [c[1] for c in centroids]
+            ax.scatter(cx, cy, s=3, c='white', alpha=0.4, edgecolors='none',
+                      label=f'{len(unique_labels)} nuclei')
+            ax.legend(loc='lower right', fontsize=9, facecolor='black',
+                      edgecolor='#444444', labelcolor='white', framealpha=0.8)
 
-    n_pos = len(positive_labels)
-    n_neg = len(negative_labels)
+    bg_min = background_surface.min()
+    bg_max = background_surface.max()
+    bg_mean = background_surface.mean()
+    bg_range = bg_max - bg_min
+    variation_pct = 100 * bg_range / bg_mean if bg_mean > 0 else 0
+
     ax.set_title(
-        f"Colocalization Proof — {n_pos} positive cells (lime + arrows), {n_neg} negative (red)\n"
-        f"Arrows show top {min(max_annotations, n_pos)} positive cells with fold-change values",
-        fontsize=13, pad=10)
-    ax.axis('off')
+        f"Local Background Surface\n"
+        f"Range: {bg_min:.1f} — {bg_max:.1f}  |  "
+        f"Mean: {bg_mean:.1f}  |  Variation: {variation_pct:.1f}%",
+        fontsize=12, pad=10, color='white', fontweight='bold')
+    ax.tick_params(colors='white')
+    for spine in ax.spines.values():
+        spine.set_color('#444444')
+
     fig.tight_layout()
     return fig
 
 
 def create_gmm_diagnostic(tissue_pixels, background_diagnostics, figsize=(10, 6)):
     """
-    Visualize the GMM background estimation: histogram of tissue intensity
-    with fitted Gaussian components overlaid.
+    GMM background estimation diagnostic: histogram with fitted components.
 
     Parameters
     ----------
     tissue_pixels : ndarray (N,)
-        Intensity values from tissue-outside-nuclei region
+        Intensity values from tissue-outside-cells region
     background_diagnostics : dict
-        From ColocalizationAnalyzer.background_diagnostics after GMM fitting.
-        Keys: n_components, background_mean, background_std, etc.
+        From ColocalizationAnalyzer.background_diagnostics
     figsize : tuple
         Figure size in inches
 
     Returns
     -------
     Figure
-        Matplotlib figure showing histogram + fitted components
+        Matplotlib figure
     """
     from scipy.stats import norm
 
-    fig = Figure(figsize=figsize)
+    fig = Figure(figsize=figsize, facecolor='#1a1a2e')
     ax = fig.add_subplot(111)
+    ax.set_facecolor('#16213e')
 
-    # Subsample for display if huge
     if len(tissue_pixels) > 500_000:
         rng = np.random.default_rng(42)
         display_pixels = rng.choice(tissue_pixels, size=500_000, replace=False)
     else:
         display_pixels = tissue_pixels
 
-    # Histogram
-    counts, bin_edges, patches = ax.hist(
-        display_pixels, bins=200, density=True,
-        color='gray', alpha=0.6, edgecolor='none', label='Tissue intensity')
+    ax.hist(display_pixels, bins=200, density=True,
+            color='#555577', alpha=0.6, edgecolor='none', label='Tissue intensity')
 
     x_range = np.linspace(display_pixels.min(), display_pixels.max(), 500)
     diag = background_diagnostics
@@ -459,48 +687,52 @@ def create_gmm_diagnostic(tissue_pixels, background_diagnostics, figsize=(10, 6)
         sig_std = diag['signal_bleed_std']
         sig_w = diag['signal_bleed_weight']
 
-        # Plot components
         bg_curve = bg_w * norm.pdf(x_range, bg_mean, bg_std)
         sig_curve = sig_w * norm.pdf(x_range, sig_mean, sig_std)
         combined = bg_curve + sig_curve
 
-        ax.plot(x_range, bg_curve, 'b-', lw=2,
+        ax.plot(x_range, bg_curve, color='#5599FF', lw=2.5,
                 label=f'Background (mean={bg_mean:.1f}, w={bg_w:.2f})')
-        ax.plot(x_range, sig_curve, 'r-', lw=2,
+        ax.plot(x_range, sig_curve, color='#FF6644', lw=2.5,
                 label=f'Signal bleed (mean={sig_mean:.1f}, w={sig_w:.2f})')
-        ax.plot(x_range, combined, 'k--', lw=1.5, label='Combined fit')
+        ax.plot(x_range, combined, 'w--', lw=1.5, alpha=0.7, label='Combined fit')
 
-        ax.axvline(bg_mean, color='blue', linestyle=':', alpha=0.7)
-        ax.axvline(sig_mean, color='red', linestyle=':', alpha=0.7)
+        ax.axvline(bg_mean, color='#5599FF', linestyle=':', alpha=0.7)
+        ax.axvline(sig_mean, color='#FF6644', linestyle=':', alpha=0.7)
 
         sep = diag.get('separation', 0)
         conf = diag.get('confidence', 'unknown')
-        ax.set_title(
-            f"GMM Background Estimation — 2 components\n"
-            f"Separation: {sep:.2f} | Confidence: {conf}",
-            fontsize=12, pad=10)
+        title = (f"GMM Background Estimation — 2 components\n"
+                 f"Separation: {sep:.2f} | Confidence: {conf}")
 
     elif diag.get('n_components') == 1:
         bg_mean = diag['background_mean']
         bg_std = diag['background_std']
         curve = norm.pdf(x_range, bg_mean, bg_std)
-        ax.plot(x_range, curve, 'b-', lw=2,
+        ax.plot(x_range, curve, color='#5599FF', lw=2.5,
                 label=f'Single component (mean={bg_mean:.1f})')
-        ax.axvline(bg_mean, color='blue', linestyle=':', alpha=0.7)
-        ax.set_title(
-            "GMM Background Estimation — 1 component (uniform tissue)",
-            fontsize=12, pad=10)
+        ax.axvline(bg_mean, color='#5599FF', linestyle=':', alpha=0.7)
+        title = "GMM Background Estimation — 1 component (uniform tissue)"
     else:
-        ax.set_title("GMM Background Estimation — fallback (insufficient data)",
-                      fontsize=12, pad=10)
+        title = "GMM Background Estimation — fallback (insufficient data)"
 
-    ax.set_xlabel("Pixel Intensity", fontsize=11)
-    ax.set_ylabel("Density", fontsize=11)
-    ax.legend(loc='upper right', fontsize=9)
-    ax.grid(True, alpha=0.3)
+    ax.set_xlabel("Pixel Intensity", fontsize=11, color='white')
+    ax.set_ylabel("Density", fontsize=11, color='white')
+    ax.set_title(title, fontsize=12, pad=10, color='white', fontweight='bold')
+    ax.legend(loc='upper right', fontsize=9, facecolor='black',
+              edgecolor='#444444', labelcolor='white', framealpha=0.8)
+    ax.tick_params(colors='white')
+    ax.grid(True, alpha=0.15, color='white')
+    for spine in ax.spines.values():
+        spine.set_color('#444444')
+
     fig.tight_layout()
     return fig
 
+
+# ══════════════════════════════════════════════════════════════════════════
+# Report
+# ══════════════════════════════════════════════════════════════════════════
 
 def generate_human_readable_report(summary, background_diagnostics=None,
                                     threshold=2.0, method='fold_change'):
@@ -538,7 +770,6 @@ def generate_human_readable_report(summary, background_diagnostics=None,
     lines.append("=" * 70)
     lines.append("")
 
-    # --- What we did ---
     lines.append("WHAT WE DID")
     lines.append("-" * 40)
     lines.append(
@@ -549,7 +780,6 @@ def generate_human_readable_report(summary, background_diagnostics=None,
     )
     lines.append("")
 
-    # --- How background was determined ---
     lines.append("HOW WE DETERMINED BACKGROUND")
     lines.append("-" * 40)
 
@@ -599,7 +829,6 @@ def generate_human_readable_report(summary, background_diagnostics=None,
         )
     lines.append("")
 
-    # --- How we classified cells ---
     lines.append("HOW WE CLASSIFIED CELLS")
     lines.append("-" * 40)
     if method == 'fold_change':
@@ -615,6 +844,14 @@ def generate_human_readable_report(summary, background_diagnostics=None,
             f"A cell needed to be at least {bg * threshold:.1f} "
             f"(= {bg:.1f} x {threshold:.1f}) to count as positive."
         )
+    elif method == 'area_fraction':
+        lines.append(
+            f"Each cell was examined pixel-by-pixel. For each nucleus, we "
+            f"checked what fraction of its pixels were at least {threshold:.1f}x "
+            f"brighter than background ({bg:.1f}). A cell was classified as "
+            f"positive only if a sufficient fraction of its area exceeded this "
+            f"brightness cutoff."
+        )
     elif method == 'absolute':
         lines.append(
             f"Each cell was classified as positive if its average brightness "
@@ -627,7 +864,6 @@ def generate_human_readable_report(summary, background_diagnostics=None,
         )
     lines.append("")
 
-    # --- Results ---
     lines.append("RESULTS")
     lines.append("-" * 40)
     lines.append(f"  Total cells detected:   {total}")
@@ -637,30 +873,30 @@ def generate_human_readable_report(summary, background_diagnostics=None,
     lines.append(f"  Median fold-change:     {median_fc:.2f}x over background")
     lines.append("")
 
-    # --- What to look at ---
     lines.append("HOW TO VERIFY THESE RESULTS")
     lines.append("-" * 40)
     lines.append(
-        "1. OVERLAY IMAGE: Open the annotated overlay image. Cells outlined "
-        "in green (lime) are positive; cells outlined in red are negative. "
-        "Arrows point to the brightest positive cells with their fold-change "
-        "values. Check that the green-outlined cells visually appear brighter "
-        "in the signal channel."
+        "1. COMPOSITE OVERLAY: Open the overlay image. It shows the red (nuclear) "
+        "and green (signal) channels as a fluorescence composite. Cells outlined "
+        "in gold are positive (colocalized); cells with dim cyan outlines are "
+        "negative. Check that gold-outlined cells visually appear green/yellow."
     )
     lines.append(
-        "2. FOLD-CHANGE HISTOGRAM: Shows the distribution of cell brightness "
-        "relative to background. The vertical dashed line is the threshold. "
-        "Green bars (right of line) = positive cells."
+        "2. ANNOTATED OVERLAY: Same as above, with arrows pointing to the "
+        "brightest positive cells and their fold-change values."
     )
     lines.append(
-        "3. GMM DIAGNOSTIC PLOT: Shows how background was determined. "
-        "The blue curve is the background population, the red curve is signal "
-        "bleed. Check that they look like reasonable fits to the histogram."
+        "3. FOLD-CHANGE HISTOGRAM: Distribution of cell brightness relative to "
+        "background. Gold bars (right of threshold line) = positive cells."
     )
     lines.append(
-        "4. BACKGROUND MASK: Shows which region was used to estimate "
-        "background (blue overlay) and which regions were excluded as nuclei "
-        "(red overlay). Verify the blue region covers actual tissue."
+        "4. GMM DIAGNOSTIC: Shows how background was determined. Blue curve = "
+        "background population, red = signal bleed."
+    )
+    lines.append(
+        "5. BACKGROUND MASK: Shows three zones — blue (where background was "
+        "sampled), orange (cell body exclusion ring), red (nuclei). Verify the "
+        "blue region covers actual tissue between cells."
     )
     lines.append("")
     lines.append("=" * 70)
@@ -670,11 +906,16 @@ def generate_human_readable_report(summary, background_diagnostics=None,
     return "\n".join(lines)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Master save function
+# ══════════════════════════════════════════════════════════════════════════
+
 def save_all_qc_figures(output_dir, green_channel, nuclei_labels, measurements_df,
                         tissue_mask, threshold, background, roi_counts=None,
                         background_diagnostics=None, tissue_pixels=None,
                         summary=None, method='fold_change',
-                        prefix="qc", dpi=150):
+                        red_channel=None, cell_body_dilation=8,
+                        prefix="qc", dpi=200):
     """
     Generate and save all QC figures, annotated overlays, and report to disk.
 
@@ -704,10 +945,14 @@ def save_all_qc_figures(output_dir, green_channel, nuclei_labels, measurements_d
         Summary statistics from get_summary_statistics()
     method : str
         Classification method used
+    red_channel : ndarray, optional
+        Nuclear channel for fluorescence composite
+    cell_body_dilation : int
+        Cell body dilation used in background estimation
     prefix : str
         Prefix for saved filenames
     dpi : int
-        Resolution for saved images
+        Resolution for saved images (default 200 for publication quality)
 
     Returns
     -------
@@ -719,38 +964,41 @@ def save_all_qc_figures(output_dir, green_channel, nuclei_labels, measurements_d
 
     saved_paths = []
 
-    # 1. Overlay image
-    fig = create_overlay_image(green_channel, nuclei_labels, measurements_df)
+    # 1. Composite overlay with classified boundaries
+    fig = create_overlay_image(green_channel, nuclei_labels, measurements_df,
+                               red_channel=red_channel)
     path = output_dir / f"{prefix}_overlay.png"
-    fig.savefig(path, dpi=dpi, bbox_inches='tight')
+    fig.savefig(path, dpi=dpi, bbox_inches='tight', facecolor=fig.get_facecolor())
     plt.close(fig)
     saved_paths.append(path)
 
-    # 2. Annotated overlay with arrows
-    fig = create_annotated_overlay(green_channel, nuclei_labels, measurements_df)
+    # 2. Annotated overlay with arrows on colocalized cells
+    fig = create_annotated_overlay(green_channel, nuclei_labels, measurements_df,
+                                   red_channel=red_channel)
     path = output_dir / f"{prefix}_annotated_overlay.png"
-    fig.savefig(path, dpi=dpi, bbox_inches='tight')
+    fig.savefig(path, dpi=dpi, bbox_inches='tight', facecolor=fig.get_facecolor())
     plt.close(fig)
     saved_paths.append(path)
 
-    # 3. Background mask
-    fig = create_background_mask_overlay(green_channel, nuclei_labels, tissue_mask)
+    # 3. Background estimation zones (tissue / exclusion ring / nuclei)
+    fig = create_background_mask_overlay(green_channel, nuclei_labels, tissue_mask,
+                                         cell_body_dilation=cell_body_dilation)
     path = output_dir / f"{prefix}_background_mask.png"
-    fig.savefig(path, dpi=dpi, bbox_inches='tight')
+    fig.savefig(path, dpi=dpi, bbox_inches='tight', facecolor=fig.get_facecolor())
     plt.close(fig)
     saved_paths.append(path)
 
     # 4. Fold change histogram
     fig = create_fold_change_histogram(measurements_df, threshold, background)
     path = output_dir / f"{prefix}_fold_change_histogram.png"
-    fig.savefig(path, dpi=dpi, bbox_inches='tight')
+    fig.savefig(path, dpi=dpi, bbox_inches='tight', facecolor=fig.get_facecolor())
     plt.close(fig)
     saved_paths.append(path)
 
     # 5. Intensity scatter
     fig = create_intensity_scatter(measurements_df, background, threshold)
     path = output_dir / f"{prefix}_intensity_scatter.png"
-    fig.savefig(path, dpi=dpi, bbox_inches='tight')
+    fig.savefig(path, dpi=dpi, bbox_inches='tight', facecolor=fig.get_facecolor())
     plt.close(fig)
     saved_paths.append(path)
 
@@ -758,7 +1006,7 @@ def save_all_qc_figures(output_dir, green_channel, nuclei_labels, measurements_d
     if background_diagnostics is not None and tissue_pixels is not None:
         fig = create_gmm_diagnostic(tissue_pixels, background_diagnostics)
         path = output_dir / f"{prefix}_gmm_diagnostic.png"
-        fig.savefig(path, dpi=dpi, bbox_inches='tight')
+        fig.savefig(path, dpi=dpi, bbox_inches='tight', facecolor=fig.get_facecolor())
         plt.close(fig)
         saved_paths.append(path)
 
@@ -766,7 +1014,7 @@ def save_all_qc_figures(output_dir, green_channel, nuclei_labels, measurements_d
     if roi_counts is not None:
         fig = create_roi_summary_bar(roi_counts)
         path = output_dir / f"{prefix}_roi_summary.png"
-        fig.savefig(path, dpi=dpi, bbox_inches='tight')
+        fig.savefig(path, dpi=dpi, bbox_inches='tight', facecolor=fig.get_facecolor())
         plt.close(fig)
         saved_paths.append(path)
 

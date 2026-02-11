@@ -63,6 +63,10 @@ dependencies = [
     "nd2",
     "dask>=2022.1",
 ]
+2d-cellpose = [
+    "mousebrain[2d]",
+    "cellpose>=3.0",
+]
 2d-alignment = [
     "mousebrain[2d]",
     "DeepSlice",
@@ -71,6 +75,7 @@ dependencies = [
 all = [
     "mousebrain[3d]",
     "mousebrain[2d]",
+    "mousebrain[2d-cellpose]",
     "mousebrain[2d-alignment]",
 ]
 dev = [

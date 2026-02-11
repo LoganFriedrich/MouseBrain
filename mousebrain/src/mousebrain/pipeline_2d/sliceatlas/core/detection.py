@@ -1,18 +1,25 @@
 """
-detection.py - Nuclei detection using StarDist
+detection.py - Nuclei detection using StarDist (and optionally Cellpose)
 
-Provides StarDist-based nuclei detection for 2D confocal slice images.
+Provides nuclei detection for 2D confocal slice images with:
+- Pre-detection image preprocessing (background subtraction, CLAHE, blur)
+- StarDist and Cellpose detection backends
+- Post-detection filtering (size, circularity, confidence, border, morphology)
 
 Usage:
-    from mousebrain.pipeline_2d.sliceatlas.core.detection import NucleiDetector
+    from mousebrain.pipeline_2d.sliceatlas.core.detection import NucleiDetector, preprocess_for_detection
+
+    # Optional preprocessing
+    preprocessed = preprocess_for_detection(image, background_subtraction=True, clahe=True)
 
     detector = NucleiDetector()
-    labels, details = detector.detect(red_channel_image)
-    filtered_labels = detector.filter_by_size(labels, min_area=50, max_area=5000)
+    labels, details = detector.detect(preprocessed)
+    labels = detector.filter_by_size(labels, min_area=50, max_area=5000)
+    labels = detector.filter_border_touching(labels)
 """
 
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any, Union
+from typing import Optional, Tuple, Dict, Any, Union, List
 import numpy as np
 
 # Lazy imports
@@ -50,6 +57,88 @@ def _get_csbdeep():
                 return (x - lo) / (hi - lo + 1e-8)
             _csbdeep = normalize
     return _csbdeep
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PRE-DETECTION IMAGE PREPROCESSING
+# ══════════════════════════════════════════════════════════════════════════
+
+def preprocess_for_detection(
+    image: np.ndarray,
+    background_subtraction: bool = False,
+    bg_sigma: float = 50.0,
+    clahe: bool = False,
+    clahe_clip_limit: float = 0.02,
+    clahe_kernel_size: Optional[int] = 128,
+    gaussian_sigma: float = 0.0,
+) -> np.ndarray:
+    """
+    Preprocess nuclear channel image before detection.
+
+    Addresses common detection problems:
+    - Background subtraction flattens uneven illumination so dim nuclei
+      in dark regions become visible (fixes "missing dim nuclei")
+    - CLAHE boosts local contrast so dim nuclei near bright ones stand out
+    - Gaussian blur smooths speckle noise and small debris
+
+    Order: bg_sub → CLAHE → blur (each step builds on the previous).
+
+    Args:
+        image: 2D grayscale nuclear channel image
+        background_subtraction: Subtract estimated background illumination.
+            Uses large-sigma Gaussian to estimate slowly-varying background.
+        bg_sigma: Sigma for background estimation (larger = smoother).
+            50.0 works well for most microscopy images.
+        clahe: Apply Contrast Limited Adaptive Histogram Equalization.
+        clahe_clip_limit: CLAHE clip limit (0.01-0.05 typical).
+            Higher = more contrast enhancement.
+        clahe_kernel_size: CLAHE tile/kernel size in pixels.
+            None = auto (1/8 of image size).
+        gaussian_sigma: Gaussian blur sigma. 0 = no blur.
+            1.0 is a light denoise, 2.0 is moderate smoothing.
+
+    Returns:
+        Preprocessed image as float32, 0-1 range.
+    """
+    from scipy.ndimage import gaussian_filter
+    from skimage.exposure import equalize_adapthist
+
+    # Convert to float32 and normalize to 0-1
+    img = image.astype(np.float32)
+    img_min, img_max = img.min(), img.max()
+    if img_max > img_min:
+        img = (img - img_min) / (img_max - img_min)
+    else:
+        return np.zeros_like(img)
+
+    # Step 1: Background subtraction
+    # Estimates slowly-varying illumination with a large Gaussian, then subtracts.
+    # This is equivalent to a top-hat filter but faster.
+    if background_subtraction:
+        bg = gaussian_filter(img, sigma=bg_sigma)
+        img = np.clip(img - bg, 0, None)
+        # Re-normalize after subtraction
+        s_max = img.max()
+        if s_max > 0:
+            img = img / s_max
+
+    # Step 2: CLAHE (local contrast enhancement)
+    if clahe:
+        if clahe_kernel_size is not None:
+            # equalize_adapthist expects kernel_size as int or iterable
+            kernel = min(clahe_kernel_size, min(img.shape) // 2)
+            kernel = max(kernel, 8)  # minimum sensible kernel
+        else:
+            kernel = None  # auto
+        img = equalize_adapthist(img, clip_limit=clahe_clip_limit,
+                                 kernel_size=kernel).astype(np.float32)
+
+    # Step 3: Light Gaussian blur (denoise)
+    if gaussian_sigma > 0:
+        from skimage.filters import gaussian
+        img = gaussian(img, sigma=gaussian_sigma, preserve_range=True).astype(np.float32)
+
+    return img
 
 
 # Available pretrained models
@@ -269,6 +358,171 @@ class NucleiDetector:
 
         return filtered
 
+    def filter_by_confidence(
+        self,
+        labels: np.ndarray,
+        details: Dict[str, Any],
+        min_confidence: float = 0.5,
+    ) -> Tuple[np.ndarray, int]:
+        """
+        Filter detections by StarDist confidence/probability score.
+
+        StarDist returns a probability score per detection in details['prob'].
+        This allows removing marginal detections that passed the initial
+        prob_thresh but have low confidence.
+
+        Args:
+            labels: Label image from detect()
+            details: Details dict from detect() (must contain 'prob')
+            min_confidence: Minimum confidence score to keep (0-1)
+
+        Returns:
+            Tuple of (filtered_labels, n_removed)
+        """
+        if 'prob' not in details or len(details['prob']) == 0:
+            return labels, 0
+
+        probs = details['prob']
+        # StarDist labels are 1-indexed, probs are 0-indexed
+        # prob[i] corresponds to label (i+1)
+        n_labels = labels.max()
+        if n_labels == 0:
+            return labels, 0
+
+        # Build set of labels to keep
+        keep_labels = set()
+        for i, prob in enumerate(probs):
+            label_id = i + 1
+            if prob >= min_confidence and label_id <= n_labels:
+                keep_labels.add(label_id)
+
+        n_removed = n_labels - len(keep_labels)
+
+        # Create filtered label image with consecutive IDs
+        filtered = np.zeros_like(labels)
+        for new_id, old_label in enumerate(sorted(keep_labels), 1):
+            filtered[labels == old_label] = new_id
+
+        return filtered, n_removed
+
+    def filter_border_touching(
+        self,
+        labels: np.ndarray,
+        border_width: int = 1,
+    ) -> Tuple[np.ndarray, int]:
+        """
+        Remove nuclei that touch image borders.
+
+        Partial nuclei at borders have incorrect area, shape, and
+        intensity measurements. Removing them improves downstream
+        accuracy.
+
+        Args:
+            labels: Label image
+            border_width: Width of border region to check (pixels)
+
+        Returns:
+            Tuple of (filtered_labels, n_removed)
+        """
+        from skimage.segmentation import clear_border
+
+        n_before = len(np.unique(labels)) - 1  # exclude bg
+        cleared = clear_border(labels, buffer_size=border_width)
+
+        # Relabel consecutively
+        unique_labels = np.unique(cleared)
+        unique_labels = unique_labels[unique_labels > 0]
+        n_after = len(unique_labels)
+
+        relabeled = np.zeros_like(cleared)
+        for new_id, old_label in enumerate(unique_labels, 1):
+            relabeled[cleared == old_label] = new_id
+
+        return relabeled, n_before - n_after
+
+    def filter_by_morphology(
+        self,
+        labels: np.ndarray,
+        intensity_image: Optional[np.ndarray] = None,
+        min_solidity: float = 0.0,
+        min_mean_intensity: float = 0.0,
+        max_eccentricity: float = 1.0,
+    ) -> Tuple[np.ndarray, int]:
+        """
+        Filter nuclei by morphological properties and intensity.
+
+        Solidity = area / convex_hull_area. Debris and artifacts typically
+        have solidity < 0.7. Real nuclei are typically > 0.8.
+
+        Mean intensity filtering removes dark detections that are likely
+        segmentation artifacts (StarDist finding shapes in noise).
+
+        Args:
+            labels: Label image
+            intensity_image: Nuclear channel image for intensity filtering.
+                If None, intensity filtering is skipped.
+            min_solidity: Minimum solidity (0-1). 0 = no filtering.
+            min_mean_intensity: Minimum mean intensity in nuclear channel.
+                0 = no filtering.
+            max_eccentricity: Maximum eccentricity (0=circle, 1=line).
+                1.0 = no filtering.
+
+        Returns:
+            Tuple of (filtered_labels, n_removed)
+        """
+        from skimage.measure import regionprops
+
+        n_before = len(np.unique(labels)) - 1
+        if n_before == 0:
+            return labels, 0
+
+        props = regionprops(labels, intensity_image=intensity_image)
+        valid_labels = []
+
+        for prop in props:
+            # Solidity check
+            if min_solidity > 0 and prop.solidity < min_solidity:
+                continue
+            # Eccentricity check
+            if max_eccentricity < 1.0 and prop.eccentricity > max_eccentricity:
+                continue
+            # Intensity check (only if image provided and threshold set)
+            if (intensity_image is not None and min_mean_intensity > 0
+                    and prop.intensity_mean < min_mean_intensity):
+                continue
+            valid_labels.append(prop.label)
+
+        filtered = np.zeros_like(labels)
+        for new_id, old_label in enumerate(valid_labels, 1):
+            filtered[labels == old_label] = new_id
+
+        return filtered, n_before - len(valid_labels)
+
+    @staticmethod
+    def compute_n_tiles(
+        image_shape: Tuple[int, int],
+        tile_size: int = 1024,
+    ) -> Optional[Tuple[int, int]]:
+        """
+        Auto-calculate n_tiles for large images.
+
+        If any image dimension exceeds tile_size, returns appropriate tiling
+        to prevent GPU memory issues. Otherwise returns None (no tiling needed).
+
+        Args:
+            image_shape: (height, width) of the image
+            tile_size: Maximum tile dimension in pixels
+
+        Returns:
+            Tuple of (ny, nx) tiles, or None if image is small enough
+        """
+        h, w = image_shape[:2]
+        if h <= tile_size and w <= tile_size:
+            return None
+        ny = max(1, (h + tile_size - 1) // tile_size)
+        nx = max(1, (w + tile_size - 1) // tile_size)
+        return (ny, nx)
+
     def get_centroids(
         self,
         labels: np.ndarray,
@@ -347,6 +601,9 @@ def detect_nuclei(
     nms_thresh: float = 0.4,
     min_area: int = 50,
     max_area: int = 5000,
+    preprocess: bool = False,
+    background_subtraction: bool = False,
+    clahe: bool = False,
 ) -> Tuple[np.ndarray, int]:
     """
     Convenience function for quick nuclei detection.
@@ -358,12 +615,22 @@ def detect_nuclei(
         nms_thresh: NMS threshold
         min_area: Minimum nucleus area
         max_area: Maximum nucleus area
+        preprocess: Apply default preprocessing (bg_sub + CLAHE)
+        background_subtraction: Apply background subtraction only
+        clahe: Apply CLAHE only
 
     Returns:
         Tuple of (labels, count)
         - labels: Filtered label image
         - count: Number of nuclei detected
     """
+    # Apply preprocessing if requested
+    if preprocess:
+        image = preprocess_for_detection(image, background_subtraction=True, clahe=True)
+    elif background_subtraction or clahe:
+        image = preprocess_for_detection(
+            image, background_subtraction=background_subtraction, clahe=clahe)
+
     detector = NucleiDetector(model_name=model_name)
     labels, _ = detector.detect(image, prob_thresh=prob_thresh, nms_thresh=nms_thresh)
     labels = detector.filter_by_size(labels, min_area=min_area, max_area=max_area)
@@ -372,6 +639,17 @@ def detect_nuclei(
     return labels, count
 
 
-def list_available_models() -> Dict[str, str]:
-    """List available pretrained StarDist models."""
+# Available Cellpose models (for reference when cellpose backend is used)
+CELLPOSE_MODELS = {
+    'nuclei': 'Nuclear segmentation (recommended for nuclear stains)',
+    'cyto': 'Cytoplasm segmentation (original model)',
+    'cyto2': 'Improved cytoplasm segmentation',
+    'cyto3': 'Latest cytoplasm model',
+}
+
+
+def list_available_models(backend: str = 'stardist') -> Dict[str, str]:
+    """List available pretrained models for the given backend."""
+    if backend == 'cellpose':
+        return CELLPOSE_MODELS.copy()
     return PRETRAINED_MODELS.copy()
