@@ -1,0 +1,30 @@
+name: connectome-pipeline
+display_name: Connectome Pipeline
+contributions:
+  commands:
+    - id: connectome-pipeline.dashboard
+      python_name: mousebrain.plugin_3d.pipeline_widget:PipelineDashboard
+      title: Pipeline Dashboard
+    - id: connectome-pipeline.tuning
+      python_name: mousebrain.plugin_3d.tuning_widget:TuningWidget
+      title: Setup & Tuning
+    - id: connectome-pipeline.crop
+      python_name: mousebrain.plugin_3d.manual_crop_widget:ManualCropWidget
+      title: Manual Crop
+    - id: connectome-pipeline.experiments
+      python_name: mousebrain.plugin_3d.experiments_widget:ExperimentsWidget
+      title: Experiments
+    - id: connectome-pipeline.curation
+      python_name: mousebrain.plugin_3d.curation_widget:CurationWidget
+      title: Curation
+  widgets:
+    - command: connectome-pipeline.dashboard
+      display_name: 1. Pipeline Dashboard
+    - command: connectome-pipeline.tuning
+      display_name: 2. Setup & Tuning
+    - command: connectome-pipeline.crop
+      display_name: 3. Manual Crop
+    - command: connectome-pipeline.experiments
+      display_name: 4. Experiments
+    - command: connectome-pipeline.curation
+      display_name: 5. Curation

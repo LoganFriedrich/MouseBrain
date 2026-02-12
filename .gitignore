@@ -1,161 +1,26 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
 *.egg-info/
-.eggs/
 *.egg
-.pytest_cache/
-.coverage
-htmlcov/
-build/
 dist/
-*.spec
+build/
+*.so
 
-# Virtual environments
+# Environments
 .env
-.venv
-env/
-venv/
+.venv/
 
 # IDE
-.idea/
 .vscode/
+.idea/
 *.swp
 *.swo
-*~
 
 # OS
-.DS_Store
 Thumbs.db
-desktop.ini
+.DS_Store
+NDH6SA~M
 
-# Large data files
-*.ims
-*.nd2
-*.tif
-*.tiff
-*.nii
-*.nii.gz
-*.h5
-*.hdf5
-*.keras
-*.crdownload
-
-# Video files
-*.mp4
-*.avi
-*.mov
-*.mkv
-*.wmv
-*.flv
-*.webm
-*.m4v
-*.mpg
-*.mpeg
-*.3gp
-*.ogv
-
-# Image files
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.bmp
-*.webp
-*.ico
-*.raw
-*.psd
-*.heic
-*.heif
-
-# Brain processing output folders
-3D_Cleared
-
-# Trained models
-3D_Cleared/util_Brainglobe/Trained_Models/
-
-# Imaris cache
-.imaris_cache/
-
-# Excel data
-*.xlsx
-*.xls
-
-# CSV files (ignore generated data, keep reference files)
-*.csv
-!**/elife*.csv
-!**/calibration_runs.csv
-!**/region_counts.csv
-!**/experiments.csv
-
-# Metadata (regenerated)
-metadata.json
-QC_*.png
-VOXEL_SIZES.txt
-.crop_position.json
-
-# Logs
-*.log
-
-# User config
-.sci_connectome/
-
-# Claude
-.claude/
-
-# Pano downloads
-*.crdownload
-
-# Zip archives
-*.zip
-3D_Cleared/1_Brains/357_CNT_02_08/357_CNT_02_08_1p625x_z4/training_data/curated_cells_20260209_153049.xml
-3D_Cleared/1_Brains/357_CNT_02_08/357_CNT_02_08_1p625x_z4/training_data/curated_cells_20260209_160333.xml
-3D_Cleared/1_Brains/357_CNT_02_08/357_CNT_02_08_1p625x_z4/training_data/curated_cells_20260209_164506.xml
-3D_Cleared/1_Brains/357_CNT_02_08/357_CNT_02_08_1p625x_z4/training_data/curated_non_cells_20260209_153131.xml
-3D_Cleared/1_Brains/357_CNT_02_08/357_CNT_02_08_1p625x_z4/training_data/curated_non_cells_20260209_160351.xml
-3D_Cleared/1_Brains/357_CNT_02_08/357_CNT_02_08_1p625x_z4/training_data/curated_non_cells_20260209_164521.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_cells_20260209_100632.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_cells_20260209_122013.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_cells_20260209_124940.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_cells_20260209_142111.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_cells_20260209_145459.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_cells_20260209_173952.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_cells.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_non_cells_20260209_100751.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_non_cells_20260209_122102.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_non_cells_20260209_125014.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_non_cells_20260209_142136.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_non_cells_20260209_145516.xml
-3D_Cleared/1_Brains/367_CNT_03_07/367_CNT_03_07_1p625x_z4/training_data/curated_non_cells.xml
-3D_Cleared/2_Data_Summary/calibration_runs.csv
-3D_Cleared/2_Data_Summary/sessions/.checkpoint_357_CNT_02_08_1p625x_z4_20260209_145635.json
-3D_Cleared/2_Data_Summary/sessions/.checkpoint_367_CNT_03_07_1p625x_z4_20260209_112518.json
-3D_Cleared/2_Data_Summary/sessions/.checkpoint_367_CNT_03_07_1p625x_z4_20260209_133445.json
-3D_Cleared/2_Data_Summary/sessions/.checkpoint_367_CNT_03_07_1p625x_z4_20260209_165418.json
-3D_Cleared/2_Data_Summary/sessions/349_CNT_01_02_1p625x_z4_20260209_145538_session.json
-3D_Cleared/2_Data_Summary/sessions/349_CNT_01_02_1p625x_z4_20260209_145538_session.md
-3D_Cleared/2_Data_Summary/sessions/357_CNT_02_08_1p625x_z4_20260209_145635_session.json
-3D_Cleared/2_Data_Summary/sessions/357_CNT_02_08_1p625x_z4_20260209_145635_session.md
-3D_Cleared/2_Data_Summary/sessions/367_CNT_03_07_1p625x_z4_20260209_133445_session.json
-3D_Cleared/2_Data_Summary/sessions/367_CNT_03_07_1p625x_z4_20260209_133445_session.md
-3D_Cleared/2_Data_Summary/sessions/LIVE_SESSION_357_CNT_02_08_1p625x_z4_20260209_145635.md
-3D_Cleared/2_Data_Summary/sessions/LIVE_SESSION_367_CNT_03_07_1p625x_z4_20260209_112518.md
-3D_Cleared/2_Data_Summary/sessions/LIVE_SESSION_367_CNT_03_07_1p625x_z4_20260209_133445.md
-3D_Cleared/2_Data_Summary/sessions/LIVE_SESSION_367_CNT_03_07_1p625x_z4_20260209_165418.md
-3D_Cleared/2_Data_Summary/calibration_runs.csv
-3D_Cleared/2_Data_Summary/calibration_runs.csv
-3D_Cleared/2_Data_Summary/calibration_runs.csv
-3D_Cleared/1_Brains/349_CNT_01_02/349_CNT_01_02_1p625x_z4/training_data/cells/curated_cells_20260211_091348.xml
-3D_Cleared/1_Brains/349_CNT_01_02/349_CNT_01_02_1p625x_z4/training_data/cells/curated_cells_20260211_093628.xml
-3D_Cleared/1_Brains/349_CNT_01_02/349_CNT_01_02_1p625x_z4/training_data/cells/curated_cells_20260211_095432.xml
-3D_Cleared/1_Brains/349_CNT_01_02/349_CNT_01_02_1p625x_z4/training_data/non_cells/curated_non_cells_20260211_091406.xml
-3D_Cleared/1_Brains/349_CNT_01_02/349_CNT_01_02_1p625x_z4/training_data/non_cells/curated_non_cells_20260211_093647.xml
-3D_Cleared/1_Brains/349_CNT_01_02/349_CNT_01_02_1p625x_z4/training_data/non_cells/curated_non_cells_20260211_095457.xml
-3D_Cleared/1_Brains/349_CNT_01_02_1p625x_z4/training_data/training.yml
-3D_Cleared/2_Data_Summary/calibration_runs.csv
-mousebrain/src/mousebrain/pipeline_2d/BrainSlice_Data/calibration_runs.csv
-mousebrain/src/mousebrain/pipeline_2d/BrainSlice_Data/calibration_runs.csv
-3D_Cleared/2_Data_Summary/calibration_runs.csv
+# Sisyphus agent files
+.sisyphus/
