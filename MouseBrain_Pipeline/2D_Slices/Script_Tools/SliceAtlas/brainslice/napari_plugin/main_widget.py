@@ -4,8 +4,8 @@ main_widget.py - Main BrainSlice napari widget
 Provides a tabbed interface for:
 1. Load - Load images and select channels
 2. Insets - Add high-resolution region-of-interest overlays
-3. Detect - Nuclei detection with StarDist
-4. Colocalize - Measure signal and classify positive/negative
+3. Detect - Nuclei detection (Threshold default, StarDist/Cellpose optional)
+4. Colocalize - Measure signal in soma regions and classify positive/negative
 5. Quantify - Assign to regions and export results
 """
 
@@ -55,6 +55,9 @@ class BrainSliceWidget(QWidget):
         self._tissue_pixels = None
         self._coloc_background_surface = None
         self._diag_canvas = None
+        self._pixel_size_um: Optional[float] = None
+        self._size_manually_set: bool = False
+        self._peeked_metadata: Optional[Dict[str, Any]] = None
 
         # Tracker
         try:
@@ -237,6 +240,9 @@ class BrainSliceWidget(QWidget):
         self.red_channel_spin.setRange(0, 10)
         self.red_channel_spin.setValue(1)  # Default to channel 1 (561nm)
         red_layout.addWidget(self.red_channel_spin)
+        self.red_channel_name_label = QLabel("")
+        self.red_channel_name_label.setStyleSheet("color: #FF8888; font-size: 10px;")
+        red_layout.addWidget(self.red_channel_name_label)
         channel_layout.addLayout(red_layout)
 
         # Green (signal) channel
@@ -246,6 +252,9 @@ class BrainSliceWidget(QWidget):
         self.green_channel_spin.setRange(0, 10)
         self.green_channel_spin.setValue(0)  # Default to channel 0 (488nm)
         green_layout.addWidget(self.green_channel_spin)
+        self.green_channel_name_label = QLabel("")
+        self.green_channel_name_label.setStyleSheet("color: #88FF88; font-size: 10px;")
+        green_layout.addWidget(self.green_channel_name_label)
         channel_layout.addLayout(green_layout)
 
         channel_group.setLayout(channel_layout)
@@ -279,7 +288,7 @@ class BrainSliceWidget(QWidget):
         backend_row = QHBoxLayout()
         backend_row.addWidget(QLabel("Backend:"))
         self.backend_combo = QComboBox()
-        self.backend_combo.addItems(['StarDist', 'Cellpose'])
+        self.backend_combo.addItems(['Threshold', 'StarDist', 'Cellpose'])
         self.backend_combo.currentTextChanged.connect(self._on_backend_changed)
         backend_row.addWidget(self.backend_combo)
         backend_layout.addLayout(backend_row)
@@ -293,7 +302,10 @@ class BrainSliceWidget(QWidget):
             '2D_paper_dsb2018',
         ])
         model_row.addWidget(self.model_combo)
-        backend_layout.addLayout(model_row)
+        self.model_row_widget = QWidget()
+        self.model_row_widget.setLayout(model_row)
+        self.model_row_widget.setVisible(False)  # Hidden for Threshold (default)
+        backend_layout.addWidget(self.model_row_widget)
 
         backend_group.setLayout(backend_layout)
         layout.addWidget(backend_group)
@@ -359,13 +371,123 @@ class BrainSliceWidget(QWidget):
         preproc_layout.addWidget(self.preproc_preview_btn)
 
         preproc_group.setLayout(preproc_layout)
+        self.preproc_group = preproc_group
+        self.preproc_group.setVisible(False)  # Hidden for Threshold (default)
         layout.addWidget(preproc_group)
 
         # ── Detection Parameters ──
         param_group = QGroupBox("Detection Parameters")
         param_layout = QVBoxLayout()
 
-        # StarDist parameters
+        # Threshold parameters (visible by default — Threshold is default backend)
+        self.threshold_params_widget = QWidget()
+        thresh_det_layout = QVBoxLayout()
+        thresh_det_layout.setContentsMargins(0, 0, 0, 0)
+
+        thresh_method_row = QHBoxLayout()
+        thresh_method_row.addWidget(QLabel("Method:"))
+        self.thresh_detect_method_combo = QComboBox()
+        self.thresh_detect_method_combo.addItems(['otsu', 'percentile', 'manual'])
+        self.thresh_detect_method_combo.setToolTip(
+            "Otsu: automatic threshold (good default for bimodal images)\n"
+            "Percentile: threshold at Nth percentile intensity\n"
+            "Manual: user-specified threshold value"
+        )
+        self.thresh_detect_method_combo.currentTextChanged.connect(
+            self._on_thresh_detect_method_changed
+        )
+        thresh_method_row.addWidget(self.thresh_detect_method_combo)
+        thresh_det_layout.addLayout(thresh_method_row)
+
+        thresh_pct_row = QHBoxLayout()
+        thresh_pct_row.addWidget(QLabel("Percentile:"))
+        self.thresh_detect_percentile_spin = QDoubleSpinBox()
+        self.thresh_detect_percentile_spin.setRange(80.0, 99.9)
+        self.thresh_detect_percentile_spin.setSingleStep(0.5)
+        self.thresh_detect_percentile_spin.setValue(99.0)
+        self.thresh_detect_percentile_spin.setToolTip(
+            "Intensity percentile to use as threshold.\n"
+            "99 = only brightest 1% of pixels."
+        )
+        thresh_pct_row.addWidget(self.thresh_detect_percentile_spin)
+        self.thresh_percentile_row = QWidget()
+        self.thresh_percentile_row.setLayout(thresh_pct_row)
+        self.thresh_percentile_row.setVisible(False)
+        thresh_det_layout.addWidget(self.thresh_percentile_row)
+
+        thresh_manual_row = QHBoxLayout()
+        thresh_manual_row.addWidget(QLabel("Manual value:"))
+        self.thresh_detect_manual_spin = QDoubleSpinBox()
+        self.thresh_detect_manual_spin.setRange(0.0, 65535.0)
+        self.thresh_detect_manual_spin.setSingleStep(100.0)
+        self.thresh_detect_manual_spin.setValue(500.0)
+        thresh_manual_row.addWidget(self.thresh_detect_manual_spin)
+        self.thresh_manual_row = QWidget()
+        self.thresh_manual_row.setLayout(thresh_manual_row)
+        self.thresh_manual_row.setVisible(False)
+        thresh_det_layout.addWidget(self.thresh_manual_row)
+
+        # Hysteresis thresholding (captures full nucleus extent)
+        self.thresh_hysteresis_check = QCheckBox("Hysteresis (expand to full boundary)")
+        self.thresh_hysteresis_check.setChecked(True)
+        self.thresh_hysteresis_check.setToolTip(
+            "Use hysteresis thresholding to capture full nucleus extent.\n"
+            "The main threshold finds bright cores; a lower threshold\n"
+            "expands to the true boundary of each nucleus.\n"
+            "Fixes undersized detections and catches dimmer nuclei."
+        )
+        self.thresh_hysteresis_check.stateChanged.connect(
+            self._on_hysteresis_check_changed
+        )
+        thresh_det_layout.addWidget(self.thresh_hysteresis_check)
+
+        thresh_hyst_row = QHBoxLayout()
+        thresh_hyst_row.addWidget(QLabel("Low fraction:"))
+        self.thresh_hysteresis_low_spin = QDoubleSpinBox()
+        self.thresh_hysteresis_low_spin.setRange(0.1, 0.9)
+        self.thresh_hysteresis_low_spin.setSingleStep(0.05)
+        self.thresh_hysteresis_low_spin.setValue(0.5)
+        self.thresh_hysteresis_low_spin.setToolTip(
+            "Low threshold = high threshold x this fraction.\n"
+            "0.5 = low is half the high threshold (good default).\n"
+            "Lower values capture more of each nucleus boundary\n"
+            "but may merge nearby objects."
+        )
+        thresh_hyst_row.addWidget(self.thresh_hysteresis_low_spin)
+        self.thresh_hysteresis_row = QWidget()
+        self.thresh_hysteresis_row.setLayout(thresh_hyst_row)
+        thresh_det_layout.addWidget(self.thresh_hysteresis_row)
+
+        thresh_opening_row = QHBoxLayout()
+        thresh_opening_row.addWidget(QLabel("Opening radius:"))
+        self.thresh_opening_spin = QSpinBox()
+        self.thresh_opening_spin.setRange(0, 10)
+        self.thresh_opening_spin.setValue(0)
+        self.thresh_opening_spin.setToolTip(
+            "Morphological opening to remove small speckle noise.\n"
+            "0 = disabled (default). 1-2 = light cleanup.\n"
+            "Warning: opening erodes nucleus boundaries."
+        )
+        thresh_opening_row.addWidget(self.thresh_opening_spin)
+        thresh_det_layout.addLayout(thresh_opening_row)
+
+        thresh_gauss_row = QHBoxLayout()
+        thresh_gauss_row.addWidget(QLabel("Gaussian sigma:"))
+        self.thresh_gauss_spin = QDoubleSpinBox()
+        self.thresh_gauss_spin.setRange(0.0, 5.0)
+        self.thresh_gauss_spin.setSingleStep(0.5)
+        self.thresh_gauss_spin.setValue(1.0)
+        self.thresh_gauss_spin.setToolTip(
+            "Gaussian blur before thresholding. Smooths noise.\n"
+            "0 = no blur. 1.0 = light smoothing."
+        )
+        thresh_gauss_row.addWidget(self.thresh_gauss_spin)
+        thresh_det_layout.addLayout(thresh_gauss_row)
+
+        self.threshold_params_widget.setLayout(thresh_det_layout)
+        param_layout.addWidget(self.threshold_params_widget)
+
+        # StarDist parameters (hidden by default)
         self.stardist_params_widget = QWidget()
         stardist_layout = QVBoxLayout()
         stardist_layout.setContentsMargins(0, 0, 0, 0)
@@ -391,6 +513,7 @@ class BrainSliceWidget(QWidget):
         stardist_layout.addLayout(nms_layout)
 
         self.stardist_params_widget.setLayout(stardist_layout)
+        self.stardist_params_widget.setVisible(False)
         param_layout.addWidget(self.stardist_params_widget)
 
         # Cellpose parameters (hidden by default)
@@ -426,7 +549,7 @@ class BrainSliceWidget(QWidget):
         size_layout.addWidget(QLabel("Min/Max Area:"))
         self.min_area_spin = QSpinBox()
         self.min_area_spin.setRange(1, 10000)
-        self.min_area_spin.setValue(50)
+        self.min_area_spin.setValue(10)
         self.max_area_spin = QSpinBox()
         self.max_area_spin.setRange(1, 100000)
         self.max_area_spin.setValue(5000)
@@ -434,6 +557,15 @@ class BrainSliceWidget(QWidget):
         size_layout.addWidget(QLabel("-"))
         size_layout.addWidget(self.max_area_spin)
         filter_layout.addLayout(size_layout)
+
+        # Physical area label (updated when pixel size is known)
+        self._area_um_label = QLabel("")
+        self._area_um_label.setStyleSheet("color: gray; font-size: 10px; margin-left: 4px;")
+        filter_layout.addWidget(self._area_um_label)
+
+        # Connect spinbox changes to update area label and track manual edits
+        self.min_area_spin.valueChanged.connect(self._on_area_spin_changed)
+        self.max_area_spin.valueChanged.connect(self._on_area_spin_changed)
 
         # Solidity filter
         solidity_layout = QHBoxLayout()
@@ -481,25 +613,44 @@ class BrainSliceWidget(QWidget):
 
     def _on_backend_changed(self, backend_text: str):
         """Toggle visibility of backend-specific parameters."""
+        is_threshold = backend_text == 'Threshold'
         is_stardist = backend_text == 'StarDist'
+        is_cellpose = backend_text == 'Cellpose'
+
+        # Threshold params
+        self.threshold_params_widget.setVisible(is_threshold)
+
+        # StarDist/Cellpose need model, preprocessing
+        self.model_row_widget.setVisible(not is_threshold)
+        self.preproc_group.setVisible(not is_threshold)
         self.stardist_params_widget.setVisible(is_stardist)
-        self.cellpose_params_widget.setVisible(not is_stardist)
+        self.cellpose_params_widget.setVisible(is_cellpose)
 
         # Update model list
-        self.model_combo.clear()
         if is_stardist:
+            self.model_combo.clear()
             self.model_combo.addItems([
                 '2D_versatile_fluo',
                 '2D_versatile_he',
                 '2D_paper_dsb2018',
             ])
-        else:
+        elif is_cellpose:
+            self.model_combo.clear()
             self.model_combo.addItems([
                 'nuclei',
                 'cyto',
                 'cyto2',
                 'cyto3',
             ])
+
+    def _on_thresh_detect_method_changed(self, method: str):
+        """Toggle threshold detection sub-parameters."""
+        self.thresh_percentile_row.setVisible(method == 'percentile')
+        self.thresh_manual_row.setVisible(method == 'manual')
+
+    def _on_hysteresis_check_changed(self, state):
+        """Toggle hysteresis low fraction visibility."""
+        self.thresh_hysteresis_row.setVisible(bool(state))
 
     def _on_thresh_method_changed(self, method: str):
         """Toggle visibility of area_fraction parameter."""
@@ -593,6 +744,27 @@ class BrainSliceWidget(QWidget):
 
         bg_group.setLayout(bg_layout)
         layout.addWidget(bg_group)
+
+        # Soma measurement
+        soma_group = QGroupBox("Soma Measurement")
+        soma_layout = QVBoxLayout()
+
+        soma_dil_row = QHBoxLayout()
+        soma_dil_row.addWidget(QLabel("Soma dilation (px):"))
+        self.soma_dilation_spin = QSpinBox()
+        self.soma_dilation_spin.setRange(0, 50)
+        self.soma_dilation_spin.setValue(5)
+        self.soma_dilation_spin.setToolTip(
+            "Dilate each nucleus ROI to include the surrounding soma.\n"
+            "Signal (eYFP, etc.) is cytoplasmic, not nuclear — measure\n"
+            "intensity in this dilated region instead of the nucleus alone.\n"
+            "0 = measure only within nucleus (old behavior)."
+        )
+        soma_dil_row.addWidget(self.soma_dilation_spin)
+        soma_layout.addLayout(soma_dil_row)
+
+        soma_group.setLayout(soma_layout)
+        layout.addWidget(soma_group)
 
         # Classification threshold
         thresh_group = QGroupBox("Positive/Negative Classification")
@@ -813,6 +985,9 @@ class BrainSliceWidget(QWidget):
             # Auto-set sample ID from filename
             self.sample_id_edit.setText(self.current_file.stem)
 
+            # Peek at metadata for channel auto-detection and size calibration
+            self._peek_and_configure(self.current_file)
+
     def _browse_folder(self):
         """Open folder browser to select folder of images as stack."""
         folder_path = QFileDialog.getExistingDirectory(
@@ -845,6 +1020,105 @@ class BrainSliceWidget(QWidget):
             except Exception as e:
                 self.file_label.setText(f"Error: {e}")
                 self.load_btn.setEnabled(False)
+
+    def _peek_and_configure(self, file_path: Path):
+        """Peek at file metadata to auto-detect channels and calibrate sizes."""
+        try:
+            from ..core.io import peek_metadata, guess_channel_roles
+
+            meta = peek_metadata(file_path)
+            self._peeked_metadata = meta
+
+            # Auto-detect channel roles from channel names/wavelengths
+            channels = meta.get('channels', [])
+            if channels:
+                roles = guess_channel_roles(meta)
+                self.red_channel_spin.setValue(roles['nuclear'])
+                self.green_channel_spin.setValue(roles['signal'])
+
+                # Show channel names next to spinboxes
+                self._update_channel_labels(channels)
+            else:
+                self.red_channel_name_label.setText("")
+                self.green_channel_name_label.setText("")
+
+            # Store pixel size and calibrate detection parameters
+            voxel = meta.get('voxel_size_um')
+            if voxel and voxel.get('x', 1.0) != 1.0:
+                self._pixel_size_um = voxel['x']
+                self._size_manually_set = False
+                self._calibrate_from_pixel_size()
+            else:
+                self._pixel_size_um = None
+
+            # Update area label if it exists
+            if hasattr(self, '_area_um_label'):
+                self._update_area_label()
+
+        except Exception as e:
+            print(f"[BrainSlice] Metadata peek failed (non-fatal): {e}")
+
+    def _update_channel_labels(self, channels):
+        """Update channel name labels next to spinboxes."""
+        red_idx = self.red_channel_spin.value()
+        green_idx = self.green_channel_spin.value()
+        if red_idx < len(channels):
+            self.red_channel_name_label.setText(channels[red_idx])
+        else:
+            self.red_channel_name_label.setText("")
+        if green_idx < len(channels):
+            self.green_channel_name_label.setText(channels[green_idx])
+        else:
+            self.green_channel_name_label.setText("")
+
+    def _calibrate_from_pixel_size(self):
+        """Auto-set detection size filters based on pixel size in microns."""
+        if self._pixel_size_um is None or self._pixel_size_um <= 0:
+            return
+        if self._size_manually_set:
+            return
+
+        px = self._pixel_size_um
+        pi = 3.14159
+
+        # Min area: 5 um diameter nucleus -> pixel area
+        min_diam_um = 5.0
+        min_area_px = max(3, int(pi * (min_diam_um / (2 * px)) ** 2))
+
+        # Max area: 30 um diameter nucleus -> pixel area
+        max_diam_um = 30.0
+        max_area_px = max(min_area_px + 10, int(pi * (max_diam_um / (2 * px)) ** 2))
+
+        # Cellpose diameter: 12 um typical nucleus
+        typical_diam_um = 12.0
+        diameter_px = max(5, int(typical_diam_um / px))
+
+        self.min_area_spin.setValue(min_area_px)
+        self.max_area_spin.setValue(max_area_px)
+        self.diameter_spin.setValue(diameter_px)
+
+        print(f"[BrainSlice] Auto-calibrated from {px:.3f} um/px: "
+              f"area={min_area_px}-{max_area_px} px, diameter={diameter_px} px")
+
+    def _update_area_label(self):
+        """Update the physical area label below min/max area spinboxes."""
+        if not hasattr(self, '_area_um_label'):
+            return
+        if self._pixel_size_um is None or self._pixel_size_um <= 0:
+            self._area_um_label.setText("")
+            return
+
+        px2 = self._pixel_size_um ** 2
+        min_um2 = self.min_area_spin.value() * px2
+        max_um2 = self.max_area_spin.value() * px2
+        self._area_um_label.setText(
+            f"({min_um2:.0f} - {max_um2:,.0f} um\u00b2 at {self._pixel_size_um:.2f} um/px)"
+        )
+
+    def _on_area_spin_changed(self):
+        """Handle area spinbox changes — mark as manual and update label."""
+        self._size_manually_set = True
+        self._update_area_label()
 
     def _load_image(self):
         """Load the selected image or folder."""
@@ -1071,51 +1345,80 @@ class BrainSliceWidget(QWidget):
         self.load_btn.setEnabled(True)
 
         if success:
-            # Apply rotation
-            red = self._apply_rotation(red)
-            green = self._apply_rotation(green)
+            try:
+                # Apply rotation
+                red = self._apply_rotation(red)
+                green = self._apply_rotation(green)
 
-            self.red_channel = red
-            self.green_channel = green
-            self.metadata = metadata
+                self.red_channel = red
+                self.green_channel = green
+                self.metadata = metadata
+                print(f"[BrainSlice] Load finished: red={red.shape}, green={green.shape}")
 
-            # Calculate contrast limits (Auto = None lets napari decide)
-            red_limits = self._get_contrast_limits(red)
-            green_limits = self._get_contrast_limits(green)
+                # Calculate contrast limits (Auto = None lets napari decide)
+                red_limits = self._get_contrast_limits(red)
+                green_limits = self._get_contrast_limits(green)
 
-            # Add to napari with proper contrast
-            self.viewer.layers.clear()
-            self.viewer.add_image(
-                red,
-                name="Nuclear (red)",
-                colormap='red',
-                blending='additive',
-                contrast_limits=red_limits,
-            )
-            self.viewer.add_image(
-                green,
-                name="Signal (green)",
-                colormap='green',
-                blending='additive',
-                contrast_limits=green_limits,
-            )
+                # Add to napari with proper contrast
+                self.viewer.layers.clear()
+                self.viewer.add_image(
+                    red,
+                    name="Nuclear (red)",
+                    colormap='red',
+                    blending='additive',
+                    contrast_limits=red_limits,
+                )
+                self.viewer.add_image(
+                    green,
+                    name="Signal (green)",
+                    colormap='green',
+                    blending='additive',
+                    contrast_limits=green_limits,
+                )
 
-            # Update UI
-            z_info = metadata.get('z_projection', '')
-            if z_info:
-                z_info = f", Z: {z_info}"
-            self.status_label.setText(f"Loaded: {self.current_file.name}{z_info}")
-            self.metadata_label.setText(
-                f"Shape: {metadata.get('shape', 'Unknown')}, "
-                f"Channels: {metadata.get('channels', 'Unknown')}"
-            )
+                # Update pixel size from full load metadata (in case peek missed it)
+                voxel = metadata.get('voxel_size_um')
+                if voxel and voxel.get('x', 1.0) != 1.0:
+                    self._pixel_size_um = voxel['x']
+                    if not self._size_manually_set:
+                        self._calibrate_from_pixel_size()
+                    self._update_area_label()
 
-            # Enable detection and preprocessing preview
+                # Update channel name labels
+                channels = metadata.get('channels', [])
+                if channels:
+                    self._update_channel_labels(channels)
+
+                # Update UI
+                z_info = metadata.get('z_projection', '')
+                if z_info:
+                    z_info = f", Z: {z_info}"
+                self.status_label.setText(f"Loaded: {self.current_file.name}{z_info}")
+
+                # Build metadata display with pixel size info
+                meta_parts = [
+                    f"Shape: {metadata.get('shape', 'Unknown')}",
+                    f"Channels: {metadata.get('channels', 'Unknown')}",
+                ]
+                if self._pixel_size_um is not None:
+                    meta_parts.append(f"Pixel: {self._pixel_size_um:.3f} um/px")
+                self.metadata_label.setText(", ".join(meta_parts))
+
+            except Exception as e:
+                import traceback
+                print(f"[BrainSlice] ERROR in _on_load_finished: {e}")
+                traceback.print_exc()
+
+            # Always enable detection and preview buttons after successful load
             self.detect_btn.setEnabled(True)
             self.preproc_preview_btn.setEnabled(True)
+            print("[BrainSlice] Detect button enabled")
 
             # Notify inset widget that base is loaded
-            self.inset_widget.on_base_loaded()
+            try:
+                self.inset_widget.on_base_loaded()
+            except Exception as e:
+                print(f"[BrainSlice] Inset widget notification failed (non-fatal): {e}")
 
         else:
             self.status_label.setText(f"Error: {message}")
@@ -1131,69 +1434,91 @@ class BrainSliceWidget(QWidget):
         self.detect_btn.setEnabled(False)
         self.detect_metrics_label.setText("")
 
-        # Build params dict with all new controls
-        backend = self.backend_combo.currentText().lower()
-        params = {
-            'backend': backend,
-            'model': self.model_combo.currentText(),
-            # StarDist params
-            'prob_thresh': self.prob_spin.value(),
-            'nms_thresh': self.nms_spin.value(),
-            # Cellpose params
-            'diameter': self.diameter_spin.value(),
-            # Preprocessing
-            'background_subtraction': self.preproc_bgsub_check.isChecked(),
-            'bg_sigma': self.preproc_bgsub_sigma_spin.value(),
-            'clahe': self.preproc_clahe_check.isChecked(),
-            'clahe_clip_limit': self.preproc_clahe_clip_spin.value(),
-            'gaussian_sigma': (self.preproc_gauss_sigma_spin.value()
-                               if self.preproc_gauss_check.isChecked() else 0.0),
-            # Filters
-            'filter_size': True,
-            'min_area': self.min_area_spin.value(),
-            'max_area': self.max_area_spin.value(),
-            'min_solidity': self.min_solidity_spin.value(),
-            'remove_border': self.remove_border_check.isChecked(),
-            'auto_n_tiles': True,
-        }
+        try:
+            # Build params dict with all new controls
+            backend = self.backend_combo.currentText().lower()
+            params = {
+                'backend': backend,
+                # Filters (shared across all backends)
+                'filter_size': True,
+                'min_area': self.min_area_spin.value(),
+                'max_area': self.max_area_spin.value(),
+                'min_solidity': self.min_solidity_spin.value(),
+                'remove_border': self.remove_border_check.isChecked(),
+            }
 
-        # Log to tracker
-        if self.tracker:
-            sample_id = self.sample_id_edit.text() or self.current_file.stem
-            self.last_run_id = self.tracker.log_detection(
-                sample_id=sample_id,
-                model=params['model'],
-                prob_thresh=params['prob_thresh'],
-                nms_thresh=params['nms_thresh'],
-                min_area=params['min_area'],
-                max_area=params['max_area'],
-                status='started',
+            if backend == 'threshold':
+                # Threshold-specific params
+                params['threshold_method'] = self.thresh_detect_method_combo.currentText()
+                params['threshold_percentile'] = self.thresh_detect_percentile_spin.value()
+                params['manual_threshold'] = self.thresh_detect_manual_spin.value()
+                params['opening_radius'] = self.thresh_opening_spin.value()
+                params['gaussian_sigma'] = self.thresh_gauss_spin.value()
+                params['use_hysteresis'] = self.thresh_hysteresis_check.isChecked()
+                params['hysteresis_low_fraction'] = self.thresh_hysteresis_low_spin.value()
+            else:
+                # StarDist / Cellpose params
+                params['model'] = self.model_combo.currentText()
+                params['prob_thresh'] = self.prob_spin.value()
+                params['nms_thresh'] = self.nms_spin.value()
+                params['diameter'] = self.diameter_spin.value()
+                params['background_subtraction'] = self.preproc_bgsub_check.isChecked()
+                params['bg_sigma'] = self.preproc_bgsub_sigma_spin.value()
+                params['clahe'] = self.preproc_clahe_check.isChecked()
+                params['clahe_clip_limit'] = self.preproc_clahe_clip_spin.value()
+                params['gaussian_sigma'] = (self.preproc_gauss_sigma_spin.value()
+                                            if self.preproc_gauss_check.isChecked() else 0.0)
+                params['auto_n_tiles'] = True
+
+            print(f"[BrainSlice] Detection params: backend={backend}")
+
+            # Log to tracker
+            if self.tracker:
+                sample_id = self.sample_id_edit.text() or self.current_file.stem
+                self.last_run_id = self.tracker.log_detection(
+                    sample_id=sample_id,
+                    model=params.get('model', backend),
+                    prob_thresh=params.get('prob_thresh', 0.0),
+                    nms_thresh=params.get('nms_thresh', 0.0),
+                    min_area=params['min_area'],
+                    max_area=params['max_area'],
+                    status='started',
+                )
+
+            # Check if we should use inset detection
+            inset_settings = self.inset_widget.get_detection_settings()
+            use_insets = (
+                inset_settings['use_insets'] and
+                inset_settings['inset_manager'] is not None and
+                len(inset_settings['inset_manager'].insets) > 0
             )
 
-        # Check if we should use inset detection
-        inset_settings = self.inset_widget.get_detection_settings()
-        use_insets = (
-            inset_settings['use_insets'] and
-            inset_settings['inset_manager'] is not None and
-            len(inset_settings['inset_manager'].insets) > 0
-        )
+            if use_insets:
+                # Run inset-aware detection (synchronous for now)
+                self._run_inset_detection(params, inset_settings)
+            else:
+                # Standard detection - extract current slice if dealing with stack
+                image = self._get_current_slice(self.red_channel)
+                if image is None:
+                    QMessageBox.warning(self, "Error", "No image data available")
+                    self.detect_btn.setEnabled(True)
+                    return
 
-        if use_insets:
-            # Run inset-aware detection (synchronous for now)
-            self._run_inset_detection(params, inset_settings)
-        else:
-            # Standard detection - extract current slice if dealing with stack
-            image = self._get_current_slice(self.red_channel)
-            if image is None:
-                QMessageBox.warning(self, "Error", "No image data available")
-                self.detect_btn.setEnabled(True)
-                return
+                print(f"[BrainSlice] Starting detection worker: image shape={image.shape}, dtype={image.dtype}")
+                from .workers import DetectionWorker
+                self.detection_worker = DetectionWorker(image, params)
+                self.detection_worker.progress.connect(self._on_detect_progress)
+                self.detection_worker.finished.connect(self._on_detect_finished)
+                self.detection_worker.start()
+                print("[BrainSlice] Detection worker started (model loading may take a moment...)")
 
-            from .workers import DetectionWorker
-            self.detection_worker = DetectionWorker(image, params)
-            self.detection_worker.progress.connect(self._on_detect_progress)
-            self.detection_worker.finished.connect(self._on_detect_finished)
-            self.detection_worker.start()
+        except Exception as e:
+            import traceback
+            print(f"[BrainSlice] ERROR in _run_detection: {e}")
+            traceback.print_exc()
+            self.status_label.setText(f"Detection error: {e}")
+            self.detect_btn.setEnabled(True)
+            QMessageBox.critical(self, "Detection Error", f"Failed to start detection:\n{e}")
 
     def _run_inset_detection(self, params: Dict[str, Any], inset_settings: Dict[str, Any]):
         """Run detection using insets at full resolution."""
@@ -1250,7 +1575,8 @@ class BrainSliceWidget(QWidget):
             # Add merged labels
             self.viewer.add_labels(
                 results['merged_labels'],
-                name=f"Nuclei ({count})"
+                name=f"Nuclei ({count})",
+                contour=2,
             )
 
             # Show inset vs base detections differently
@@ -1327,7 +1653,7 @@ class BrainSliceWidget(QWidget):
                 if 'Nuclei' in layer.name:
                     self.viewer.layers.remove(layer)
 
-            self.viewer.add_labels(labels, name=f"Nuclei ({count})")
+            self.viewer.add_labels(labels, name=f"Nuclei ({count})", contour=2)
 
             # Update UI
             self.status_label.setText(message)
@@ -1367,14 +1693,20 @@ class BrainSliceWidget(QWidget):
             if removed_parts:
                 lines.append("  Removed: " + ", ".join(removed_parts))
 
-        # Size stats
+        # Size stats with physical units if available
         size_stats = metrics.get('size_stats')
         if size_stats:
-            lines.append(
+            size_line = (
                 f"Size: mean={size_stats['mean']:.0f}px  "
                 f"median={size_stats['median']:.0f}px  "
                 f"std={size_stats['std']:.0f}px"
             )
+            if self._pixel_size_um is not None:
+                px2 = self._pixel_size_um ** 2
+                mean_um2 = size_stats['mean'] * px2
+                median_um2 = size_stats['median'] * px2
+                size_line += f"\n      ({mean_um2:.0f} / {median_um2:.0f} um\u00b2)"
+            lines.append(size_line)
 
         # Confidence stats
         conf_stats = metrics.get('confidence_stats')
@@ -1394,6 +1726,19 @@ class BrainSliceWidget(QWidget):
                 lines.append(f"Backend: {backend} | Preprocess: {', '.join(active)}")
         else:
             lines.append(f"Backend: {backend}")
+
+        # Threshold-specific info
+        if backend == 'threshold':
+            thresh_val = metrics.get('threshold_value', 0)
+            thresh_method = metrics.get('threshold_method', '?')
+            if metrics.get('use_hysteresis'):
+                thresh_low = metrics.get('threshold_low', 0)
+                lines.append(
+                    f"Threshold ({thresh_method}): high={thresh_val:.1f}, "
+                    f"low={thresh_low:.1f} (hysteresis)"
+                )
+            else:
+                lines.append(f"Threshold ({thresh_method}): {thresh_val:.1f}")
 
         self.detect_metrics_label.setText("\n".join(lines))
 
@@ -1421,6 +1766,7 @@ class BrainSliceWidget(QWidget):
             'area_fraction': self.area_fraction_spin.value(),
             'use_local_background': self.bg_local_check.isChecked(),
             'bg_block_size': self.bg_block_size_spin.value(),
+            'soma_dilation': self.soma_dilation_spin.value(),
         }
 
         # Log to tracker
@@ -1453,6 +1799,9 @@ class BrainSliceWidget(QWidget):
             self.coloc_btn.setEnabled(True)
             return
 
+        # Get nuclear channel for Manders/Pearson validation metrics
+        nuclear_image = self._get_current_slice(self.red_channel)
+
         # When using area_fraction method, pass signal_image and labels to worker
         # so it can forward them to classify_positive_negative
         if params['threshold_method'] == 'area_fraction':
@@ -1462,12 +1811,14 @@ class BrainSliceWidget(QWidget):
                 params,
                 signal_image_for_area=signal_image,
                 labels_for_area=labels,
+                nuclear_image=nuclear_image,
             )
         else:
             self.coloc_worker = ColocalizationWorker(
                 signal_image,
                 labels,
                 params,
+                nuclear_image=nuclear_image,
             )
         self.coloc_worker.progress.connect(self._on_coloc_progress)
         self.coloc_worker.finished.connect(self._on_coloc_finished)
@@ -1531,12 +1882,24 @@ class BrainSliceWidget(QWidget):
 
             # Update UI
             self.status_label.setText(message)
-            self.coloc_result_label.setText(
+            result_text = (
                 f"Positive: {summary['positive_cells']} ({summary['positive_fraction']*100:.1f}%)\n"
                 f"Negative: {summary['negative_cells']}\n"
                 f"Background: {summary['background_used']:.1f}\n"
                 f"Mean fold change: {summary['mean_fold_change']:.2f}"
             )
+
+            # Append Manders/Pearson validation metrics if available
+            coloc_metrics = summary.get('coloc_metrics')
+            if coloc_metrics:
+                result_text += (
+                    f"\n--- Validation Metrics ---\n"
+                    f"Pearson r: {coloc_metrics['pearson_r']:.4f}\n"
+                    f"Manders M1 (red in green): {coloc_metrics['manders_m1']:.4f}\n"
+                    f"Manders M2 (green in red): {coloc_metrics['manders_m2']:.4f}"
+                )
+
+            self.coloc_result_label.setText(result_text)
 
             # Enable quantification
             self.quant_btn.setEnabled(True)

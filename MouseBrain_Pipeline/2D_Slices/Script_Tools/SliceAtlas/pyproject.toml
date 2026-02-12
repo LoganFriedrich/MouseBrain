@@ -57,6 +57,9 @@ dev = [
     "pytest-cov",
 ]
 
+[project.scripts]
+brainslice-coloc = "brainslice.cli.run_coloc:main"
+
 [project.entry-points."napari.manifest"]
 brainslice = "brainslice.napari_plugin:napari.yaml"
 

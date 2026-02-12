@@ -72,14 +72,7 @@ desktop.ini
 *.heif
 
 # Brain processing output folders
-3D_Cleared/1_Brains/**/0_Raw_IMS/
-3D_Cleared/1_Brains/**/1_Extracted_Full/
-3D_Cleared/1_Brains/**/2_Cropped_For_Registration/
-3D_Cleared/1_Brains/**/3_Registered_Atlas/
-3D_Cleared/1_Brains/**/4_Cell_Candidates/
-3D_Cleared/1_Brains/**/5_Classified_Cells/
-3D_Cleared/1_Brains/**/6_Region_Analysis/
-3D_Cleared/1_Brains/**/_crop_optimization/
+3D_Cleared
 
 # Trained models
 3D_Cleared/util_Brainglobe/Trained_Models/

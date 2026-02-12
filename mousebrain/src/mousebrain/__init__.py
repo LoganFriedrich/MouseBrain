@@ -22,6 +22,8 @@ __version__ = "0.2.0"
 from mousebrain.config import (
     ROOT_PATH,
     TISSUE_ROOT,
+    MOUSEBRAIN_ROOT,
+    PIPELINE_ROOT,
     CLEARED_3D_DIR,
     NUCLEI_DETECTION_DIR,
     BRAINS_ROOT,
@@ -45,5 +47,14 @@ from mousebrain.config import (
 # Convenience aliases matching old __init__.py names
 BRAINTOOLS_ROOT = TISSUE_ROOT
 CLEARED_3D_ROOT = CLEARED_3D_DIR
-SLICES_2D_ROOT = TISSUE_ROOT / "2D_Slices"
-INJURY_ROOT = TISSUE_ROOT / "Injury"
+
+# 2D Slices and Injury - support both restructured and current paths
+if PIPELINE_ROOT and (PIPELINE_ROOT / "2D_Slices").exists():
+    SLICES_2D_ROOT = PIPELINE_ROOT / "2D_Slices"
+else:
+    SLICES_2D_ROOT = TISSUE_ROOT / "2D_Slices"
+
+if PIPELINE_ROOT and (PIPELINE_ROOT / "Injury").exists():
+    INJURY_ROOT = PIPELINE_ROOT / "Injury"
+else:
+    INJURY_ROOT = TISSUE_ROOT / "Injury"

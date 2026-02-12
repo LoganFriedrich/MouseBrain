@@ -473,6 +473,71 @@ class ColocalizationAnalyzer:
 
         return df
 
+    def measure_soma_intensities(
+        self,
+        signal_image: np.ndarray,
+        nuclei_labels: np.ndarray,
+        soma_dilation: int = 5,
+    ):
+        """
+        Measure signal intensity in dilated soma regions around each nucleus.
+
+        For retrograde-labeled neurons, the signal (e.g., eYFP) is cytoplasmic,
+        not nuclear. So we need to look AROUND each nucleus (the soma/cell body)
+        to determine whether a cell is positive.
+
+        For each nucleus:
+            1. Dilate the nucleus mask by soma_dilation pixels → soma ROI
+            2. Measure mean green intensity in the soma ROI
+
+        Args:
+            signal_image: Signal channel (e.g., green/eYFP)
+            nuclei_labels: Label image from detection
+            soma_dilation: Dilation radius in pixels to create soma ROIs.
+                Should roughly cover the cytoplasm around the nucleus.
+
+        Returns:
+            DataFrame with columns:
+            - label: nucleus ID
+            - centroid_y, centroid_x: nucleus centroid position
+            - nucleus_area: area of the nucleus ROI (pixels)
+            - soma_area: area of the dilated soma ROI (pixels)
+            - soma_mean_intensity: mean signal in the soma ROI
+            - soma_max_intensity: max signal in the soma ROI
+            - soma_median_intensity: median signal in the soma ROI
+        """
+        pd = _get_pandas()
+        ndimage = _get_ndimage()
+        from skimage.measure import regionprops
+        from skimage.morphology import disk
+
+        selem = disk(soma_dilation)
+        props = regionprops(nuclei_labels)
+
+        rows = []
+        for prop in props:
+            # Get single-nucleus binary mask
+            nucleus_mask = nuclei_labels == prop.label
+
+            # Dilate to create soma region
+            soma_mask = ndimage.binary_dilation(nucleus_mask, structure=selem)
+
+            # Measure signal in the soma region
+            soma_pixels = signal_image[soma_mask]
+
+            rows.append({
+                'label': prop.label,
+                'centroid_y': prop.centroid[0],
+                'centroid_x': prop.centroid[1],
+                'nucleus_area': prop.area,
+                'soma_area': int(soma_mask.sum()),
+                'soma_mean_intensity': float(np.mean(soma_pixels)),
+                'soma_max_intensity': float(np.max(soma_pixels)),
+                'soma_median_intensity': float(np.median(soma_pixels)),
+            })
+
+        return pd.DataFrame(rows)
+
     def classify_positive_negative(
         self,
         measurements,  # DataFrame
@@ -519,6 +584,14 @@ class ColocalizationAnalyzer:
         pd = _get_pandas()
         df = measurements.copy()
 
+        # Determine which intensity column to use for classification.
+        # If soma_mean_intensity exists (from measure_soma_intensities), use it.
+        # Otherwise use mean_intensity (from measure_nuclei_intensities).
+        if 'soma_mean_intensity' in df.columns:
+            intensity_col = 'soma_mean_intensity'
+        else:
+            intensity_col = 'mean_intensity'
+
         # Handle 2D background surface (from estimate_local_background)
         if isinstance(background, np.ndarray) and background.ndim == 2:
             # Look up per-nucleus background at each centroid
@@ -529,15 +602,19 @@ class ColocalizationAnalyzer:
                 x = int(np.clip(round(row['centroid_x']), 0, w - 1))
                 per_nucleus_bg.append(float(background[y, x]))
             df['background'] = per_nucleus_bg
-            df['fold_change'] = df['mean_intensity'] / (df['background'] + 1e-10)
         else:
             # Scalar background (existing behavior)
             df['background'] = float(background)
-            df['fold_change'] = df['mean_intensity'] / (float(background) + 1e-10)
+
+        df['fold_change'] = df[intensity_col] / (df['background'] + 1e-10)
 
         # Classify based on method
         if method == 'fold_change':
             df['is_positive'] = df['fold_change'] >= threshold
+
+        elif method == 'adaptive':
+            # Adaptive GMM on nuclear intensities to find subpopulations
+            df = self._classify_adaptive(df, intensity_col, threshold)
 
         elif method == 'area_fraction':
             if signal_image is None or nuclei_labels is None:
@@ -570,6 +647,108 @@ class ColocalizationAnalyzer:
 
         else:
             raise ValueError(f"Unknown classification method: {method}")
+
+        return df
+
+    def _classify_adaptive(self, df, intensity_col, fallback_threshold):
+        """Classify cells by fitting GMM to their signal intensity distribution.
+
+        Fits 1- and 2-component GMMs to the distribution of nucleus signal
+        intensities. If 2-component is better (by BIC), uses posterior
+        probability to assign each cell to the positive/negative subpopulation.
+        Falls back to fold_change classification when N is too small for GMM
+        or when no bimodal split exists.
+
+        The fallback uses a conservative threshold (max of user-specified and
+        2.0x) to avoid over-classification when there is no clear bimodal
+        separation — which typically means almost all cells are negative.
+
+        Stores diagnostics in self.adaptive_diagnostics.
+        """
+        intensities = df[intensity_col].values
+        self.adaptive_diagnostics = None
+
+        # Conservative fallback: when there's no bimodal split, most cells
+        # are likely negative, so use a stricter threshold
+        safe_threshold = max(fallback_threshold, 2.0)
+
+        # Need enough cells for a meaningful GMM fit
+        if len(intensities) < 8:
+            df['is_positive'] = df['fold_change'] >= safe_threshold
+            df['positive_probability'] = np.where(
+                df['is_positive'], 1.0, 0.0
+            )
+            self.adaptive_diagnostics = {
+                'method_used': 'fallback_fold_change',
+                'reason': f'Too few cells ({len(intensities)}) for adaptive GMM',
+                'fallback_threshold': safe_threshold,
+            }
+            return df
+
+        from sklearn.mixture import GaussianMixture
+
+        X = intensities.reshape(-1, 1).astype(np.float64)
+
+        gmm1 = GaussianMixture(n_components=1, random_state=42).fit(X)
+        gmm2 = GaussianMixture(n_components=2, random_state=42).fit(X)
+
+        bic1 = gmm1.bic(X)
+        bic2 = gmm2.bic(X)
+
+        if bic2 < bic1:
+            # 2-component model: clear positive/negative subpopulations
+            means = gmm2.means_.flatten()
+            stds = np.sqrt(gmm2.covariances_.flatten())
+            weights = gmm2.weights_.flatten()
+
+            hi_idx = int(np.argmax(means))
+            lo_idx = 1 - hi_idx
+
+            separation = float(
+                (means[hi_idx] - means[lo_idx]) / (stds[lo_idx] + 1e-10)
+            )
+
+            # Use posterior probability for soft classification
+            probs = gmm2.predict_proba(X)
+            df['positive_probability'] = probs[:, hi_idx]
+            df['is_positive'] = df['positive_probability'] > 0.5
+
+            # Threshold at intersection of the two Gaussians
+            adaptive_thresh = float(
+                (means[lo_idx] * stds[hi_idx] + means[hi_idx] * stds[lo_idx])
+                / (stds[lo_idx] + stds[hi_idx])
+            )
+
+            self.adaptive_diagnostics = {
+                'method_used': 'gmm_2component',
+                'bic_1': float(bic1),
+                'bic_2': float(bic2),
+                'negative_mean': float(means[lo_idx]),
+                'negative_std': float(stds[lo_idx]),
+                'negative_weight': float(weights[lo_idx]),
+                'positive_mean': float(means[hi_idx]),
+                'positive_std': float(stds[hi_idx]),
+                'positive_weight': float(weights[hi_idx]),
+                'separation': separation,
+                'adaptive_threshold': adaptive_thresh,
+            }
+        else:
+            # 1-component model: no clear subpopulations
+            # Use conservative fold_change (most cells are likely negative)
+            df['is_positive'] = df['fold_change'] >= safe_threshold
+            df['positive_probability'] = np.where(
+                df['is_positive'], 1.0, 0.0
+            )
+
+            self.adaptive_diagnostics = {
+                'method_used': 'fallback_fold_change',
+                'reason': 'GMM found 1 component (no bimodal split in intensities)',
+                'bic_1': float(bic1),
+                'bic_2': float(bic2),
+                'mean': float(gmm1.means_.flatten()[0]),
+                'std': float(np.sqrt(gmm1.covariances_.flatten()[0])),
+                'fallback_threshold': safe_threshold,
+            }
 
         return df
 
@@ -612,7 +791,101 @@ class ColocalizationAnalyzer:
         if self.background_diagnostics is not None:
             summary['background_diagnostics'] = self.background_diagnostics
 
+        # Include adaptive classification diagnostics if available
+        if self.adaptive_diagnostics is not None:
+            summary['adaptive_diagnostics'] = self.adaptive_diagnostics
+
         return summary
+
+
+def compute_colocalization_metrics(
+    red_image: np.ndarray,
+    green_image: np.ndarray,
+    nuclei_labels: np.ndarray,
+    background_green: float,
+    tissue_mask: Optional[np.ndarray] = None,
+    soma_dilation: int = 0,
+) -> Dict[str, float]:
+    """
+    Compute standard colocalization metrics (Pearson, Manders) as validation.
+
+    These whole-image metrics serve as a cross-check against per-cell
+    classification. If Manders' M1 says 25% of red signal overlaps green
+    but per-cell classification says 80% positive, something is wrong.
+
+    Metrics computed:
+    - **Pearson's r**: Overall linear correlation between channels within tissue.
+      Ranges -1 (anti-correlated) to +1 (perfectly correlated). Insensitive to
+      intensity differences between channels.
+
+    - **Manders' M1**: Fraction of red-channel signal that co-occurs with
+      above-background green signal. Answers: "of all nuclear signal, how much
+      is in regions with green signal?"
+
+    - **Manders' M2**: Fraction of green-channel signal that co-occurs with
+      red nuclei (or soma ROIs). Answers: "of all green signal, how much is
+      near detected nuclei?"
+
+    Args:
+        red_image: Nuclear channel (2D)
+        green_image: Signal channel (2D)
+        nuclei_labels: Label image from detection (0 = background)
+        background_green: Estimated green background level (used as Manders threshold)
+        tissue_mask: Optional tissue mask. If None, uses entire image.
+        soma_dilation: If > 0, dilate nuclei to create soma ROIs for Manders' M2.
+
+    Returns:
+        Dict with keys: pearson_r, manders_m1, manders_m2
+    """
+    ndimage = _get_ndimage()
+
+    red = red_image.astype(np.float64)
+    green = green_image.astype(np.float64)
+
+    # Restrict analysis to tissue region
+    if tissue_mask is not None:
+        mask = tissue_mask
+    else:
+        mask = np.ones(red.shape, dtype=bool)
+
+    # ── Pearson's correlation (within tissue) ──
+    r_vals = red[mask]
+    g_vals = green[mask]
+    if len(r_vals) > 1 and np.std(r_vals) > 0 and np.std(g_vals) > 0:
+        pearson_r = float(np.corrcoef(r_vals, g_vals)[0, 1])
+    else:
+        pearson_r = 0.0
+
+    # ── Manders' thresholded coefficients ──
+    # Green signal mask: where green is above background
+    green_above_bg = green > background_green
+
+    # Red signal mask: where nuclei are (or soma ROIs if dilated)
+    nuclei_mask = nuclei_labels > 0
+    if soma_dilation > 0:
+        from skimage.morphology import disk
+        selem = disk(soma_dilation)
+        red_roi_mask = ndimage.binary_dilation(nuclei_mask, structure=selem)
+    else:
+        red_roi_mask = nuclei_mask
+
+    # M1: fraction of red (nuclear) signal in regions with above-background green
+    # "Of all nuclear signal, how much co-occurs with green signal?"
+    red_in_green = red[mask & nuclei_mask & green_above_bg].sum()
+    red_total = red[mask & nuclei_mask].sum()
+    manders_m1 = float(red_in_green / red_total) if red_total > 0 else 0.0
+
+    # M2: fraction of green signal in regions with red nuclei/somas
+    # "Of all green signal in tissue, how much is within cell ROIs?"
+    green_in_red = green[mask & red_roi_mask].sum()
+    green_total = green[mask].sum()
+    manders_m2 = float(green_in_red / green_total) if green_total > 0 else 0.0
+
+    return {
+        'pearson_r': round(pearson_r, 4),
+        'manders_m1': round(manders_m1, 4),
+        'manders_m2': round(manders_m2, 4),
+    }
 
 
 def analyze_colocalization(

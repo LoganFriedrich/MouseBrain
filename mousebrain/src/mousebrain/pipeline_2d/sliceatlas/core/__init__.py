@@ -17,6 +17,7 @@ from .io import (
     save_tiff,
     get_channel_info,
     guess_channel_roles,
+    peek_metadata,
     find_images_in_folder,
     load_folder,
     load_folder_lazy,
@@ -97,7 +98,7 @@ __all__ = [
     'BRAINSLICE_ROOT', 'DATA_DIR', 'TRACKER_CSV', 'MODELS_DIR',
     'parse_sample_name', 'get_sample_dir', 'get_sample_subdir', 'SampleDirs',
     # IO
-    'load_image', 'extract_channels', 'save_tiff', 'get_channel_info', 'guess_channel_roles',
+    'load_image', 'extract_channels', 'save_tiff', 'get_channel_info', 'guess_channel_roles', 'peek_metadata',
     'find_images_in_folder', 'load_folder', 'load_folder_lazy',
     # Detection
     'NucleiDetector', 'detect_nuclei', 'list_available_models',

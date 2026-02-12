@@ -1,21 +1,24 @@
 """
-detection.py - Nuclei detection using StarDist (and optionally Cellpose)
+detection.py - Nuclei detection for 2D confocal slice images
 
-Provides nuclei detection for 2D confocal slice images with:
-- Pre-detection image preprocessing (background subtraction, CLAHE, blur)
-- StarDist and Cellpose detection backends
-- Post-detection filtering (size, circularity, confidence, border, morphology)
+Provides multiple detection backends:
+- Threshold: Simple intensity thresholding for sparse, bright nuclei (DEFAULT)
+- StarDist: Deep learning segmentation for dense, touching nuclei
+- Cellpose: Alternative deep learning segmentation
+
+For sparse retrograde-labeled neurons (e.g., DCN projecting neurons),
+threshold detection is preferred — it directly finds bright objects in the
+nuclear channel without the overhead of a segmentation model.
 
 Usage:
-    from brainslice.core.detection import NucleiDetector, preprocess_for_detection
+    from brainslice.core.detection import detect_by_threshold, NucleiDetector
 
-    # Optional preprocessing
-    preprocessed = preprocess_for_detection(image, background_subtraction=True, clahe=True)
+    # Threshold detection (recommended for sparse fluorescent nuclei)
+    labels, details = detect_by_threshold(image, min_area=10, max_area=500)
 
+    # StarDist detection (for dense DAPI-stained fields)
     detector = NucleiDetector()
-    labels, details = detector.detect(preprocessed)
-    labels = detector.filter_by_size(labels, min_area=50, max_area=5000)
-    labels = detector.filter_border_touching(labels)
+    labels, details = detector.detect(image)
 """
 
 from pathlib import Path
@@ -139,6 +142,142 @@ def preprocess_for_detection(
         img = gaussian(img, sigma=gaussian_sigma, preserve_range=True).astype(np.float32)
 
     return img
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# THRESHOLD-BASED DETECTION (for sparse fluorescent nuclei)
+# ══════════════════════════════════════════════════════════════════════════
+
+def detect_by_threshold(
+    image: np.ndarray,
+    method: str = 'otsu',
+    percentile: float = 99.0,
+    manual_threshold: Optional[float] = None,
+    min_area: int = 10,
+    max_area: int = 5000,
+    opening_radius: int = 0,
+    gaussian_sigma: float = 1.0,
+    use_hysteresis: bool = True,
+    hysteresis_low_fraction: float = 0.5,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Detect nuclei by intensity thresholding on the nuclear channel.
+
+    This is the correct approach for sparse, bright nuclei (e.g., retrograde-
+    labeled neurons). The nuclei are clearly brighter than background, so a
+    simple threshold finds them more reliably than a segmentation model trained
+    on dense, touching nuclei.
+
+    Steps:
+        1. Optional Gaussian blur to denoise
+        2. Threshold (Otsu, percentile, or manual)
+        3. Hysteresis expansion: use a lower threshold to capture the full
+           extent of each nucleus (not just the bright core)
+        4. Optional morphological opening to remove small noise
+        5. Connected component labeling
+        6. Size filter
+
+    Hysteresis thresholding (enabled by default) solves two problems:
+    - **Undersized detections**: A single threshold captures only the bright
+      core of each nucleus. The low threshold expands to the full boundary.
+    - **Missing dim nuclei**: Dimmer nuclei whose peak intensity barely
+      exceeds the high threshold get properly captured once their connected
+      region above the low threshold is included.
+
+    Args:
+        image: 2D nuclear channel image (any dtype)
+        method: Threshold method
+            - 'otsu': Otsu's automatic threshold (good default)
+            - 'percentile': Top N% brightest pixels
+            - 'manual': Use manual_threshold value directly
+        percentile: For percentile method, keep pixels above this percentile
+        manual_threshold: For manual method, intensity cutoff (in image units)
+        min_area: Minimum nucleus area in pixels
+        max_area: Maximum nucleus area in pixels
+        opening_radius: Radius for morphological opening (noise removal).
+            0 = no opening (default). 1-2 = light cleanup.
+        gaussian_sigma: Gaussian blur sigma before thresholding. 0 = no blur.
+        use_hysteresis: If True (default), use hysteresis thresholding to
+            capture the full extent of each nucleus. The computed threshold
+            becomes the "high" threshold; a "low" threshold at
+            high * hysteresis_low_fraction captures nucleus edges.
+        hysteresis_low_fraction: Low threshold as fraction of high threshold.
+            0.5 = low threshold is half the high threshold. Lower values
+            capture more of each nucleus boundary but may merge nearby objects.
+
+    Returns:
+        Tuple of (labels, details)
+        - labels: 2D label image where each nucleus has unique ID (0 = bg)
+        - details: dict with 'threshold', 'method', 'raw_count', etc.
+    """
+    from skimage.filters import threshold_otsu, apply_hysteresis_threshold
+    from skimage.morphology import disk, binary_opening, label
+    from skimage.measure import regionprops
+
+    if image.ndim != 2:
+        raise ValueError(f"Expected 2D image, got {image.ndim}D")
+
+    # Work on float copy
+    img = image.astype(np.float32)
+
+    # Step 1: Optional Gaussian blur
+    if gaussian_sigma > 0:
+        from scipy.ndimage import gaussian_filter
+        img = gaussian_filter(img, sigma=gaussian_sigma)
+
+    # Step 2: Compute threshold
+    if method == 'otsu':
+        thresh_val = threshold_otsu(img)
+    elif method == 'percentile':
+        thresh_val = np.percentile(img, percentile)
+    elif method == 'manual':
+        if manual_threshold is None:
+            raise ValueError("manual_threshold required when method='manual'")
+        thresh_val = float(manual_threshold)
+    else:
+        raise ValueError(f"Unknown threshold method: {method}")
+
+    # Step 3: Apply threshold (with optional hysteresis)
+    if use_hysteresis:
+        low_thresh = thresh_val * hysteresis_low_fraction
+        binary = apply_hysteresis_threshold(img, low_thresh, thresh_val)
+    else:
+        binary = img > thresh_val
+
+    # Step 4: Optional morphological opening (remove small noise specks)
+    if opening_radius > 0:
+        selem = disk(opening_radius)
+        binary = binary_opening(binary, selem)
+
+    # Step 5: Connected component labeling
+    labels = label(binary)
+    raw_count = labels.max()
+
+    # Step 6: Size filter
+    if raw_count > 0:
+        props = regionprops(labels)
+        valid = [p for p in props if min_area <= p.area <= max_area]
+
+        filtered = np.zeros_like(labels)
+        for new_id, prop in enumerate(valid, 1):
+            filtered[labels == prop.label] = new_id
+        labels = filtered
+
+    final_count = labels.max()
+
+    # Build details dict (compatible with existing pipeline interface)
+    details = {
+        'threshold': float(thresh_val),
+        'threshold_low': float(thresh_val * hysteresis_low_fraction) if use_hysteresis else float(thresh_val),
+        'use_hysteresis': use_hysteresis,
+        'hysteresis_low_fraction': hysteresis_low_fraction,
+        'method': method,
+        'raw_count': int(raw_count),
+        'filtered_count': int(final_count),
+        'removed_by_size': int(raw_count - final_count),
+    }
+
+    return labels, details
 
 
 # Available pretrained models

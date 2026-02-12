@@ -21,6 +21,11 @@ from qtpy.QtCore import Qt, Signal
 from qtpy.QtGui import QFont, QKeySequence
 import numpy as np
 
+# Import paths from central config
+_config_dir = Path(__file__).resolve().parent.parent.parent
+if str(_config_dir) not in sys.path:
+    sys.path.insert(0, str(_config_dir))
+
 
 class CurationWidget(QWidget):
     """
@@ -198,7 +203,7 @@ class CurationWidget(QWidget):
             "  Y/C = Confirm cell\n"
             "  N/X = Reject candidate\n"
             "  S/Space = Skip\n"
-            "  \u2190 \u2192 = Navigate without marking\n"
+            "  ← → = Navigate without marking\n"
             "  Esc = Exit review mode"
         ))
 
@@ -218,7 +223,7 @@ class CurationWidget(QWidget):
         # Manual navigation
         nav_layout = QHBoxLayout()
 
-        prev_btn = QPushButton("\u2190 Previous")
+        prev_btn = QPushButton("← Previous")
         prev_btn.clicked.connect(self.go_previous)
         nav_layout.addWidget(prev_btn)
 
@@ -236,7 +241,7 @@ class CurationWidget(QWidget):
         skip_btn.clicked.connect(self.skip_current)
         nav_layout.addWidget(skip_btn)
 
-        next_btn = QPushButton("Next \u2192")
+        next_btn = QPushButton("Next →")
         next_btn.clicked.connect(self.go_next)
         nav_layout.addWidget(next_btn)
 

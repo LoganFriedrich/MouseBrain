@@ -646,6 +646,117 @@ def load_folder_lazy(
     return stack, metadata
 
 
+def peek_metadata(
+    file_path: Union[str, Path],
+) -> Dict[str, Any]:
+    """
+    Read metadata from an image file without loading pixel data.
+
+    Fast metadata-only read for auto-detecting channel roles, pixel sizes,
+    and number of channels before loading the full image. Useful for
+    pre-populating UI controls.
+
+    Args:
+        file_path: Path to ND2 or TIFF file
+
+    Returns:
+        Dict with keys that may include:
+        - channels: List[str] of channel names
+        - voxel_size_um: Dict with 'x', 'y', optionally 'z' in microns
+        - n_channels: int
+        - n_z: int
+        - shape: tuple
+    """
+    file_path = Path(file_path)
+    if not file_path.exists():
+        return {}
+
+    suffix = file_path.suffix.lower()
+    metadata: Dict[str, Any] = {
+        'file_path': str(file_path),
+        'file_format': suffix.lstrip('.'),
+    }
+
+    try:
+        if suffix == '.nd2':
+            nd2 = _get_nd2()
+            with nd2.ND2File(file_path) as f:
+                sizes = dict(f.sizes) if hasattr(f, 'sizes') else {}
+                metadata['n_channels'] = sizes.get('C', 1)
+                metadata['n_z'] = sizes.get('Z', 1)
+
+                # Voxel size
+                try:
+                    voxel_size = f.voxel_size()
+                    if voxel_size:
+                        metadata['voxel_size_um'] = {
+                            'x': voxel_size.x if voxel_size.x else 1.0,
+                            'y': voxel_size.y if voxel_size.y else 1.0,
+                        }
+                        if voxel_size.z:
+                            metadata['voxel_size_um']['z'] = voxel_size.z
+                except Exception:
+                    pass
+
+                # Channel names
+                try:
+                    if hasattr(f, 'metadata') and f.metadata:
+                        if hasattr(f.metadata, 'channels'):
+                            channels = []
+                            for ch in f.metadata.channels:
+                                if hasattr(ch, 'channel') and hasattr(ch.channel, 'name'):
+                                    channels.append(ch.channel.name)
+                                else:
+                                    channels.append(f"Channel_{len(channels)}")
+                            metadata['channels'] = channels
+                except Exception:
+                    pass
+
+        elif suffix in ['.tif', '.tiff']:
+            tifffile = _get_tifffile()
+            with tifffile.TiffFile(file_path) as tf:
+                # Basic shape info from first series
+                if tf.series:
+                    series = tf.series[0]
+                    metadata['shape'] = series.shape
+                    # Guess n_channels from shape
+                    if len(series.shape) >= 3:
+                        metadata['n_channels'] = series.shape[0]
+                    else:
+                        metadata['n_channels'] = 1
+
+                # Try to get resolution from TIFF tags
+                page = tf.pages[0]
+                if hasattr(page, 'tags'):
+                    x_res = page.tags.get('XResolution')
+                    y_res = page.tags.get('YResolution')
+                    res_unit = page.tags.get('ResolutionUnit')
+                    if x_res and y_res:
+                        try:
+                            # Resolution is stored as rational (num, denom)
+                            xr = x_res.value
+                            yr = y_res.value
+                            if isinstance(xr, tuple):
+                                xr = xr[0] / xr[1]
+                            if isinstance(yr, tuple):
+                                yr = yr[0] / yr[1]
+                            # Convert to um based on unit
+                            # ResolutionUnit: 1=no unit, 2=inch, 3=centimeter
+                            unit_val = res_unit.value if res_unit else 1
+                            if unit_val == 3 and xr > 0 and yr > 0:
+                                # cm to um
+                                metadata['voxel_size_um'] = {
+                                    'x': 1e4 / xr,
+                                    'y': 1e4 / yr,
+                                }
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+
+    return metadata
+
+
 def guess_channel_roles(
     metadata: Dict[str, Any]
 ) -> Dict[str, int]:
