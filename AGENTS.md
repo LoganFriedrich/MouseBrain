@@ -1,39 +1,42 @@
 <!-- Parent: ../AGENTS.md -->
-# Tissue - Domain
+# MouseBrain - Tool
 
 ## Purpose
-All tissue processing tools and data for whole-brain microscopy. Contains the MouseBrain tool and its processing pipelines for 3D cleared brains, 2D slices, and injury analysis.
+Unified Python package for tissue analysis. Provides napari plugins for 3D cleared brain cell detection and 2D slice analysis, plus CLI, path configuration, and calibration run tracking.
 
 ## Structure
 ```
-Tissue/
-├── MouseBrain/                    # TOOL: mousebrain Python package
-│   ├── pyproject.toml             # Package definition with [3d], [2d], [all] extras
-│   ├── src/mousebrain/
-│   │   ├── config.py              # Central path configuration (canonical)
-│   │   ├── tracker.py             # Calibration run tracker (canonical)
-│   │   ├── cli.py                 # `mousebrain` CLI entry point
-│   │   ├── pipeline_3d/           # 3D napari plugin (canonical location)
-│   │   └── pipeline_2d/           # 2D napari plugin
-│   └── scripts/                   # Install/setup scripts
-│
-└── MouseBrain_Pipeline/           # DATA: working data being processed
-    ├── 3D_Cleared/                # 3D brain data + legacy scripts
-    │   ├── 1_Brains/              # Per-brain processing folders
-    │   ├── 2_Data_Summary/        # Tracking CSVs, session logs
-    │   └── util_Scripts/          # Legacy pipeline scripts (shims to mousebrain)
-    ├── 2D_Slices/                 # 2D slice registration and analysis
-    │   └── Script_Tools/SliceAtlas/  # Standalone brainslice package
-    └── Injury/                    # Injury analysis pipeline
+MouseBrain/
+├── pyproject.toml                 # Package: mousebrain with [3d], [2d], [all] extras
+├── src/mousebrain/
+│   ├── __init__.py                # Path re-exports, version
+│   ├── config.py                  # Central path configuration (canonical)
+│   ├── tracker.py                 # Calibration run tracker (canonical)
+│   ├── cli.py                     # `mousebrain` CLI with feature detection
+│   ├── plugin_3d/                 # 3D napari plugin
+│   │   ├── napari.yaml            # Plugin: "sci-connectome-pipeline"
+│   │   ├── tuning_widget.py       # Main widget (10,000+ lines, 9 tabs)
+│   │   ├── pipeline_widget.py     # Pipeline execution widget
+│   │   ├── manual_crop_widget.py  # Manual cropping
+│   │   ├── experiments_widget.py  # Run history browser
+│   │   ├── curation_widget.py     # Data curation
+│   │   ├── session_documenter.py  # Session documentation
+│   │   └── crop_subprocess.py     # Subprocess for cropping
+│   └── plugin_2d/                 # 2D napari plugin
+│       ├── napari.yaml            # Plugin: "brainslice-2d"
+│       ├── sliceatlas/            # Slice analysis core
+│       └── annotator/             # ND2 annotation and export
+└── scripts/                       # Install/setup scripts
 ```
 
-## Key Files
-- `MouseBrain/src/mousebrain/config.py` — All path constants (BRAINS_ROOT, DATA_SUMMARY_DIR, etc.)
-- `MouseBrain/src/mousebrain/tracker.py` — ExperimentTracker API
-- `MouseBrain/src/mousebrain/pipeline_3d/tuning_widget.py` — Main 3D napari widget (10,000+ lines)
+## Key APIs
+```python
+from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR, DATA_SUMMARY_DIR
+from mousebrain.tracker import ExperimentTracker
+```
 
 ## For AI Agents
-- **Canonical code** lives in `MouseBrain/src/mousebrain/`. The `util_Scripts/` copies are backward-compat shims.
-- Import from `mousebrain.config` and `mousebrain.tracker`, not from `config` or `experiment_tracker`.
-- The `mousebrain` package has optional extras: `pip install -e ".[3d]"`, `".[2d]"`, or `".[all]"`.
-- 3D_Cleared is temporarily at `Tissue/3D_Cleared/` until the batch script `FINISH_RESTRUCTURE.bat` moves it into `MouseBrain_Pipeline/`.
+- This is the CANONICAL code location. Do not edit the backward-compat shims in `util_Scripts/`.
+- `tuning_widget.py` is 10,000+ lines with 9 tabs. Be very careful with edits.
+- Install: `cd Tissue/MouseBrain && pip install -e ".[all]"`
+- Launch: `mousebrain` CLI command

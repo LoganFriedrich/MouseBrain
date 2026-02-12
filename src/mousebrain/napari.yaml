@@ -1,0 +1,44 @@
+name: mousebrain
+display_name: BrainTools
+contributions:
+  commands:
+    # === 3D Cleared Brain Pipeline ===
+    - id: mousebrain.dashboard
+      python_name: mousebrain.plugin_3d.pipeline_widget:PipelineDashboard
+      title: Pipeline Dashboard
+    - id: mousebrain.tuning
+      python_name: mousebrain.plugin_3d.tuning_widget:TuningWidget
+      title: Setup & Tuning
+    - id: mousebrain.crop
+      python_name: mousebrain.plugin_3d.manual_crop_widget:ManualCropWidget
+      title: Manual Crop
+    - id: mousebrain.experiments
+      python_name: mousebrain.plugin_3d.experiments_widget:ExperimentsWidget
+      title: Experiments
+    - id: mousebrain.curation
+      python_name: mousebrain.plugin_3d.curation_widget:CurationWidget
+      title: Curation
+    # === 2D Slice Pipeline ===
+    - id: mousebrain.sliceatlas
+      python_name: mousebrain.plugin_2d.sliceatlas.napari_plugin.main_widget:BrainSliceWidget
+      title: BrainSlice - Slice Analysis
+    - id: mousebrain.annotator
+      python_name: mousebrain.plugin_2d.annotator.widgets.main_widget:SliceAnnotatorWidget
+      title: Slice Annotator
+  widgets:
+    # === 3D Cleared Brain Pipeline ===
+    - command: mousebrain.dashboard
+      display_name: "3D: 1. Pipeline Dashboard"
+    - command: mousebrain.tuning
+      display_name: "3D: 2. Setup & Tuning"
+    - command: mousebrain.crop
+      display_name: "3D: 3. Manual Crop"
+    - command: mousebrain.experiments
+      display_name: "3D: 4. Experiments"
+    - command: mousebrain.curation
+      display_name: "3D: 5. Curation"
+    # === 2D Slice Pipeline ===
+    - command: mousebrain.sliceatlas
+      display_name: "2D: 1. BrainSlice"
+    - command: mousebrain.annotator
+      display_name: "2D: 2. Slice Annotator"
