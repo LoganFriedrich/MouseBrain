@@ -1,6 +1,6 @@
 # util_Scripts - Pipeline Scripts Documentation
 
-> **Navigation**: [← Back to Project Root](../../claude.md) | [napari Plugin →](sci_connectome_napari/claude.md)
+> **Navigation**: [← Back to Project Root](../../../claude.md) | [napari Plugin →](sci_connectome_napari/claude.md)
 
 ---
 
@@ -202,6 +202,6 @@ python experiment_tracker.py --search "349_CNT_01_02_1p625x_z4"
 ---
 
 ## See Also
-- [Project Root claude.md](../../claude.md) - Start here for overview
+- [Project Root claude.md](../../../claude.md) - Start here for overview
 - [napari Plugin claude.md](sci_connectome_napari/claude.md) - Widget documentation
 - [SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md) - Technical architecture

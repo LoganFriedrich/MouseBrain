@@ -1,6 +1,6 @@
 # sci_connectome_napari - Napari Plugin Documentation
 
-> **Navigation**: [← Back to Project Root](../../../claude.md) | [← util_Scripts](../claude.md) | [SYSTEM_ARCHITECTURE →](../SYSTEM_ARCHITECTURE.md)
+> **Navigation**: [← Back to Project Root](../../../../claude.md) | [← util_Scripts](../claude.md) | [SYSTEM_ARCHITECTURE →](../SYSTEM_ARCHITECTURE.md)
 
 ---
 
@@ -285,7 +285,7 @@ This allows Mark as Best to find and update the correct layer.
 ## Installation
 
 ```bash
-cd y:\2_Connectome\3_Nuclei_Detection\util_Scripts\sci_connectome_napari
+cd y:\2_Connectome\Tissue\MouseBrain_Pipeline\3D_Cleared\util_Scripts\sci_connectome_napari
 pip install -e .
 ```
 
@@ -351,6 +351,6 @@ self._mark_selected_as_best()
 ---
 
 ## See Also
-- [Project Root claude.md](../../../claude.md) - Start here
+- [Project Root claude.md](../../../../claude.md) - Start here
 - [util_Scripts claude.md](../claude.md) - Script documentation
 - [SYSTEM_ARCHITECTURE.md](../SYSTEM_ARCHITECTURE.md) - Technical architecture

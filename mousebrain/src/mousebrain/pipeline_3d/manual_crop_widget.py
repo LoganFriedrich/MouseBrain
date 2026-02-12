@@ -24,7 +24,11 @@ from napari.utils import notifications
 # CONFIGURATION
 # =============================================================================
 
-# Import paths from central config
+# Import paths from central config (auto-detects repo location)
+import sys as _sys
+_config_dir = Path(__file__).resolve().parent.parent.parent
+if str(_config_dir) not in _sys.path:
+    _sys.path.insert(0, str(_config_dir))
 from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT
 FOLDER_EXTRACTED = "1_Extracted_Full"
 FOLDER_CROPPED = "2_Cropped_For_Registration"
@@ -248,7 +252,7 @@ class ManualCropWidget(QWidget):
         selector_layout.addWidget(self.brain_combo, stretch=1)
 
         # Refresh button
-        self.refresh_btn = QPushButton("\u21bb")
+        self.refresh_btn = QPushButton("↻")
         self.refresh_btn.setFixedWidth(30)
         self.refresh_btn.setToolTip("Refresh brain list")
         self.refresh_btn.clicked.connect(self._populate_brain_list)
@@ -385,11 +389,8 @@ class ManualCropWidget(QWidget):
 
         brains_found = []
 
-        # CRITICAL: Force Y: drive to avoid UNC path slowness
+        # Use config-detected BRAINS_ROOT (handles Y: drive preference internally)
         scan_path = DEFAULT_BRAINGLOBE_ROOT
-        y_drive_path = Path(r"Y:\2_Connectome\Tissue\3D_Cleared\1_Brains")
-        if y_drive_path.exists():
-            scan_path = y_drive_path
 
         print(f"[{time.time()-t0:.2f}s] Scanning brains in: {scan_path}")
 
@@ -417,7 +418,7 @@ class ManualCropWidget(QWidget):
                 # Check crop status (quick existence check)
                 cropped_folder = pipeline_folder / FOLDER_CROPPED
                 has_crop = cropped_folder.exists() and (cropped_folder / "ch0").exists()
-                status = "\u2713 cropped" if has_crop else "\u25CB needs crop"
+                status = "✓ cropped" if has_crop else "○ needs crop"
                 brains_found.append((pipeline_folder.name, pipeline_folder, status))
 
             print(f"[{time.time()-t0:.2f}s] Found {len(brains_found)} brains with extracted data")
@@ -441,10 +442,8 @@ class ManualCropWidget(QWidget):
 
     def _browse_for_brain(self):
         """Open file dialog to browse for a brain folder."""
-        # Use Y: drive to avoid UNC slowness
-        browse_start = Path(r"Y:\2_Connectome\Tissue\3D_Cleared\1_Brains")
-        if not browse_start.exists():
-            browse_start = DEFAULT_BRAINGLOBE_ROOT
+        # Use config-detected BRAINS_ROOT
+        browse_start = DEFAULT_BRAINGLOBE_ROOT
 
         folder = QFileDialog.getExistingDirectory(
             self,
@@ -677,10 +676,8 @@ class ManualCropWidget(QWidget):
 
         # If pipeline folder not set, ask user to select it
         if not self.pipeline_folder:
-            # Use Y: drive to avoid UNC slowness
-            browse_start = Path(r"Y:\2_Connectome\Tissue\3D_Cleared\1_Brains")
-            if not browse_start.exists():
-                browse_start = DEFAULT_BRAINGLOBE_ROOT
+            # Use config-detected BRAINS_ROOT
+            browse_start = DEFAULT_BRAINGLOBE_ROOT
 
             folder = QFileDialog.getExistingDirectory(
                 self,
@@ -832,7 +829,7 @@ class ManualCropWidget(QWidget):
     def _on_crop_finished(self, success, message):
         """Handle crop completion."""
         if success:
-            self.log_output.append(f"\n\u2713 Crop complete!")
+            self.log_output.append(f"\n✓ Crop complete!")
             self.log_output.append(f"Output: {message}")
             self.progress.setValue(100)
 
@@ -846,7 +843,7 @@ class ManualCropWidget(QWidget):
             # Close napari after successful crop
             self.viewer.close()
         else:
-            self.log_output.append(f"\n\u2717 Error: {message}")
+            self.log_output.append(f"\n✗ Error: {message}")
             notifications.show_error(f"Crop failed: {message}")
 
             # Re-enable controls

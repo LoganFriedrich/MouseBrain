@@ -16,12 +16,15 @@ from qtpy.QtWidgets import (
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QFont
 
-# Import paths from central config
+# Import paths from central config (auto-detects repo location)
+_config_dir = Path(__file__).resolve().parent.parent.parent
+if str(_config_dir) not in sys.path:
+    sys.path.insert(0, str(_config_dir))
 from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR
 
 # Try to import experiment tracker
 try:
-    from mousebrain.tracker import ExperimentTracker, EXP_TYPES
+    from experiment_tracker import ExperimentTracker, EXP_TYPES
     TRACKER_AVAILABLE = True
 except ImportError:
     TRACKER_AVAILABLE = False

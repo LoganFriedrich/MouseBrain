@@ -43,11 +43,12 @@ def _find_repo_root() -> Optional[Path]:
     """
     Auto-detect the repository root by walking up from this script's location.
 
-    Looks for the characteristic folder structure (NEW: Tissue/3D_Cleared):
-    - Tissue/3D_Cleared/  (or legacy 3_Nuclei_Detection/)
-      - util_Scripts/  (where this config.py lives)
-      - 1_Brains/
-      - 2_Data_Summary/
+    Looks for the characteristic folder structure:
+    - Tissue/MouseBrain_Pipeline/3D_Cleared/  (new restructured layout)
+    - Tissue/3D_Cleared/  (current layout, still supported)
+    - 3_Nuclei_Detection/  (legacy layout)
+
+    Each of these should contain util_Scripts/, 1_Brains/, 2_Data_Summary/.
 
     Returns the root (2_Connectome equivalent).
     """
@@ -56,25 +57,37 @@ def _find_repo_root() -> Optional[Path]:
 
     # Walk up looking for the pipeline structure
     for _ in range(10):  # Max 10 levels up to prevent infinite loop
-        # Check if we're in util_Scripts under 3D_Cleared (new structure)
+        # Check if we're in util_Scripts under 3D_Cleared
         if current.name == "util_Scripts":
             parent = current.parent
             if parent.name == "3D_Cleared":
-                # New structure: Tissue/3D_Cleared -> return Tissue's parent (2_Connectome)
-                tissue_dir = parent.parent
-                if tissue_dir.name == "Tissue":
-                    return tissue_dir.parent
-            # Legacy: 3_Nuclei_Detection
+                grandparent = parent.parent
+                # New restructured: Tissue/MouseBrain_Pipeline/3D_Cleared/util_Scripts
+                if grandparent.name == "MouseBrain_Pipeline":
+                    tissue_dir = grandparent.parent
+                    if tissue_dir.name == "Tissue":
+                        return tissue_dir.parent
+                # Current: Tissue/3D_Cleared/util_Scripts
+                if grandparent.name == "Tissue":
+                    return grandparent.parent
+            # Legacy: 3_Nuclei_Detection/util_Scripts
             if parent.name == "3_Nuclei_Detection":
                 return parent.parent
 
-        # Check if current directory contains Tissue/3D_Cleared (new)
+        # Check if current directory contains the pipeline structure
+        # New restructured: Tissue/MouseBrain_Pipeline/3D_Cleared
+        new_cleared = current / "Tissue" / "MouseBrain_Pipeline" / "3D_Cleared"
+        if new_cleared.exists() and new_cleared.is_dir():
+            if (new_cleared / "util_Scripts").exists():
+                return current
+
+        # Current: Tissue/3D_Cleared
         cleared_3d = current / "Tissue" / "3D_Cleared"
         if cleared_3d.exists() and cleared_3d.is_dir():
             if (cleared_3d / "util_Scripts").exists():
                 return current
 
-        # Legacy: Check for 3_Nuclei_Detection
+        # Legacy: 3_Nuclei_Detection
         nuclei_detection = current / "3_Nuclei_Detection"
         if nuclei_detection.exists() and nuclei_detection.is_dir():
             if (nuclei_detection / "util_Scripts").exists():
@@ -111,8 +124,11 @@ def _get_root_path() -> Path:
 
     # 2. Prefer Y: drive to avoid UNC path issues with zarr/dask
     y_drive = Path(r"Y:\2_Connectome")
-    if y_drive.exists() and (y_drive / "Tissue" / "3D_Cleared").exists():
-        return y_drive
+    if y_drive.exists():
+        # Check new restructured path first, then current path
+        if ((y_drive / "Tissue" / "MouseBrain_Pipeline" / "3D_Cleared").exists()
+                or (y_drive / "Tissue" / "3D_Cleared").exists()):
+            return y_drive
 
     # 3. Try auto-detection (may return UNC path on network drives)
     detected = _find_repo_root()
@@ -130,12 +146,28 @@ def _get_root_path() -> Path:
 # Root of the installation (e.g., Y:\2_Connectome or wherever user installed)
 ROOT_PATH = _get_root_path()
 
-# Tissue processing root (NEW structure)
+# Tissue processing root
 TISSUE_ROOT = ROOT_PATH / "Tissue"
 
-# Main directories - try new structure first, fall back to legacy
-if (TISSUE_ROOT / "3D_Cleared").exists():
-    # New structure: Tissue/3D_Cleared
+# Tool package location (mousebrain package itself)
+# Supports both new (MouseBrain) and old (mousebrain) casing
+if (TISSUE_ROOT / "MouseBrain").exists():
+    MOUSEBRAIN_ROOT = TISSUE_ROOT / "MouseBrain"
+else:
+    MOUSEBRAIN_ROOT = TISSUE_ROOT / "mousebrain"
+
+# Pipeline data root (MouseBrain_Pipeline or direct under Tissue)
+if (TISSUE_ROOT / "MouseBrain_Pipeline").exists():
+    PIPELINE_ROOT = TISSUE_ROOT / "MouseBrain_Pipeline"
+else:
+    PIPELINE_ROOT = None  # Not yet restructured; 3D_Cleared is directly under Tissue
+
+# Main directories - try restructured path first, then current, then legacy
+if PIPELINE_ROOT and (PIPELINE_ROOT / "3D_Cleared").exists():
+    # Restructured: Tissue/MouseBrain_Pipeline/3D_Cleared
+    CLEARED_3D_DIR = PIPELINE_ROOT / "3D_Cleared"
+elif (TISSUE_ROOT / "3D_Cleared").exists():
+    # Current structure: Tissue/3D_Cleared
     CLEARED_3D_DIR = TISSUE_ROOT / "3D_Cleared"
 else:
     # Legacy structure: 3_Nuclei_Detection
@@ -224,7 +256,10 @@ def print_config():
 
     print(f"\nDetected/configured paths:")
     print(f"  ROOT_PATH:            {ROOT_PATH}")
-    print(f"  NUCLEI_DETECTION_DIR: {NUCLEI_DETECTION_DIR}")
+    print(f"  TISSUE_ROOT:          {TISSUE_ROOT}")
+    print(f"  MOUSEBRAIN_ROOT:      {MOUSEBRAIN_ROOT}")
+    print(f"  PIPELINE_ROOT:        {PIPELINE_ROOT}")
+    print(f"  CLEARED_3D_DIR:       {CLEARED_3D_DIR}")
     print(f"  BRAINS_ROOT:          {BRAINS_ROOT}")
     print(f"  DATA_SUMMARY_DIR:     {DATA_SUMMARY_DIR}")
     print(f"  SCRIPTS_DIR:          {SCRIPTS_DIR}")

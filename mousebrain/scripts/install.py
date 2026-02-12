@@ -187,7 +187,19 @@ def install_napari_plugin():
     print("\nInstalling napari manual crop plugin...")
 
     # Plugin is located in the util_Scripts folder
-    plugin_dir = Path(__file__).parent / "3_Nuclei_Detection" / "util_Scripts" / "napari_manual_crop"
+    # Try new restructured path first, then current, then legacy
+    plugin_dir = None
+    for candidate in [
+        Path(__file__).parent.parent / "src" / "mousebrain" / "pipeline_3d",  # mousebrain package
+        Path(__file__).parent / "MouseBrain_Pipeline" / "3D_Cleared" / "util_Scripts" / "napari_manual_crop",
+        Path(__file__).parent / "3D_Cleared" / "util_Scripts" / "napari_manual_crop",
+        Path(__file__).parent / "3_Nuclei_Detection" / "util_Scripts" / "napari_manual_crop",
+    ]:
+        if candidate.exists():
+            plugin_dir = candidate
+            break
+    if plugin_dir is None:
+        plugin_dir = Path(__file__).parent / "MouseBrain_Pipeline" / "3D_Cleared" / "util_Scripts" / "napari_manual_crop"
 
     if not plugin_dir.exists():
         print(f"⚠️  Plugin directory not found: {plugin_dir}")
@@ -258,9 +270,12 @@ def create_config():
         return
 
     # Default configuration
+    # Uses new restructured paths with fallback to current structure
     config = {
-        "brainglobe_root": "Y:\\2_Connectome\\3_Nuclei_Detection\\1_Brains",
-        "summary_data": "Y:\\2_Connectome\\3_Nuclei_Detection\\2_Data_Summary",
+        "brainglobe_root": "Y:\\2_Connectome\\Tissue\\MouseBrain_Pipeline\\3D_Cleared\\1_Brains",
+        "brainglobe_root_fallback": "Y:\\2_Connectome\\Tissue\\3D_Cleared\\1_Brains",
+        "summary_data": "Y:\\2_Connectome\\Tissue\\MouseBrain_Pipeline\\3D_Cleared\\2_Data_Summary",
+        "summary_data_fallback": "Y:\\2_Connectome\\Tissue\\3D_Cleared\\2_Data_Summary",
         "default_orientation": "iar",
         "camera_pixel_size": 6.5,
     }
@@ -334,7 +349,7 @@ def main():
     print(f"✓ To use the pipeline, first activate the environment:\n")
     print(f"    conda activate {ENV_NAME}\n")
     print("✓ Then navigate to the scripts folder and run the pipeline:")
-    print("    cd 3_Nuclei_Detection\\util_Scripts")
+    print("    cd Tissue\\MouseBrain_Pipeline\\3D_Cleared\\util_Scripts")
     print("    python 1_organize_pipeline.py")
     print("\n✓ To launch napari with the manual crop plugin:")
     print("    napari")

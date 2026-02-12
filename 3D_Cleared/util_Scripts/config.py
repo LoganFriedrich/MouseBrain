@@ -2,18 +2,18 @@
 """
 config.py - Backward-compatibility shim.
 
-The canonical version of this module now lives in the braintools package:
-    from braintools.config import BRAINS_ROOT, SCRIPTS_DIR, ...
+The canonical version of this module now lives in the mousebrain package:
+    from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR, ...
 
 This shim re-exports everything so existing scripts that do
     from config import BRAINS_ROOT
 continue to work without changes.
 """
 
-# Try braintools package first (preferred)
+# Try mousebrain package first (preferred)
 try:
-    from braintools.config import *
-    from braintools.config import _find_repo_root, _get_root_path, PROJECT_CODES
+    from mousebrain.config import *
+    from mousebrain.config import _find_repo_root, _get_root_path, PROJECT_CODES
 except ImportError:
     # Fallback: if braintools is not installed, use inline version
     # This keeps standalone scripts working even without pip install
@@ -29,15 +29,28 @@ except ImportError:
             if current.name == "util_Scripts":
                 parent = current.parent
                 if parent.name == "3D_Cleared":
-                    tissue_dir = parent.parent
-                    if tissue_dir.name == "Tissue":
-                        return tissue_dir.parent
+                    grandparent = parent.parent
+                    # New restructured: Tissue/MouseBrain_Pipeline/3D_Cleared/util_Scripts
+                    if grandparent.name == "MouseBrain_Pipeline":
+                        tissue_dir = grandparent.parent
+                        if tissue_dir.name == "Tissue":
+                            return tissue_dir.parent
+                    # Current: Tissue/3D_Cleared/util_Scripts
+                    if grandparent.name == "Tissue":
+                        return grandparent.parent
                 if parent.name == "3_Nuclei_Detection":
                     return parent.parent
+            # New restructured: Tissue/MouseBrain_Pipeline/3D_Cleared
+            new_cleared = current / "Tissue" / "MouseBrain_Pipeline" / "3D_Cleared"
+            if new_cleared.exists() and new_cleared.is_dir():
+                if (new_cleared / "util_Scripts").exists():
+                    return current
+            # Current: Tissue/3D_Cleared
             cleared_3d = current / "Tissue" / "3D_Cleared"
             if cleared_3d.exists() and cleared_3d.is_dir():
                 if (cleared_3d / "util_Scripts").exists():
                     return current
+            # Legacy: 3_Nuclei_Detection
             nuclei_detection = current / "3_Nuclei_Detection"
             if nuclei_detection.exists() and nuclei_detection.is_dir():
                 if (nuclei_detection / "util_Scripts").exists():
@@ -54,8 +67,10 @@ except ImportError:
             if env_path.exists():
                 return env_path
         y_drive = Path(r"Y:\2_Connectome")
-        if y_drive.exists() and (y_drive / "Tissue" / "3D_Cleared").exists():
-            return y_drive
+        if y_drive.exists():
+            if ((y_drive / "Tissue" / "MouseBrain_Pipeline" / "3D_Cleared").exists()
+                    or (y_drive / "Tissue" / "3D_Cleared").exists()):
+                return y_drive
         detected = _find_repo_root()
         if detected and detected.exists():
             return detected
@@ -64,7 +79,22 @@ except ImportError:
     ROOT_PATH = _get_root_path()
     TISSUE_ROOT = ROOT_PATH / "Tissue"
 
-    if (TISSUE_ROOT / "3D_Cleared").exists():
+    # Tool package location
+    if (TISSUE_ROOT / "MouseBrain").exists():
+        MOUSEBRAIN_ROOT = TISSUE_ROOT / "MouseBrain"
+    else:
+        MOUSEBRAIN_ROOT = TISSUE_ROOT / "mousebrain"
+
+    # Pipeline data root
+    if (TISSUE_ROOT / "MouseBrain_Pipeline").exists():
+        PIPELINE_ROOT = TISSUE_ROOT / "MouseBrain_Pipeline"
+    else:
+        PIPELINE_ROOT = None
+
+    # 3D Cleared dir - try restructured, then current, then legacy
+    if PIPELINE_ROOT and (PIPELINE_ROOT / "3D_Cleared").exists():
+        CLEARED_3D_DIR = PIPELINE_ROOT / "3D_Cleared"
+    elif (TISSUE_ROOT / "3D_Cleared").exists():
         CLEARED_3D_DIR = TISSUE_ROOT / "3D_Cleared"
     else:
         CLEARED_3D_DIR = ROOT_PATH / "3_Nuclei_Detection"

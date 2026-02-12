@@ -1,4 +1,4 @@
-# BrainTools
+# MouseBrain
 
 Unified package for SCI-Connectome tissue analysis tools.
 
@@ -6,10 +6,10 @@ Unified package for SCI-Connectome tissue analysis tools.
 
 ```powershell
 # 1. Open PowerShell and activate the environment
-conda activate "Y:\2_Connectome\envs\braintool"
+conda activate Y:\2_Connectome\envs\MouseBrain
 
 # 2. Go to this folder and run the installer
-cd Y:\2_Connectome\Tissue\braintools
+cd Y:\2_Connectome\Tissue\MouseBrain
 .\install.ps1
 ```
 
@@ -18,9 +18,9 @@ That's it. The script installs everything correctly.
 ## Usage
 
 ```bash
-braintool              # Launch napari with all plugins
-braintool --check      # Verify everything is working
-braintool --paths      # Show configured paths
+mousebrain              # Launch napari with all plugins
+mousebrain --check      # Verify everything is working
+mousebrain --paths      # Show configured paths
 ```
 
 Then in napari: **Plugins → SCI-Connectome Pipeline → 2. Setup & Tuning**
@@ -41,5 +41,5 @@ If something breaks, re-run the installer:
 
 Or check what's wrong:
 ```powershell
-braintool --check
+mousebrain --check
 ```

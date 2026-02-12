@@ -15,6 +15,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 
+# Add parent path to find config module
+_scripts_dir = Path(__file__).resolve().parent.parent.parent
+if str(_scripts_dir) not in sys.path:
+    sys.path.insert(0, str(_scripts_dir))
+
 try:
     from mousebrain.config import parse_brain_name, get_brain_hierarchy
 except ImportError:
@@ -609,7 +614,7 @@ class SessionDocumenter:
             elif evt_type == 'detection_run':
                 lines.append(f"- [{ts}] Detection run: found **{data.get('cell_count', '?')} cells**")
             elif evt_type == 'param_change':
-                lines.append(f"- [{ts}] Changed {data.get('param', '?')}: {data.get('from', '?')} \u2192 {data.get('to', '?')}")
+                lines.append(f"- [{ts}] Changed {data.get('param', '?')}: {data.get('from', '?')} → {data.get('to', '?')}")
             elif evt_type == 'classification_run':
                 lines.append(f"- [{ts}] Classification: **{data.get('cells_found', 0)} cells**, {data.get('rejected', 0)} rejected ({data.get('acceptance_rate', 0):.0f}% acceptance)")
             elif evt_type == 'curation':

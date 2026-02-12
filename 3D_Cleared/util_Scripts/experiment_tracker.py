@@ -2,18 +2,18 @@
 """
 experiment_tracker.py - Backward-compatibility shim.
 
-The canonical version of this module now lives in the braintools package:
-    from braintools.tracker import ExperimentTracker
+The canonical version of this module now lives in the mousebrain package:
+    from mousebrain.tracker import ExperimentTracker
 
 This shim re-exports everything so existing scripts that do
     from experiment_tracker import ExperimentTracker
 continue to work without changes.
 """
 
-# Try braintools package first (preferred)
+# Try mousebrain package first (preferred)
 try:
-    from braintools.tracker import *
-    from braintools.tracker import (
+    from mousebrain.tracker import *
+    from mousebrain.tracker import (
         ExperimentTracker,
         EXP_TYPES,
         CSV_COLUMNS,
@@ -21,11 +21,11 @@ try:
         main,
     )
 except ImportError:
-    # Fallback: braintools not installed, use original inline code
-    # This should not normally happen — install braintools first
+    # Fallback: mousebrain not installed, use original inline code
+    # This should not normally happen — install mousebrain first
     raise ImportError(
-        "braintools package is required. Install with:\n"
-        "  cd Y:\\2_Connectome\\Tissue\\braintools\n"
+        "mousebrain package is required. Install with:\n"
+        "  cd Y:\\2_Connectome\\Tissue\\mousebrain\n"
         "  pip install -e ."
     )
 

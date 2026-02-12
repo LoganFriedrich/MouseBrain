@@ -217,14 +217,9 @@ def launch_manual_crop(brain_name):
         from pathlib import Path
         debug("napari imported")
 
-        # CRITICAL: Use Y: drive directly to avoid UNC path slowness
-        BRAINS_ROOT = Path(r"Y:\2_Connectome\Tissue\3D_Cleared\1_Brains")
-        debug(f"Checking Y: drive path exists: {BRAINS_ROOT}")
-        if not BRAINS_ROOT.exists():
-            debug("Y: drive not found, falling back to mousebrain import...")
-            from mousebrain import BRAINS_ROOT as _fallback
-            BRAINS_ROOT = _fallback
-            debug(f"Fallback BRAINS_ROOT: {BRAINS_ROOT}")
+        # Use config-detected BRAINS_ROOT (handles Y: drive preference internally)
+        from mousebrain import BRAINS_ROOT
+        debug(f"BRAINS_ROOT from config: {BRAINS_ROOT}")
 
         debug(f"Searching for brain '{brain_name}' in: {BRAINS_ROOT}")
 
