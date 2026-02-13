@@ -14,7 +14,7 @@ MouseBrain/
 │   ├── tracker.py                 # Calibration run tracker (canonical)
 │   ├── cli.py                     # `mousebrain` CLI with feature detection
 │   ├── plugin_3d/                 # 3D napari plugin
-│   │   ├── napari.yaml            # Plugin: "sci-connectome-pipeline"
+│   │   ├── napari.yaml            # Plugin: "connectome-pipeline"
 │   │   ├── tuning_widget.py       # Main widget (10,000+ lines, 9 tabs)
 │   │   ├── pipeline_widget.py     # Pipeline execution widget
 │   │   ├── manual_crop_widget.py  # Manual cropping
@@ -36,7 +36,11 @@ from mousebrain.tracker import ExperimentTracker
 ```
 
 ## For AI Agents
-- This is the CANONICAL code location. Do not edit the backward-compat shims in `util_Scripts/`.
+
+**THIS IS THE CANONICAL CODE LOCATION.** All new code goes here.
+
+- **All new features, bug fixes, and modules** go in `src/mousebrain/`. This directory IS the git repo.
+- All code lives here in `src/mousebrain/` and `scripts/`. `MouseBrain_Pipeline/` contains only data — no code, no scripts, no exceptions.
 - `tuning_widget.py` is 10,000+ lines with 9 tabs. Be very careful with edits.
 - Install: `cd Tissue/MouseBrain && pip install -e ".[all]"`
 - Launch: `mousebrain` CLI command

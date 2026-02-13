@@ -484,6 +484,89 @@ class BrainSliceWidget(QWidget):
         thresh_gauss_row.addWidget(self.thresh_gauss_spin)
         thresh_det_layout.addLayout(thresh_gauss_row)
 
+        # ── Morphology cleanup group ──
+        morph_group = QGroupBox("Post-Detection Cleanup")
+        morph_layout = QVBoxLayout()
+        morph_layout.setContentsMargins(4, 4, 4, 4)
+
+        closing_row = QHBoxLayout()
+        closing_row.addWidget(QLabel("Closing radius:"))
+        self.thresh_closing_spin = QSpinBox()
+        self.thresh_closing_spin.setRange(0, 10)
+        self.thresh_closing_spin.setValue(0)
+        self.thresh_closing_spin.setToolTip(
+            "Morphological closing to bridge small gaps in nucleus masks.\n"
+            "0 = disabled (default). 1-3 = typical for fragmented nuclei."
+        )
+        closing_row.addWidget(self.thresh_closing_spin)
+        morph_layout.addLayout(closing_row)
+
+        self.thresh_fill_holes_check = QCheckBox("Fill holes")
+        self.thresh_fill_holes_check.setChecked(True)
+        self.thresh_fill_holes_check.setToolTip(
+            "Fill internal holes in binary mask before labeling.\n"
+            "Saturated nuclei can have internal voids from noise."
+        )
+        morph_layout.addWidget(self.thresh_fill_holes_check)
+
+        self.thresh_split_check = QCheckBox("Split touching nuclei (watershed)")
+        self.thresh_split_check.setChecked(False)
+        self.thresh_split_check.setToolTip(
+            "Use distance-transform watershed to split merged nuclei.\n"
+            "Useful when hysteresis merges two adjacent bright nuclei."
+        )
+        self.thresh_split_check.stateChanged.connect(
+            self._on_split_check_changed
+        )
+        morph_layout.addWidget(self.thresh_split_check)
+
+        split_fp_row = QHBoxLayout()
+        split_fp_row.addWidget(QLabel("Split footprint:"))
+        self.thresh_split_footprint_spin = QSpinBox()
+        self.thresh_split_footprint_spin.setRange(3, 30)
+        self.thresh_split_footprint_spin.setValue(10)
+        self.thresh_split_footprint_spin.setToolTip(
+            "Footprint size for watershed peak detection.\n"
+            "Larger = peaks must be farther apart to split.\n"
+            "10 = good default for typical nuclear spacing."
+        )
+        split_fp_row.addWidget(self.thresh_split_footprint_spin)
+        self.thresh_split_footprint_row = QWidget()
+        self.thresh_split_footprint_row.setLayout(split_fp_row)
+        self.thresh_split_footprint_row.setVisible(False)
+        morph_layout.addWidget(self.thresh_split_footprint_row)
+
+        solidity_row = QHBoxLayout()
+        solidity_row.addWidget(QLabel("Min solidity:"))
+        self.thresh_solidity_spin = QDoubleSpinBox()
+        self.thresh_solidity_spin.setRange(0.0, 1.0)
+        self.thresh_solidity_spin.setSingleStep(0.05)
+        self.thresh_solidity_spin.setValue(0.0)
+        self.thresh_solidity_spin.setToolTip(
+            "Minimum solidity (area / convex_hull_area).\n"
+            "0 = no filtering. Nuclei are typically > 0.8.\n"
+            "Debris/artifacts are often < 0.7."
+        )
+        solidity_row.addWidget(self.thresh_solidity_spin)
+        morph_layout.addLayout(solidity_row)
+
+        circ_row = QHBoxLayout()
+        circ_row.addWidget(QLabel("Min circularity:"))
+        self.thresh_circularity_spin = QDoubleSpinBox()
+        self.thresh_circularity_spin.setRange(0.0, 1.0)
+        self.thresh_circularity_spin.setSingleStep(0.05)
+        self.thresh_circularity_spin.setValue(0.0)
+        self.thresh_circularity_spin.setToolTip(
+            "Minimum circularity (4*pi*area/perimeter^2).\n"
+            "0 = no filtering. Perfect circle = 1.0.\n"
+            "Use 0.4-0.6 to reject elongated artifacts."
+        )
+        circ_row.addWidget(self.thresh_circularity_spin)
+        morph_layout.addLayout(circ_row)
+
+        morph_group.setLayout(morph_layout)
+        thresh_det_layout.addWidget(morph_group)
+
         self.threshold_params_widget.setLayout(thresh_det_layout)
         param_layout.addWidget(self.threshold_params_widget)
 
@@ -652,9 +735,18 @@ class BrainSliceWidget(QWidget):
         """Toggle hysteresis low fraction visibility."""
         self.thresh_hysteresis_row.setVisible(bool(state))
 
+    def _on_split_check_changed(self, state):
+        """Toggle watershed split footprint visibility."""
+        self.thresh_split_footprint_row.setVisible(bool(state))
+
     def _on_thresh_method_changed(self, method: str):
         """Toggle visibility of area_fraction parameter."""
         self.area_fraction_widget.setVisible(method == 'area_fraction')
+
+    def _on_coloc_mode_changed(self, mode_text: str):
+        """Show/hide Channel 2 controls based on mode."""
+        is_dual = mode_text == 'Dual Channel'
+        self.ch2_group.setVisible(is_dual)
 
     def _preview_preprocessing(self):
         """Show preprocessing effect on current nuclear channel in napari."""
@@ -691,6 +783,15 @@ class BrainSliceWidget(QWidget):
         widget = QWidget()
         layout = QVBoxLayout()
         widget.setLayout(layout)
+
+        # Mode selector: Single or Dual channel
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Mode:"))
+        self.coloc_mode_combo = QComboBox()
+        self.coloc_mode_combo.addItems(['Single Channel', 'Dual Channel'])
+        self.coloc_mode_combo.currentTextChanged.connect(self._on_coloc_mode_changed)
+        mode_layout.addWidget(self.coloc_mode_combo)
+        layout.addLayout(mode_layout)
 
         # Background estimation
         bg_group = QGroupBox("Background Estimation")
@@ -806,6 +907,48 @@ class BrainSliceWidget(QWidget):
 
         thresh_group.setLayout(thresh_layout)
         layout.addWidget(thresh_group)
+
+        # --- Channel 2 params (visible only in Dual mode) ---
+        self.ch2_group = QGroupBox("Channel 2 (Green / eYFP)")
+        ch2_layout = QVBoxLayout()
+
+        ch2_bg_layout = QHBoxLayout()
+        ch2_bg_layout.addWidget(QLabel("BG method:"))
+        self.bg_method_combo_ch2 = QComboBox()
+        self.bg_method_combo_ch2.addItems(['gmm', 'percentile', 'mode', 'mean'])
+        ch2_bg_layout.addWidget(self.bg_method_combo_ch2)
+        ch2_layout.addLayout(ch2_bg_layout)
+
+        ch2_dil_layout = QHBoxLayout()
+        ch2_dil_layout.addWidget(QLabel("BG exclusion radius:"))
+        self.bg_dilation_spin_ch2 = QSpinBox()
+        self.bg_dilation_spin_ch2.setRange(5, 200)
+        self.bg_dilation_spin_ch2.setValue(50)
+        self.bg_dilation_spin_ch2.setToolTip("Background exclusion dilation for green channel.\nShould be generous to exclude eYFP+ somas.")
+        ch2_dil_layout.addWidget(self.bg_dilation_spin_ch2)
+        ch2_layout.addLayout(ch2_dil_layout)
+
+        ch2_soma_layout = QHBoxLayout()
+        ch2_soma_layout.addWidget(QLabel("Soma dilation (px):"))
+        self.soma_dilation_spin_ch2 = QSpinBox()
+        self.soma_dilation_spin_ch2.setRange(0, 50)
+        self.soma_dilation_spin_ch2.setValue(15)
+        self.soma_dilation_spin_ch2.setToolTip("eYFP is cytoplasmic — dilate generously to capture soma signal.\nRecommended: 15-20px.")
+        ch2_soma_layout.addWidget(self.soma_dilation_spin_ch2)
+        ch2_layout.addLayout(ch2_soma_layout)
+
+        ch2_thresh_layout = QHBoxLayout()
+        ch2_thresh_layout.addWidget(QLabel("Threshold:"))
+        self.thresh_value_spin_ch2 = QDoubleSpinBox()
+        self.thresh_value_spin_ch2.setRange(0.1, 100.0)
+        self.thresh_value_spin_ch2.setValue(2.0)
+        self.thresh_value_spin_ch2.setSingleStep(0.5)
+        ch2_thresh_layout.addWidget(self.thresh_value_spin_ch2)
+        ch2_layout.addLayout(ch2_thresh_layout)
+
+        self.ch2_group.setLayout(ch2_layout)
+        self.ch2_group.setVisible(False)
+        layout.addWidget(self.ch2_group)
 
         # Run button
         self.coloc_btn = QPushButton("Run Colocalization Analysis")
@@ -1453,9 +1596,15 @@ class BrainSliceWidget(QWidget):
                 params['threshold_percentile'] = self.thresh_detect_percentile_spin.value()
                 params['manual_threshold'] = self.thresh_detect_manual_spin.value()
                 params['opening_radius'] = self.thresh_opening_spin.value()
+                params['closing_radius'] = self.thresh_closing_spin.value()
+                params['fill_holes'] = self.thresh_fill_holes_check.isChecked()
+                params['split_touching'] = self.thresh_split_check.isChecked()
+                params['split_footprint_size'] = self.thresh_split_footprint_spin.value()
                 params['gaussian_sigma'] = self.thresh_gauss_spin.value()
                 params['use_hysteresis'] = self.thresh_hysteresis_check.isChecked()
                 params['hysteresis_low_fraction'] = self.thresh_hysteresis_low_spin.value()
+                params['min_solidity'] = self.thresh_solidity_spin.value()
+                params['min_circularity'] = self.thresh_circularity_spin.value()
             else:
                 # StarDist / Cellpose params
                 params['model'] = self.model_combo.currentText()
@@ -1739,6 +1888,9 @@ class BrainSliceWidget(QWidget):
                 )
             else:
                 lines.append(f"Threshold ({thresh_method}): {thresh_val:.1f}")
+            n_splits = metrics.get('n_watershed_splits', 0)
+            if n_splits > 0:
+                lines.append(f"Watershed splits: +{n_splits} nuclei")
 
         self.detect_metrics_label.setText("\n".join(lines))
 
@@ -1752,6 +1904,11 @@ class BrainSliceWidget(QWidget):
             return
         if self.green_channel is None:
             QMessageBox.warning(self, "Error", "No signal channel loaded")
+            return
+
+        # Branch on mode
+        if self.coloc_mode_combo.currentText() == 'Dual Channel':
+            self._run_dual_colocalization()
             return
 
         self.status_label.setText("Running colocalization analysis...")
@@ -1822,6 +1979,51 @@ class BrainSliceWidget(QWidget):
             )
         self.coloc_worker.progress.connect(self._on_coloc_progress)
         self.coloc_worker.finished.connect(self._on_coloc_finished)
+        self.coloc_worker.start()
+
+    def _run_dual_colocalization(self):
+        """Run dual-channel colocalization (both red and green as independent signals)."""
+        self.status_label.setText("Running dual-channel colocalization...")
+        self.coloc_btn.setEnabled(False)
+
+        # Ch1 params (red / mCherry — nuclear)
+        params_ch1 = {
+            'background_method': self.bg_method_combo.currentText(),
+            'background_percentile': self.bg_percentile_spin.value(),
+            'threshold_method': self.thresh_method_combo.currentText(),
+            'threshold_value': self.thresh_value_spin.value(),
+            'dilation_iterations': self.bg_dilation_spin.value(),
+            'area_fraction': self.area_fraction_spin.value(),
+            'soma_dilation': self.soma_dilation_spin.value(),
+        }
+
+        # Ch2 params (green / eYFP — cytoplasmic)
+        params_ch2 = {
+            'background_method': self.bg_method_combo_ch2.currentText(),
+            'background_percentile': self.bg_percentile_spin.value(),
+            'threshold_method': 'fold_change',
+            'threshold_value': self.thresh_value_spin_ch2.value(),
+            'dilation_iterations': self.bg_dilation_spin_ch2.value(),
+            'area_fraction': 0.5,
+            'soma_dilation': self.soma_dilation_spin_ch2.value(),
+        }
+
+        from .workers import DualColocalizationWorker
+
+        signal_1 = self._get_current_slice(self.red_channel)
+        signal_2 = self._get_current_slice(self.green_channel)
+        labels = self._get_current_slice(self.nuclei_labels)
+
+        if signal_1 is None or signal_2 is None or labels is None:
+            QMessageBox.warning(self, "Error", "Missing channels or labels")
+            self.coloc_btn.setEnabled(True)
+            return
+
+        self.coloc_worker = DualColocalizationWorker(
+            signal_1, signal_2, labels, params_ch1, params_ch2,
+        )
+        self.coloc_worker.progress.connect(self._on_coloc_progress)
+        self.coloc_worker.finished.connect(self._on_dual_coloc_finished)
         self.coloc_worker.start()
 
     def _on_coloc_progress(self, message: str):
@@ -1909,6 +2111,50 @@ class BrainSliceWidget(QWidget):
             if self.tracker and self.last_run_id:
                 self.tracker.update_status(self.last_run_id, status='failed')
 
+    def _on_dual_coloc_finished(self, success: bool, message: str, measurements, summary, tissue_mask):
+        """Handle dual-channel colocalization completion."""
+        print(f"[BrainSlice] _on_dual_coloc_finished: success={success}")
+        self.coloc_btn.setEnabled(True)
+
+        if success:
+            self.cell_measurements = measurements
+            self._coloc_summary = summary
+
+            # Auto-save CSV
+            if self.current_file is not None:
+                results_dir = self.current_file.parent / "BrainSlice_Results"
+                results_dir.mkdir(parents=True, exist_ok=True)
+                stem = self.current_file.stem
+                tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+                measurements.to_csv(results_dir / f"{stem}_{tag}_dual_measurements.csv", index=False)
+
+            # Visualize with 4-category coloring
+            self._visualize_dual_colocalization(measurements)
+
+            # Update result label
+            ch1 = summary.get('ch1_name', 'red')
+            ch2 = summary.get('ch2_name', 'green')
+            result_text = (
+                f"DUAL-CHANNEL RESULTS\n"
+                f"Total nuclei: {summary['total_nuclei']}\n"
+                f"Red+ (mCherry): {summary.get(f'n_{ch1}_positive', 0)} "
+                f"({summary.get(f'fraction_{ch1}', 0)*100:.1f}%)\n"
+                f"Green+ (eYFP): {summary.get(f'n_{ch2}_positive', 0)} "
+                f"({summary.get(f'fraction_{ch2}', 0)*100:.1f}%)\n"
+                f"Dual+ (both): {summary.get('n_dual', 0)} "
+                f"({summary.get('fraction_dual', 0)*100:.1f}%)\n"
+                f"Red-only: {summary.get(f'n_{ch1}_only', 0)}\n"
+                f"Green-only: {summary.get(f'n_{ch2}_only', 0)}\n"
+                f"Neither: {summary.get('n_neither', 0)}"
+            )
+            self.coloc_result_label.setText(result_text)
+            self.status_label.setText(message)
+
+            # Enable quantification
+            self.quant_btn.setEnabled(True)
+        else:
+            self.status_label.setText(f"Error: {message}")
+
     def _visualize_colocalization(self, measurements):
         """Visualize colocalization results in napari."""
         if measurements is None or len(measurements) == 0:
@@ -1953,6 +2199,42 @@ class BrainSliceWidget(QWidget):
                 edge_color='red',
                 edge_width=0.5,
             )
+
+    def _visualize_dual_colocalization(self, measurements):
+        """Visualize dual-channel results with 4 colored point layers."""
+        if measurements is None or len(measurements) == 0:
+            return
+
+        if 'centroid_y_base' in measurements.columns:
+            y_col, x_col = 'centroid_y_base', 'centroid_x_base'
+        else:
+            y_col, x_col = 'centroid_y', 'centroid_x'
+
+        # Remove old colocalization layers
+        for layer in list(self.viewer.layers):
+            if any(tag in layer.name for tag in ['Positive', 'Negative', 'Dual+', 'Red-only', 'Green-only', 'Neither']):
+                self.viewer.layers.remove(layer)
+
+        # Category -> color mapping
+        categories = {
+            'dual':       ('Dual+', '#FFFF00'),
+            'red_only':   ('Red-only', '#FF4444'),
+            'green_only': ('Green-only', '#44FF44'),
+            'neither':    ('Neither', '#888888'),
+        }
+
+        for cat, (name_prefix, color) in categories.items():
+            subset = measurements[measurements['classification'] == cat]
+            if len(subset) > 0:
+                coords = subset[[y_col, x_col]].values
+                self.viewer.add_points(
+                    coords,
+                    name=f"{name_prefix} ({len(subset)})",
+                    size=10,
+                    face_color='transparent',
+                    edge_color=color,
+                    edge_width=0.5,
+                )
 
     def _update_diagnostic_plot(self):
         """Update the diagnostic plot based on combo selection."""
@@ -2268,41 +2550,91 @@ class BrainSliceWidget(QWidget):
             )
 
             total = len(filtered)
-            positive = int(filtered['is_positive'].sum()) if total > 0 else 0
-            negative = total - positive
-            fraction = positive / total if total > 0 else 0.0
+            is_dual_mode = 'classification' in filtered.columns
 
-            results.append({
-                'roi': f"ROI {i+1}",
-                'total': total,
-                'positive': positive,
-                'negative': negative,
-                'fraction': fraction,
-            })
+            if is_dual_mode and total > 0:
+                n_dual = int((filtered['classification'] == 'dual').sum())
+                n_red = int((filtered['classification'] == 'red_only').sum())
+                n_green = int((filtered['classification'] == 'green_only').sum())
+                n_neither = int((filtered['classification'] == 'neither').sum())
+                results.append({
+                    'roi': f"ROI {i+1}",
+                    'total': total,
+                    'dual': n_dual,
+                    'red_only': n_red,
+                    'green_only': n_green,
+                    'neither': n_neither,
+                    'frac_dual': n_dual / total if total > 0 else 0.0,
+                    '_dual_mode': True,
+                })
+            else:
+                positive = int(filtered['is_positive'].sum()) if total > 0 else 0
+                negative = total - positive
+                fraction = positive / total if total > 0 else 0.0
+                results.append({
+                    'roi': f"ROI {i+1}",
+                    'total': total,
+                    'positive': positive,
+                    'negative': negative,
+                    'fraction': fraction,
+                    '_dual_mode': False,
+                })
 
         # Add totals row
-        t_total = sum(r['total'] for r in results)
-        t_pos = sum(r['positive'] for r in results)
-        t_neg = sum(r['negative'] for r in results)
-        t_frac = t_pos / t_total if t_total > 0 else 0.0
-        results.append({
-            'roi': 'TOTAL',
-            'total': t_total,
-            'positive': t_pos,
-            'negative': t_neg,
-            'fraction': t_frac,
-        })
+        is_dual = results and results[0].get('_dual_mode', False)
+        if is_dual:
+            t_total = sum(r['total'] for r in results)
+            t_dual = sum(r.get('dual', 0) for r in results)
+            t_red = sum(r.get('red_only', 0) for r in results)
+            t_green = sum(r.get('green_only', 0) for r in results)
+            t_neither = sum(r.get('neither', 0) for r in results)
+            results.append({
+                'roi': 'TOTAL', 'total': t_total,
+                'dual': t_dual, 'red_only': t_red,
+                'green_only': t_green, 'neither': t_neither,
+                'frac_dual': t_dual / t_total if t_total > 0 else 0.0,
+                '_dual_mode': True,
+            })
+        else:
+            t_total = sum(r['total'] for r in results)
+            t_pos = sum(r['positive'] for r in results)
+            t_neg = sum(r['negative'] for r in results)
+            t_frac = t_pos / t_total if t_total > 0 else 0.0
+            results.append({
+                'roi': 'TOTAL', 'total': t_total,
+                'positive': t_pos, 'negative': t_neg,
+                'fraction': t_frac, '_dual_mode': False,
+            })
 
         self._roi_counts_data = results
 
         # Update table
-        self.roi_results_table.setRowCount(len(results))
-        for row_idx, r in enumerate(results):
-            self.roi_results_table.setItem(row_idx, 0, QTableWidgetItem(r['roi']))
-            self.roi_results_table.setItem(row_idx, 1, QTableWidgetItem(str(r['total'])))
-            self.roi_results_table.setItem(row_idx, 2, QTableWidgetItem(str(r['positive'])))
-            self.roi_results_table.setItem(row_idx, 3, QTableWidgetItem(str(r['negative'])))
-            self.roi_results_table.setItem(row_idx, 4, QTableWidgetItem(f"{r['fraction']*100:.1f}%"))
+        if is_dual:
+            self.roi_results_table.setColumnCount(7)
+            self.roi_results_table.setHorizontalHeaderLabels(
+                ["ROI", "Total", "Dual+", "Red+", "Green+", "Neither", "Frac Dual"]
+            )
+            self.roi_results_table.setRowCount(len(results))
+            for row_idx, r in enumerate(results):
+                self.roi_results_table.setItem(row_idx, 0, QTableWidgetItem(r['roi']))
+                self.roi_results_table.setItem(row_idx, 1, QTableWidgetItem(str(r['total'])))
+                self.roi_results_table.setItem(row_idx, 2, QTableWidgetItem(str(r.get('dual', 0))))
+                self.roi_results_table.setItem(row_idx, 3, QTableWidgetItem(str(r.get('red_only', 0))))
+                self.roi_results_table.setItem(row_idx, 4, QTableWidgetItem(str(r.get('green_only', 0))))
+                self.roi_results_table.setItem(row_idx, 5, QTableWidgetItem(str(r.get('neither', 0))))
+                self.roi_results_table.setItem(row_idx, 6, QTableWidgetItem(f"{r.get('frac_dual', 0)*100:.1f}%"))
+        else:
+            self.roi_results_table.setColumnCount(5)
+            self.roi_results_table.setHorizontalHeaderLabels(
+                ["ROI", "Total Nuclei", "Green+", "Green-", "Fraction"]
+            )
+            self.roi_results_table.setRowCount(len(results))
+            for row_idx, r in enumerate(results):
+                self.roi_results_table.setItem(row_idx, 0, QTableWidgetItem(r['roi']))
+                self.roi_results_table.setItem(row_idx, 1, QTableWidgetItem(str(r['total'])))
+                self.roi_results_table.setItem(row_idx, 2, QTableWidgetItem(str(r.get('positive', 0))))
+                self.roi_results_table.setItem(row_idx, 3, QTableWidgetItem(str(r.get('negative', 0))))
+                self.roi_results_table.setItem(row_idx, 4, QTableWidgetItem(f"{r.get('fraction', 0)*100:.1f}%"))
 
         self.status_label.setText(f"Counted cells in {len(results)-1} ROI(s)")
 

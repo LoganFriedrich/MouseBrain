@@ -2897,14 +2897,13 @@ class TuningWidget(QWidget):
         options_layout = QVBoxLayout()
         options_group.setLayout(options_layout)
 
-        self.prefilter_suspicious_cb = QCheckBox("Also flag suspicious regions")
-        self.prefilter_suspicious_cb.setToolTip(
-            "Flag candidates in regions biologically unlikely\n"
-            "for the selected tracing type:\n"
-            "  Descending: cerebellar cortex, white matter,\n"
-            "  olfactory, cortical layers 1-3, basal ganglia, etc."
+        suspicious_label = QLabel(
+            "Removes candidates in biologically suspicious regions\n"
+            "(cerebellar cortex, white matter, olfactory, cortical L1-3, etc.)\n"
+            "OOB and unmapped candidates are kept."
         )
-        options_layout.addWidget(self.prefilter_suspicious_cb)
+        suspicious_label.setWordWrap(True)
+        options_layout.addWidget(suspicious_label)
 
         tracing_row = QHBoxLayout()
         tracing_row.addWidget(QLabel("Tracing type:"))
@@ -2962,13 +2961,13 @@ class TuningWidget(QWidget):
         self.prefilter_save_btn.setEnabled(False)
         action_layout.addWidget(self.prefilter_save_btn)
 
-        self.prefilter_to_training_btn = QPushButton("Outside -> Non-Cells Training")
+        self.prefilter_to_training_btn = QPushButton("Suspicious -> Non-Cells Training")
         self.prefilter_to_training_btn.setToolTip(
-            "Copy outside-brain candidates to the non-cells training bucket.\n"
-            "Teaches the classifier that meningeal signals are not cells."
+            "Copy suspicious-region candidates to the non-cells training bucket.\n"
+            "Teaches the classifier that surface/cerebellar/olfactory signals are not cells."
         )
         self.prefilter_to_training_btn.setStyleSheet("background-color: #8B0000; color: white;")
-        self.prefilter_to_training_btn.clicked.connect(self._send_outside_to_training)
+        self.prefilter_to_training_btn.clicked.connect(self._send_suspicious_to_training)
         self.prefilter_to_training_btn.setEnabled(False)
         action_layout.addWidget(self.prefilter_to_training_btn)
 
@@ -3167,19 +3166,13 @@ class TuningWidget(QWidget):
 
         try:
             # Import and run the pre-filter
-            import sys
-            from pathlib import Path
-            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            from mousebrain.prefilter import prefilter_candidates
 
-            from util_atlas_prefilter import prefilter_candidates
-
-            flag_suspicious = self.prefilter_suspicious_cb.isChecked()
             tracing_type = self.prefilter_tracing_combo.currentText()
 
             result = prefilter_candidates(
                 candidates_xml=candidates_xml,
                 registration_path=registration_path,
-                flag_suspicious=flag_suspicious,
                 tracing_type=tracing_type,
             )
 
@@ -3192,16 +3185,22 @@ class TuningWidget(QWidget):
             stats = result['stats']
             total = stats['total']
             interior = stats['interior']
-            outside = stats['outside']
             suspicious = stats['suspicious']
+            oob = stats.get('out_of_bounds', 0)
+            unmapped = stats.get('unmapped', 0)
 
             text = (
                 f"Total candidates:     {total:>8,}\n"
                 f"Interior (keep):      {interior:>8,}  ({interior/total*100:.1f}%)\n"
-                f"Outside brain (drop): {outside:>8,}  ({outside/total*100:.1f}%)"
+                f"  OOB (kept):         {oob:>8,}\n"
+                f"  Unmapped (kept):    {unmapped:>8,}\n"
+                f"Suspicious (remove):  {suspicious:>8,}  ({suspicious/total*100:.1f}%)"
             )
-            if flag_suspicious:
-                text += f"\nSuspicious (flag):    {suspicious:>8,}  ({suspicious/total*100:.1f}%)"
+            # Show category breakdown if available
+            cat_counts = result.get('category_counts', {})
+            if cat_counts:
+                for cat, cnt in sorted(cat_counts.items(), key=lambda x: -x[1]):
+                    text += f"\n  {cat}: {cnt:,}"
 
             self.prefilter_results_label.setText(text)
             self.prefilter_save_btn.setEnabled(True)
@@ -3215,9 +3214,7 @@ class TuningWidget(QWidget):
                         brain=brain_name,
                         total=total,
                         interior=interior,
-                        outside=outside,
                         suspicious=suspicious,
-                        flag_suspicious=flag_suspicious,
                         tracing_type=tracing_type,
                         parent_experiment=self._prefilter_source_exp_id,
                         input_path=str(candidates_xml),
@@ -3248,7 +3245,7 @@ class TuningWidget(QWidget):
         for layer in layers_to_remove:
             self.viewer.layers.remove(layer)
 
-        # Interior candidates (green)
+        # Interior candidates (green) — kept for classification
         if result['interior_coords']:
             coords = np.array(result['interior_coords'])
             self.viewer.add_points(
@@ -3262,29 +3259,15 @@ class TuningWidget(QWidget):
                 edge_width=0.1,
             )
 
-        # Outside brain (red)
-        if result['outside_coords']:
-            coords = np.array(result['outside_coords'])
-            self.viewer.add_points(
-                coords,
-                name=f"Outside/Meningeal ({len(coords)})",
-                face_color='transparent',
-                edge_color='#FF0000',
-                symbol='x',
-                size=14,
-                opacity=0.2,
-                edge_width=0.1,
-            )
-
-        # Suspicious regions (magenta)
+        # Suspicious regions (red) — removed by filter
         if result['suspicious_coords']:
             coords = np.array(result['suspicious_coords'])
             self.viewer.add_points(
                 coords,
                 name=f"Suspicious Region ({len(coords)})",
                 face_color='transparent',
-                edge_color='#FF00FF',
-                symbol='triangle_up',
+                edge_color='#FF0000',
+                symbol='x',
                 size=14,
                 opacity=0.2,
                 edge_width=0.1,
@@ -3305,24 +3288,22 @@ class TuningWidget(QWidget):
         output_dir = brain_path / "4_Cell_Candidates" / f"prefiltered_{ts}"
 
         try:
-            import sys
-            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-            from util_atlas_prefilter import save_prefilter_results
+            from mousebrain.prefilter import save_prefilter_results
 
             saved = save_prefilter_results(self._prefilter_result, output_dir, brain_name)
 
             QMessageBox.information(self, "Saved",
                 f"Pre-filter results saved to:\n{output_dir}\n\n"
-                f"Interior: {len(self._prefilter_result['interior_coords'])} candidates\n"
-                f"Outside: {len(self._prefilter_result['outside_coords'])} candidates\n"
+                f"Interior (keep): {len(self._prefilter_result['interior_coords'])} candidates\n"
+                f"Suspicious (removed): {len(self._prefilter_result['suspicious_coords'])} candidates\n"
                 f"Use interior_candidates.xml for classification.")
         except Exception as e:
             QMessageBox.warning(self, "Save Error", f"Could not save results:\n{e}")
 
-    def _send_outside_to_training(self):
-        """Copy outside-brain candidates to the non-cells training bucket."""
-        if not self._prefilter_result or not self._prefilter_result['outside_coords']:
-            QMessageBox.warning(self, "No Data", "No outside-brain candidates to send.")
+    def _send_suspicious_to_training(self):
+        """Copy suspicious-region candidates to the non-cells training bucket."""
+        if not self._prefilter_result or not self._prefilter_result['suspicious_coords']:
+            QMessageBox.warning(self, "No Data", "No suspicious-region candidates to send.")
             return
 
         # Get or create training layers
@@ -3337,15 +3318,16 @@ class TuningWidget(QWidget):
             return
 
         import numpy as np
-        outside_coords = np.array(self._prefilter_result['outside_coords'])
+        suspicious_coords = np.array(self._prefilter_result['suspicious_coords'])
         existing = train_non_cells.data
-        combined = np.vstack([existing, outside_coords]) if len(existing) > 0 else outside_coords
+        combined = np.vstack([existing, suspicious_coords]) if len(existing) > 0 else suspicious_coords
         train_non_cells.data = combined
 
-        count = len(outside_coords)
+        count = len(suspicious_coords)
         QMessageBox.information(self, "Added to Training",
-            f"Added {count} outside-brain candidates to Non-Cells training bucket.\n\n"
-            f"These will teach the classifier that meningeal signals are not cells.\n"
+            f"Added {count} suspicious-region candidates to Non-Cells training bucket.\n\n"
+            f"These are from biologically unlikely regions (surface, cerebellar cortex, etc.)\n"
+            f"and will teach the classifier that these signals are not cells.\n"
             f"Total non-cells in bucket: {len(combined)}")
 
     def _load_previous_prefilter(self):
@@ -3405,18 +3387,16 @@ class TuningWidget(QWidget):
                 return coords
 
             interior = load_coords_from_xml(prefiltered_dir / "interior_candidates.xml")
-            outside = load_coords_from_xml(prefiltered_dir / "outside_candidates.xml")
             suspicious = load_coords_from_xml(prefiltered_dir / "suspicious_candidates.xml")
 
             result = {
                 'interior_coords': interior,
-                'outside_coords': outside,
                 'suspicious_coords': suspicious,
                 'suspicious_details': {},
+                'category_counts': {},
                 'stats': {
-                    'total': len(interior) + len(outside) + len(suspicious),
+                    'total': len(interior) + len(suspicious),
                     'interior': len(interior),
-                    'outside': len(outside),
                     'suspicious': len(suspicious),
                 },
             }
@@ -4946,7 +4926,7 @@ class TuningWidget(QWidget):
                 "Load a brain first to visualize its training data.")
             return
 
-        brain_path = BRAINS_ROOT / self.current_brain
+        brain_path = self.current_brain  # Already a full Path (set in on_brain_changed)
         training_path = brain_path / "training_data"
 
         if not training_path.exists():
@@ -8065,23 +8045,14 @@ class TuningWidget(QWidget):
             'border_width': 0.1,
             'description': 'Interior candidates (inside brain)'
         },
-        'prefilter_outside': {
+        'prefilter_suspicious': {
             'face': 'transparent',
             'edge': '#FF0000',
             'symbol': 'x',
             'size': 14,
             'opacity': 0.2,
             'border_width': 0.1,
-            'description': 'Outside brain (meningeal/surface)'
-        },
-        'prefilter_suspicious': {
-            'face': 'transparent',
-            'edge': '#FF00FF',
-            'symbol': 'triangle_up',
-            'size': 14,
-            'opacity': 0.2,
-            'border_width': 0.1,
-            'description': 'Suspicious region (biologically unlikely)'
+            'description': 'Suspicious region (removed by pre-filter)'
         },
 
         # ----------------------------------------------------------------------

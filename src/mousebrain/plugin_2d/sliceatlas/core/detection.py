@@ -156,9 +156,15 @@ def detect_by_threshold(
     min_area: int = 10,
     max_area: int = 5000,
     opening_radius: int = 0,
+    closing_radius: int = 0,
+    fill_holes: bool = True,
+    split_touching: bool = False,
+    split_footprint_size: int = 10,
     gaussian_sigma: float = 1.0,
     use_hysteresis: bool = True,
     hysteresis_low_fraction: float = 0.5,
+    min_solidity: float = 0.0,
+    min_circularity: float = 0.0,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
     Detect nuclei by intensity thresholding on the nuclear channel.
@@ -174,8 +180,12 @@ def detect_by_threshold(
         3. Hysteresis expansion: use a lower threshold to capture the full
            extent of each nucleus (not just the bright core)
         4. Optional morphological opening to remove small noise
-        5. Connected component labeling
-        6. Size filter
+        5. Optional morphological closing to bridge small gaps
+        6. Fill holes in binary mask (enabled by default)
+        7. Connected component labeling
+        8. Optional watershed splitting of merged nuclei
+        9. Size filter
+       10. Optional solidity/circularity filter
 
     Hysteresis thresholding (enabled by default) solves two problems:
     - **Undersized detections**: A single threshold captures only the bright
@@ -196,6 +206,16 @@ def detect_by_threshold(
         max_area: Maximum nucleus area in pixels
         opening_radius: Radius for morphological opening (noise removal).
             0 = no opening (default). 1-2 = light cleanup.
+        closing_radius: Radius for morphological closing (bridge small gaps
+            within nucleus boundaries). 0 = no closing (default). 1-3 typical.
+        fill_holes: Fill holes in the binary mask before labeling. True by
+            default — saturated H2B nuclei can have internal voids from noise.
+        split_touching: Use distance-transform + watershed to split merged
+            nuclei. Useful when hysteresis merges two adjacent bright nuclei
+            into one connected component. Default False.
+        split_footprint_size: Size of local-maximum footprint for watershed
+            seed detection. Larger values require peaks to be farther apart
+            to be considered separate nuclei. Default 10.
         gaussian_sigma: Gaussian blur sigma before thresholding. 0 = no blur.
         use_hysteresis: If True (default), use hysteresis thresholding to
             capture the full extent of each nucleus. The computed threshold
@@ -204,6 +224,11 @@ def detect_by_threshold(
         hysteresis_low_fraction: Low threshold as fraction of high threshold.
             0.5 = low threshold is half the high threshold. Lower values
             capture more of each nucleus boundary but may merge nearby objects.
+        min_solidity: Minimum solidity (area / convex_hull_area) to keep.
+            0 = no filtering (default). Nuclei are typically > 0.8.
+            Debris and artifacts are often < 0.7.
+        min_circularity: Minimum circularity (4*pi*area/perimeter^2).
+            0 = no filtering (default). Perfect circle = 1.0.
 
     Returns:
         Tuple of (labels, details)
@@ -211,8 +236,9 @@ def detect_by_threshold(
         - details: dict with 'threshold', 'method', 'raw_count', etc.
     """
     from skimage.filters import threshold_otsu, apply_hysteresis_threshold
-    from skimage.morphology import disk, binary_opening, label
+    from skimage.morphology import disk, binary_opening, binary_closing, label
     from skimage.measure import regionprops
+    from scipy.ndimage import binary_fill_holes
 
     if image.ndim != 2:
         raise ValueError(f"Expected 2D image, got {image.ndim}D")
@@ -249,14 +275,53 @@ def detect_by_threshold(
         selem = disk(opening_radius)
         binary = binary_opening(binary, selem)
 
-    # Step 5: Connected component labeling
+    # Step 5: Optional morphological closing (bridge small gaps)
+    if closing_radius > 0:
+        selem = disk(closing_radius)
+        binary = binary_closing(binary, selem)
+
+    # Step 6: Fill holes in binary mask
+    if fill_holes:
+        binary = binary_fill_holes(binary)
+
+    # Step 7: Connected component labeling
     labels = label(binary)
     raw_count = labels.max()
 
-    # Step 6: Size filter
-    if raw_count > 0:
+    # Step 8: Optional watershed splitting of merged nuclei
+    n_split = 0
+    if split_touching and raw_count > 0:
+        labels, n_split = _watershed_split(labels, split_footprint_size)
+
+    count_after_split = labels.max()
+
+    # Step 9: Size filter
+    removed_by_size = 0
+    if count_after_split > 0:
         props = regionprops(labels)
         valid = [p for p in props if min_area <= p.area <= max_area]
+        removed_by_size = len(props) - len(valid)
+
+        filtered = np.zeros_like(labels)
+        for new_id, prop in enumerate(valid, 1):
+            filtered[labels == prop.label] = new_id
+        labels = filtered
+
+    # Step 10: Optional solidity/circularity filter
+    removed_by_morphology = 0
+    count_before_morph = labels.max()
+    if count_before_morph > 0 and (min_solidity > 0 or min_circularity > 0):
+        props = regionprops(labels)
+        valid = []
+        for p in props:
+            if min_solidity > 0 and p.solidity < min_solidity:
+                continue
+            if min_circularity > 0 and p.perimeter > 0:
+                circ = 4 * np.pi * p.area / (p.perimeter ** 2)
+                if circ < min_circularity:
+                    continue
+            valid.append(p)
+        removed_by_morphology = len(props) - len(valid)
 
         filtered = np.zeros_like(labels)
         for new_id, prop in enumerate(valid, 1):
@@ -274,10 +339,68 @@ def detect_by_threshold(
         'method': method,
         'raw_count': int(raw_count),
         'filtered_count': int(final_count),
-        'removed_by_size': int(raw_count - final_count),
+        'removed_by_size': int(removed_by_size),
+        'removed_by_morphology': int(removed_by_morphology),
+        'n_watershed_splits': int(n_split),
+        'fill_holes': fill_holes,
+        'closing_radius': closing_radius,
+        'split_touching': split_touching,
     }
 
     return labels, details
+
+
+def _watershed_split(
+    labels: np.ndarray,
+    footprint_size: int = 10,
+) -> Tuple[np.ndarray, int]:
+    """
+    Split merged nuclei using distance-transform watershed.
+
+    For each connected component, computes the distance transform and finds
+    local maxima. If a component has multiple peaks, watershed splits it into
+    separate objects.
+
+    Args:
+        labels: Label image from connected component labeling.
+        footprint_size: Size of the footprint for local maximum detection.
+            Larger values require peaks to be farther apart to be considered
+            separate nuclei. 10 is a good default for typical microscopy.
+
+    Returns:
+        Tuple of (new_labels, n_splits) where n_splits is the number of
+        objects that were split (i.e., extra objects created).
+    """
+    from scipy.ndimage import distance_transform_edt, label as ndi_label
+    from skimage.feature import peak_local_max
+    from skimage.segmentation import watershed
+
+    binary = labels > 0
+    distance = distance_transform_edt(binary)
+
+    # Find local maxima (seeds for watershed)
+    coords = peak_local_max(
+        distance,
+        footprint=np.ones((footprint_size, footprint_size)),
+        labels=binary.astype(int),
+    )
+
+    # Create marker image from peaks
+    markers = np.zeros_like(labels, dtype=int)
+    for i, (r, c) in enumerate(coords, 1):
+        markers[r, c] = i
+
+    # Expand markers to connected regions
+    markers_labeled, _ = ndi_label(markers)
+
+    # Run watershed on negated distance (valleys = boundaries)
+    ws_labels = watershed(-distance, markers_labeled, mask=binary)
+
+    n_before = labels.max()
+    n_after = ws_labels.max()
+    n_splits = max(0, n_after - n_before)
+
+    return ws_labels, n_splits
 
 
 # Available pretrained models

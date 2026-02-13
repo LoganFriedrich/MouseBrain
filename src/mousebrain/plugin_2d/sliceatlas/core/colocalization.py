@@ -16,6 +16,39 @@ Usage:
 from typing import Optional, Dict, Any, Tuple
 import numpy as np
 
+# ============================================================================
+# Display normalization standard for dual-channel (mCherry + eYFP) imaging
+# ============================================================================
+# These constants define the canonical display mapping for visualization.
+# All visualization code should import and use these — NOT local definitions.
+#
+# Derived from NIS-Elements manual TIFF exports of ENCR regional ND2 files.
+# Raw data is 12-bit (0-4095).
+#
+# Red/Magenta (561nm H2B-mCherry): nuclear signal, saturated at 4095,
+#   background mean ~16. Display 0-250 captures full dynamic range.
+# Green (488nm eYFP): cytoplasmic signal, dim vs autofluorescence (median ~193).
+#   Floor=200 pushes autofluorescence to black; display_max=450 stretches the
+#   eYFP signal range (~270-400) across most of the brightness scale.
+#
+# Pseudocolor: Magenta (R+B) + Green → White where both channels overlap.
+DISPLAY_RED_FLOOR = 0
+DISPLAY_RED_MAX = 250
+DISPLAY_GRN_FLOOR = 200
+DISPLAY_GRN_MAX = 450
+
+
+def normalize_for_display(image: np.ndarray, display_max: float,
+                          floor: float = 0) -> np.ndarray:
+    """Linear normalization with floor subtraction for visualization.
+
+    Maps [floor, display_max] → [0, 1]. Values below floor clip to 0.
+    No gamma — linear mapping only. All visualization code should use this.
+    """
+    return np.clip((image.astype(np.float64) - floor) / (display_max - floor),
+                   0, 1)
+
+
 # Lazy imports
 _pd = None
 _ndimage = None
@@ -939,6 +972,182 @@ def analyze_colocalization(
     summary = analyzer.get_summary_statistics(classified)
 
     return classified, summary
+
+
+def analyze_dual_colocalization(
+    signal_image_1: np.ndarray,
+    signal_image_2: np.ndarray,
+    nuclei_labels: np.ndarray,
+    # Channel 1 params
+    background_method_1: str = 'gmm',
+    background_percentile_1: float = 10.0,
+    threshold_method_1: str = 'fold_change',
+    threshold_value_1: float = 2.0,
+    cell_body_dilation_1: int = 8,
+    area_fraction_1: float = 0.5,
+    soma_dilation_1: int = 0,
+    # Channel 2 params
+    background_method_2: str = 'gmm',
+    background_percentile_2: float = 10.0,
+    threshold_method_2: str = 'fold_change',
+    threshold_value_2: float = 2.0,
+    cell_body_dilation_2: int = 8,
+    area_fraction_2: float = 0.5,
+    soma_dilation_2: int = 5,
+    # Channel labels
+    ch1_name: str = 'red',
+    ch2_name: str = 'green',
+) -> Tuple[Any, Dict[str, Any]]:
+    """
+    Dual-channel colocalization: classify each nucleus in two signal channels
+    independently, then cross-tabulate into dual/ch1-only/ch2-only/neither.
+
+    Designed for retrograde tracing experiments where two viral tracers
+    (e.g., H2B-mCherry + eYFP) are co-injected and each channel needs
+    independent background estimation and thresholding.
+
+    Args:
+        signal_image_1: First signal channel (e.g., mCherry/red, 561nm)
+        signal_image_2: Second signal channel (e.g., eYFP/green, 488nm)
+        nuclei_labels: Label image from nuclear detection
+        background_method_1/2: Background estimation method per channel
+        background_percentile_1/2: Percentile for background (if percentile method)
+        threshold_method_1/2: Classification method per channel
+        threshold_value_1/2: Threshold per channel
+        cell_body_dilation_1/2: Nuclei exclusion radius for background estimation
+        area_fraction_1/2: For area_fraction method
+        soma_dilation_1/2: Soma dilation for intensity measurement.
+            0 = measure within nucleus (nuclear-localized signals like H2B).
+            >0 = measure in dilated soma ring (cytoplasmic signals like eYFP).
+        ch1_name/ch2_name: Channel labels for output columns
+
+    Returns:
+        Tuple of (measurements_df, summary_dict)
+        measurements_df has columns:
+            label, centroid_y, centroid_x, area,
+            mean_intensity_ch1, fold_change_ch1, is_positive_ch1,
+            mean_intensity_ch2, fold_change_ch2, is_positive_ch2,
+            classification ('dual', 'ch1_only', 'ch2_only', 'neither'),
+            is_positive (ch1 | ch2, for backward compat)
+    """
+    pd = _get_pandas()
+
+    # --- Channel 1 analysis ---
+    analyzer1 = ColocalizationAnalyzer(
+        background_method=background_method_1,
+        background_percentile=background_percentile_1,
+    )
+    bg1 = analyzer1.estimate_background(
+        signal_image_1, nuclei_labels,
+        cell_body_dilation=cell_body_dilation_1,
+    )
+    if soma_dilation_1 > 0:
+        meas1 = analyzer1.measure_soma_intensities(
+            signal_image_1, nuclei_labels, soma_dilation=soma_dilation_1,
+        )
+    else:
+        meas1 = analyzer1.measure_nuclei_intensities(signal_image_1, nuclei_labels)
+
+    classify_kw1 = {
+        'method': threshold_method_1,
+        'threshold': threshold_value_1,
+    }
+    if threshold_method_1 == 'area_fraction':
+        classify_kw1['signal_image'] = signal_image_1
+        classify_kw1['nuclei_labels'] = nuclei_labels
+        classify_kw1['area_fraction'] = area_fraction_1
+    classified1 = analyzer1.classify_positive_negative(meas1, bg1, **classify_kw1)
+
+    # --- Channel 2 analysis ---
+    analyzer2 = ColocalizationAnalyzer(
+        background_method=background_method_2,
+        background_percentile=background_percentile_2,
+    )
+    bg2 = analyzer2.estimate_background(
+        signal_image_2, nuclei_labels,
+        cell_body_dilation=cell_body_dilation_2,
+    )
+    if soma_dilation_2 > 0:
+        meas2 = analyzer2.measure_soma_intensities(
+            signal_image_2, nuclei_labels, soma_dilation=soma_dilation_2,
+        )
+    else:
+        meas2 = analyzer2.measure_nuclei_intensities(signal_image_2, nuclei_labels)
+
+    classify_kw2 = {
+        'method': threshold_method_2,
+        'threshold': threshold_value_2,
+    }
+    if threshold_method_2 == 'area_fraction':
+        classify_kw2['signal_image'] = signal_image_2
+        classify_kw2['nuclei_labels'] = nuclei_labels
+        classify_kw2['area_fraction'] = area_fraction_2
+    classified2 = analyzer2.classify_positive_negative(meas2, bg2, **classify_kw2)
+
+    # --- Merge ---
+    # Shared spatial columns from ch1
+    shared_cols = ['label', 'centroid_y', 'centroid_x', 'area']
+    # Handle _base variants if present
+    for col in ['centroid_y_base', 'centroid_x_base']:
+        if col in classified1.columns:
+            shared_cols.append(col)
+
+    merged = classified1[shared_cols].copy()
+
+    # Add ch1 intensity/classification columns with suffix
+    intensity_col_1 = 'soma_mean_intensity' if 'soma_mean_intensity' in classified1.columns else 'mean_intensity'
+    merged[f'mean_intensity_{ch1_name}'] = classified1[intensity_col_1].values
+    merged[f'background_{ch1_name}'] = classified1['background'].values
+    merged[f'fold_change_{ch1_name}'] = classified1['fold_change'].values
+    merged[f'is_positive_{ch1_name}'] = classified1['is_positive'].values
+
+    # Add ch2 intensity/classification columns with suffix
+    intensity_col_2 = 'soma_mean_intensity' if 'soma_mean_intensity' in classified2.columns else 'mean_intensity'
+    merged[f'mean_intensity_{ch2_name}'] = classified2[intensity_col_2].values
+    merged[f'background_{ch2_name}'] = classified2['background'].values
+    merged[f'fold_change_{ch2_name}'] = classified2['fold_change'].values
+    merged[f'is_positive_{ch2_name}'] = classified2['is_positive'].values
+
+    # --- Cross-tabulate ---
+    pos1 = merged[f'is_positive_{ch1_name}']
+    pos2 = merged[f'is_positive_{ch2_name}']
+    merged['classification'] = 'neither'
+    merged.loc[pos1 & pos2, 'classification'] = 'dual'
+    merged.loc[pos1 & ~pos2, 'classification'] = f'{ch1_name}_only'
+    merged.loc[~pos1 & pos2, 'classification'] = f'{ch2_name}_only'
+
+    # Backward compat: positive in either channel
+    merged['is_positive'] = pos1 | pos2
+
+    # --- Summary ---
+    total = len(merged)
+    n_ch1 = int(pos1.sum())
+    n_ch2 = int(pos2.sum())
+    n_dual = int((pos1 & pos2).sum())
+    n_ch1_only = int((pos1 & ~pos2).sum())
+    n_ch2_only = int((~pos1 & pos2).sum())
+    n_neither = int((~pos1 & ~pos2).sum())
+
+    summary = {
+        'total_nuclei': total,
+        f'n_{ch1_name}_positive': n_ch1,
+        f'n_{ch2_name}_positive': n_ch2,
+        'n_dual': n_dual,
+        f'n_{ch1_name}_only': n_ch1_only,
+        f'n_{ch2_name}_only': n_ch2_only,
+        'n_neither': n_neither,
+        f'fraction_{ch1_name}': float(n_ch1 / total) if total > 0 else 0.0,
+        f'fraction_{ch2_name}': float(n_ch2 / total) if total > 0 else 0.0,
+        'fraction_dual': float(n_dual / total) if total > 0 else 0.0,
+        f'background_{ch1_name}': float(bg1) if not isinstance(bg1, np.ndarray) else float(np.mean(bg1)),
+        f'background_{ch2_name}': float(bg2) if not isinstance(bg2, np.ndarray) else float(np.mean(bg2)),
+        f'bg_diagnostics_{ch1_name}': analyzer1.background_diagnostics,
+        f'bg_diagnostics_{ch2_name}': analyzer2.background_diagnostics,
+        'ch1_name': ch1_name,
+        'ch2_name': ch2_name,
+    }
+
+    return merged, summary
 
 
 def filter_measurements_by_roi(
