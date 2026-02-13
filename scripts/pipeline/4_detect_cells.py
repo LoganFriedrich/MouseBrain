@@ -287,10 +287,14 @@ def run_cellfinder_detect(
             end_plane=-1,  # All planes
             voxel_sizes=(float(voxel_sizes[0]), float(voxel_sizes[1]), float(voxel_sizes[2])),
             soma_diameter=float(params['soma_diameter']),
+            max_cluster_size=100000,
             ball_xy_size=float(params['ball_xy_size']),
             ball_z_size=float(params['ball_z_size']),
-            n_sds_above_mean_thresh=float(params['threshold']),  # This is the threshold parameter
+            ball_overlap_fraction=0.6,
+            soma_spread_factor=1.4,
             n_free_cpus=n_free_cpus,
+            log_sigma_size=0.2,
+            n_sds_above_mean_thresh=float(params['threshold']),  # This is the threshold parameter
         )
 
         duration = time.time() - start_time

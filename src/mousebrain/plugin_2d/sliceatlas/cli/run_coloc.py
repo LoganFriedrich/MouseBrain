@@ -315,11 +315,12 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     # Normalize channels for display using shared standard
     from mousebrain.plugin_2d.sliceatlas.core.colocalization import (
         normalize_for_display, DISPLAY_RED_FLOOR, DISPLAY_RED_MAX,
-        DISPLAY_GRN_FLOOR, DISPLAY_GRN_MAX,
+        DISPLAY_RED_GAMMA, DISPLAY_GRN_FLOOR, DISPLAY_GRN_MAX,
+        DISPLAY_GRN_GAMMA,
     )
 
-    r = normalize_for_display(red_image, DISPLAY_RED_MAX, DISPLAY_RED_FLOOR)
-    g = normalize_for_display(green_image, DISPLAY_GRN_MAX, DISPLAY_GRN_FLOOR)
+    r = normalize_for_display(red_image, DISPLAY_RED_MAX, DISPLAY_RED_FLOOR, DISPLAY_RED_GAMMA)
+    g = normalize_for_display(green_image, DISPLAY_GRN_MAX, DISPLAY_GRN_FLOOR, DISPLAY_GRN_GAMMA)
     # Magenta + Green composite (white where both overlap)
     composite = np.stack([r, g, r], axis=-1)
 
@@ -553,11 +554,12 @@ def _make_dual_results_figure(red_image, green_image, labels, measurements,
 
     from mousebrain.plugin_2d.sliceatlas.core.colocalization import (
         normalize_for_display, DISPLAY_RED_FLOOR, DISPLAY_RED_MAX,
-        DISPLAY_GRN_FLOOR, DISPLAY_GRN_MAX,
+        DISPLAY_RED_GAMMA, DISPLAY_GRN_FLOOR, DISPLAY_GRN_MAX,
+        DISPLAY_GRN_GAMMA,
     )
 
-    r = normalize_for_display(red_image, DISPLAY_RED_MAX, DISPLAY_RED_FLOOR)
-    g = normalize_for_display(green_image, DISPLAY_GRN_MAX, DISPLAY_GRN_FLOOR)
+    r = normalize_for_display(red_image, DISPLAY_RED_MAX, DISPLAY_RED_FLOOR, DISPLAY_RED_GAMMA)
+    g = normalize_for_display(green_image, DISPLAY_GRN_MAX, DISPLAY_GRN_FLOOR, DISPLAY_GRN_GAMMA)
     # Magenta + Green composite (white where both overlap)
     composite = np.stack([r, g, r], axis=-1)
 
