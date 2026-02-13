@@ -123,7 +123,7 @@ def find_default_model():
     models = []
     for model_dir in DEFAULT_MODELS_DIR.iterdir():
         if model_dir.is_dir():
-            # Prefer .keras (full model) over .h5 (weights only)
+            # Prefer .keras over .h5 (both are full models)
             keras_files = list(model_dir.glob("*.keras"))
             if keras_files:
                 models.append((model_dir, keras_files[0]))
@@ -263,11 +263,14 @@ def run_cellfinder_classify(
 
         print(f"[{timestamp()}] Running classification network...")
 
-        # Determine model type: .keras = full model, .h5 = weights only
-        if model_path.suffix == '.keras':
+        # Determine model type
+        # .keras and .h5 checkpoints from training (save_weights_only=False) are
+        # full models -> load via trained_model (tf.keras.models.load_model)
+        # Weights-only files -> load via model_weights (build_model + load_weights)
+        if model_path.suffix in ('.keras', '.h5'):
             trained_model_arg = model_path
             model_weights_arg = None
-            print(f"    Model format: .keras (full model)")
+            print(f"    Model format: {model_path.suffix} (full model)")
         else:
             trained_model_arg = None
             model_weights_arg = model_path

@@ -28,14 +28,15 @@ import numpy as np
 # Red/Magenta (561nm H2B-mCherry): nuclear signal, saturated at 4095,
 #   background mean ~16. Display 0-250 captures full dynamic range.
 # Green (488nm eYFP): cytoplasmic signal, dim vs autofluorescence (median ~193).
-#   Floor=200 pushes autofluorescence to black; display_max=450 stretches the
-#   eYFP signal range (~270-400) across most of the brightness scale.
+#   Floor=190 pushes autofluorescence to black; display_max=984 stretches the
+#   full eYFP signal range across the brightness scale.
 #
 # Pseudocolor: Magenta (R+B) + Green → White where both channels overlap.
-DISPLAY_RED_FLOOR = 0
-DISPLAY_RED_MAX = 250
-DISPLAY_GRN_FLOOR = 200
-DISPLAY_GRN_MAX = 450
+# Values tuned interactively in napari on ENCR regional ND2 crops.
+DISPLAY_RED_FLOOR = 25
+DISPLAY_RED_MAX = 221
+DISPLAY_GRN_FLOOR = 190
+DISPLAY_GRN_MAX = 984
 
 
 def normalize_for_display(image: np.ndarray, display_max: float,
