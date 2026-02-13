@@ -486,37 +486,36 @@ def _make_results_figure(red_image, green_image, labels, measurements,
             # Crop regions
             r_crop = r[y0:y1, x0:x1]
             g_crop = g[y0:y1, x0:x1]
-            comp_crop = composite[y0:y1, x0:x1].copy()
+            comp_crop = composite[y0:y1, x0:x1]
 
-            # Draw boundary in crop
+            # Label mask for vector contour overlay
             lbl_crop = labels[y0:y1, x0:x1]
-            bnd_crop = find_boundaries(lbl_crop == lbl, mode='outer')
-            bnd_color = [0, 1, 0] if is_pos else [1, 0.2, 0.2]
+            contour_mask = (lbl_crop == lbl).astype(np.float64)
+            contour_color = 'lime' if is_pos else '#ff4444'
 
-            # Red channel zoom
+            # Red channel zoom — clean image + vector contour
             ax_r = fig.add_subplot(gs_bot[row, col])
             red_crop = np.stack([r_crop, np.zeros_like(r_crop), r_crop], axis=-1)
-            # Draw white boundary on red
-            for c in range(3):
-                red_crop[:, :, c] = np.where(bnd_crop, 1.0, red_crop[:, :, c])
             ax_r.imshow(np.clip(red_crop, 0, 1))
+            ax_r.contour(contour_mask, levels=[0.5], linewidths=0.8,
+                         colors=['white'], antialiased=True)
             ax_r.set_title(f"#{i+1} Red", color='white', fontsize=9)
             ax_r.axis('off')
 
-            # Green channel zoom
+            # Green channel zoom — clean image + vector contour
             ax_g = fig.add_subplot(gs_bot[row, col + 1])
             grn_crop = np.stack([np.zeros_like(g_crop), g_crop, np.zeros_like(g_crop)], axis=-1)
-            for c in range(3):
-                grn_crop[:, :, c] = np.where(bnd_crop, bnd_color[c], grn_crop[:, :, c])
             ax_g.imshow(np.clip(grn_crop, 0, 1))
+            ax_g.contour(contour_mask, levels=[0.5], linewidths=0.8,
+                         colors=[contour_color], antialiased=True)
             ax_g.set_title(f"Green", color='white', fontsize=9)
             ax_g.axis('off')
 
-            # Composite zoom
+            # Composite zoom — clean image + vector contour
             ax_c = fig.add_subplot(gs_bot[row, col + 2])
-            for c in range(3):
-                comp_crop[:, :, c] = np.where(bnd_crop, bnd_color[c], comp_crop[:, :, c])
             ax_c.imshow(np.clip(comp_crop, 0, 1))
+            ax_c.contour(contour_mask, levels=[0.5], linewidths=0.8,
+                         colors=[contour_color], antialiased=True)
             status = "POS" if is_pos else "NEG"
             status_color = 'lime' if is_pos else '#ff4444'
             # Show probability if available (adaptive method), otherwise fold-change
@@ -531,19 +530,40 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     return fig
 
 
+def _thicken_boundary(boundary_mask, radius=1):
+    """Dilate a boundary mask to make outlines thicker."""
+    from skimage.morphology import binary_dilation, disk
+    if radius <= 0:
+        return boundary_mask
+    return binary_dilation(boundary_mask, disk(radius))
+
+
+def _alpha_blend_outline(rgb_image, boundary_mask, color_rgb, alpha=0.7):
+    """Alpha-blend a colored outline onto an RGB image (in-place)."""
+    for c in range(3):
+        rgb_image[:, :, c] = np.where(
+            boundary_mask,
+            alpha * color_rgb[c] + (1 - alpha) * rgb_image[:, :, c],
+            rgb_image[:, :, c],
+        )
+
+
 def _make_dual_results_figure(red_image, green_image, labels, measurements,
                                summary, det_details, args):
     """Build a matplotlib figure for dual-channel colocalization results.
 
     Layout:
-    - Top row: Red channel, Green channel, Composite with 4-category outlines, Metrics
-    - Bottom row: Zoomed panels around individual nuclei (up to 6)
+    - Top row: Magenta ch, Green ch, Clean Composite, Classification Overlay,
+               Metrics+Legend (5 panels, last one narrower)
+    - Middle rows: Zoomed nucleus panels (up to 6, 3 per row: red|green|composite)
+    - Bottom row: Background diagnostic histograms (red ch, green ch)
 
-    Category colors:
-    - Dual (both): yellow
-    - Red-only: red
-    - Green-only: green
-    - Neither: gray
+    Outline strategy:
+    - Overview panels: 2px thick, alpha-blended
+    - Zoom panels: 3px thick, alpha-blended
+    - Magenta panel: cyan outlines (max contrast against magenta)
+    - Green panel: magenta outlines (max contrast against green)
+    - Composite/Classification: category-colored outlines
     """
     import matplotlib
     matplotlib.use('Agg')
@@ -563,12 +583,12 @@ def _make_dual_results_figure(red_image, green_image, labels, measurements,
     # Magenta + Green composite (white where both overlap)
     composite = np.stack([r, g, r], axis=-1)
 
-    # Classification colors (RGBA)
+    # Classification colors [R, G, B]
     cat_colors = {
-        'dual':       [1.0, 1.0, 0.0, 0.95],   # yellow
-        'red_only':   [1.0, 0.27, 0.27, 0.95],  # red
-        'green_only': [0.27, 1.0, 0.27, 0.95],  # green
-        'neither':    [0.53, 0.53, 0.53, 0.7],   # gray
+        'dual':       [1.0, 1.0, 0.0],    # yellow
+        'red_only':   [1.0, 0.27, 0.27],   # red
+        'green_only': [0.27, 1.0, 0.27],   # green
+        'neither':    [0.53, 0.53, 0.53],   # gray
     }
 
     # Build per-label classification lookup
@@ -584,14 +604,47 @@ def _make_dual_results_figure(red_image, green_image, labels, measurements,
             label_fc_r[lbl] = row.get(f'fold_change_{ch1_name}', 0)
             label_fc_g[lbl] = row.get(f'fold_change_{ch2_name}', 0)
 
-    # Build per-category boundary masks
-    cat_boundaries = {}
-    for cat in cat_colors:
-        mask = np.zeros(labels.shape, dtype=bool)
-        for lbl, c in label_cat.items():
-            if c == cat:
-                mask |= find_boundaries(labels == lbl, mode='outer')
-        cat_boundaries[cat] = mask
+    # Channel-specific measurement region boundaries
+    from scipy import ndimage as _ndi
+    from skimage.morphology import disk as _disk
+    _selem_ch1 = _disk(args.ch1_soma_dilation) if args.ch1_soma_dilation > 0 else None
+    _selem_ch2 = _disk(args.ch2_soma_dilation) if args.ch2_soma_dilation > 0 else None
+
+    red_pos_boundary = np.zeros(labels.shape, dtype=bool)
+    green_pos_boundary = np.zeros(labels.shape, dtype=bool)
+    all_nuc_boundary = np.zeros(labels.shape, dtype=bool)
+    dual_centroids = []
+
+    for lbl, cat in label_cat.items():
+        nuc_mask = labels == lbl
+        nuc_bnd = find_boundaries(nuc_mask.astype(int), mode='outer')
+        all_nuc_boundary |= nuc_bnd
+
+        # Red+ cells: show their measurement region (nucleus or dilated)
+        if cat in ('dual', 'red_only'):
+            if _selem_ch1 is not None:
+                ch1_roi = _ndi.binary_dilation(nuc_mask, structure=_selem_ch1)
+                red_pos_boundary |= find_boundaries(ch1_roi.astype(int), mode='outer')
+            else:
+                red_pos_boundary |= nuc_bnd
+
+        # Green+ cells: show their measurement region (soma or nucleus)
+        if cat in ('dual', 'green_only'):
+            if _selem_ch2 is not None:
+                ch2_roi = _ndi.binary_dilation(nuc_mask, structure=_selem_ch2)
+                green_pos_boundary |= find_boundaries(ch2_roi.astype(int), mode='outer')
+            else:
+                green_pos_boundary |= nuc_bnd
+
+    # Dual centroids from measurements
+    if measurements is not None and len(measurements) > 0:
+        for _, row in measurements.iterrows():
+            if row.get('classification') == 'dual':
+                dual_centroids.append((row['centroid_y'], row['centroid_x']))
+
+    red_pos_boundary_thick = _thicken_boundary(red_pos_boundary, radius=1)
+    green_pos_boundary_thick = _thicken_boundary(green_pos_boundary, radius=1)
+    all_nuc_boundary_thick = _thicken_boundary(all_nuc_boundary, radius=1)
 
     # Get nucleus regions for zoom panels
     props = regionprops(labels)
@@ -601,66 +654,86 @@ def _make_dual_results_figure(red_image, green_image, labels, measurements,
 
     # ── Figure layout ──
     n_zoom_rows = max(1, (n_zoom + 2) // 3) if n_zoom > 0 else 0
-    fig = plt.figure(figsize=(24, 6 + 4 * n_zoom_rows))
+    # Total height: top panels + zoom rows + histogram row
+    fig_h = 6 + 4 * n_zoom_rows + 3.5
+    fig = plt.figure(figsize=(28, fig_h))
     fig.patch.set_facecolor('#1a1a1a')
     fname = Path(args.file).stem
 
     h, w = labels.shape
 
-    # Top row: 4 panels
-    gs_top = fig.add_gridspec(1, 4, top=0.98, bottom=0.55 if n_zoom > 0 else 0.02,
-                              left=0.02, right=0.98, wspace=0.05)
+    # Vertical layout fractions
+    top_bottom = 0.55 if n_zoom > 0 else 0.38
+    zoom_bottom = 0.28 if n_zoom > 0 else top_bottom
+    hist_top = zoom_bottom - 0.03
+    hist_bottom = 0.02
 
-    # Panel 1: Red channel with white nucleus outlines
+    # Top row: 5 panels (4 images + metrics), metrics narrower
+    gs_top = fig.add_gridspec(1, 5, top=0.98, bottom=top_bottom,
+                              left=0.02, right=0.98, wspace=0.04,
+                              width_ratios=[1, 1, 1, 1, 0.7])
+
+    OUTLINE_ALPHA = 0.7
+
+    # Panel 1: Magenta channel — all detected nuclei (cyan outlines)
     ax1 = fig.add_subplot(gs_top[0, 0])
-    red_rgb = np.stack([r, np.zeros_like(r), r], axis=-1)
-    boundaries = find_boundaries(labels, mode='outer')
-    outline_overlay = np.zeros((*labels.shape, 4))
-    outline_overlay[boundaries] = [1, 1, 1, 0.9]
+    red_rgb = np.stack([r, np.zeros_like(r), r], axis=-1).copy()
+    _alpha_blend_outline(red_rgb, all_nuc_boundary_thick, [0, 1, 1], OUTLINE_ALPHA)
     ax1.imshow(np.clip(red_rgb, 0, 1))
-    ax1.imshow(outline_overlay)
+    ax1.set_title(f"Magenta / mCherry: {labels.max()} nuclei",
+                  color='#FF55FF', fontsize=10)
+    ax1.axis('off')
+
+    # Panel 2: Green channel — nucleus outlines + green soma outlines for green+ cells
+    ax2 = fig.add_subplot(gs_top[0, 1])
+    grn_rgb = np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1).copy()
+    _alpha_blend_outline(grn_rgb, all_nuc_boundary_thick, [1, 0, 1], 0.5)
+    _alpha_blend_outline(grn_rgb, green_pos_boundary_thick, [0.2, 1, 0.2], 0.85)
+    ax2.imshow(np.clip(grn_rgb, 0, 1))
+    ax2.set_title("Green / eYFP", color='#55FF55', fontsize=10)
+    ax2.axis('off')
+
+    # Panel 3: Clean composite (no outlines — just the merged image)
+    ax3 = fig.add_subplot(gs_top[0, 2])
+    ax3.imshow(np.clip(composite, 0, 1))
+    ax3.set_title("Composite", color='white', fontsize=10)
+    ax3.axis('off')
+
+    # Panel 4: Classification — red nucleus outlines + green soma outlines + dual dots
+    ax4 = fig.add_subplot(gs_top[0, 3])
+    class_rgb = composite.copy()
+    _alpha_blend_outline(class_rgb, red_pos_boundary_thick, [1, 0.33, 1], 0.85)
+    _alpha_blend_outline(class_rgb, green_pos_boundary_thick, [0.33, 1, 0.33], 0.85)
+    ax4.imshow(np.clip(class_rgb, 0, 1))
+    # Dual-positive centroid markers
+    for cy, cx in dual_centroids:
+        ax4.plot(cx, cy, 'o', color='yellow', markersize=6,
+                 markeredgecolor='black', markeredgewidth=0.5)
+    # Zoom region boxes
     for i, prop in enumerate(props[:n_zoom]):
         cy, cx = prop.centroid
         y0 = max(0, int(cy) - zoom_pad)
         x0 = max(0, int(cx) - zoom_pad)
         sz = 2 * zoom_pad
-        rect = Rectangle((x0, y0), sz, sz, linewidth=1,
+        rect = Rectangle((x0, y0), sz, sz, linewidth=1.5,
                           edgecolor='cyan', facecolor='none', linestyle='--')
-        ax1.add_patch(rect)
-        ax1.text(x0 + 2, y0 - 2, str(i + 1), color='cyan', fontsize=8,
+        ax4.add_patch(rect)
+        ax4.text(x0 + 2, y0 - 2, str(i + 1), color='cyan', fontsize=8,
                  va='bottom', fontweight='bold')
-    ax1.set_title(f"Magenta / mCherry: {labels.max()} nuclei", color='#FF55FF', fontsize=11)
-    ax1.axis('off')
-
-    # Panel 2: Green channel with white nucleus outlines
-    ax2 = fig.add_subplot(gs_top[0, 1])
-    grn_rgb = np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1)
-    ax2.imshow(np.clip(grn_rgb, 0, 1))
-    ax2.imshow(outline_overlay)
-    ax2.set_title("Green / eYFP", color='#55FF55', fontsize=11)
-    ax2.axis('off')
-
-    # Panel 3: Composite with 4-category outlines
-    ax3 = fig.add_subplot(gs_top[0, 2])
-    ax3.imshow(np.clip(composite, 0, 1))
-    coloc_overlay = np.zeros((*labels.shape, 4))
-    for cat, color in cat_colors.items():
-        coloc_overlay[cat_boundaries[cat]] = color
-    ax3.imshow(coloc_overlay)
     n_dual = summary.get('n_dual', 0)
     n_r = summary.get(f'n_{ch1_name}_only', 0)
     n_g = summary.get(f'n_{ch2_name}_only', 0)
     n_n = summary.get('n_neither', 0)
-    ax3.set_title(
-        f"Dual={n_dual}  Red={n_r}  Grn={n_g}  None={n_n}",
-        color='white', fontsize=11,
+    ax4.set_title(
+        f"Classification: Dual={n_dual}  Red={n_r}  Grn={n_g}  None={n_n}",
+        color='white', fontsize=10,
     )
-    ax3.axis('off')
-
-    # Panel 4: Metrics text
-    ax4 = fig.add_subplot(gs_top[0, 3])
-    ax4.set_facecolor('#1a1a1a')
     ax4.axis('off')
+
+    # Panel 5: Metrics text + legend
+    ax5 = fig.add_subplot(gs_top[0, 4])
+    ax5.set_facecolor('#1a1a1a')
+    ax5.axis('off')
 
     total = summary.get('total_nuclei', 0)
     frac_r = summary.get(f'fraction_{ch1_name}', 0) * 100
@@ -678,11 +751,14 @@ def _make_dual_results_figure(red_image, green_image, labels, measurements,
         f"Detection\n"
         f"  Method: {thresh_str}\n"
         f"  Nuclei: {total}\n"
-        f"  Raw: {det_details['raw_count']} -> {det_details['filtered_count']}\n\n"
+        f"  Raw: {det_details['raw_count']} -> "
+        f"{det_details['filtered_count']}\n\n"
         f"Dual-Channel Classification\n"
-        f"  Red+ (mCherry): {summary.get(f'n_{ch1_name}_positive', 0)} "
+        f"  Red+ (mCherry): "
+        f"{summary.get(f'n_{ch1_name}_positive', 0)} "
         f"({frac_r:.1f}%)\n"
-        f"  Green+ (eYFP):  {summary.get(f'n_{ch2_name}_positive', 0)} "
+        f"  Green+ (eYFP):  "
+        f"{summary.get(f'n_{ch2_name}_positive', 0)} "
         f"({frac_g:.1f}%)\n"
         f"  Dual+ (both):   {n_dual} ({frac_d:.1f}%)\n"
         f"  Red-only:       {n_r}\n"
@@ -697,23 +773,39 @@ def _make_dual_results_figure(red_image, green_image, labels, measurements,
         f"  Ch1 threshold: {args.ch1_threshold}x\n"
         f"  Ch2 threshold: {args.ch2_threshold}x\n"
     )
-    ax4.text(0.05, 0.95, metrics_text, transform=ax4.transAxes,
-             color='white', fontsize=9, fontfamily='monospace',
+    ax5.text(0.05, 0.95, metrics_text, transform=ax5.transAxes,
+             color='white', fontsize=8, fontfamily='monospace',
              va='top', ha='left')
 
-    # ── Bottom rows: Zoomed nucleus panels ──
+    # Color legend
+    legend_items = [
+        ('#FF55FF', 'Red+ nucleus'),
+        ('#55FF55', 'Green+ soma'),
+        ('#FFFF00', 'Dual+ (dot)'),
+        ('cyan',    'Zoom region'),
+    ]
+    legend_y = 0.12
+    for color, text in legend_items:
+        ax5.plot([0.05], [legend_y], marker='s', markersize=7,
+                 color=color, transform=ax5.transAxes)
+        ax5.text(0.11, legend_y, text, transform=ax5.transAxes,
+                 color='white', fontsize=7, va='center')
+        legend_y -= 0.035
+
+    # ── Middle rows: Zoomed nucleus panels ──
     if n_zoom > 0:
         n_cols = min(n_zoom, 3)
-        n_rows = (n_zoom + n_cols - 1) // n_cols
+        n_z_rows = (n_zoom + n_cols - 1) // n_cols
         gs_bot = fig.add_gridspec(
-            n_rows, n_cols * 3,
-            top=0.48, bottom=0.02, left=0.02, right=0.98,
+            n_z_rows, n_cols * 3,
+            top=top_bottom - 0.03, bottom=zoom_bottom,
+            left=0.02, right=0.98,
             wspace=0.08, hspace=0.25,
         )
 
         for i, prop in enumerate(props[:n_zoom]):
-            row = i // n_cols
-            col = (i % n_cols) * 3
+            zrow = i // n_cols
+            zcol = (i % n_cols) * 3
 
             cy, cx = int(prop.centroid[0]), int(prop.centroid[1])
             y0 = max(0, cy - zoom_pad)
@@ -725,50 +817,182 @@ def _make_dual_results_figure(red_image, green_image, labels, measurements,
             cat = label_cat.get(lbl, 'neither')
             fc_r = label_fc_r.get(lbl, 0)
             fc_g = label_fc_g.get(lbl, 0)
-            bnd_color = cat_colors[cat][:3]
 
             r_crop = r[y0:y1, x0:x1]
             g_crop = g[y0:y1, x0:x1]
-            comp_crop = composite[y0:y1, x0:x1].copy()
+            comp_crop = composite[y0:y1, x0:x1]
 
+            # Build per-channel measurement region contours
             lbl_crop = labels[y0:y1, x0:x1]
-            bnd_crop = find_boundaries(lbl_crop == lbl, mode='outer')
+            nucleus_mask_crop = (lbl_crop == lbl)
+            nucleus_contour = nucleus_mask_crop.astype(np.float64)
 
-            # Red channel zoom
-            ax_r = fig.add_subplot(gs_bot[row, col])
-            red_crop = np.stack([r_crop, np.zeros_like(r_crop), r_crop], axis=-1)
-            for c in range(3):
-                red_crop[:, :, c] = np.where(bnd_crop, bnd_color[c], red_crop[:, :, c])
+            # Ch1 (red) measurement region: nucleus or dilated soma
+            if _selem_ch1 is not None:
+                ch1_contour = _ndi.binary_dilation(
+                    nucleus_mask_crop, structure=_selem_ch1
+                ).astype(np.float64)
+            else:
+                ch1_contour = nucleus_contour
+
+            # Ch2 (green) measurement region: nucleus or dilated soma
+            if _selem_ch2 is not None:
+                ch2_contour = _ndi.binary_dilation(
+                    nucleus_mask_crop, structure=_selem_ch2
+                ).astype(np.float64)
+            else:
+                ch2_contour = nucleus_contour
+
+            # Category color for composite title
+            cat_hex = {
+                'dual': '#FFFF00', 'red_only': '#FF4444',
+                'green_only': '#44FF44', 'neither': '#888888',
+            }
+
+            # Red channel zoom — red measurement region (cyan outline)
+            ax_r = fig.add_subplot(gs_bot[zrow, zcol])
+            red_crop = np.stack(
+                [r_crop, np.zeros_like(r_crop), r_crop], axis=-1)
             ax_r.imshow(np.clip(red_crop, 0, 1))
-            ax_r.set_title(f"#{i+1} Red fc={fc_r:.1f}x", color='white', fontsize=8)
+            ax_r.contour(ch1_contour, levels=[0.5], linewidths=0.8,
+                         colors=['cyan'], antialiased=True)
+            ax_r.set_title(f"#{i+1} Red fc={fc_r:.1f}x",
+                           color='white', fontsize=8)
             ax_r.axis('off')
 
-            # Green channel zoom
-            ax_g = fig.add_subplot(gs_bot[row, col + 1])
-            grn_crop = np.stack([np.zeros_like(g_crop), g_crop, np.zeros_like(g_crop)], axis=-1)
-            for c in range(3):
-                grn_crop[:, :, c] = np.where(bnd_crop, bnd_color[c], grn_crop[:, :, c])
+            # Green channel zoom — green measurement region (magenta outline)
+            ax_g = fig.add_subplot(gs_bot[zrow, zcol + 1])
+            grn_crop = np.stack(
+                [np.zeros_like(g_crop), g_crop, np.zeros_like(g_crop)],
+                axis=-1)
             ax_g.imshow(np.clip(grn_crop, 0, 1))
-            ax_g.set_title(f"Green fc={fc_g:.1f}x", color='white', fontsize=8)
+            ax_g.contour(ch2_contour, levels=[0.5], linewidths=0.8,
+                         colors=['magenta'], antialiased=True)
+            ax_g.set_title(f"Green fc={fc_g:.1f}x",
+                           color='white', fontsize=8)
             ax_g.axis('off')
 
-            # Composite zoom with category label
-            ax_c = fig.add_subplot(gs_bot[row, col + 2])
-            for c in range(3):
-                comp_crop[:, :, c] = np.where(bnd_crop, bnd_color[c], comp_crop[:, :, c])
+            # Composite zoom — both measurement regions overlaid
+            ax_c = fig.add_subplot(gs_bot[zrow, zcol + 2])
             ax_c.imshow(np.clip(comp_crop, 0, 1))
+            # Red measurement region (solid magenta) — only if red+
+            is_red_pos = cat in ('dual', 'red_only')
+            is_green_pos = cat in ('dual', 'green_only')
+            if is_red_pos:
+                ax_c.contour(ch1_contour, levels=[0.5], linewidths=0.8,
+                             colors=['#FF55FF'], antialiased=True,
+                             linestyles='solid')
+            # Green measurement region (dashed green) — only if green+
+            if is_green_pos:
+                ax_c.contour(ch2_contour, levels=[0.5], linewidths=0.8,
+                             colors=['#55FF55'], antialiased=True,
+                             linestyles='dashed')
+            # Dual indicator: yellow dot at center
+            if cat == 'dual':
+                # Centroid relative to crop
+                nuc_ys, nuc_xs = np.where(nucleus_mask_crop)
+                if len(nuc_ys) > 0:
+                    dot_y = nuc_ys.mean()
+                    dot_x = nuc_xs.mean()
+                    ax_c.plot(dot_x, dot_y, 'o', color='yellow',
+                              markersize=5, markeredgecolor='black',
+                              markeredgewidth=0.5)
             cat_labels = {
-                'dual': 'DUAL', 'red_only': 'RED', 'green_only': 'GRN', 'neither': '---'
+                'dual': 'DUAL', 'red_only': 'RED',
+                'green_only': 'GRN', 'neither': '---',
             }
             cat_text_colors = {
                 'dual': '#FFFF00', 'red_only': '#FF4444',
-                'green_only': '#44FF44', 'neither': '#888888'
+                'green_only': '#44FF44', 'neither': '#888888',
             }
             ax_c.set_title(
                 cat_labels.get(cat, cat),
                 color=cat_text_colors.get(cat, 'white'), fontsize=9,
             )
             ax_c.axis('off')
+
+    # ── Bottom row: Background diagnostic histograms ──
+    gs_hist = fig.add_gridspec(1, 2, top=hist_top, bottom=hist_bottom,
+                               left=0.06, right=0.94, wspace=0.25)
+
+    # Build tissue mask (exclude nuclei with generous dilation for green)
+    from skimage.morphology import binary_dilation, disk
+    nuclei_mask = labels > 0
+    tissue_mask = red_image > 0  # nonzero = tissue (not background/empty)
+
+    for ch_idx, (ax_pos, ch_img, ch_name_str, ch_color, bg_dil) in enumerate([
+        (0, red_image, f"Red (561nm) — bg dilation={args.ch1_bg_dilation}px",
+         '#FF55FF', args.ch1_bg_dilation),
+        (1, green_image, f"Green (488nm) — bg dilation={args.ch2_bg_dilation}px",
+         '#55FF55', args.ch2_bg_dilation),
+    ]):
+        ax_h = fig.add_subplot(gs_hist[0, ax_pos])
+        ax_h.set_facecolor('#1a1a1a')
+
+        # Tissue pixels outside dilated nuclei (what GMM sees)
+        if bg_dil > 0:
+            excl_mask = binary_dilation(nuclei_mask, disk(bg_dil))
+        else:
+            excl_mask = nuclei_mask
+        bg_pixels = ch_img[tissue_mask & ~excl_mask].astype(np.float64)
+
+        # Nucleus pixels (what is being measured)
+        nuc_pixels = ch_img[nuclei_mask].astype(np.float64)
+
+        if len(bg_pixels) > 0:
+            # Clip to reasonable range for histogram
+            p999 = np.percentile(np.concatenate([bg_pixels, nuc_pixels]), 99.9)
+            bins = np.linspace(0, p999, 150)
+
+            # Background pixel histogram
+            ax_h.hist(bg_pixels, bins=bins, density=True, alpha=0.5,
+                      color='#6688AA', label=f'Background tissue (n={len(bg_pixels):,})')
+
+            # Nucleus pixel histogram
+            if len(nuc_pixels) > 0:
+                ax_h.hist(nuc_pixels, bins=bins, density=True, alpha=0.5,
+                          color=ch_color,
+                          label=f'Nucleus pixels (n={len(nuc_pixels):,})')
+
+            # Overlay GMM fit if diagnostics available
+            diag_key = f'bg_diagnostics_{["red", "green"][ch_idx]}'
+            diag = summary.get(diag_key)
+            if diag is not None:
+                from scipy.stats import norm
+                x = np.linspace(0, p999, 300)
+                bg_mean = diag['background_mean']
+                bg_std = diag['background_std']
+                bg_wt = diag.get('background_weight', 1.0)
+
+                # Background component
+                y_bg = bg_wt * norm.pdf(x, bg_mean, bg_std)
+                ax_h.plot(x, y_bg, '--', color='white', linewidth=1.5,
+                          label=f'GMM bg: {bg_mean:.0f} +/- {bg_std:.0f}')
+
+                # Signal component if 2-component
+                if diag.get('n_components', 1) == 2:
+                    sig_mean = diag['signal_bleed_mean']
+                    sig_std = diag['signal_bleed_std']
+                    sig_wt = diag.get('signal_bleed_weight', 0)
+                    y_sig = sig_wt * norm.pdf(x, sig_mean, sig_std)
+                    ax_h.plot(x, y_sig, '--', color='orange', linewidth=1.5,
+                              label=f'GMM sig: {sig_mean:.0f} +/- {sig_std:.0f}')
+
+                # Threshold line (background * fold_change)
+                thresh_val = args.ch1_threshold if ch_idx == 0 else args.ch2_threshold
+                thresh_line = bg_mean * thresh_val
+                ax_h.axvline(thresh_line, color='#FF4444', linestyle=':',
+                             linewidth=1.5,
+                             label=f'Threshold: {thresh_val}x = {thresh_line:.0f}')
+
+        ax_h.set_title(ch_name_str, color='white', fontsize=10)
+        ax_h.set_xlabel('Intensity', color='white', fontsize=8)
+        ax_h.set_ylabel('Density', color='white', fontsize=8)
+        ax_h.tick_params(colors='white', labelsize=7)
+        ax_h.legend(fontsize=7, facecolor='#333333', edgecolor='#555555',
+                    labelcolor='white', loc='upper right')
+        for spine in ax_h.spines.values():
+            spine.set_color('#555555')
 
     plt.suptitle(f"{fname}  [DUAL]", color='white', fontsize=14,
                  fontweight='bold', y=0.995)
@@ -837,8 +1061,8 @@ Examples:
 
     # Detection parameters
     det = parser.add_argument_group('Detection')
-    det.add_argument('--method', choices=['otsu', 'percentile', 'manual'],
-                     default='otsu', help='Threshold method (default: otsu)')
+    det.add_argument('--method', choices=['otsu', 'percentile', 'manual', 'zscore'],
+                     default='zscore', help='Threshold method (default: zscore)')
     det.add_argument('--percentile', type=float, default=99.0,
                      help='Percentile for percentile method (default: 99)')
     det.add_argument('--manual-threshold', type=float, default=None,
