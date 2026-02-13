@@ -29,17 +29,18 @@ import numpy as np
 #   background mean ~16. Floor=25 clips camera noise. Gamma 0.8 slightly
 #   boosts bright nuclei.
 # Green (488nm eYFP): cytoplasmic signal, dim vs autofluorescence (median ~193).
-#   Floor=0 (no clip). Gamma 2.0 does all the heavy lifting: crushes the
-#   autofluorescence (193/1302 = 0.15 → 0.15^2 = 0.02, nearly black) while
-#   expanding the dim eYFP signal range into visible brightness.
+#   Floor=32 clips lowest-intensity noise. Gamma 2.0 does all the heavy
+#   lifting: crushes the autofluorescence (193/1333 = 0.14 → 0.14^2 = 0.02,
+#   nearly black) while expanding the dim eYFP signal range into visible
+#   brightness.
 #
 # Pseudocolor: Magenta (R+B) + Green → White where both channels overlap.
 # Values tuned interactively in napari on ENCR regional ND2 crops.
 DISPLAY_RED_FLOOR = 25
 DISPLAY_RED_MAX = 221
 DISPLAY_RED_GAMMA = 0.8
-DISPLAY_GRN_FLOOR = 0
-DISPLAY_GRN_MAX = 1302
+DISPLAY_GRN_FLOOR = 32
+DISPLAY_GRN_MAX = 1333
 DISPLAY_GRN_GAMMA = 2.0
 
 

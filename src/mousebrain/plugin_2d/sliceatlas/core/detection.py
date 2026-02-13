@@ -260,6 +260,20 @@ def detect_by_threshold(
         if manual_threshold is None:
             raise ValueError("manual_threshold required when method='manual'")
         thresh_val = float(manual_threshold)
+    elif method == 'zscore':
+        # Z-score detection: "is this pixel significantly brighter than background?"
+        # Use robust statistics (median + MAD) to estimate background, since
+        # nuclei are sparse outliers that would bias mean/std upward.
+        bg_median = float(np.median(img))
+        mad = float(np.median(np.abs(img - bg_median)))
+        # MAD-to-std conversion factor for Gaussian: std ≈ 1.4826 * MAD
+        bg_std = mad * 1.4826
+        if bg_std < 1e-6:
+            bg_std = float(np.std(img))  # fallback if image is near-constant
+        # threshold = k standard deviations above background
+        # 'percentile' parameter is repurposed as the z-score cutoff (default 5.0)
+        z_cutoff = percentile if percentile != 99.0 else 5.0
+        thresh_val = bg_median + z_cutoff * bg_std
     else:
         raise ValueError(f"Unknown threshold method: {method}")
 
@@ -346,6 +360,12 @@ def detect_by_threshold(
         'closing_radius': closing_radius,
         'split_touching': split_touching,
     }
+
+    # Add z-score diagnostics if applicable
+    if method == 'zscore':
+        details['bg_median'] = float(bg_median)
+        details['bg_std'] = float(bg_std)
+        details['z_cutoff'] = float(z_cutoff)
 
     return labels, details
 

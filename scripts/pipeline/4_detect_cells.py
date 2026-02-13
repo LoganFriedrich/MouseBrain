@@ -252,11 +252,26 @@ def run_cellfinder_detect(
 
     Returns:
         (success, duration, cells_found)
+
+    IMPORTANT - WINDOWS MULTIPROCESSING LIMIT:
+        Windows WaitForMultipleObjects allows max 63 handles. If
+        (cpu_count - n_free_cpus) > 63, cellfinder crashes with:
+            "ValueError: need at most 63 handles, got a sequence of length N"
+        On machines with many CPUs (e.g. 104), n_free_cpus MUST be set high
+        enough to keep the worker pool under 63. This is enforced below.
     """
     # Import cellfinder Python API
     from cellfinder.core.detect.detect import main as detect_main
     from brainglobe_utils.IO.image.load import read_with_dask
     from brainglobe_utils.IO.cells import save_cells
+    import multiprocessing
+
+    # ENFORCE WINDOWS 63-HANDLE LIMIT (see docstring)
+    max_workers = 60  # safely under the 63 limit
+    total_cpus = multiprocessing.cpu_count()
+    if total_cpus - n_free_cpus > max_workers:
+        n_free_cpus = total_cpus - max_workers
+        print(f"    [NOTE] Adjusted n_free_cpus to {n_free_cpus} (Windows 63-handle limit, {total_cpus} CPUs)")
 
     output_path.mkdir(parents=True, exist_ok=True)
 
