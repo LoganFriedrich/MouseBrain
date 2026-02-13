@@ -23,15 +23,19 @@ import pandas as pd
 # Internal helpers
 # ══════════════════════════════════════════════════════════════════════════
 
-def _normalize_channel(channel, gamma=0.7, pmin=0.5, pmax=99.5):
+def _normalize_channel(channel, gamma=0.7, pmin=0.5, pmax=99.5,
+                       display_max=None, floor=0):
     """
-    Normalize an image channel to 0–1 with contrast stretch and gamma.
+    Normalize an image channel to 0–1.
 
-    Uses percentile-based contrast stretching to handle outlier pixels
-    (e.g., hot pixels, saturated artifacts) without blowing out the image.
-    Gamma < 1.0 brightens dim features (good for fluorescence).
+    Two modes:
+    - If display_max is set: linear map [floor, display_max] → [0, 1] (standard)
+    - Otherwise: percentile-based contrast stretch with gamma (legacy)
     """
     img = channel.astype(np.float64)
+    if display_max is not None:
+        return np.clip((img - floor) / (display_max - floor), 0, 1)
+    # Legacy percentile mode
     lo = np.percentile(img, pmin)
     hi = np.percentile(img, pmax)
     if hi - lo < 1e-8:
@@ -42,29 +46,48 @@ def _normalize_channel(channel, gamma=0.7, pmin=0.5, pmax=99.5):
     return img
 
 
-def _make_composite(red_channel=None, green_channel=None, gamma=0.7):
+# Display standard constants — canonical source:
+# mousebrain.plugin_2d.sliceatlas.core.colocalization
+_DISP_RED_FLOOR, _DISP_RED_MAX = 0, 250
+_DISP_GRN_FLOOR, _DISP_GRN_MAX = 200, 450
+
+
+def _make_composite(red_channel=None, green_channel=None, gamma=0.7,
+                    use_standard_display=False):
     """
     Create an RGB fluorescence composite from one or both channels.
 
-    - red_channel → mapped to the R plane (like looking through a red filter)
-    - green_channel → mapped to the G plane
-    - Where both overlap, you see yellow/orange (natural compositing)
+    Pseudocolor: Magenta (R+B) for red channel, Green for green channel.
+    Where both overlap → white. Colorblind-friendly.
 
-    If only green_channel is provided, falls back to a dim greyscale base
-    with slight green tint, so the green signal is still visible.
+    use_standard_display=True uses fixed display ranges instead of
+    percentile-based normalization (recommended for dual-channel ENCR data).
     """
     if red_channel is not None and green_channel is not None:
-        r = _normalize_channel(red_channel, gamma=gamma)
-        g = _normalize_channel(green_channel, gamma=gamma)
-        b = np.zeros_like(r)
-        return np.stack([r, g, b], axis=-1)
+        if use_standard_display:
+            r = _normalize_channel(red_channel, display_max=_DISP_RED_MAX,
+                                   floor=_DISP_RED_FLOOR)
+            g = _normalize_channel(green_channel, display_max=_DISP_GRN_MAX,
+                                   floor=_DISP_GRN_FLOOR)
+        else:
+            r = _normalize_channel(red_channel, gamma=gamma)
+            g = _normalize_channel(green_channel, gamma=gamma)
+        # Magenta + Green composite (white where both overlap)
+        return np.stack([r, g, r], axis=-1)
     elif green_channel is not None:
-        # No red channel — use dim greyscale so boundaries are visible
-        g = _normalize_channel(green_channel, gamma=gamma)
-        return np.stack([g * 0.3, g, g * 0.1], axis=-1)
+        if use_standard_display:
+            g = _normalize_channel(green_channel, display_max=_DISP_GRN_MAX,
+                                   floor=_DISP_GRN_FLOOR)
+        else:
+            g = _normalize_channel(green_channel, gamma=gamma)
+        return np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1)
     elif red_channel is not None:
-        r = _normalize_channel(red_channel, gamma=gamma)
-        return np.stack([r, r * 0.15, r * 0.15], axis=-1)
+        if use_standard_display:
+            r = _normalize_channel(red_channel, display_max=_DISP_RED_MAX,
+                                   floor=_DISP_RED_FLOOR)
+        else:
+            r = _normalize_channel(red_channel, gamma=gamma)
+        return np.stack([r, np.zeros_like(r), r], axis=-1)
     else:
         raise ValueError("At least one channel must be provided")
 
@@ -148,7 +171,9 @@ def create_overlay_image(green_channel, nuclei_labels, measurements_df,
     ax = fig.add_subplot(111)
 
     # Build fluorescence composite
-    composite = _make_composite(red_channel, green_channel, gamma=0.7)
+    dual = red_channel is not None and green_channel is not None
+    composite = _make_composite(red_channel, green_channel,
+                                use_standard_display=dual)
 
     # Draw boundaries (2px thick for visibility)
     _draw_boundaries(composite, nuclei_labels, measurements_df, thickness=2)
@@ -214,7 +239,9 @@ def create_annotated_overlay(green_channel, nuclei_labels, measurements_df,
     ax = fig.add_subplot(111)
 
     # Build composite and draw boundaries
-    composite = _make_composite(red_channel, green_channel, gamma=0.7)
+    dual = red_channel is not None and green_channel is not None
+    composite = _make_composite(red_channel, green_channel,
+                                use_standard_display=dual)
     _draw_boundaries(composite, nuclei_labels, measurements_df, thickness=2)
 
     ax.imshow(composite, interpolation='bilinear')

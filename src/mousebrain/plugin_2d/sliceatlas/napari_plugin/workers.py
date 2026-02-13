@@ -143,9 +143,15 @@ class DetectionWorker(QThread):
                     min_area=self.params.get('min_area', 10),
                     max_area=self.params.get('max_area', 5000),
                     opening_radius=self.params.get('opening_radius', 0),
+                    closing_radius=self.params.get('closing_radius', 0),
+                    fill_holes=self.params.get('fill_holes', True),
+                    split_touching=self.params.get('split_touching', False),
+                    split_footprint_size=self.params.get('split_footprint_size', 10),
                     gaussian_sigma=self.params.get('gaussian_sigma', 1.0),
                     use_hysteresis=self.params.get('use_hysteresis', True),
                     hysteresis_low_fraction=self.params.get('hysteresis_low_fraction', 0.5),
+                    min_solidity=self.params.get('min_solidity', 0.0),
+                    min_circularity=self.params.get('min_circularity', 0.0),
                 )
 
                 raw_count = details.get('raw_count', 0)
@@ -153,6 +159,8 @@ class DetectionWorker(QThread):
                 metrics['raw_count'] = raw_count
                 metrics['filtered_count'] = final_count
                 metrics['removed_by_size'] = details.get('removed_by_size', 0)
+                metrics['removed_by_morphology'] = details.get('removed_by_morphology', 0)
+                metrics['n_watershed_splits'] = details.get('n_watershed_splits', 0)
                 metrics['threshold_value'] = details.get('threshold', 0)
                 metrics['threshold_low'] = details.get('threshold_low', 0)
                 metrics['threshold_method'] = details.get('method', 'otsu')
@@ -436,6 +444,87 @@ class ColocalizationWorker(QThread):
                    f"({summary['positive_fraction']*100:.1f}% positive)")
 
             self.finished.emit(True, msg, classified, summary, tissue_mask)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.finished.emit(False, str(e), None, None, None)
+
+
+class DualColocalizationWorker(QThread):
+    """Run dual-channel colocalization analysis in background thread."""
+
+    progress = Signal(str)
+    finished = Signal(bool, str, object, object, object)  # success, msg, measurements_df, summary, tissue_mask
+
+    def __init__(
+        self,
+        signal_image_1: np.ndarray,   # red / mCherry
+        signal_image_2: np.ndarray,   # green / eYFP
+        nuclei_labels: np.ndarray,
+        params_ch1: Dict[str, Any],
+        params_ch2: Dict[str, Any],
+    ):
+        super().__init__()
+        self.signal_image_1 = signal_image_1
+        self.signal_image_2 = signal_image_2
+        self.nuclei_labels = nuclei_labels
+        self.params_ch1 = params_ch1
+        self.params_ch2 = params_ch2
+
+    def run(self):
+        try:
+            from ..core.colocalization import analyze_dual_colocalization
+
+            print(f"[DualColocWorker] Starting dual-channel colocalization...")
+            print(f"[DualColocWorker]   ch1 (red): shape={self.signal_image_1.shape}, range=[{self.signal_image_1.min()}, {self.signal_image_1.max()}]")
+            print(f"[DualColocWorker]   ch2 (green): shape={self.signal_image_2.shape}, range=[{self.signal_image_2.min()}, {self.signal_image_2.max()}]")
+            print(f"[DualColocWorker]   labels: max_label={self.nuclei_labels.max()}")
+            print(f"[DualColocWorker]   params_ch1: {self.params_ch1}")
+            print(f"[DualColocWorker]   params_ch2: {self.params_ch2}")
+
+            self.progress.emit("Analyzing channel 1 (red / mCherry)...")
+
+            classified, summary = analyze_dual_colocalization(
+                signal_image_1=self.signal_image_1,
+                signal_image_2=self.signal_image_2,
+                nuclei_labels=self.nuclei_labels,
+                # Ch1 params
+                background_method_1=self.params_ch1.get('background_method', 'gmm'),
+                background_percentile_1=self.params_ch1.get('background_percentile', 10.0),
+                threshold_method_1=self.params_ch1.get('threshold_method', 'fold_change'),
+                threshold_value_1=self.params_ch1.get('threshold_value', 2.0),
+                cell_body_dilation_1=self.params_ch1.get('dilation_iterations', 10),
+                area_fraction_1=self.params_ch1.get('area_fraction', 0.5),
+                soma_dilation_1=self.params_ch1.get('soma_dilation', 0),
+                # Ch2 params
+                background_method_2=self.params_ch2.get('background_method', 'gmm'),
+                background_percentile_2=self.params_ch2.get('background_percentile', 10.0),
+                threshold_method_2=self.params_ch2.get('threshold_method', 'fold_change'),
+                threshold_value_2=self.params_ch2.get('threshold_value', 2.0),
+                cell_body_dilation_2=self.params_ch2.get('dilation_iterations', 50),
+                area_fraction_2=self.params_ch2.get('area_fraction', 0.5),
+                soma_dilation_2=self.params_ch2.get('soma_dilation', 5),
+                ch1_name='red',
+                ch2_name='green',
+            )
+
+            self.progress.emit("Dual-channel analysis complete.")
+
+            # Store diagnostics
+            self.background_diagnostics_ch1 = summary.get('bg_diagnostics_red', {})
+            self.background_diagnostics_ch2 = summary.get('bg_diagnostics_green', {})
+
+            n_dual = summary.get('n_dual', 0)
+            n_r = summary.get('n_red_only', 0)
+            n_g = summary.get('n_green_only', 0)
+            total = summary.get('total_nuclei', 0)
+
+            msg = (f"Dual analysis complete: {n_dual} dual+, "
+                   f"{n_r} red-only, {n_g} green-only "
+                   f"({total} total)")
+
+            self.finished.emit(True, msg, classified, summary, None)
 
         except Exception as e:
             import traceback

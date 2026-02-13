@@ -43,3 +43,12 @@ Or check what's wrong:
 ```powershell
 mousebrain --check
 ```
+
+## Acknowledgments
+
+This tool builds on excellent open-source neuroscience software:
+
+- **[BrainGlobe](https://brainglobe.info/)** - Atlas registration, segmentation, and the atlas API ([GitHub](https://github.com/brainglobe))
+  > Claudi, F., Petrucco, L., et al. (2020). BrainGlobe Atlas API: a common interface for neuroanatomical atlases. *JOSS*, 5(54), 2668.
+- **[cellfinder](https://brainglobe.info/documentation/cellfinder/)** - Whole-brain cell detection and classification ([GitHub](https://github.com/brainglobe/cellfinder))
+  > Tyson, A.L., Velez-Fort, M., et al. (2021). Accurate determination of marker-positive cell bodies in tissue sections. *Scientific Reports*, 11, 21505.

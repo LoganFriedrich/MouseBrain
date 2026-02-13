@@ -84,9 +84,15 @@ def run_pipeline(args):
         min_area=args.min_area,
         max_area=args.max_area,
         opening_radius=args.opening_radius,
+        closing_radius=args.closing_radius,
+        fill_holes=not args.no_fill_holes,
+        split_touching=args.split_touching,
+        split_footprint_size=args.split_footprint,
         gaussian_sigma=args.gaussian_sigma,
         use_hysteresis=not args.no_hysteresis,
         hysteresis_low_fraction=args.hysteresis_low,
+        min_solidity=args.min_solidity,
+        min_circularity=args.min_circularity,
     )
     t_detect = time.time() - t1
 
@@ -97,12 +103,60 @@ def run_pipeline(args):
         print(f"  Hysteresis low: {details['threshold_low']:.1f}")
     print(f"  Raw: {details['raw_count']} -> Filtered: {n_nuclei} "
           f"(removed {details['removed_by_size']} by size)")
+    if details.get('n_watershed_splits', 0) > 0:
+        print(f"  Watershed splits: {details['n_watershed_splits']}")
+    if details.get('removed_by_morphology', 0) > 0:
+        print(f"  Removed by morphology: {details['removed_by_morphology']}")
 
     if n_nuclei == 0:
         print("\nNo nuclei found. Try lowering threshold or min_area.")
         return
 
-    # ── Colocalization ──
+    # ── Branch: dual or single channel ──
+    if args.dual:
+        classified, summary, coloc_metrics = _run_dual_pipeline(
+            red_image, green_image, labels, args, t0, t_load, t_detect, details,
+        )
+    else:
+        classified, summary, coloc_metrics = _run_single_pipeline(
+            red_image, green_image, labels, args, t0, t_load, t_detect, details,
+        )
+
+    # ── Visualize ──
+    print("\nGenerating visualization...")
+    if args.dual:
+        fig = _make_dual_results_figure(
+            red_image, green_image, labels, classified, summary,
+            details, args,
+        )
+    else:
+        fig = _make_results_figure(
+            red_image, green_image, labels, classified, summary,
+            details, coloc_metrics, args,
+        )
+
+    # Always save a PNG next to the input file for quick review
+    png_path = Path(args.file).with_suffix('.coloc_result.png')
+    fig.savefig(str(png_path), dpi=150, bbox_inches='tight',
+                facecolor=fig.get_facecolor())
+    print(f"  Saved figure: {png_path}")
+
+    # Show interactively unless --no-show
+    if not args.no_show:
+        import matplotlib
+        matplotlib.use('TkAgg')
+        import matplotlib.pyplot as plt
+        plt.show()
+
+    # ── Save ──
+    if args.save:
+        _save_results(args.save, classified, summary, labels, args, fig)
+
+
+def _run_single_pipeline(red_image, green_image, labels, args, t0, t_load, t_detect, details):
+    """Original single-channel colocalization pipeline."""
+    n_nuclei = details['filtered_count']
+
     print(f"\nRunning colocalization (soma_dilation={args.soma_dilation}px)...")
     coloc_mod = _import_core('colocalization')
     ColocalizationAnalyzer = coloc_mod.ColocalizationAnalyzer
@@ -183,29 +237,63 @@ def run_pipeline(args):
     print(f"\n  Timing: load={t_load:.1f}s, detect={t_detect:.1f}s, "
           f"coloc={t_coloc:.1f}s, total={t_total:.1f}s")
 
-    # ── Visualize ──
-    print("\nGenerating visualization...")
-    fig = _make_results_figure(
-        red_image, green_image, labels, classified, summary,
-        details, coloc_metrics, args,
+    return classified, summary, coloc_metrics
+
+
+def _run_dual_pipeline(red_image, green_image, labels, args, t0, t_load, t_detect, details):
+    """Dual-channel colocalization pipeline."""
+    n_nuclei = details['filtered_count']
+
+    print(f"\nRunning DUAL-CHANNEL colocalization...")
+    print(f"  Ch1 (red):  soma_dilation={args.ch1_soma_dilation}px, "
+          f"threshold={args.ch1_threshold}x, bg_dilation={args.ch1_bg_dilation}")
+    print(f"  Ch2 (green): soma_dilation={args.ch2_soma_dilation}px, "
+          f"threshold={args.ch2_threshold}x, bg_dilation={args.ch2_bg_dilation}")
+
+    coloc_mod = _import_core('colocalization')
+    analyze_dual = coloc_mod.analyze_dual_colocalization
+    t2 = time.time()
+
+    classified, summary = analyze_dual(
+        signal_image_1=red_image,
+        signal_image_2=green_image,
+        nuclei_labels=labels,
+        threshold_method_1='fold_change',
+        threshold_value_1=args.ch1_threshold,
+        cell_body_dilation_1=args.ch1_bg_dilation,
+        soma_dilation_1=args.ch1_soma_dilation,
+        threshold_method_2='fold_change',
+        threshold_value_2=args.ch2_threshold,
+        cell_body_dilation_2=args.ch2_bg_dilation,
+        soma_dilation_2=args.ch2_soma_dilation,
+        ch1_name='red',
+        ch2_name='green',
     )
 
-    # Always save a PNG next to the input file for quick review
-    png_path = Path(args.file).with_suffix('.coloc_result.png')
-    fig.savefig(str(png_path), dpi=150, bbox_inches='tight',
-                facecolor=fig.get_facecolor())
-    print(f"  Saved figure: {png_path}")
+    t_coloc = time.time() - t2
+    t_total = time.time() - t0
 
-    # Show interactively unless --no-show
-    if not args.no_show:
-        import matplotlib
-        matplotlib.use('TkAgg')
-        import matplotlib.pyplot as plt
-        plt.show()
+    # ── Print results ──
+    print(f"\n{'='*50}")
+    print(f"DUAL-CHANNEL RESULTS: {Path(args.file).name}")
+    print(f"{'='*50}")
+    print(f"  Nuclei detected:  {summary['total_nuclei']}")
+    print(f"  Red+ (mCherry):   {summary['n_red_positive']} "
+          f"({summary['fraction_red']*100:.1f}%)")
+    print(f"  Green+ (eYFP):    {summary['n_green_positive']} "
+          f"({summary['fraction_green']*100:.1f}%)")
+    print(f"  Dual+ (both):     {summary['n_dual']} "
+          f"({summary['fraction_dual']*100:.1f}%)")
+    print(f"  Red-only:         {summary['n_red_only']}")
+    print(f"  Green-only:       {summary['n_green_only']} "
+          f"{'(expected ~0)' if summary['n_green_only'] > 0 else ''}")
+    print(f"  Neither:          {summary['n_neither']}")
+    print(f"  Background red:   {summary['background_red']:.1f}")
+    print(f"  Background green: {summary['background_green']:.1f}")
+    print(f"\n  Timing: load={t_load:.1f}s, detect={t_detect:.1f}s, "
+          f"coloc={t_coloc:.1f}s, total={t_total:.1f}s")
 
-    # ── Save ──
-    if args.save:
-        _save_results(args.save, classified, summary, labels, args, fig)
+    return classified, summary, None
 
 
 def _make_results_figure(red_image, green_image, labels, measurements,
@@ -224,18 +312,16 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     from skimage.segmentation import find_boundaries
     from skimage.measure import regionprops
 
-    # Normalize channels for display
-    def norm(img, gamma=0.7):
-        f = img.astype(np.float64)
-        lo, hi = np.percentile(f, [0.5, 99.5])
-        if hi - lo < 1e-8:
-            return np.zeros_like(f)
-        f = np.clip((f - lo) / (hi - lo), 0, 1)
-        return np.power(f, gamma)
+    # Normalize channels for display using shared standard
+    from mousebrain.plugin_2d.sliceatlas.core.colocalization import (
+        normalize_for_display, DISPLAY_RED_FLOOR, DISPLAY_RED_MAX,
+        DISPLAY_GRN_FLOOR, DISPLAY_GRN_MAX,
+    )
 
-    r = norm(red_image)
-    g = norm(green_image)
-    composite = np.stack([r, g, np.zeros_like(r)], axis=-1)
+    r = normalize_for_display(red_image, DISPLAY_RED_MAX, DISPLAY_RED_FLOOR)
+    g = normalize_for_display(green_image, DISPLAY_GRN_MAX, DISPLAY_GRN_FLOOR)
+    # Magenta + Green composite (white where both overlap)
+    composite = np.stack([r, g, r], axis=-1)
 
     # Find nucleus boundaries
     boundaries = find_boundaries(labels, mode='outer')
@@ -287,7 +373,7 @@ def _make_results_figure(red_image, green_image, labels, measurements,
 
     # Panel 1: Red channel with white nucleus outlines
     ax1 = fig.add_subplot(gs_top[0, 0])
-    red_rgb = np.stack([r, r * 0.3, r * 0.3], axis=-1)
+    red_rgb = np.stack([r, np.zeros_like(r), r], axis=-1)
     ax1.imshow(np.clip(red_rgb, 0, 1))
     outline_overlay = np.zeros((*labels.shape, 4))
     outline_overlay[boundaries] = [1, 1, 1, 0.9]
@@ -408,7 +494,7 @@ def _make_results_figure(red_image, green_image, labels, measurements,
 
             # Red channel zoom
             ax_r = fig.add_subplot(gs_bot[row, col])
-            red_crop = np.stack([r_crop, r_crop * 0.3, r_crop * 0.3], axis=-1)
+            red_crop = np.stack([r_crop, np.zeros_like(r_crop), r_crop], axis=-1)
             # Draw white boundary on red
             for c in range(3):
                 red_crop[:, :, c] = np.where(bnd_crop, 1.0, red_crop[:, :, c])
@@ -418,7 +504,7 @@ def _make_results_figure(red_image, green_image, labels, measurements,
 
             # Green channel zoom
             ax_g = fig.add_subplot(gs_bot[row, col + 1])
-            grn_crop = np.stack([g_crop * 0.1, g_crop, g_crop * 0.1], axis=-1)
+            grn_crop = np.stack([np.zeros_like(g_crop), g_crop, np.zeros_like(g_crop)], axis=-1)
             for c in range(3):
                 grn_crop[:, :, c] = np.where(bnd_crop, bnd_color[c], grn_crop[:, :, c])
             ax_g.imshow(np.clip(grn_crop, 0, 1))
@@ -441,6 +527,249 @@ def _make_results_figure(red_image, green_image, labels, measurements,
             ax_c.axis('off')
 
     plt.suptitle(fname, color='white', fontsize=14, fontweight='bold', y=0.995)
+    return fig
+
+
+def _make_dual_results_figure(red_image, green_image, labels, measurements,
+                               summary, det_details, args):
+    """Build a matplotlib figure for dual-channel colocalization results.
+
+    Layout:
+    - Top row: Red channel, Green channel, Composite with 4-category outlines, Metrics
+    - Bottom row: Zoomed panels around individual nuclei (up to 6)
+
+    Category colors:
+    - Dual (both): yellow
+    - Red-only: red
+    - Green-only: green
+    - Neither: gray
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+    from skimage.segmentation import find_boundaries
+    from skimage.measure import regionprops
+
+    from mousebrain.plugin_2d.sliceatlas.core.colocalization import (
+        normalize_for_display, DISPLAY_RED_FLOOR, DISPLAY_RED_MAX,
+        DISPLAY_GRN_FLOOR, DISPLAY_GRN_MAX,
+    )
+
+    r = normalize_for_display(red_image, DISPLAY_RED_MAX, DISPLAY_RED_FLOOR)
+    g = normalize_for_display(green_image, DISPLAY_GRN_MAX, DISPLAY_GRN_FLOOR)
+    # Magenta + Green composite (white where both overlap)
+    composite = np.stack([r, g, r], axis=-1)
+
+    # Classification colors (RGBA)
+    cat_colors = {
+        'dual':       [1.0, 1.0, 0.0, 0.95],   # yellow
+        'red_only':   [1.0, 0.27, 0.27, 0.95],  # red
+        'green_only': [0.27, 1.0, 0.27, 0.95],  # green
+        'neither':    [0.53, 0.53, 0.53, 0.7],   # gray
+    }
+
+    # Build per-label classification lookup
+    label_cat = {}
+    label_fc_r = {}
+    label_fc_g = {}
+    ch1_name = summary.get('ch1_name', 'red')
+    ch2_name = summary.get('ch2_name', 'green')
+    if measurements is not None and len(measurements) > 0:
+        for _, row in measurements.iterrows():
+            lbl = int(row['label'])
+            label_cat[lbl] = row.get('classification', 'neither')
+            label_fc_r[lbl] = row.get(f'fold_change_{ch1_name}', 0)
+            label_fc_g[lbl] = row.get(f'fold_change_{ch2_name}', 0)
+
+    # Build per-category boundary masks
+    cat_boundaries = {}
+    for cat in cat_colors:
+        mask = np.zeros(labels.shape, dtype=bool)
+        for lbl, c in label_cat.items():
+            if c == cat:
+                mask |= find_boundaries(labels == lbl, mode='outer')
+        cat_boundaries[cat] = mask
+
+    # Get nucleus regions for zoom panels
+    props = regionprops(labels)
+    props.sort(key=lambda p: p.area, reverse=True)
+    n_zoom = min(6, len(props))
+    zoom_pad = 40
+
+    # ── Figure layout ──
+    n_zoom_rows = max(1, (n_zoom + 2) // 3) if n_zoom > 0 else 0
+    fig = plt.figure(figsize=(24, 6 + 4 * n_zoom_rows))
+    fig.patch.set_facecolor('#1a1a1a')
+    fname = Path(args.file).stem
+
+    h, w = labels.shape
+
+    # Top row: 4 panels
+    gs_top = fig.add_gridspec(1, 4, top=0.98, bottom=0.55 if n_zoom > 0 else 0.02,
+                              left=0.02, right=0.98, wspace=0.05)
+
+    # Panel 1: Red channel with white nucleus outlines
+    ax1 = fig.add_subplot(gs_top[0, 0])
+    red_rgb = np.stack([r, np.zeros_like(r), r], axis=-1)
+    boundaries = find_boundaries(labels, mode='outer')
+    outline_overlay = np.zeros((*labels.shape, 4))
+    outline_overlay[boundaries] = [1, 1, 1, 0.9]
+    ax1.imshow(np.clip(red_rgb, 0, 1))
+    ax1.imshow(outline_overlay)
+    for i, prop in enumerate(props[:n_zoom]):
+        cy, cx = prop.centroid
+        y0 = max(0, int(cy) - zoom_pad)
+        x0 = max(0, int(cx) - zoom_pad)
+        sz = 2 * zoom_pad
+        rect = Rectangle((x0, y0), sz, sz, linewidth=1,
+                          edgecolor='cyan', facecolor='none', linestyle='--')
+        ax1.add_patch(rect)
+        ax1.text(x0 + 2, y0 - 2, str(i + 1), color='cyan', fontsize=8,
+                 va='bottom', fontweight='bold')
+    ax1.set_title(f"Magenta / mCherry: {labels.max()} nuclei", color='#FF55FF', fontsize=11)
+    ax1.axis('off')
+
+    # Panel 2: Green channel with white nucleus outlines
+    ax2 = fig.add_subplot(gs_top[0, 1])
+    grn_rgb = np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1)
+    ax2.imshow(np.clip(grn_rgb, 0, 1))
+    ax2.imshow(outline_overlay)
+    ax2.set_title("Green / eYFP", color='#55FF55', fontsize=11)
+    ax2.axis('off')
+
+    # Panel 3: Composite with 4-category outlines
+    ax3 = fig.add_subplot(gs_top[0, 2])
+    ax3.imshow(np.clip(composite, 0, 1))
+    coloc_overlay = np.zeros((*labels.shape, 4))
+    for cat, color in cat_colors.items():
+        coloc_overlay[cat_boundaries[cat]] = color
+    ax3.imshow(coloc_overlay)
+    n_dual = summary.get('n_dual', 0)
+    n_r = summary.get(f'n_{ch1_name}_only', 0)
+    n_g = summary.get(f'n_{ch2_name}_only', 0)
+    n_n = summary.get('n_neither', 0)
+    ax3.set_title(
+        f"Dual={n_dual}  Red={n_r}  Grn={n_g}  None={n_n}",
+        color='white', fontsize=11,
+    )
+    ax3.axis('off')
+
+    # Panel 4: Metrics text
+    ax4 = fig.add_subplot(gs_top[0, 3])
+    ax4.set_facecolor('#1a1a1a')
+    ax4.axis('off')
+
+    total = summary.get('total_nuclei', 0)
+    frac_r = summary.get(f'fraction_{ch1_name}', 0) * 100
+    frac_g = summary.get(f'fraction_{ch2_name}', 0) * 100
+    frac_d = summary.get('fraction_dual', 0) * 100
+    bg_r = summary.get(f'background_{ch1_name}', 0)
+    bg_g = summary.get(f'background_{ch2_name}', 0)
+
+    thresh_str = f"{det_details['method']}: {det_details['threshold']:.0f}"
+    if det_details.get('use_hysteresis'):
+        thresh_str += f" (hyst low: {det_details['threshold_low']:.0f})"
+
+    metrics_text = (
+        f"File: {fname}\n\n"
+        f"Detection\n"
+        f"  Method: {thresh_str}\n"
+        f"  Nuclei: {total}\n"
+        f"  Raw: {det_details['raw_count']} -> {det_details['filtered_count']}\n\n"
+        f"Dual-Channel Classification\n"
+        f"  Red+ (mCherry): {summary.get(f'n_{ch1_name}_positive', 0)} "
+        f"({frac_r:.1f}%)\n"
+        f"  Green+ (eYFP):  {summary.get(f'n_{ch2_name}_positive', 0)} "
+        f"({frac_g:.1f}%)\n"
+        f"  Dual+ (both):   {n_dual} ({frac_d:.1f}%)\n"
+        f"  Red-only:       {n_r}\n"
+        f"  Green-only:     {n_g}\n"
+        f"  Neither:        {n_n}\n\n"
+        f"Background\n"
+        f"  Red bg:   {bg_r:.1f}\n"
+        f"  Green bg: {bg_g:.1f}\n\n"
+        f"Parameters\n"
+        f"  Ch1 soma dil:  {args.ch1_soma_dilation}px\n"
+        f"  Ch2 soma dil:  {args.ch2_soma_dilation}px\n"
+        f"  Ch1 threshold: {args.ch1_threshold}x\n"
+        f"  Ch2 threshold: {args.ch2_threshold}x\n"
+    )
+    ax4.text(0.05, 0.95, metrics_text, transform=ax4.transAxes,
+             color='white', fontsize=9, fontfamily='monospace',
+             va='top', ha='left')
+
+    # ── Bottom rows: Zoomed nucleus panels ──
+    if n_zoom > 0:
+        n_cols = min(n_zoom, 3)
+        n_rows = (n_zoom + n_cols - 1) // n_cols
+        gs_bot = fig.add_gridspec(
+            n_rows, n_cols * 3,
+            top=0.48, bottom=0.02, left=0.02, right=0.98,
+            wspace=0.08, hspace=0.25,
+        )
+
+        for i, prop in enumerate(props[:n_zoom]):
+            row = i // n_cols
+            col = (i % n_cols) * 3
+
+            cy, cx = int(prop.centroid[0]), int(prop.centroid[1])
+            y0 = max(0, cy - zoom_pad)
+            y1 = min(h, cy + zoom_pad)
+            x0 = max(0, cx - zoom_pad)
+            x1 = min(w, cx + zoom_pad)
+
+            lbl = prop.label
+            cat = label_cat.get(lbl, 'neither')
+            fc_r = label_fc_r.get(lbl, 0)
+            fc_g = label_fc_g.get(lbl, 0)
+            bnd_color = cat_colors[cat][:3]
+
+            r_crop = r[y0:y1, x0:x1]
+            g_crop = g[y0:y1, x0:x1]
+            comp_crop = composite[y0:y1, x0:x1].copy()
+
+            lbl_crop = labels[y0:y1, x0:x1]
+            bnd_crop = find_boundaries(lbl_crop == lbl, mode='outer')
+
+            # Red channel zoom
+            ax_r = fig.add_subplot(gs_bot[row, col])
+            red_crop = np.stack([r_crop, np.zeros_like(r_crop), r_crop], axis=-1)
+            for c in range(3):
+                red_crop[:, :, c] = np.where(bnd_crop, bnd_color[c], red_crop[:, :, c])
+            ax_r.imshow(np.clip(red_crop, 0, 1))
+            ax_r.set_title(f"#{i+1} Red fc={fc_r:.1f}x", color='white', fontsize=8)
+            ax_r.axis('off')
+
+            # Green channel zoom
+            ax_g = fig.add_subplot(gs_bot[row, col + 1])
+            grn_crop = np.stack([np.zeros_like(g_crop), g_crop, np.zeros_like(g_crop)], axis=-1)
+            for c in range(3):
+                grn_crop[:, :, c] = np.where(bnd_crop, bnd_color[c], grn_crop[:, :, c])
+            ax_g.imshow(np.clip(grn_crop, 0, 1))
+            ax_g.set_title(f"Green fc={fc_g:.1f}x", color='white', fontsize=8)
+            ax_g.axis('off')
+
+            # Composite zoom with category label
+            ax_c = fig.add_subplot(gs_bot[row, col + 2])
+            for c in range(3):
+                comp_crop[:, :, c] = np.where(bnd_crop, bnd_color[c], comp_crop[:, :, c])
+            ax_c.imshow(np.clip(comp_crop, 0, 1))
+            cat_labels = {
+                'dual': 'DUAL', 'red_only': 'RED', 'green_only': 'GRN', 'neither': '---'
+            }
+            cat_text_colors = {
+                'dual': '#FFFF00', 'red_only': '#FF4444',
+                'green_only': '#44FF44', 'neither': '#888888'
+            }
+            ax_c.set_title(
+                cat_labels.get(cat, cat),
+                color=cat_text_colors.get(cat, 'white'), fontsize=9,
+            )
+            ax_c.axis('off')
+
+    plt.suptitle(f"{fname}  [DUAL]", color='white', fontsize=14,
+                 fontweight='bold', y=0.995)
     return fig
 
 
@@ -518,12 +847,24 @@ Examples:
                      help='Maximum nucleus area in pixels (default: 5000)')
     det.add_argument('--opening-radius', type=int, default=0,
                      help='Morphological opening radius (default: 0)')
+    det.add_argument('--closing-radius', type=int, default=0,
+                     help='Morphological closing radius to bridge gaps (default: 0)')
+    det.add_argument('--no-fill-holes', action='store_true',
+                     help='Disable hole filling in binary mask')
+    det.add_argument('--split-touching', action='store_true',
+                     help='Watershed-split merged nuclei')
+    det.add_argument('--split-footprint', type=int, default=10,
+                     help='Footprint size for watershed peak detection (default: 10)')
     det.add_argument('--gaussian-sigma', type=float, default=1.0,
                      help='Gaussian blur sigma (default: 1.0)')
     det.add_argument('--no-hysteresis', action='store_true',
                      help='Disable hysteresis thresholding')
     det.add_argument('--hysteresis-low', type=float, default=0.5,
                      help='Hysteresis low fraction (default: 0.5)')
+    det.add_argument('--min-solidity', type=float, default=0.0,
+                     help='Min solidity filter (0=off, 0.7-0.8 typical for nuclei)')
+    det.add_argument('--min-circularity', type=float, default=0.0,
+                     help='Min circularity filter (0=off, 0.5 typical for nuclei)')
 
     # Colocalization parameters
     coloc = parser.add_argument_group('Colocalization')
@@ -537,6 +878,23 @@ Examples:
                        help='Classification method (default: adaptive)')
     coloc.add_argument('--coloc-threshold', type=float, default=1.5,
                        help='Fold-change threshold for fallback (default: 1.5)')
+
+    # Dual-channel colocalization
+    dual = parser.add_argument_group('Dual Channel')
+    dual.add_argument('--dual', action='store_true',
+                      help='Enable dual-channel colocalization (both channels as signals)')
+    dual.add_argument('--ch1-soma-dilation', type=int, default=0,
+                      help='Soma dilation for channel 1/red (default: 0 = nuclear)')
+    dual.add_argument('--ch2-soma-dilation', type=int, default=5,
+                      help='Soma dilation for channel 2/green (default: 5 = cytoplasmic)')
+    dual.add_argument('--ch1-threshold', type=float, default=2.0,
+                      help='Fold-change threshold for channel 1 (default: 2.0)')
+    dual.add_argument('--ch2-threshold', type=float, default=2.0,
+                      help='Fold-change threshold for channel 2 (default: 2.0)')
+    dual.add_argument('--ch1-bg-dilation', type=int, default=10,
+                      help='Background exclusion dilation for ch1 (default: 10)')
+    dual.add_argument('--ch2-bg-dilation', type=int, default=50,
+                      help='Background exclusion dilation for ch2 (default: 50, generous for eYFP)')
 
     # Output
     parser.add_argument('--save', type=str, default=None,
