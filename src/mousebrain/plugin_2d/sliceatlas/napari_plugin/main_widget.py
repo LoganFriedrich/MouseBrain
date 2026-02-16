@@ -2008,6 +2008,19 @@ class BrainSliceWidget(QWidget):
             'soma_dilation': self.soma_dilation_spin_ch2.value(),
         }
 
+        # Log to tracker
+        if self.tracker:
+            sample_id = self.sample_id_edit.text() or self.current_file.stem
+            self.last_run_id = self.tracker.log_colocalization(
+                sample_id=sample_id,
+                signal_channel='dual',
+                background_method=params_ch1['background_method'],
+                background_percentile=params_ch1['background_percentile'],
+                threshold_method=params_ch1['threshold_method'],
+                threshold_value=params_ch1['threshold_value'],
+                status='started',
+            )
+
         from .workers import DualColocalizationWorker
 
         signal_1 = self._get_current_slice(self.red_channel)
@@ -2049,12 +2062,14 @@ class BrainSliceWidget(QWidget):
             self._coloc_background_surface = getattr(self.coloc_worker, 'background_surface', None)
             self._coloc_summary = summary
 
-            # Auto-save measurements CSV alongside the image
+            # Auto-save measurements CSV
             measurements_path = None
             if self.current_file is not None:
-                results_dir = self.current_file.parent / "BrainSlice_Results"
-                results_dir.mkdir(parents=True, exist_ok=True)
+                from ..core.config import get_sample_dir, SampleDirs
                 stem = self.current_file.stem
+                sample_dir = get_sample_dir(stem)
+                results_dir = sample_dir / SampleDirs.QUANTIFIED
+                results_dir.mkdir(parents=True, exist_ok=True)
                 run_tag = self.last_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
                 measurements_path = results_dir / f"{stem}_{run_tag}_measurements.csv"
                 measurements.to_csv(measurements_path, index=False)
@@ -2121,12 +2136,28 @@ class BrainSliceWidget(QWidget):
             self._coloc_summary = summary
 
             # Auto-save CSV
+            measurements_path = None
             if self.current_file is not None:
-                results_dir = self.current_file.parent / "BrainSlice_Results"
-                results_dir.mkdir(parents=True, exist_ok=True)
+                from ..core.config import get_sample_dir, SampleDirs
                 stem = self.current_file.stem
-                tag = datetime.now().strftime("%Y%m%d_%H%M%S")
-                measurements.to_csv(results_dir / f"{stem}_{tag}_dual_measurements.csv", index=False)
+                sample_dir = get_sample_dir(stem)
+                results_dir = sample_dir / SampleDirs.QUANTIFIED
+                results_dir.mkdir(parents=True, exist_ok=True)
+                tag = self.last_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+                measurements_path = results_dir / f"{stem}_{tag}_dual_measurements.csv"
+                measurements.to_csv(measurements_path, index=False)
+
+            # Update tracker
+            if self.tracker and self.last_run_id:
+                update_kwargs = dict(
+                    status='completed',
+                    coloc_positive_cells=summary.get('n_dual', 0),
+                    coloc_negative_cells=summary.get('n_neither', 0),
+                )
+                if measurements_path is not None:
+                    update_kwargs['measurements_path'] = str(measurements_path)
+                self.tracker.update_status(self.last_run_id, **update_kwargs)
+                self.session_run_ids.append(self.last_run_id)
 
             # Visualize with 4-category coloring
             self._visualize_dual_colocalization(measurements)
@@ -2154,6 +2185,8 @@ class BrainSliceWidget(QWidget):
             self.quant_btn.setEnabled(True)
         else:
             self.status_label.setText(f"Error: {message}")
+            if self.tracker and self.last_run_id:
+                self.tracker.update_status(self.last_run_id, status='failed')
 
     def _visualize_colocalization(self, measurements):
         """Visualize colocalization results in napari."""
@@ -2681,7 +2714,11 @@ class BrainSliceWidget(QWidget):
         # Determine output directory
         output_dir = None
         if self.export_csv_check.isChecked() and self.current_file:
-            output_dir = self.current_file.parent / "BrainSlice_Results"
+            from ..core.config import get_sample_dir, SampleDirs
+            stem = self.current_file.stem
+            sample_dir = get_sample_dir(stem)
+            output_dir = sample_dir / SampleDirs.QUANTIFIED
+            output_dir.mkdir(parents=True, exist_ok=True)
 
         from .workers import QuantificationWorker
 
@@ -2759,7 +2796,10 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(message)
 
             if self.export_csv_check.isChecked():
-                output_dir = self.current_file.parent / "BrainSlice_Results"
+                from ..core.config import get_sample_dir, SampleDirs
+                stem = self.current_file.stem
+                sample_dir = get_sample_dir(stem)
+                output_dir = sample_dir / SampleDirs.QUANTIFIED
                 QMessageBox.information(
                     self,
                     "Export Complete",

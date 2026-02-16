@@ -530,6 +530,7 @@ class ColocalizationAnalyzer:
         signal_image: np.ndarray,
         nuclei_labels: np.ndarray,
         soma_dilation: int = 5,
+        ring_only: bool = False,
     ):
         """
         Measure signal intensity in dilated soma regions around each nucleus.
@@ -547,6 +548,10 @@ class ColocalizationAnalyzer:
             nuclei_labels: Label image from detection
             soma_dilation: Dilation radius in pixels to create soma ROIs.
                 Should roughly cover the cytoplasm around the nucleus.
+            ring_only: If True, measure only the cytoplasm ring (soma minus
+                nucleus). Critical for cytoplasmic-only signals (e.g., eYFP)
+                where including nuclear pixels dilutes the measurement with
+                near-zero values. Default False for backward compatibility.
 
         Returns:
             DataFrame with columns:
@@ -574,18 +579,132 @@ class ColocalizationAnalyzer:
             # Dilate to create soma region
             soma_mask = ndimage.binary_dilation(nucleus_mask, structure=selem)
 
-            # Measure signal in the soma region
-            soma_pixels = signal_image[soma_mask]
+            if ring_only:
+                # Exclude nuclear pixels — measure only cytoplasm ring
+                measurement_mask = soma_mask & ~nucleus_mask
+            else:
+                measurement_mask = soma_mask
+
+            # Measure signal in the measurement region
+            soma_pixels = signal_image[measurement_mask]
+
+            if len(soma_pixels) == 0:
+                # Edge case: ring is empty (nucleus fills entire dilation)
+                soma_pixels = signal_image[soma_mask]
 
             rows.append({
                 'label': prop.label,
                 'centroid_y': prop.centroid[0],
                 'centroid_x': prop.centroid[1],
                 'nucleus_area': prop.area,
-                'soma_area': int(soma_mask.sum()),
+                'soma_area': int(measurement_mask.sum()),
                 'soma_mean_intensity': float(np.mean(soma_pixels)),
                 'soma_max_intensity': float(np.max(soma_pixels)),
                 'soma_median_intensity': float(np.median(soma_pixels)),
+            })
+
+        return pd.DataFrame(rows)
+
+    def measure_cytoplasm_intensities(
+        self,
+        signal_image: np.ndarray,
+        nuclei_labels: np.ndarray,
+        expansion_px: int = 8,
+    ):
+        """
+        Measure signal intensity in the cytoplasm ring around each nucleus
+        using non-overlapping Voronoi-like expansion.
+
+        This is the preferred method for dim cytoplasmic signals (e.g., eYFP)
+        in dense tissue. Unlike measure_soma_intensities(), it:
+        1. Uses expand_labels() for non-overlapping territory assignment
+           (no double-counting between adjacent cells)
+        2. Always excludes nuclear pixels (ring-only measurement)
+        3. Runs in O(1) operations on the full label image (fast)
+
+        For each nucleus:
+            1. expand_labels assigns each pixel to the nearest nucleus
+               (up to expansion_px distance)
+            2. The cytoplasm ring = expanded territory minus nucleus
+            3. Measure signal intensity only in this ring
+
+        Args:
+            signal_image: Signal channel (e.g., green/eYFP, dim cytoplasmic)
+            nuclei_labels: Label image from nuclear detection
+            expansion_px: Maximum expansion distance in pixels. Should roughly
+                match the expected cell body radius beyond the nucleus edge.
+                8-15 px typical for 20x brainstem neurons.
+
+        Returns:
+            DataFrame with columns:
+            - label: nucleus ID
+            - centroid_y, centroid_x: nucleus centroid position
+            - nucleus_area: nucleus area (pixels)
+            - cyto_area: cytoplasm ring area (pixels)
+            - soma_mean_intensity: mean signal in cytoplasm ring
+            - soma_max_intensity: max signal in cytoplasm ring
+            - soma_median_intensity: median signal in cytoplasm ring
+            - soma_p90_intensity: 90th percentile signal in ring
+              (robust to hot pixels, better than max for dim signals)
+
+        Note:
+            Output column names use 'soma_*' prefix for compatibility with
+            classify_positive_negative() which auto-detects soma columns.
+        """
+        pd = _get_pandas()
+        from skimage.segmentation import expand_labels
+        from skimage.measure import regionprops
+
+        # Expand labels — each pixel assigned to nearest nucleus (Voronoi)
+        expanded = expand_labels(nuclei_labels, distance=expansion_px)
+
+        # Cytoplasm ring = expanded territory minus original nucleus
+        cyto_labels = expanded.copy()
+        cyto_labels[nuclei_labels > 0] = 0  # remove nuclear pixels
+
+        # Measure in the ring for each nucleus
+        nuc_props = regionprops(nuclei_labels)
+        nuc_lookup = {p.label: p for p in nuc_props}
+
+        rows = []
+        for label_id in np.unique(expanded):
+            if label_id == 0:
+                continue
+
+            nuc_prop = nuc_lookup.get(label_id)
+            if nuc_prop is None:
+                continue
+
+            # Cytoplasm ring pixels
+            ring_mask = cyto_labels == label_id
+            ring_pixels = signal_image[ring_mask]
+
+            if len(ring_pixels) == 0:
+                # Fallback: use full expanded region
+                full_mask = expanded == label_id
+                ring_pixels = signal_image[full_mask]
+                ring_area = int(full_mask.sum())
+            else:
+                ring_area = int(ring_mask.sum())
+
+            # Nuclear intensity — used by adaptive GMM as fallback when
+            # ring intensities are unimodal (cytoplasmic signals compress
+            # the distribution, but nuclear intensities often stay bimodal)
+            nuc_pixels = signal_image[nuclei_labels == label_id]
+            nuc_mean = float(np.mean(nuc_pixels)) if len(nuc_pixels) > 0 else 0.0
+
+            rows.append({
+                'label': label_id,
+                'centroid_y': nuc_prop.centroid[0],
+                'centroid_x': nuc_prop.centroid[1],
+                'nucleus_area': nuc_prop.area,
+                'cyto_area': ring_area,
+                'mean_intensity': nuc_mean,
+                # Named soma_* for compat with classify_positive_negative()
+                'soma_mean_intensity': float(np.mean(ring_pixels)),
+                'soma_max_intensity': float(np.max(ring_pixels)),
+                'soma_median_intensity': float(np.median(ring_pixels)),
+                'soma_p90_intensity': float(np.percentile(ring_pixels, 90)),
             })
 
         return pd.DataFrame(rows)
@@ -599,6 +718,7 @@ class ColocalizationAnalyzer:
         signal_image: Optional[np.ndarray] = None,
         nuclei_labels: Optional[np.ndarray] = None,
         area_fraction: float = 0.5,
+        local_snr_radius: int = 100,
     ):
         """
         Classify each nucleus as positive or negative for signal.
@@ -611,6 +731,12 @@ class ColocalizationAnalyzer:
                 at its centroid position.
             method: Classification method
                 - 'fold_change': positive if mean >= threshold * background
+                - 'local_snr': positive if local signal-to-noise ratio exceeds
+                  threshold. For each cell, estimates background from nearby
+                  tissue (within local_snr_radius, excluding all cell bodies),
+                  then computes SNR = (signal - local_bg_mean) / local_bg_std.
+                  Best for extremely dim signals with spatially varying
+                  autofluorescence. Requires signal_image and nuclei_labels.
                 - 'area_fraction': positive if >= area_fraction of nucleus
                   pixels exceed background * threshold. Requires signal_image
                   and nuclei_labels. This is the most robust method as it
@@ -618,18 +744,25 @@ class ColocalizationAnalyzer:
                 - 'absolute': positive if mean >= threshold (absolute value)
                 - 'percentile': positive if mean >= threshold percentile of all nuclei
             threshold: Threshold value (interpretation depends on method).
-                For area_fraction: fold-change each pixel must exceed.
-            signal_image: Signal channel image (required for area_fraction method)
-            nuclei_labels: Label image (required for area_fraction method)
+                For local_snr: number of standard deviations above local
+                background (e.g., 3.0 = 3 sigma). For area_fraction:
+                fold-change each pixel must exceed.
+            signal_image: Signal channel image (required for local_snr and
+                area_fraction methods)
+            nuclei_labels: Label image (required for local_snr and
+                area_fraction methods)
             area_fraction: Fraction of nucleus area that must exceed the
                 threshold to be classified as positive (default 0.5 = 50%).
                 Only used with method='area_fraction'.
+            local_snr_radius: Radius in pixels for local background estimation
+                around each cell (default 100). Only used with method='local_snr'.
 
         Returns:
             DataFrame with added columns:
             - background: background value used (per-nucleus if local)
             - fold_change: mean_intensity / background
             - is_positive: True/False classification
+            - local_snr: (local_snr method only) per-cell signal-to-noise ratio
             - positive_pixel_fraction: (area_fraction method only) fraction
               of nucleus pixels that exceeded threshold
         """
@@ -663,6 +796,69 @@ class ColocalizationAnalyzer:
         # Classify based on method
         if method == 'fold_change':
             df['is_positive'] = df['fold_change'] >= threshold
+
+        elif method == 'local_snr':
+            # Per-cell local signal-to-noise ratio classification.
+            # For each cell, sample tissue background within local_snr_radius
+            # (excluding ALL cell bodies), compute local mean and std, then
+            # classify based on how many std devs the cell's signal is above.
+            # This is the most robust method for extremely dim signals with
+            # spatially varying autofluorescence (e.g., brainstem vs cerebellum).
+            if signal_image is None or nuclei_labels is None:
+                raise ValueError(
+                    "local_snr method requires signal_image and nuclei_labels"
+                )
+            ndimage = _get_ndimage()
+            from skimage.morphology import disk as _disk
+
+            h, w = signal_image.shape
+
+            # Pre-compute cell body exclusion mask (dilate all nuclei)
+            all_nuclei = nuclei_labels > 0
+            cell_body_excl = ndimage.binary_dilation(
+                all_nuclei, structure=_disk(8)
+            )
+
+            local_snr_values = []
+            local_bg_means = []
+            local_bg_stds = []
+
+            for _, row in df.iterrows():
+                cy = int(np.clip(round(row['centroid_y']), 0, h - 1))
+                cx = int(np.clip(round(row['centroid_x']), 0, w - 1))
+
+                # Local window bounds
+                y0 = max(0, cy - local_snr_radius)
+                y1 = min(h, cy + local_snr_radius)
+                x0 = max(0, cx - local_snr_radius)
+                x1 = min(w, cx + local_snr_radius)
+
+                # Local tissue pixels outside cell bodies
+                local_bg_mask = ~cell_body_excl[y0:y1, x0:x1]
+                local_pixels = signal_image[y0:y1, x0:x1][local_bg_mask]
+
+                if len(local_pixels) < 20:
+                    # Too few background pixels — use global background
+                    local_bg_mean = float(background) if not isinstance(
+                        background, np.ndarray) else float(np.mean(background))
+                    local_bg_std = max(local_bg_mean * 0.1, 1.0)
+                else:
+                    local_bg_mean = float(np.mean(local_pixels))
+                    local_bg_std = float(np.std(local_pixels))
+                    if local_bg_std < 1e-6:
+                        local_bg_std = max(local_bg_mean * 0.1, 1.0)
+
+                cell_signal = row[intensity_col]
+                snr = (cell_signal - local_bg_mean) / local_bg_std
+
+                local_snr_values.append(float(snr))
+                local_bg_means.append(local_bg_mean)
+                local_bg_stds.append(local_bg_std)
+
+            df['local_snr'] = local_snr_values
+            df['local_bg_mean'] = local_bg_means
+            df['local_bg_std'] = local_bg_stds
+            df['is_positive'] = df['local_snr'] >= threshold
 
         elif method == 'adaptive':
             # Adaptive GMM on nuclear intensities to find subpopulations
@@ -705,101 +901,144 @@ class ColocalizationAnalyzer:
     def _classify_adaptive(self, df, intensity_col, fallback_threshold):
         """Classify cells by fitting GMM to their signal intensity distribution.
 
-        Fits 1- and 2-component GMMs to the distribution of nucleus signal
-        intensities. If 2-component is better (by BIC), uses posterior
-        probability to assign each cell to the positive/negative subpopulation.
-        Falls back to fold_change classification when N is too small for GMM
-        or when no bimodal split exists.
-
-        The fallback uses a conservative threshold (max of user-specified and
-        2.0x) to avoid over-classification when there is no clear bimodal
-        separation — which typically means almost all cells are negative.
+        Uses a cascade strategy to find bimodal subpopulations:
+        1. Try GMM on the primary intensity column (soma or nuclear)
+        2. If that fails (unimodal), try GMM on fold_change values
+        3. If that fails and nuclear intensities are available as a separate
+           column, try GMM on those (nuclear signal often stays bimodal even
+           when cytoplasm ring measurements compress the distribution)
+        4. Only then fall back to conservative fold_change threshold
 
         Stores diagnostics in self.adaptive_diagnostics.
         """
-        intensities = df[intensity_col].values
         self.adaptive_diagnostics = None
 
-        # Conservative fallback: when there's no bimodal split, most cells
-        # are likely negative, so use a stricter threshold
+        # Conservative fallback threshold
         safe_threshold = max(fallback_threshold, 2.0)
 
         # Need enough cells for a meaningful GMM fit
-        if len(intensities) < 8:
+        if len(df) < 8:
             df['is_positive'] = df['fold_change'] >= safe_threshold
             df['positive_probability'] = np.where(
                 df['is_positive'], 1.0, 0.0
             )
             self.adaptive_diagnostics = {
                 'method_used': 'fallback_fold_change',
-                'reason': f'Too few cells ({len(intensities)}) for adaptive GMM',
+                'reason': f'Too few cells ({len(df)}) for adaptive GMM',
                 'fallback_threshold': safe_threshold,
             }
             return df
 
         from sklearn.mixture import GaussianMixture
 
-        X = intensities.reshape(-1, 1).astype(np.float64)
+        # Build cascade of columns to try GMM on
+        cascade = [(intensity_col, df[intensity_col].values)]
 
-        gmm1 = GaussianMixture(n_components=1, random_state=42).fit(X)
-        gmm2 = GaussianMixture(n_components=2, random_state=42).fit(X)
+        # Try fold_change if available
+        if 'fold_change' in df.columns:
+            cascade.append(('fold_change', df['fold_change'].values))
 
-        bic1 = gmm1.bic(X)
-        bic2 = gmm2.bic(X)
+        # Try nuclear intensities if we're using soma measurements
+        if (intensity_col == 'soma_mean_intensity'
+                and 'mean_intensity' in df.columns):
+            cascade.append(('mean_intensity', df['mean_intensity'].values))
 
-        if bic2 < bic1:
-            # 2-component model: clear positive/negative subpopulations
-            means = gmm2.means_.flatten()
-            stds = np.sqrt(gmm2.covariances_.flatten())
-            weights = gmm2.weights_.flatten()
+        for col_name, values in cascade:
+            X = values.reshape(-1, 1).astype(np.float64)
 
-            hi_idx = int(np.argmax(means))
-            lo_idx = 1 - hi_idx
+            gmm1 = GaussianMixture(n_components=1, random_state=42).fit(X)
+            gmm2 = GaussianMixture(n_components=2, random_state=42).fit(X)
 
-            separation = float(
-                (means[hi_idx] - means[lo_idx]) / (stds[lo_idx] + 1e-10)
-            )
+            bic1 = gmm1.bic(X)
+            bic2 = gmm2.bic(X)
 
-            # Use posterior probability for soft classification
-            probs = gmm2.predict_proba(X)
-            df['positive_probability'] = probs[:, hi_idx]
-            df['is_positive'] = df['positive_probability'] > 0.5
+            if bic2 < bic1:
+                # 2-component model found subpopulations
+                means = gmm2.means_.flatten()
+                stds = np.sqrt(gmm2.covariances_.flatten())
+                weights = gmm2.weights_.flatten()
 
-            # Threshold at intersection of the two Gaussians
-            adaptive_thresh = float(
-                (means[lo_idx] * stds[hi_idx] + means[hi_idx] * stds[lo_idx])
-                / (stds[lo_idx] + stds[hi_idx])
-            )
+                hi_idx = int(np.argmax(means))
+                lo_idx = 1 - hi_idx
 
-            self.adaptive_diagnostics = {
-                'method_used': 'gmm_2component',
-                'bic_1': float(bic1),
-                'bic_2': float(bic2),
-                'negative_mean': float(means[lo_idx]),
-                'negative_std': float(stds[lo_idx]),
-                'negative_weight': float(weights[lo_idx]),
-                'positive_mean': float(means[hi_idx]),
-                'positive_std': float(stds[hi_idx]),
-                'positive_weight': float(weights[hi_idx]),
-                'separation': separation,
-                'adaptive_threshold': adaptive_thresh,
-            }
-        else:
-            # 1-component model: no clear subpopulations
-            # Use conservative fold_change (most cells are likely negative)
-            df['is_positive'] = df['fold_change'] >= safe_threshold
-            df['positive_probability'] = np.where(
-                df['is_positive'], 1.0, 0.0
-            )
+                separation = float(
+                    (means[hi_idx] - means[lo_idx])
+                    / (stds[lo_idx] + 1e-10)
+                )
 
-            self.adaptive_diagnostics = {
-                'method_used': 'fallback_fold_change',
-                'reason': 'GMM found 1 component (no bimodal split in intensities)',
-                'bic_1': float(bic1),
-                'bic_2': float(bic2),
-                'mean': float(gmm1.means_.flatten()[0]),
-                'std': float(np.sqrt(gmm1.covariances_.flatten()[0])),
-                'fallback_threshold': safe_threshold,
+                # Use posterior probability for soft classification
+                probs = gmm2.predict_proba(X)
+                df['positive_probability'] = probs[:, hi_idx]
+                df['is_positive'] = df['positive_probability'] > 0.5
+
+                # Threshold at intersection of the two Gaussians
+                adaptive_thresh = float(
+                    (means[lo_idx] * stds[hi_idx]
+                     + means[hi_idx] * stds[lo_idx])
+                    / (stds[lo_idx] + stds[hi_idx])
+                )
+
+                self.adaptive_diagnostics = {
+                    'method_used': 'gmm_2component',
+                    'gmm_column': col_name,
+                    'bic_1': float(bic1),
+                    'bic_2': float(bic2),
+                    'negative_mean': float(means[lo_idx]),
+                    'negative_std': float(stds[lo_idx]),
+                    'negative_weight': float(weights[lo_idx]),
+                    'positive_mean': float(means[hi_idx]),
+                    'positive_std': float(stds[hi_idx]),
+                    'positive_weight': float(weights[hi_idx]),
+                    'separation': separation,
+                    'adaptive_threshold': adaptive_thresh,
+                }
+
+                # ----- Ring rescue for Z-plane occlusion -----
+                # When GMM classified on nuclear intensities, some true
+                # positives may have low nuclear green because the nucleus
+                # "punches a hole" in the cytoplasmic signal at this focal
+                # plane.  Their ring (cytoplasm) signal is still strong.
+                # Rescue negative cells whose ring fold_change matches
+                # the positive population's ring signal.
+                if (col_name == 'mean_intensity'
+                        and 'soma_mean_intensity' in df.columns
+                        and 'fold_change' in df.columns
+                        and df['is_positive'].any()
+                        and (~df['is_positive']).any()):
+                    pos_fc = df.loc[df['is_positive'], 'fold_change']
+                    # Threshold: 25th-percentile of positive fold_change,
+                    # floored at 1.5x to avoid rescuing background cells
+                    rescue_thresh = max(float(pos_fc.quantile(0.25)), 1.5)
+
+                    neg_mask = ~df['is_positive']
+                    rescue_mask = neg_mask & (df['fold_change'] >= rescue_thresh)
+                    n_rescued = int(rescue_mask.sum())
+
+                    if n_rescued > 0:
+                        df.loc[rescue_mask, 'is_positive'] = True
+                        # Confident but flagged — not from GMM posterior
+                        df.loc[rescue_mask, 'positive_probability'] = 0.75
+                        self.adaptive_diagnostics['ring_rescue'] = {
+                            'n_rescued': n_rescued,
+                            'rescue_threshold_fc': float(rescue_thresh),
+                            'pos_fc_median': float(pos_fc.median()),
+                            'pos_fc_p25': float(pos_fc.quantile(0.25)),
+                        }
+
+                return df
+
+        # All cascade steps failed — no bimodal split found anywhere
+        df['is_positive'] = df['fold_change'] >= safe_threshold
+        df['positive_probability'] = np.where(
+            df['is_positive'], 1.0, 0.0
+        )
+
+        tried = [col for col, _ in cascade]
+        self.adaptive_diagnostics = {
+            'method_used': 'fallback_fold_change',
+            'reason': (f'GMM found 1 component on all cascade columns: '
+                       f'{tried}'),
+            'fallback_threshold': safe_threshold,
             }
 
         return df
@@ -1008,11 +1247,13 @@ def analyze_dual_colocalization(
     # Channel 2 params
     background_method_2: str = 'gmm',
     background_percentile_2: float = 10.0,
-    threshold_method_2: str = 'fold_change',
-    threshold_value_2: float = 2.0,
+    threshold_method_2: str = 'local_snr',
+    threshold_value_2: float = 3.0,
     cell_body_dilation_2: int = 8,
     area_fraction_2: float = 0.5,
     soma_dilation_2: int = 5,
+    # Measurement mode
+    use_cytoplasm_ring: bool = True,
     # Channel labels
     ch1_name: str = 'red',
     ch2_name: str = 'green',
@@ -1031,13 +1272,23 @@ def analyze_dual_colocalization(
         nuclei_labels: Label image from nuclear detection
         background_method_1/2: Background estimation method per channel
         background_percentile_1/2: Percentile for background (if percentile method)
-        threshold_method_1/2: Classification method per channel
-        threshold_value_1/2: Threshold per channel
+        threshold_method_1/2: Classification method per channel.
+            Recommended: 'fold_change' for bright nuclear ch1,
+            'local_snr' for dim cytoplasmic ch2.
+        threshold_value_1/2: Threshold per channel.
+            For fold_change: fold-change multiplier (e.g., 2.0).
+            For local_snr: number of std devs above local background (e.g., 3.0).
         cell_body_dilation_1/2: Nuclei exclusion radius for background estimation
         area_fraction_1/2: For area_fraction method
         soma_dilation_1/2: Soma dilation for intensity measurement.
             0 = measure within nucleus (nuclear-localized signals like H2B).
             >0 = measure in dilated soma ring (cytoplasmic signals like eYFP).
+        use_cytoplasm_ring: If True (default) and soma_dilation > 0, use
+            non-overlapping expand_labels with nuclear pixel exclusion
+            (measure_cytoplasm_intensities). If False, use legacy per-nucleus
+            dilation (measure_soma_intensities). The new method is faster,
+            avoids overlapping regions, and excludes nuclear pixels that
+            would dilute cytoplasmic signal measurements.
         ch1_name/ch2_name: Channel labels for output columns
 
     Returns:
@@ -1051,6 +1302,36 @@ def analyze_dual_colocalization(
     """
     pd = _get_pandas()
 
+    def _measure_channel(analyzer, signal_image, nuclei_labels, soma_dilation,
+                         use_ring):
+        """Choose measurement method based on soma_dilation and use_ring."""
+        if soma_dilation > 0 and use_ring:
+            return analyzer.measure_cytoplasm_intensities(
+                signal_image, nuclei_labels, expansion_px=soma_dilation,
+            )
+        elif soma_dilation > 0:
+            return analyzer.measure_soma_intensities(
+                signal_image, nuclei_labels, soma_dilation=soma_dilation,
+                ring_only=True,
+            )
+        else:
+            return analyzer.measure_nuclei_intensities(
+                signal_image, nuclei_labels,
+            )
+
+    def _classify_channel(analyzer, meas, bg, method, threshold, signal_image,
+                          nuclei_labels, area_fraction):
+        """Build classify kwargs and run classification."""
+        kw = {'method': method, 'threshold': threshold}
+        if method == 'area_fraction':
+            kw['signal_image'] = signal_image
+            kw['nuclei_labels'] = nuclei_labels
+            kw['area_fraction'] = area_fraction
+        elif method == 'local_snr':
+            kw['signal_image'] = signal_image
+            kw['nuclei_labels'] = nuclei_labels
+        return analyzer.classify_positive_negative(meas, bg, **kw)
+
     # --- Channel 1 analysis ---
     analyzer1 = ColocalizationAnalyzer(
         background_method=background_method_1,
@@ -1060,22 +1341,14 @@ def analyze_dual_colocalization(
         signal_image_1, nuclei_labels,
         cell_body_dilation=cell_body_dilation_1,
     )
-    if soma_dilation_1 > 0:
-        meas1 = analyzer1.measure_soma_intensities(
-            signal_image_1, nuclei_labels, soma_dilation=soma_dilation_1,
-        )
-    else:
-        meas1 = analyzer1.measure_nuclei_intensities(signal_image_1, nuclei_labels)
-
-    classify_kw1 = {
-        'method': threshold_method_1,
-        'threshold': threshold_value_1,
-    }
-    if threshold_method_1 == 'area_fraction':
-        classify_kw1['signal_image'] = signal_image_1
-        classify_kw1['nuclei_labels'] = nuclei_labels
-        classify_kw1['area_fraction'] = area_fraction_1
-    classified1 = analyzer1.classify_positive_negative(meas1, bg1, **classify_kw1)
+    meas1 = _measure_channel(
+        analyzer1, signal_image_1, nuclei_labels,
+        soma_dilation_1, use_cytoplasm_ring,
+    )
+    classified1 = _classify_channel(
+        analyzer1, meas1, bg1, threshold_method_1, threshold_value_1,
+        signal_image_1, nuclei_labels, area_fraction_1,
+    )
 
     # --- Channel 2 analysis ---
     analyzer2 = ColocalizationAnalyzer(
@@ -1086,22 +1359,14 @@ def analyze_dual_colocalization(
         signal_image_2, nuclei_labels,
         cell_body_dilation=cell_body_dilation_2,
     )
-    if soma_dilation_2 > 0:
-        meas2 = analyzer2.measure_soma_intensities(
-            signal_image_2, nuclei_labels, soma_dilation=soma_dilation_2,
-        )
-    else:
-        meas2 = analyzer2.measure_nuclei_intensities(signal_image_2, nuclei_labels)
-
-    classify_kw2 = {
-        'method': threshold_method_2,
-        'threshold': threshold_value_2,
-    }
-    if threshold_method_2 == 'area_fraction':
-        classify_kw2['signal_image'] = signal_image_2
-        classify_kw2['nuclei_labels'] = nuclei_labels
-        classify_kw2['area_fraction'] = area_fraction_2
-    classified2 = analyzer2.classify_positive_negative(meas2, bg2, **classify_kw2)
+    meas2 = _measure_channel(
+        analyzer2, signal_image_2, nuclei_labels,
+        soma_dilation_2, use_cytoplasm_ring,
+    )
+    classified2 = _classify_channel(
+        analyzer2, meas2, bg2, threshold_method_2, threshold_value_2,
+        signal_image_2, nuclei_labels, area_fraction_2,
+    )
 
     # --- Merge ---
     # Shared spatial columns from ch1
