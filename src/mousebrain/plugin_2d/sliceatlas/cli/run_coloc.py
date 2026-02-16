@@ -649,7 +649,7 @@ def _make_results_figure(red_image, green_image, labels, measurements,
                 else:
                     n_crop_neg += 1
                 cmask = _intensity_contour_mask(
-                    red_raw_crop, lbl_crop, crop_lbl, contour_dilation=2,
+                    red_raw_crop, lbl_crop, crop_lbl, contour_dilation=4,
                 )
                 cell_contours.append((cmask, lbl_is_pos, crop_lbl))
 
@@ -663,24 +663,33 @@ def _make_results_figure(red_image, green_image, labels, measurements,
             ax_r.set_title(f"#{i+1} Red", color='white', fontsize=9)
             ax_r.axis('off')
 
-            # Green channel zoom — pos=cyan, neg=red contours
+            # Green channel zoom — positive contours only (cyan)
+            # Negative contours omitted so red outlines don't obscure green signal
             ax_g = fig.add_subplot(gs_bot[row, col + 1])
             grn_crop = np.stack([np.zeros_like(g_crop), g_crop, np.zeros_like(g_crop)], axis=-1)
             ax_g.imshow(np.clip(grn_crop, 0, 1))
             for cmask, lbl_pos, _ in cell_contours:
-                cc = 'cyan' if lbl_pos else '#ff4444'
-                ax_g.contour(cmask, levels=[0.5], linewidths=0.7,
-                             colors=[cc], alpha=0.8, antialiased=True)
+                if lbl_pos:
+                    ax_g.contour(cmask, levels=[0.5], linewidths=0.7,
+                                 colors=['cyan'], alpha=0.8, antialiased=True)
             ax_g.set_title(f"Green", color='white', fontsize=9)
             ax_g.axis('off')
 
-            # Composite zoom — pos=cyan, neg=red contours + stats
+            # Composite zoom — pos=lime, neg=red contours + yellow halos
             ax_c = fig.add_subplot(gs_bot[row, col + 2])
             ax_c.imshow(np.clip(comp_crop, 0, 1))
             for cmask, lbl_pos, _ in cell_contours:
-                cc = 'cyan' if lbl_pos else '#ff4444'
+                cc = 'lime' if lbl_pos else '#ff4444'
                 ax_c.contour(cmask, levels=[0.5], linewidths=0.7,
                              colors=[cc], alpha=0.8, antialiased=True)
+            # Yellow halos around positive cells in composite zoom
+            for cmask, lbl_pos, _ in cell_contours:
+                if lbl_pos:
+                    from skimage.morphology import binary_dilation, disk
+                    halo_bin = binary_dilation(cmask > 0.5, disk(4))
+                    halo_smooth = _smooth_mask(halo_bin.astype(np.float64), sigma=1.0)
+                    ax_c.contour(halo_smooth, levels=[0.5], linewidths=1.0,
+                                 colors=['yellow'], alpha=0.8, antialiased=True)
             # Stats text: how many pos/neg in this crop
             stat_parts = []
             if n_crop_pos > 0:
@@ -690,7 +699,7 @@ def _make_results_figure(red_image, green_image, labels, measurements,
             stat_str = ", ".join(stat_parts)
             # Primary cell status for title
             primary_status = "POS" if is_pos else "NEG"
-            primary_color = 'cyan' if is_pos else '#ff4444'
+            primary_color = 'lime' if is_pos else '#ff4444'
             fc = label_fc.get(lbl, 0)
             prob = label_prob.get(lbl)
             if prob is not None:
