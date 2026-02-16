@@ -19,10 +19,13 @@ from pathlib import Path
 
 import numpy as np
 
+from ..core.config import DATA_DIR, get_sample_dir, SampleDirs, parse_sample_name
 
-# Default paths
-ENCR_ROOT = Path(r"Y:\2_Connectome\Tissue\2D_Slices\ENCR")
-DEFAULT_OUTPUT = ENCR_ROOT / "batch_results"
+
+# Default paths - resolve ENCR root from config
+# DATA_DIR is now 1_Subjects/, so ENCR is a subdirectory
+ENCR_ROOT = DATA_DIR / "ENCR" if DATA_DIR else Path(r"Y:\2_Connectome\Tissue\MouseBrain_Pipeline\2D_Slices\1_Subjects\ENCR")
+DEFAULT_OUTPUT = ENCR_ROOT.parent.parent / "2_Data_Summary" / "batch_results"
 
 # Default channel indices for ENCR ND2 files
 # Channel 0 = 488nm (green/eYFP signal)
@@ -32,18 +35,35 @@ GREEN_IDX = 0
 
 
 def find_nd2_files(root: Path) -> list:
-    """Find all ND2 files in ENCR HD_Regions folders."""
+    """Find all ND2 files in ENCR subject folders."""
     nd2_files = []
-    for hd_dir in sorted(root.glob("ENCR_02_*_HD_Regions")):
-        # Check Corrected subfolder first (preferred)
-        corrected = hd_dir / "Corrected"
-        if corrected.exists():
-            nd2_files.extend(sorted(corrected.glob("*.nd2")))
-        # Also get files from base dir that aren't in Corrected
-        corrected_stems = {f.stem for f in (corrected.glob("*.nd2") if corrected.exists() else [])}
-        for f in sorted(hd_dir.glob("*.nd2")):
-            if f.stem not in corrected_stems:
-                nd2_files.append(f)
+
+    # New structure: 1_Subjects/ENCR/ENCR_XX_XX/0_Raw_HD/ and 0_Raw/
+    for subject_dir in sorted(root.glob("ENCR_*")):
+        if not subject_dir.is_dir():
+            continue
+        # HD region files
+        hd_dir = subject_dir / SampleDirs.RAW_HD
+        if hd_dir.exists():
+            nd2_files.extend(sorted(hd_dir.glob("*.nd2")))
+        # Standard raw files
+        raw_dir = subject_dir / SampleDirs.RAW
+        if raw_dir.exists():
+            nd2_files.extend(sorted(raw_dir.glob("*.nd2")))
+
+    # Fallback: old structure (ENCR_02_XX_HD_Regions/)
+    if not nd2_files:
+        for hd_dir in sorted(root.glob("ENCR_02_*_HD_Regions")):
+            # Check Corrected subfolder first (preferred)
+            corrected = hd_dir / "Corrected"
+            if corrected.exists():
+                nd2_files.extend(sorted(corrected.glob("*.nd2")))
+            # Also get files from base dir that aren't in Corrected
+            corrected_stems = {f.stem for f in (corrected.glob("*.nd2") if corrected.exists() else [])}
+            for f in sorted(hd_dir.glob("*.nd2")):
+                if f.stem not in corrected_stems:
+                    nd2_files.append(f)
+
     return nd2_files
 
 
@@ -66,6 +86,13 @@ def process_single(
     from ..core.colocalization import ColocalizationAnalyzer
     from ..core.visualization import save_all_qc_figures
 
+    # Initialize tracker
+    try:
+        from ..tracker import SliceTracker
+        tracker = SliceTracker()
+    except Exception:
+        tracker = None
+
     result = {
         'file': nd2_path.name,
         'path': str(nd2_path),
@@ -81,10 +108,26 @@ def process_single(
             result['animal'] = f"{parts[0]}_{parts[1]}"
             result['region'] = '_'.join(parts[3:]) if len(parts) > 3 else parts[2]
 
+        # Parse sample ID
+        sample_id = nd2_path.stem
+
         # Load
         print(f"  Loading {nd2_path.name}...")
         data, metadata = load_image(nd2_path)
         red, green = extract_channels(data, red_idx=RED_IDX, green_idx=GREEN_IDX)
+
+        # Log detection run to tracker
+        det_run_id = None
+        if tracker:
+            det_run_id = tracker.log_detection(
+                sample_id=sample_id,
+                channel="red",
+                model="2D_versatile_fluo",
+                prob_thresh=prob_thresh,
+                nms_thresh=nms_thresh,
+                input_path=str(nd2_path),
+                status="started",
+            )
 
         # Detect
         print(f"  Detecting nuclei...")
@@ -94,9 +137,30 @@ def process_single(
         result['n_nuclei'] = n_nuclei
         print(f"  Found {n_nuclei} nuclei")
 
+        # Update tracker with detection results
+        if tracker and det_run_id:
+            tracker.update_status(det_run_id, status="completed", det_nuclei_found=n_nuclei)
+
         if n_nuclei == 0:
             result['status'] = 'no_nuclei'
+            if tracker and det_run_id:
+                tracker.update_status(det_run_id, status="completed", det_nuclei_found=0)
             return result
+
+        # Log colocalization run to tracker
+        coloc_run_id = None
+        if tracker:
+            coloc_run_id = tracker.log_colocalization(
+                sample_id=sample_id,
+                signal_channel="green",
+                background_method="percentile",
+                background_percentile=bg_percentile,
+                threshold_method="fold_change",
+                threshold_value=threshold,
+                parent_run=det_run_id,
+                input_path=str(nd2_path),
+                status="started",
+            )
 
         # Colocalize
         print(f"  Running colocalization...")
@@ -112,6 +176,17 @@ def process_single(
         )
         summary = analyzer.get_summary_statistics(classified)
 
+        # Update tracker with colocalization results
+        if tracker and coloc_run_id:
+            tracker.update_status(
+                coloc_run_id,
+                status="completed",
+                coloc_positive_cells=summary['positive_cells'],
+                coloc_negative_cells=summary['negative_cells'],
+                coloc_positive_fraction=summary['positive_fraction'],
+                coloc_background_value=summary['background_used'],
+            )
+
         result.update({
             'n_positive': summary['positive_cells'],
             'n_negative': summary['negative_cells'],
@@ -122,15 +197,35 @@ def process_single(
             'status': 'completed',
         })
 
-        # Save outputs
-        sample_dir = output_dir / stem
+        # Route output to per-subject pipeline folder
+        parsed = parse_sample_name(sample_id)
+        subject_id = f"{parsed['project']}_{parsed['cohort']}_{parsed['subject']}"
+        subject_base = DATA_DIR / parsed['project'] / subject_id if DATA_DIR else output_dir
+        quant_dir = subject_base / SampleDirs.QUANTIFIED
+        quant_dir.mkdir(parents=True, exist_ok=True)
+        detect_dir = subject_base / SampleDirs.DETECTED
+        detect_dir.mkdir(parents=True, exist_ok=True)
+
+        # Fallback sample_dir for backward compatibility
+        sample_dir = output_dir / sample_id
         sample_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save measurements CSV
-        classified.to_csv(sample_dir / "measurements.csv", index=False)
+        # Save measurements CSV to quantification directory
+        classified.to_csv(quant_dir / f"{sample_id}_measurements.csv", index=False)
 
-        # Save QC figures
+        # Save QC figures to detection directory (primary) and fallback
         print(f"  Saving QC images...")
+        save_all_qc_figures(
+            output_dir=detect_dir,
+            green_channel=green,
+            nuclei_labels=labels,
+            measurements_df=classified,
+            tissue_mask=tissue_mask,
+            threshold=threshold,
+            background=background,
+            prefix=sample_id,
+        )
+        # Also save to sample_dir for backward compatibility
         save_all_qc_figures(
             output_dir=sample_dir,
             green_channel=green,
@@ -139,7 +234,7 @@ def process_single(
             tissue_mask=tissue_mask,
             threshold=threshold,
             background=background,
-            prefix=stem,
+            prefix=sample_id,
         )
 
         print(f"  Done: {summary['positive_cells']} pos, {summary['negative_cells']} neg ({summary['positive_fraction']*100:.1f}%)")
@@ -150,6 +245,10 @@ def process_single(
         result['status'] = 'error'
         result['error'] = str(e)
         print(f"  ERROR: {e}")
+
+        # Update tracker on error
+        if tracker and det_run_id:
+            tracker.update_status(det_run_id, status="error")
 
     return result
 

@@ -1,68 +1,51 @@
 """
-config.py - Path configuration for BrainSlice
+config.py - Path configuration for BrainSlice (2D slice analysis)
 
-Handles automatic detection of project root and defines standard paths.
-Uses environment variable override or auto-detection from script location.
+Imports canonical paths from mousebrain.config when running as part of the
+monorepo, with fallback for standalone brainslice usage.
 
 Usage:
     from mousebrain.plugin_2d.sliceatlas.core.config import DATA_DIR, TRACKER_CSV
 """
 
 import os
-import sys
 from pathlib import Path
 from typing import Optional, Dict, Any
 
 
 # =============================================================================
-# PATH DETECTION
+# PATH DETECTION — unified with mousebrain.config
 # =============================================================================
 
-def _get_root_path() -> Path:
-    """
-    Detect BrainSlice root directory.
+try:
+    from mousebrain.config import (
+        SLICES_2D_DIR, SLICES_2D_SUBJECTS, SLICES_2D_DATA_SUMMARY,
+        SLICES_2D_TRACKER_CSV, PIPELINE_ROOT, TISSUE_ROOT,
+    )
+    DATA_DIR = SLICES_2D_SUBJECTS  # samples live here now
+    TRACKER_CSV = SLICES_2D_TRACKER_CSV
+    MODELS_DIR = TISSUE_ROOT / "MouseBrain" / "models" if TISSUE_ROOT else Path("models")
+except ImportError:
+    # Standalone fallback (brainslice installed without mousebrain)
+    SLICES_2D_DIR = None
+    SLICES_2D_SUBJECTS = None
+    SLICES_2D_DATA_SUMMARY = None
+    SLICES_2D_TRACKER_CSV = None
+    PIPELINE_ROOT = None
+    TISSUE_ROOT = None
 
-    Priority:
-    1. Environment variable BRAINSLICE_ROOT
-    2. Auto-detect by walking up from this file
-    3. Fallback to parent of brainslice package
-    """
-    # Check environment variable
-    env_root = os.environ.get("BRAINSLICE_ROOT")
-    if env_root:
-        root = Path(env_root)
-        if root.exists():
-            return root
+    # Legacy path detection
+    _env_root = os.environ.get("BRAINSLICE_ROOT")
+    if _env_root:
+        _root = Path(_env_root)
+    else:
+        _root = Path(__file__).resolve().parent.parent.parent
+    DATA_DIR = _root / "BrainSlice_Data"
+    TRACKER_CSV = DATA_DIR / "calibration_runs.csv"
+    MODELS_DIR = _root / "models"
 
-    # Auto-detect: walk up from this file looking for BrainSlice marker
-    current = Path(__file__).resolve().parent
-    for _ in range(5):  # Max 5 levels up
-        if (current / "brainslice").is_dir() and (current / "environment.yml").exists():
-            return current
-        current = current.parent
-
-    # Fallback: assume we're in brainslice/core/
-    return Path(__file__).resolve().parent.parent.parent
-
-
-# =============================================================================
-# STANDARD PATHS
-# =============================================================================
-
-BRAINSLICE_ROOT = _get_root_path()
-
-# Data directory (where sample folders live)
-DATA_DIR = BRAINSLICE_ROOT / "BrainSlice_Data"
-
-# Tracker CSV for calibration runs
-TRACKER_CSV = DATA_DIR / "calibration_runs.csv"
-
-# Models directory (for custom StarDist models, etc.)
-MODELS_DIR = BRAINSLICE_ROOT / "models"
-
-# Ensure directories exist
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
+# Legacy alias
+BRAINSLICE_ROOT = SLICES_2D_DIR or Path(__file__).resolve().parent.parent.parent
 
 
 # =============================================================================
@@ -202,14 +185,27 @@ def sample_id_from_path(filepath: str) -> str:
 
 def get_sample_dir(sample_id: str) -> Path:
     """
-    Get the data directory for a specific sample.
+    Get the data directory for a specific sample, organized by project/subject.
+
+    For a sample like "E02_01_S12_DCN", resolves to:
+        DATA_DIR / ENCR / ENCR_02_01 /
 
     Args:
-        sample_id: Sample identifier
+        sample_id: Sample identifier (filename stem)
 
     Returns:
-        Path to sample's data directory
+        Path to subject's data directory
     """
+    parsed = parse_sample_name(sample_id)
+    project = parsed.get("project", "UNKNOWN")
+    cohort = parsed.get("cohort", "00")
+    subject = parsed.get("subject", "00")
+
+    if project and cohort and subject:
+        subject_id = f"{project}_{cohort}_{subject}"
+        return DATA_DIR / project / subject_id
+
+    # Fallback for unparseable names
     return DATA_DIR / sample_id
 
 
@@ -219,7 +215,7 @@ def get_sample_subdir(sample_id: str, subdir: str) -> Path:
 
     Args:
         sample_id: Sample identifier
-        subdir: Subdirectory name (e.g., "0_Raw", "2_Registered")
+        subdir: Subdirectory name (e.g., "0_Raw", "3_Detected")
 
     Returns:
         Path to subdirectory (created if doesn't exist)
@@ -236,10 +232,13 @@ def get_sample_subdir(sample_id: str, subdir: str) -> Path:
 class SampleDirs:
     """Standard subdirectory names for sample data."""
     RAW = "0_Raw"
+    RAW_ATLAS = "0_Raw_Atlas"
+    RAW_HD = "0_Raw_HD"
     PREPROCESSED = "1_Preprocessed"
     REGISTERED = "2_Registered"
     DETECTED = "3_Detected"
     QUANTIFIED = "4_Quantified"
+    QUANTIFIED_CORRECTED = "4_Quantified_Corrected"
 
 
 # =============================================================================
@@ -253,11 +252,14 @@ def validate_paths() -> Dict[str, bool]:
     Returns:
         Dict mapping path names to existence status
     """
-    return {
-        "BRAINSLICE_ROOT": BRAINSLICE_ROOT.exists(),
-        "DATA_DIR": DATA_DIR.exists(),
-        "MODELS_DIR": MODELS_DIR.exists(),
-    }
+    results = {}
+    if DATA_DIR:
+        results["DATA_DIR"] = DATA_DIR.exists()
+    if TRACKER_CSV:
+        results["TRACKER_CSV"] = TRACKER_CSV.exists()
+    if SLICES_2D_DIR:
+        results["SLICES_2D_DIR"] = SLICES_2D_DIR.exists()
+    return results
 
 
 # =============================================================================
@@ -265,12 +267,12 @@ def validate_paths() -> Dict[str, bool]:
 # =============================================================================
 
 if __name__ == "__main__":
-    print("BrainSlice Configuration")
+    print("BrainSlice 2D Configuration")
     print("=" * 50)
-    print(f"BRAINSLICE_ROOT: {BRAINSLICE_ROOT}")
-    print(f"DATA_DIR: {DATA_DIR}")
-    print(f"TRACKER_CSV: {TRACKER_CSV}")
-    print(f"MODELS_DIR: {MODELS_DIR}")
+    print(f"SLICES_2D_DIR:    {SLICES_2D_DIR}")
+    print(f"DATA_DIR:         {DATA_DIR}")
+    print(f"TRACKER_CSV:      {TRACKER_CSV}")
+    print(f"MODELS_DIR:       {MODELS_DIR}")
     print()
     print("Path validation:")
     for name, exists in validate_paths().items():

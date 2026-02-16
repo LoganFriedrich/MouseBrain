@@ -271,41 +271,92 @@ def detect_by_threshold(
         if bg_std < 1e-6:
             bg_std = float(np.std(img))  # fallback if image is near-constant
         # threshold = k standard deviations above background
-        # 'percentile' parameter is repurposed as the z-score cutoff (default 5.0)
-        z_cutoff = percentile if percentile != 99.0 else 5.0
+        # 'percentile' parameter is repurposed as the z-score cutoff (default 8.0)
+        # At typical magnifications (2-3 um/px), real fluorescent nuclei are 8-700+
+        # sigma above background.  z=3 catches autofluorescence noise; z=8 is the
+        # dimmest a real H2B-mCherry nucleus can be and still be resolvable.
+        z_cutoff = percentile if percentile != 99.0 else 8.0
         thresh_val = bg_median + z_cutoff * bg_std
     else:
         raise ValueError(f"Unknown threshold method: {method}")
 
-    # Step 3: Apply threshold (with optional hysteresis)
-    if use_hysteresis:
-        low_thresh = thresh_val * hysteresis_low_fraction
-        binary = apply_hysteresis_threshold(img, low_thresh, thresh_val)
+    # ── Peak-based detection (zscore method) ──
+    # For sparse fluorescent nuclei, find bright spots directly via local
+    # maxima then stamp a fixed-radius circular label around each peak.
+    # This is the standard "spot detection" approach used by QuPath, CellProfiler,
+    # etc. At low magnification (2-8 px per nucleus), circles are accurate enough
+    # and we avoid all watershed/merging artifacts.
+    if method == 'zscore':
+        from skimage.feature import peak_local_max
+
+        # Find intensity peaks above threshold
+        # min_distance prevents detecting two peaks within one nucleus
+        min_dist = max(2, int(np.sqrt(min_area)))
+        coords = peak_local_max(
+            img,
+            min_distance=min_dist,
+            threshold_abs=thresh_val,
+        )
+        raw_count = len(coords)
+
+        # Stamp circular labels around each peak
+        # Radius: geometric mean of min/max expected nucleus radius
+        avg_area = (min_area + max_area) / 2
+        radius_px = max(1, int(np.sqrt(avg_area / np.pi)))
+
+        labels = np.zeros(img.shape, dtype=np.int32)
+        h_img, w_img = img.shape
+        yy, xx = np.ogrid[-radius_px:radius_px + 1, -radius_px:radius_px + 1]
+        circle_template = (yy ** 2 + xx ** 2) <= radius_px ** 2
+
+        for i, (pr, pc) in enumerate(coords, 1):
+            # Clip circle to image bounds
+            y0 = max(0, pr - radius_px)
+            y1 = min(h_img, pr + radius_px + 1)
+            x0 = max(0, pc - radius_px)
+            x1 = min(w_img, pc + radius_px + 1)
+            cy0 = y0 - (pr - radius_px)
+            cy1 = circle_template.shape[0] - ((pr + radius_px + 1) - y1)
+            cx0 = x0 - (pc - radius_px)
+            cx1 = circle_template.shape[1] - ((pc + radius_px + 1) - x1)
+            mask = circle_template[cy0:cy1, cx0:cx1]
+            region = labels[y0:y1, x0:x1]
+            # Don't overwrite existing labels (first-come = brighter peak)
+            region[(mask) & (region == 0)] = i
+
+        n_split = 0
+
     else:
-        binary = img > thresh_val
+        # ── Classic threshold path (otsu, percentile, manual) ──
+        # Step 3: Apply threshold (with optional hysteresis)
+        if use_hysteresis:
+            low_thresh = thresh_val * hysteresis_low_fraction
+            binary = apply_hysteresis_threshold(img, low_thresh, thresh_val)
+        else:
+            binary = img > thresh_val
 
-    # Step 4: Optional morphological opening (remove small noise specks)
-    if opening_radius > 0:
-        selem = disk(opening_radius)
-        binary = binary_opening(binary, selem)
+        # Step 4: Optional morphological opening (remove small noise specks)
+        if opening_radius > 0:
+            selem = disk(opening_radius)
+            binary = binary_opening(binary, selem)
 
-    # Step 5: Optional morphological closing (bridge small gaps)
-    if closing_radius > 0:
-        selem = disk(closing_radius)
-        binary = binary_closing(binary, selem)
+        # Step 5: Optional morphological closing (bridge small gaps)
+        if closing_radius > 0:
+            selem = disk(closing_radius)
+            binary = binary_closing(binary, selem)
 
-    # Step 6: Fill holes in binary mask
-    if fill_holes:
-        binary = binary_fill_holes(binary)
+        # Step 6: Fill holes in binary mask
+        if fill_holes:
+            binary = binary_fill_holes(binary)
 
-    # Step 7: Connected component labeling
-    labels = label(binary)
-    raw_count = labels.max()
+        # Step 7: Connected component labeling
+        labels = label(binary)
+        raw_count = labels.max()
 
-    # Step 8: Optional watershed splitting of merged nuclei
-    n_split = 0
-    if split_touching and raw_count > 0:
-        labels, n_split = _watershed_split(labels, split_footprint_size)
+        # Step 8: Optional watershed splitting of merged nuclei
+        n_split = 0
+        if split_touching and raw_count > 0:
+            labels, n_split = _watershed_split(labels, split_footprint_size)
 
     count_after_split = labels.max()
 

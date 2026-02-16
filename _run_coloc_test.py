@@ -11,7 +11,7 @@ sys.argv = [
     "--dual",
     "--no-show",
     "--method", "zscore",
-    "--split-touching",
+    "--no-hysteresis",
 ]
 
 from mousebrain.plugin_2d.sliceatlas.cli.run_coloc import main

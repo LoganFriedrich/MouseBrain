@@ -207,6 +207,25 @@ ELIFE_COUNTS_CSV = DATA_SUMMARY_DIR / "elife_counts.csv"  # Current (one row per
 ELIFE_COUNTS_ARCHIVE_CSV = DATA_SUMMARY_DIR / "elife_counts_archive.csv"  # Historical
 
 # =============================================================================
+# 2D SLICES PATHS
+# =============================================================================
+
+# 2D slice analysis data (mirrors 3D structure with 1_Subjects/, 2_Data_Summary/)
+if PIPELINE_ROOT and (PIPELINE_ROOT / "2D_Slices").exists():
+    SLICES_2D_DIR = PIPELINE_ROOT / "2D_Slices"
+else:
+    SLICES_2D_DIR = TISSUE_ROOT / "2D_Slices" if TISSUE_ROOT else None
+
+if SLICES_2D_DIR:
+    SLICES_2D_SUBJECTS = SLICES_2D_DIR / "1_Subjects"
+    SLICES_2D_DATA_SUMMARY = SLICES_2D_DIR / "2_Data_Summary"
+    SLICES_2D_TRACKER_CSV = SLICES_2D_DATA_SUMMARY / "calibration_runs.csv"
+else:
+    SLICES_2D_SUBJECTS = None
+    SLICES_2D_DATA_SUMMARY = None
+    SLICES_2D_TRACKER_CSV = None
+
+# =============================================================================
 # LEGACY ALIASES (for backwards compatibility)
 # =============================================================================
 
@@ -271,6 +290,9 @@ def print_config():
     print(f"  SCRIPTS_DIR:          {SCRIPTS_DIR}")
     print(f"  MODELS_DIR:           {MODELS_DIR}")
     print(f"  EXPERIMENTS_CSV:      {EXPERIMENTS_CSV}")
+    print(f"  SLICES_2D_DIR:        {SLICES_2D_DIR}")
+    print(f"  SLICES_2D_SUBJECTS:   {SLICES_2D_SUBJECTS}")
+    print(f"  SLICES_2D_TRACKER_CSV:{SLICES_2D_TRACKER_CSV}")
 
     print(f"\nPath validation:")
     validate_paths(verbose=True)
