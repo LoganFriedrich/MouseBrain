@@ -634,62 +634,75 @@ def _make_results_figure(red_image, green_image, labels, measurements,
             comp_crop = composite[y0:y1, x0:x1]
             lbl_crop = labels[y0:y1, x0:x1]
             red_raw_crop = red_image[y0:y1, x0:x1]
+            grn_raw_crop = green_image[y0:y1, x0:x1]
 
             # Find ALL labels in this crop and draw contours for each
             crop_labels = set(np.unique(lbl_crop)) - {0}
             n_crop_pos = 0
             n_crop_neg = 0
 
-            # Build per-label contour masks for all cells in crop
-            cell_contours = []  # list of (contour_mask, is_positive, label_id)
+            # Voronoi territory map — each pixel assigned to nearest nucleus
+            # Used to split adjacent green signals at the midline
+            from skimage.segmentation import expand_labels
+            territory_map = expand_labels(lbl_crop, distance=9999)
+
+            # Build per-label contour masks — red-channel (nuclear) for red/composite,
+            # green-channel (signal) for green panel
+            cell_contours = []      # (nuc_mask, is_positive, label_id)
+            green_contours = []     # (grn_mask, is_positive, label_id) — positive only
             for crop_lbl in crop_labels:
                 lbl_is_pos = crop_lbl in positive_labels
                 if lbl_is_pos:
                     n_crop_pos += 1
                 else:
                     n_crop_neg += 1
+                # Nuclear contour (from red channel) — for red + composite panels
+                # Voronoi territory prevents adjacent nuclei from merging
                 cmask = _intensity_contour_mask(
                     red_raw_crop, lbl_crop, crop_lbl, contour_dilation=4,
+                    threshold_fraction=0.4,
+                    territory_mask=(territory_map == crop_lbl),
                 )
                 cell_contours.append((cmask, lbl_is_pos, crop_lbl))
+                # Green signal contour — for green panel (positive cells only)
+                # Voronoi territory prevents adjacent cytoplasmic signals from merging
+                # Higher threshold_fraction (0.5) for tighter contours
+                if lbl_is_pos:
+                    gmask = _intensity_contour_mask(
+                        grn_raw_crop, lbl_crop, crop_lbl, contour_dilation=2,
+                        threshold_fraction=0.5,
+                        territory_mask=(territory_map == crop_lbl),
+                    )
+                    green_contours.append((gmask, crop_lbl))
 
             # Red channel zoom — white contours for all cells
             ax_r = fig.add_subplot(gs_bot[row, col])
             red_crop = np.stack([r_crop, np.zeros_like(r_crop), r_crop], axis=-1)
             ax_r.imshow(np.clip(red_crop, 0, 1))
             for cmask, lbl_pos, _ in cell_contours:
-                ax_r.contour(cmask, levels=[0.5], linewidths=0.7,
-                             colors=['white'], alpha=0.8, antialiased=True)
+                ax_r.contour(cmask, levels=[0.5], linewidths=0.5,
+                             colors=['white'], alpha=0.7, antialiased=True)
             ax_r.set_title(f"#{i+1} Red", color='white', fontsize=9)
             ax_r.axis('off')
 
-            # Green channel zoom — positive contours only (cyan)
-            # Negative contours omitted so red outlines don't obscure green signal
+            # Green channel zoom — contours trace actual green signal (not nuclei)
             ax_g = fig.add_subplot(gs_bot[row, col + 1])
-            grn_crop = np.stack([np.zeros_like(g_crop), g_crop, np.zeros_like(g_crop)], axis=-1)
-            ax_g.imshow(np.clip(grn_crop, 0, 1))
-            for cmask, lbl_pos, _ in cell_contours:
-                if lbl_pos:
-                    ax_g.contour(cmask, levels=[0.5], linewidths=0.7,
-                                 colors=['cyan'], alpha=0.8, antialiased=True)
+            grn_crop_rgb = np.stack([np.zeros_like(g_crop), g_crop, np.zeros_like(g_crop)], axis=-1)
+            ax_g.imshow(np.clip(grn_crop_rgb, 0, 1))
+            for gmask, _ in green_contours:
+                ax_g.contour(gmask, levels=[0.5], linewidths=0.5,
+                             colors=['cyan'], alpha=0.7, antialiased=True)
             ax_g.set_title(f"Green", color='white', fontsize=9)
             ax_g.axis('off')
 
-            # Composite zoom — pos=lime, neg=red contours + yellow halos
+            # Composite zoom — pos=lime, neg=red contours (no halos at zoom scale)
             ax_c = fig.add_subplot(gs_bot[row, col + 2])
             ax_c.imshow(np.clip(comp_crop, 0, 1))
             for cmask, lbl_pos, _ in cell_contours:
                 cc = 'lime' if lbl_pos else '#ff4444'
-                ax_c.contour(cmask, levels=[0.5], linewidths=0.7,
-                             colors=[cc], alpha=0.8, antialiased=True)
-            # Yellow halos around positive cells in composite zoom
-            for cmask, lbl_pos, _ in cell_contours:
-                if lbl_pos:
-                    from skimage.morphology import binary_dilation, disk
-                    halo_bin = binary_dilation(cmask > 0.5, disk(4))
-                    halo_smooth = _smooth_mask(halo_bin.astype(np.float64), sigma=1.0)
-                    ax_c.contour(halo_smooth, levels=[0.5], linewidths=1.0,
-                                 colors=['yellow'], alpha=0.8, antialiased=True)
+                lw = 0.6 if lbl_pos else 0.4
+                ax_c.contour(cmask, levels=[0.5], linewidths=lw,
+                             colors=[cc], alpha=0.7, antialiased=True)
             # Stats text: how many pos/neg in this crop
             stat_parts = []
             if n_crop_pos > 0:
@@ -747,7 +760,8 @@ def _smooth_mask(mask, sigma=1.2):
 
 
 def _intensity_contour_mask(channel_crop, lbl_crop, lbl, sigma=1.2,
-                             threshold_fraction=0.3, contour_dilation=0):
+                             threshold_fraction=0.3, contour_dilation=0,
+                             territory_mask=None):
     """Create a contour mask from actual channel intensity instead of label shape.
 
     Instead of contouring the artificial circular label stamp, this traces
@@ -763,6 +777,10 @@ def _intensity_contour_mask(channel_crop, lbl_crop, lbl, sigma=1.2,
             intensity to place the contour (0.3 = 30% of the way up).
         contour_dilation: Pixels to dilate the mask outward before smoothing,
             so the contour frames the signal rather than overlapping it.
+        territory_mask: Boolean mask of this cell's Voronoi territory
+            (from expand_labels).  When provided, the intensity threshold
+            is clipped to this territory so adjacent cells' signals split
+            at the midline between their nuclei.
     Returns:
         Smoothed float mask suitable for contour(mask, levels=[0.5]).
     """
@@ -776,8 +794,13 @@ def _intensity_contour_mask(channel_crop, lbl_crop, lbl, sigma=1.2,
     ys, xs = np.where(stamp)
     cy, cx = int(round(ys.mean())), int(round(xs.mean()))
 
-    # Peak intensity within the stamp
-    peak_val = float(channel_crop[stamp].max())
+    # Peak intensity — use territory if available (cytoplasmic signals
+    # may peak outside the nuclear stamp), otherwise use the stamp
+    if territory_mask is not None:
+        peak_region = territory_mask
+    else:
+        peak_region = stamp
+    peak_val = float(channel_crop[peak_region].max())
 
     # Local background: median of crop pixels outside all labels
     bg_pixels = channel_crop[lbl_crop == 0]
@@ -790,6 +813,10 @@ def _intensity_contour_mask(channel_crop, lbl_crop, lbl, sigma=1.2,
     # Threshold at fraction between background and peak
     thresh = local_bg + threshold_fraction * (peak_val - local_bg)
     intensity_mask = channel_crop > thresh
+
+    # Clip to cell's Voronoi territory — splits adjacent signals at midline
+    if territory_mask is not None:
+        intensity_mask = intensity_mask & territory_mask
 
     # Keep only the connected component containing the centroid
     labeled_cc, n_cc = ndi_label(intensity_mask)
@@ -810,6 +837,10 @@ def _intensity_contour_mask(channel_crop, lbl_crop, lbl, sigma=1.2,
     if contour_dilation > 0:
         from skimage.morphology import binary_dilation, disk
         cell_mask = binary_dilation(cell_mask > 0.5, disk(contour_dilation)).astype(np.float64)
+
+    # Re-clip to territory after dilation so contours don't cross into neighbors
+    if territory_mask is not None:
+        cell_mask = cell_mask * territory_mask.astype(np.float64)
 
     return _smooth_mask(cell_mask, sigma=sigma)
 
