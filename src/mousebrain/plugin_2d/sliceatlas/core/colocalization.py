@@ -767,6 +767,13 @@ class ColocalizationAnalyzer:
                 When 2D, each nucleus gets its own background value looked up
                 at its centroid position.
             method: Classification method
+                - 'background_mean': **CURRENT DEFAULT** (under active
+                  development). Estimates tissue green background (excluding
+                  black areas and generously dilated somas), then classifies
+                  as positive if green ROI > background mean. Simple,
+                  interpretable, no tuning needed. Requires signal_image
+                  and nuclei_labels.
+                All methods below retained for comparison during development:
                 - 'fold_change': positive if mean >= threshold * background
                 - 'local_snr': positive if local signal-to-noise ratio exceeds
                   threshold. For each cell, estimates background from nearby
@@ -833,6 +840,100 @@ class ColocalizationAnalyzer:
         # Classify based on method
         if method == 'fold_change':
             df['is_positive'] = df['fold_change'] >= threshold
+
+        elif method == 'background_mean':
+            # PI's method: simple comparison to tissue background mean.
+            #
+            # 1. Exclude black/near-black areas (slide, empty regions)
+            # 2. Dilate all nuclear ROIs generously to block all somas
+            # 3. Average remaining green in tissue = background threshold
+            # 4. Cell is positive if its green ROI mean > background mean
+            #
+            # No standard deviations, no Otsu, no tiers. The background
+            # mean IS the threshold.
+            if signal_image is None or nuclei_labels is None:
+                raise ValueError(
+                    "background_mean method requires signal_image and "
+                    "nuclei_labels"
+                )
+            ndimage = _get_ndimage()
+            from skimage.segmentation import expand_labels as _expand
+
+            # Step 3a: tissue mask — exclude black/near-black areas
+            # Anything below p5 is likely slide or empty space
+            tissue_floor = np.percentile(signal_image, 5)
+            tissue_mask = signal_image > tissue_floor
+
+            # Step 3b: generous dilation to exclude ALL possible somas
+            # Must be large enough that no cell body signal contaminates
+            # the background estimate
+            soma_dil = 8  # default
+            if 'cyto_area' in df.columns and 'nucleus_area' in df.columns:
+                avg_nuc = df['nucleus_area'].median()
+                avg_ring = df['cyto_area'].median()
+                if avg_nuc > 0:
+                    import math
+                    soma_dil = int(math.sqrt((avg_nuc + avg_ring) / math.pi)
+                                   - math.sqrt(avg_nuc / math.pi))
+            bg_excl_radius = max(soma_dil * 3, 25)
+            expanded_all = _expand(nuclei_labels, distance=bg_excl_radius)
+            soma_exclusion = expanded_all > 0
+
+            # Step 3c: background = mean of green in tissue, outside somas
+            bg_mask = tissue_mask & ~soma_exclusion
+            bg_pixels = signal_image[bg_mask]
+
+            if len(bg_pixels) < 100:
+                # Dense image: fall back to tissue excluding just nuclei
+                bg_mask_fallback = tissue_mask & (nuclei_labels == 0)
+                bg_pixels = signal_image[bg_mask_fallback]
+
+            bg_mean = float(np.mean(bg_pixels))
+            # Use below-median pixels for robust std (avoids any signal bleed)
+            below_med = bg_pixels[bg_pixels <= np.median(bg_pixels)]
+            if len(below_med) > 10:
+                bg_std = float(np.std(below_med))
+            else:
+                bg_std = float(np.std(bg_pixels))
+            if bg_std < 1e-6:
+                bg_std = max(bg_mean * 0.05, 1.0)
+
+            # Step 4: classify — green ROI above background mean?
+            df['is_positive'] = df[intensity_col] > bg_mean
+
+            # How many std devs above background each cell is
+            df['sigma_above_bg'] = (
+                (df[intensity_col] - bg_mean) / bg_std
+            )
+
+            # Overwrite the background column with our computed value
+            df['background'] = bg_mean
+            df['bg_std'] = bg_std
+            df['fold_change'] = df[intensity_col] / max(bg_mean, 1e-10)
+
+            # Binning: how many cells at each sigma level
+            sigmas = df['sigma_above_bg'].values
+            n_above_0 = int(np.sum(sigmas > 0))
+            n_above_1 = int(np.sum(sigmas > 1.0))
+            n_above_1p5 = int(np.sum(sigmas > 1.5))
+            n_above_2 = int(np.sum(sigmas > 2.0))
+            n_above_3 = int(np.sum(sigmas > 3.0))
+
+            self.adaptive_diagnostics = {
+                'method_used': 'background_mean',
+                'background_mean': bg_mean,
+                'background_std': bg_std,
+                'bg_excl_radius': bg_excl_radius,
+                'tissue_pixels': int(np.sum(tissue_mask)),
+                'excluded_pixels': int(np.sum(soma_exclusion & tissue_mask)),
+                'bg_pixels_used': len(bg_pixels),
+                'n_total': len(df),
+                'n_above_bg': n_above_0,
+                'n_above_1std': n_above_1,
+                'n_above_1p5std': n_above_1p5,
+                'n_above_2std': n_above_2,
+                'n_above_3std': n_above_3,
+            }
 
         elif method == 'local_snr':
             # Per-cell local signal-to-noise ratio classification.
