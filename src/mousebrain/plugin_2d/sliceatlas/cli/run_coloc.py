@@ -235,6 +235,11 @@ def _run_single_pipeline(red_image, green_image, labels, args, t0, t_load, t_det
                 print(f"    Ring rescue: {rr['n_rescued']} cells rescued "
                       f"(fc >= {rr['rescue_threshold_fc']:.2f}x, "
                       f"pos median fc={rr['pos_fc_median']:.2f}x)")
+        elif ad['method_used'] == 'local_snr_otsu':
+            print(f"    Otsu threshold: {ad['otsu_threshold']:.2f} sigma")
+            print(f"    SNR range: median={ad['snr_median']:.2f}, "
+                  f"max={ad['snr_max']:.2f}")
+            print(f"    Above local bg: {ad['n_above_zero']} cells")
         elif ad.get('reason'):
             print(f"    Reason: {ad['reason']}")
 
@@ -350,51 +355,71 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     from matplotlib.patches import Rectangle
     from skimage.measure import regionprops
 
-    # Normalize channels for display using shared standard
-    from mousebrain.plugin_2d.sliceatlas.core.colocalization import (
-        normalize_for_display, DISPLAY_RED_FLOOR, DISPLAY_RED_MAX,
-        DISPLAY_RED_GAMMA, DISPLAY_GRN_FLOOR, DISPLAY_GRN_MAX,
-        DISPLAY_GRN_GAMMA,
-    )
+    # Normalize channels for display using auto-norm
+    from mousebrain.plugin_2d.sliceatlas.core.colocalization import normalize_for_display_auto
 
-    r = normalize_for_display(red_image, DISPLAY_RED_MAX, DISPLAY_RED_FLOOR, DISPLAY_RED_GAMMA)
-    g = normalize_for_display(green_image, DISPLAY_GRN_MAX, DISPLAY_GRN_FLOOR, DISPLAY_GRN_GAMMA)
+    r = normalize_for_display_auto(red_image, channel='red')
+    g = normalize_for_display_auto(green_image, channel='green')
     # Magenta + Green composite (white where both overlap)
     composite = np.stack([r, g, r], axis=-1)
 
-    # Classify labels
+    # Classify labels into tiers: positive / borderline / negative
+    # Uses continuous local_snr score when available, otherwise binary
     positive_labels = set()
+    borderline_labels = set()  # above background but below threshold
     negative_labels = set()
     label_fc = {}  # fold-change per label
-    label_prob = {}  # posterior probability per label (adaptive method)
+    label_prob = {}  # posterior probability per label
+    label_snr = {}  # local SNR score per label
+
+    # Get Otsu threshold for tier boundaries
+    otsu_thresh = None
+    if summary and summary.get('adaptive_diagnostics'):
+        ad = summary['adaptive_diagnostics']
+        otsu_thresh = ad.get('otsu_threshold')
+
     if measurements is not None and len(measurements) > 0:
+        has_snr = 'local_snr' in measurements.columns
         for _, row in measurements.iterrows():
             lbl = int(row['label'])
-            if row.get('is_positive', False):
-                positive_labels.add(lbl)
-            else:
-                negative_labels.add(lbl)
             label_fc[lbl] = row.get('fold_change', 0)
             if 'positive_probability' in row.index:
                 label_prob[lbl] = row['positive_probability']
+            if has_snr:
+                snr = row['local_snr']
+                label_snr[lbl] = snr
+                if row.get('is_positive', False):
+                    positive_labels.add(lbl)
+                elif snr > 0:
+                    borderline_labels.add(lbl)
+                else:
+                    negative_labels.add(lbl)
+            else:
+                if row.get('is_positive', False):
+                    positive_labels.add(lbl)
+                else:
+                    negative_labels.add(lbl)
 
     # Per-category filled masks for smooth vector contour rendering
     pos_mask = np.zeros(labels.shape, dtype=np.float64)
+    bord_mask = np.zeros(labels.shape, dtype=np.float64)
     neg_mask = np.zeros(labels.shape, dtype=np.float64)
     for lbl in positive_labels:
         pos_mask += (labels == lbl).astype(np.float64)
+    for lbl in borderline_labels:
+        bord_mask += (labels == lbl).astype(np.float64)
     for lbl in negative_labels:
         neg_mask += (labels == lbl).astype(np.float64)
     pos_mask = np.clip(pos_mask, 0, 1)
+    bord_mask = np.clip(bord_mask, 0, 1)
     neg_mask = np.clip(neg_mask, 0, 1)
     # Smooth for vector-quality contours
     pos_mask_smooth = _smooth_mask(pos_mask) if pos_mask.any() else pos_mask
+    bord_mask_smooth = _smooth_mask(bord_mask) if bord_mask.any() else bord_mask
     neg_mask_smooth = _smooth_mask(neg_mask) if neg_mask.any() else neg_mask
     all_nuc_smooth = _smooth_mask((labels > 0).astype(np.float64))
 
-    # Halo ring: dilated positive mask drawn OUTSIDE the cell border.
-    # The contour of this dilated mask sits ~4px outside the lime contour,
-    # creating a visible "target ring" that draws the eye without touching signal.
+    # Halo ring for positive cells only
     if pos_mask.any():
         from skimage.morphology import binary_dilation, disk
         pos_halo_binary = binary_dilation(pos_mask > 0.5, disk(8))
@@ -485,21 +510,23 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     ax2.set_title(f"Signal ({n_pos} colocalized)", color='white', fontsize=10)
     ax2.axis('off')
 
-    # Panel 3: Composite — all nuclei contoured, pos=lime neg=red,
-    #           positive indicated with thin open crosshair
+    # Panel 3: Composite — three tiers: pos=lime, borderline=yellow, neg=dim red
     ax3 = fig.add_subplot(gs_top[0, 2])
     ax3.imshow(np.clip(composite, 0, 1))
     if neg_mask.any():
-        ax3.contour(neg_mask_smooth, levels=[0.5], linewidths=0.4,
-                    colors=['#ff4444'], alpha=0.4, antialiased=True)
+        ax3.contour(neg_mask_smooth, levels=[0.5], linewidths=0.3,
+                    colors=['#ff4444'], alpha=0.3, antialiased=True)
+    if bord_mask.any():
+        ax3.contour(bord_mask_smooth, levels=[0.5], linewidths=0.5,
+                    colors=['#ffaa00'], alpha=0.6, antialiased=True)
     if pos_mask.any():
         ax3.contour(pos_mask_smooth, levels=[0.5], linewidths=0.6,
                     colors=['lime'], alpha=0.7, antialiased=True)
-        # Halo ring: bright outer contour draws the eye to positive cells
         ax3.contour(pos_halo_smooth, levels=[0.5], linewidths=1.5,
                     colors=['yellow'], alpha=0.9, antialiased=True)
+    n_bord = len(borderline_labels)
     ax3.set_title(
-        f"Classified: {n_pos} pos ({frac:.0f}%) / {n_neg} neg",
+        f"Classified: {n_pos} pos / {n_bord} borderline / {n_neg} neg",
         color='white', fontsize=10,
     )
     ax3.axis('off')
@@ -534,10 +561,36 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     # Use nested gridspec for histogram on top, text below
     gs_stats = gs_top[0, 4].subgridspec(2, 1, height_ratios=[1, 1.2], hspace=0.3)
 
-    # Mini histogram
+    # Mini histogram — show SNR distribution when available, else fold-change
     ax_hist = fig.add_subplot(gs_stats[0])
     ax_hist.set_facecolor('#1a1a1a')
-    if measurements is not None and 'fold_change' in measurements.columns:
+    has_snr = measurements is not None and 'local_snr' in measurements.columns
+    if has_snr:
+        snr_vals = measurements['local_snr'].dropna().values
+        pos_snr = snr_vals[measurements['is_positive'].values == True]
+        bord_snr = snr_vals[np.array([l in borderline_labels for l in measurements['label']])]
+        neg_snr = snr_vals[np.array([l in negative_labels for l in measurements['label']])]
+        bins = np.linspace(min(snr_vals.min(), -2), max(snr_vals.max(), 5), 35)
+        if len(neg_snr) > 0:
+            ax_hist.hist(neg_snr, bins=bins, color='#ff4444', alpha=0.5,
+                         label=f'Neg ({len(neg_snr)})')
+        if len(bord_snr) > 0:
+            ax_hist.hist(bord_snr, bins=bins, color='#ffaa00', alpha=0.5,
+                         label=f'Bord ({len(bord_snr)})')
+        if len(pos_snr) > 0:
+            ax_hist.hist(pos_snr, bins=bins, color='lime', alpha=0.6,
+                         label=f'Pos ({len(pos_snr)})')
+        if otsu_thresh is not None:
+            ax_hist.axvline(otsu_thresh, color='yellow', ls='--', lw=1, alpha=0.8,
+                            label=f'Otsu={otsu_thresh:.1f}σ')
+        ax_hist.axvline(0, color='white', ls=':', lw=0.5, alpha=0.4)
+        ax_hist.set_xlabel('Local SNR (σ above bg)', color='#ccc', fontsize=7)
+        ax_hist.tick_params(colors='#888', labelsize=6)
+        ax_hist.legend(fontsize=5, loc='upper right', facecolor='#333',
+                       edgecolor='#555', labelcolor='white')
+        for spine in ax_hist.spines.values():
+            spine.set_color('#555')
+    elif measurements is not None and 'fold_change' in measurements.columns:
         fc_vals = measurements['fold_change'].dropna().values
         is_pos_col = measurements.get('is_positive', None)
         if is_pos_col is not None:
@@ -695,29 +748,40 @@ def _make_results_figure(red_image, green_image, labels, measurements,
             ax_g.set_title(f"Green", color='white', fontsize=9)
             ax_g.axis('off')
 
-            # Composite zoom — pos=lime, neg=red contours (no halos at zoom scale)
+            # Composite zoom — 3-tier contours: pos=lime, borderline=orange, neg=red
             ax_c = fig.add_subplot(gs_bot[row, col + 2])
             ax_c.imshow(np.clip(comp_crop, 0, 1))
-            for cmask, lbl_pos, _ in cell_contours:
-                cc = 'lime' if lbl_pos else '#ff4444'
-                lw = 0.6 if lbl_pos else 0.4
+            for cmask, lbl_pos, crop_lbl_id in cell_contours:
+                if lbl_pos:
+                    cc, lw = 'lime', 0.6
+                elif crop_lbl_id in borderline_labels:
+                    cc, lw = '#ffaa00', 0.5
+                else:
+                    cc, lw = '#ff4444', 0.3
                 ax_c.contour(cmask, levels=[0.5], linewidths=lw,
                              colors=[cc], alpha=0.7, antialiased=True)
-            # Stats text: how many pos/neg in this crop
+            # Stats text
             stat_parts = []
             if n_crop_pos > 0:
                 stat_parts.append(f"{n_crop_pos} pos")
             if n_crop_neg > 0:
                 stat_parts.append(f"{n_crop_neg} neg")
             stat_str = ", ".join(stat_parts)
-            # Primary cell status for title
-            primary_status = "POS" if is_pos else "NEG"
-            primary_color = 'lime' if is_pos else '#ff4444'
-            fc = label_fc.get(lbl, 0)
-            prob = label_prob.get(lbl)
-            if prob is not None:
-                title_str = f"{primary_status} P={prob:.2f}"
+            # Primary cell title with SNR score
+            snr_val = label_snr.get(lbl)
+            if is_pos:
+                primary_status = "POS"
+                primary_color = 'lime'
+            elif lbl in borderline_labels:
+                primary_status = "BORD"
+                primary_color = '#ffaa00'
             else:
+                primary_status = "NEG"
+                primary_color = '#ff4444'
+            if snr_val is not None:
+                title_str = f"{primary_status} SNR={snr_val:.1f}"
+            else:
+                fc = label_fc.get(lbl, 0)
                 title_str = f"{primary_status} fc={fc:.1f}x"
             ax_c.set_title(title_str, color=primary_color, fontsize=9)
             # Cell count annotation in bottom-left
@@ -935,14 +999,10 @@ def _make_dual_results_figure(red_image, green_image, labels, measurements,
     from matplotlib.patches import Rectangle
     from skimage.measure import regionprops
 
-    from mousebrain.plugin_2d.sliceatlas.core.colocalization import (
-        normalize_for_display, DISPLAY_RED_FLOOR, DISPLAY_RED_MAX,
-        DISPLAY_RED_GAMMA, DISPLAY_GRN_FLOOR, DISPLAY_GRN_MAX,
-        DISPLAY_GRN_GAMMA,
-    )
+    from mousebrain.plugin_2d.sliceatlas.core.colocalization import normalize_for_display_auto
 
-    r = normalize_for_display(red_image, DISPLAY_RED_MAX, DISPLAY_RED_FLOOR, DISPLAY_RED_GAMMA)
-    g = normalize_for_display(green_image, DISPLAY_GRN_MAX, DISPLAY_GRN_FLOOR, DISPLAY_GRN_GAMMA)
+    r = normalize_for_display_auto(red_image, channel='red')
+    g = normalize_for_display_auto(green_image, channel='green')
     # Magenta + Green composite (white where both overlap)
     composite = np.stack([r, g, r], axis=-1)
 
@@ -1516,14 +1576,17 @@ Examples:
     coloc.add_argument('--bg-dilation', type=int, default=10,
                        help='Background estimation dilation (default: 10)')
     coloc.add_argument('--coloc-method',
-                       choices=['adaptive', 'fold_change', 'area_fraction',
+                       choices=['zscore', 'adaptive', 'fold_change', 'area_fraction',
                                 'local_snr'],
-                       default='adaptive',
-                       help='Classification method (default: adaptive). '
-                       'Use local_snr for extremely dim signals.')
-    coloc.add_argument('--coloc-threshold', type=float, default=1.5,
-                       help='Fold-change threshold for fallback (default: 1.5). '
-                       'For local_snr: number of std devs above local bg.')
+                       default='local_snr',
+                       help='Classification method (default: local_snr). '
+                       'local_snr: per-cell local background comparison with '
+                       'Otsu threshold (recommended for dim enhancer-driven signals). '
+                       'zscore: global z-score + Otsu threshold. '
+                       'adaptive: GMM cascade (legacy).')
+    coloc.add_argument('--coloc-threshold', type=float, default=2.0,
+                       help='Minimum threshold for local_snr (default: 2.0 sigma). '
+                       'Otsu overrides this if it finds a higher natural break.')
     coloc.add_argument('--local-snr-radius', type=int, default=100,
                        help='Radius for local SNR background estimation '
                        '(default: 100px, used with --coloc-method local_snr)')
@@ -1537,11 +1600,11 @@ Examples:
     dual.add_argument('--ch2-soma-dilation', type=int, default=8,
                       help='Soma dilation for channel 2/green (default: 8 = cytoplasmic)')
     dual.add_argument('--ch1-method', default='fold_change',
-                      choices=['fold_change', 'adaptive', 'local_snr',
+                      choices=['zscore', 'fold_change', 'adaptive', 'local_snr',
                                'area_fraction'],
                       help='Classification method for ch1 (default: fold_change)')
     dual.add_argument('--ch2-method', default='local_snr',
-                      choices=['fold_change', 'adaptive', 'local_snr',
+                      choices=['zscore', 'fold_change', 'adaptive', 'local_snr',
                                'area_fraction'],
                       help='Classification method for ch2 (default: local_snr, '
                       'best for dim cytoplasmic signals)')
