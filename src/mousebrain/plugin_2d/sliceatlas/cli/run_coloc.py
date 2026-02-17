@@ -519,59 +519,39 @@ def _make_results_figure(red_image, green_image, labels, measurements,
 
     h, w = labels.shape
 
-    # Panel 1: Magenta — all nuclei outlined (white contours)
+    # Panel 1: Magenta channel — clean, no contours
     ax1 = fig.add_subplot(gs_top[0, 0])
     red_rgb = np.stack([r, np.zeros_like(r), r], axis=-1)
     ax1.imshow(np.clip(red_rgb, 0, 1))
-    ax1.contour(all_nuc_smooth, levels=[0.5], linewidths=0.5,
-                colors=['white'], alpha=0.7, antialiased=True)
     ax1.set_title(f"Nuclear ({labels.max()} nuclei)", color='white', fontsize=10)
     ax1.axis('off')
 
-    # Panel 2: Green — only colocalized nuclei outlined
+    # Panel 2: Green channel — clean, no contours
     ax2 = fig.add_subplot(gs_top[0, 1])
     grn_rgb = np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1)
     ax2.imshow(np.clip(grn_rgb, 0, 1))
-    if pos_mask.any():
-        ax2.contour(pos_mask_smooth, levels=[0.5], linewidths=0.6,
-                    colors=['white'], alpha=0.8, antialiased=True)
-    ax2.set_title(f"Signal ({n_pos} colocalized)", color='white', fontsize=10)
+    ax2.set_title("Signal (green)", color='white', fontsize=10)
     ax2.axis('off')
 
-    # Panel 3: Composite — three tiers: pos=lime, borderline=yellow, neg=dim red
+    # Panel 3: Clean composite — no contours, see the raw overlap
     ax3 = fig.add_subplot(gs_top[0, 2])
     ax3.imshow(np.clip(composite, 0, 1))
-    if neg_mask.any():
-        ax3.contour(neg_mask_smooth, levels=[0.5], linewidths=0.3,
-                    colors=['#ff4444'], alpha=0.3, antialiased=True)
-    if bord_mask.any():
-        ax3.contour(bord_mask_smooth, levels=[0.5], linewidths=0.5,
-                    colors=['#ffaa00'], alpha=0.6, antialiased=True)
-    if pos_mask.any():
-        ax3.contour(pos_mask_smooth, levels=[0.5], linewidths=0.6,
-                    colors=['lime'], alpha=0.7, antialiased=True)
-        ax3.contour(pos_halo_smooth, levels=[0.5], linewidths=1.5,
-                    colors=['yellow'], alpha=0.9, antialiased=True)
-    n_bord_panel = len(borderline_labels)
-    ax3.set_title(
-        f"{len(positive_labels)} >1σ / {n_bord_panel} 0-1σ / "
-        f"{len(negative_labels)} <bg",
-        color='white', fontsize=10,
-    )
+    ax3.set_title("Composite", color='white', fontsize=10)
     ax3.axis('off')
 
-    # Panel 4: Composite + zoom boxes (same contours, non-overlapping boxes)
+    # Panel 4: Classification overlay + zoom boxes
+    n_bord_panel = len(borderline_labels)
     ax4 = fig.add_subplot(gs_top[0, 3])
     ax4.imshow(np.clip(composite, 0, 1))
     if neg_mask.any():
-        ax4.contour(neg_mask_smooth, levels=[0.5], linewidths=0.4,
-                    colors=['#ff4444'], alpha=0.4, antialiased=True)
+        ax4.contour(neg_mask_smooth, levels=[0.5], linewidths=0.3,
+                    colors=['#ff4444'], alpha=0.3, antialiased=True)
+    if bord_mask.any():
+        ax4.contour(bord_mask_smooth, levels=[0.5], linewidths=0.4,
+                    colors=['#ffaa00'], alpha=0.5, antialiased=True)
     if pos_mask.any():
-        ax4.contour(pos_mask_smooth, levels=[0.5], linewidths=0.6,
-                    colors=['lime'], alpha=0.7, antialiased=True)
-        # Halo ring
-        ax4.contour(pos_halo_smooth, levels=[0.5], linewidths=1.5,
-                    colors=['yellow'], alpha=0.9, antialiased=True)
+        ax4.contour(pos_mask_smooth, levels=[0.5], linewidths=0.5,
+                    colors=['lime'], alpha=0.6, antialiased=True)
     # Non-overlapping zoom rectangles
     for i, prop in enumerate(zoom_props_final):
         cy, cx = prop.centroid
@@ -583,7 +563,11 @@ def _make_results_figure(red_image, green_image, labels, measurements,
         ax4.add_patch(rect)
         ax4.text(x0 + 2, y0 - 2, str(i + 1), color='yellow', fontsize=8,
                  va='bottom', fontweight='bold')
-    ax4.set_title("Zoom regions", color='white', fontsize=10)
+    ax4.set_title(
+        f"{len(positive_labels)} >1σ / {n_bord_panel} 0-1σ / "
+        f"{len(negative_labels)} <bg",
+        color='white', fontsize=10,
+    )
     ax4.axis('off')
 
     # Panel 5: Stats — text + mini histogram
