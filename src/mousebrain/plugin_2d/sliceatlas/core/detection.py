@@ -271,11 +271,12 @@ def detect_by_threshold(
         if bg_std < 1e-6:
             bg_std = float(np.std(img))  # fallback if image is near-constant
         # threshold = k standard deviations above background
-        # 'percentile' parameter is repurposed as the z-score cutoff (default 8.0)
-        # At typical magnifications (2-3 um/px), real fluorescent nuclei are 8-700+
-        # sigma above background.  z=3 catches autofluorescence noise; z=8 is the
-        # dimmest a real H2B-mCherry nucleus can be and still be resolvable.
-        z_cutoff = percentile if percentile != 99.0 else 8.0
+        # 'percentile' parameter is repurposed as the z-score cutoff (default 5.0)
+        # At typical magnifications (2-3 um/px), real fluorescent nuclei are 5-700+
+        # sigma above background. Confocal with few z-stacks means some H2B-mCherry
+        # nuclei are partially out of plane and appear dim — z=5 catches these
+        # while still rejecting autofluorescence noise (z=3 would be too loose).
+        z_cutoff = percentile if percentile != 99.0 else 5.0
         thresh_val = bg_median + z_cutoff * bg_std
     else:
         raise ValueError(f"Unknown threshold method: {method}")
