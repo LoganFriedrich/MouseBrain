@@ -17,31 +17,57 @@ from typing import Optional, Dict, Any, Tuple
 import numpy as np
 
 # ============================================================================
-# Display normalization standard for dual-channel (mCherry + eYFP) imaging
+# Display normalization — per-image auto-normalization
 # ============================================================================
-# These constants define the canonical display mapping for visualization.
-# All visualization code should import and use these — NOT local definitions.
-#
-# Derived from NIS-Elements manual TIFF exports of ENCR regional ND2 files.
-# Raw data is 12-bit (0-4095).
-#
-# Red/Magenta (561nm H2B-mCherry): nuclear signal, saturated at 4095,
-#   background mean ~16. Floor=25 clips camera noise. Gamma 0.8 slightly
-#   boosts bright nuclei.
-# Green (488nm eYFP): cytoplasmic signal, dim vs autofluorescence (median ~193).
-#   Floor=32 clips lowest-intensity noise. Gamma 2.0 does all the heavy
-#   lifting: crushes the autofluorescence (193/1333 = 0.14 → 0.14^2 = 0.02,
-#   nearly black) while expanding the dim eYFP signal range into visible
-#   brightness.
-#
-# Pseudocolor: Magenta (R+B) + Green → White where both channels overlap.
-# Values tuned interactively in napari on ENCR regional ND2 crops.
+# Legacy hardcoded constants kept for backwards compatibility.
 DISPLAY_RED_FLOOR = 25
 DISPLAY_RED_MAX = 221
 DISPLAY_RED_GAMMA = 0.8
 DISPLAY_GRN_FLOOR = 32
 DISPLAY_GRN_MAX = 1333
 DISPLAY_GRN_GAMMA = 2.0
+
+
+def normalize_for_display_auto(image: np.ndarray,
+                                channel: str = 'green') -> np.ndarray:
+    """Auto-normalize image for display with background-balanced gamma.
+
+    Both channels map their median (background) to the same target brightness
+    so the composite background appears as dim gray (magenta + green = white,
+    dim white = gray).
+
+    Strategy:
+    1. Floor at p1 (clip hot-pixel noise), max at p99.9 (signal)
+    2. Compute per-channel gamma so that the median maps to TARGET_BG
+    3. This equalizes background brightness across channels regardless
+       of their raw intensity distributions
+
+    Args:
+        image: Raw intensity image (any dtype).
+        channel: 'green' or 'red' (gamma computed per-channel).
+
+    Returns:
+        Normalized float64 array in [0, 1].
+    """
+    TARGET_BG = 0.06  # background display brightness (dim gray)
+
+    img = image.astype(np.float64)
+    p1 = np.percentile(img, 1)
+    p60 = np.percentile(img, 60)
+    p999 = np.percentile(img, 99.9)
+
+    floor = p1
+    display_max = max(p999, floor + 1)
+    linear = np.clip((img - floor) / (display_max - floor), 0, 1)
+
+    # Compute gamma so p60 (upper background) maps to TARGET_BG
+    # Using p60 instead of p50 ensures the brighter background pixels
+    # are also suppressed, not just the median
+    ref_linear = np.clip((p60 - floor) / (display_max - floor), 1e-6, 1.0)
+    gamma = np.log(TARGET_BG) / np.log(ref_linear)
+    gamma = np.clip(gamma, 0.3, 3.0)  # sane bounds
+
+    return np.power(linear, gamma)
 
 
 def normalize_for_display(image: np.ndarray, display_max: float,
@@ -335,6 +361,17 @@ class ColocalizationAnalyzer:
 
         else:
             raise ValueError(f"Unknown background method: {self.background_method}")
+
+        # Store background std for z-score classification
+        # Use only below-background pixels to avoid signal contamination.
+        # The background estimate itself is robust (GMM), but std of ALL
+        # tissue pixels is inflated by bright signal areas.
+        below_bg = tissue_pixels[tissue_pixels <= background]
+        if len(below_bg) > 10:
+            self._background_std = float(np.std(below_bg))
+        else:
+            self._background_std = float(np.std(tissue_pixels))
+        self._tissue_pixels = tissue_pixels  # keep for diagnostics
 
         return float(background)
 
@@ -801,23 +838,38 @@ class ColocalizationAnalyzer:
             # Per-cell local signal-to-noise ratio classification.
             # For each cell, sample tissue background within local_snr_radius
             # (excluding ALL cell bodies), compute local mean and std, then
-            # classify based on how many std devs the cell's signal is above.
-            # This is the most robust method for extremely dim signals with
-            # spatially varying autofluorescence (e.g., brainstem vs cerebellum).
+            # score by how many std devs above local background.
+            #
+            # Reports continuous scores. Binary threshold set by Otsu on the
+            # positive scores (data-driven) or by the threshold parameter
+            # as a fallback minimum.
             if signal_image is None or nuclei_labels is None:
                 raise ValueError(
                     "local_snr method requires signal_image and nuclei_labels"
                 )
             ndimage = _get_ndimage()
-            from skimage.morphology import disk as _disk
+            from skimage.segmentation import expand_labels as _expand
 
             h, w = signal_image.shape
 
-            # Pre-compute cell body exclusion mask (dilate all nuclei)
-            all_nuclei = nuclei_labels > 0
-            cell_body_excl = ndimage.binary_dilation(
-                all_nuclei, structure=_disk(8)
-            )
+            # Pre-compute cell body exclusion mask using expand_labels.
+            # Generous exclusion (3x soma_dilation or 25px minimum) ensures
+            # signal from positive cell somas doesn't bleed into neighbors'
+            # local background estimates. The enhancer-driven eYFP signal
+            # can extend well beyond the nucleus boundary.
+            # Infer soma_dilation from DataFrame columns or use generous default
+            soma_dil = 8  # default if we can't infer
+            if 'cyto_area' in df.columns and 'nucleus_area' in df.columns:
+                # Estimate from first cell's ring size
+                avg_nuc = df['nucleus_area'].median()
+                avg_ring = df['cyto_area'].median()
+                if avg_nuc > 0:
+                    import math
+                    soma_dil = int(math.sqrt((avg_nuc + avg_ring) / math.pi)
+                                   - math.sqrt(avg_nuc / math.pi))
+            excl_radius = max(soma_dil * 3, 25)
+            expanded_all = _expand(nuclei_labels, distance=excl_radius)
+            cell_body_excl = expanded_all > 0
 
             local_snr_values = []
             local_bg_means = []
@@ -833,7 +885,7 @@ class ColocalizationAnalyzer:
                 x0 = max(0, cx - local_snr_radius)
                 x1 = min(w, cx + local_snr_radius)
 
-                # Local tissue pixels outside cell bodies
+                # Local tissue pixels outside ALL cell bodies
                 local_bg_mask = ~cell_body_excl[y0:y1, x0:x1]
                 local_pixels = signal_image[y0:y1, x0:x1][local_bg_mask]
 
@@ -843,8 +895,13 @@ class ColocalizationAnalyzer:
                         background, np.ndarray) else float(np.mean(background))
                     local_bg_std = max(local_bg_mean * 0.1, 1.0)
                 else:
+                    # Use below-median pixels for std (robust to signal bleed)
                     local_bg_mean = float(np.mean(local_pixels))
-                    local_bg_std = float(np.std(local_pixels))
+                    below_med = local_pixels[local_pixels <= np.median(local_pixels)]
+                    if len(below_med) > 5:
+                        local_bg_std = float(np.std(below_med))
+                    else:
+                        local_bg_std = float(np.std(local_pixels))
                     if local_bg_std < 1e-6:
                         local_bg_std = max(local_bg_mean * 0.1, 1.0)
 
@@ -858,11 +915,38 @@ class ColocalizationAnalyzer:
             df['local_snr'] = local_snr_values
             df['local_bg_mean'] = local_bg_means
             df['local_bg_std'] = local_bg_stds
-            df['is_positive'] = df['local_snr'] >= threshold
+            # Continuous score — always reported
+            df['positive_probability'] = np.clip(
+                np.array(local_snr_values) / 10.0, 0.0, 1.0
+            )
+
+            # Data-driven threshold via Otsu on positive scores
+            from skimage.filters import threshold_otsu
+            snr_arr = np.array(local_snr_values)
+            snr_positive = snr_arr[snr_arr > 0]
+            otsu_thresh = threshold
+            if len(snr_positive) >= 4:
+                try:
+                    otsu_val = threshold_otsu(snr_positive)
+                    if otsu_val >= 1.0:  # sanity: at least 1 sigma
+                        otsu_thresh = otsu_val
+                except ValueError:
+                    pass
+
+            df['is_positive'] = snr_arr >= otsu_thresh
+
+            self.adaptive_diagnostics = {
+                'method_used': 'local_snr_otsu',
+                'otsu_threshold': float(otsu_thresh),
+                'fallback_threshold': float(threshold),
+                'snr_max': float(snr_arr.max()) if len(snr_arr) > 0 else 0,
+                'snr_median': float(np.median(snr_arr)),
+                'n_above_zero': int(np.sum(snr_arr > 0)),
+            }
 
         elif method == 'adaptive':
             # Adaptive GMM on nuclear intensities to find subpopulations
-            df = self._classify_adaptive(df, intensity_col, threshold)
+            df = self._classify_adaptive_gmm(df, intensity_col, threshold)
 
         elif method == 'area_fraction':
             if signal_image is None or nuclei_labels is None:
@@ -893,12 +977,90 @@ class ColocalizationAnalyzer:
             cutoff = np.percentile(df['mean_intensity'], threshold)
             df['is_positive'] = df['mean_intensity'] >= cutoff
 
+        elif method == 'zscore':
+            df = self._classify_zscore(df, intensity_col, background)
+
         else:
             raise ValueError(f"Unknown classification method: {method}")
 
         return df
 
-    def _classify_adaptive(self, df, intensity_col, fallback_threshold):
+    def _classify_zscore(self, df, intensity_col, background):
+        """Classify cells by z-score above background.
+
+        Simple, transparent approach:
+        1. Compute z-score for each cell: (intensity - bg_mean) / bg_std
+        2. Try Otsu on z-scores to find natural break between populations
+        3. If Otsu fails (unimodal), use fixed z > 3.0 cutoff
+
+        No GMM, no cascade, no fallbacks. Works the same for nuclear
+        or cytoplasm ring measurements because z-scoring normalizes.
+        """
+        from skimage.filters import threshold_otsu
+
+        # Background stats — use per-cell background if available
+        if 'background' in df.columns:
+            bg_values = df['background'].values
+        elif isinstance(background, np.ndarray) and background.ndim == 2:
+            bg_values = np.full(len(df), float(np.mean(background)))
+        else:
+            bg_values = np.full(len(df), float(background))
+
+        # Compute z-scores: how many background-stds above background
+        # Use the background distribution's std (stored during estimation)
+        bg_std = getattr(self, '_background_std', None)
+        if bg_std is None or bg_std < 1e-6:
+            # Estimate std from the per-cell background values or use
+            # a fraction of the mean as fallback
+            bg_mean = float(np.mean(bg_values))
+            bg_std = max(bg_mean * 0.15, 1.0)
+
+        intensities = df[intensity_col].values
+        z_scores = (intensities - bg_values) / bg_std
+        df['z_score'] = z_scores
+
+        # Try Otsu on z-scores to find natural population break
+        z_positive = z_scores[z_scores > 0]  # only above-background cells
+        otsu_worked = False
+
+        if len(z_positive) >= 4:
+            try:
+                otsu_thresh = threshold_otsu(z_positive)
+                # Sanity: Otsu threshold should be at least 2.0 sigma
+                if otsu_thresh >= 2.0:
+                    z_threshold = otsu_thresh
+                    otsu_worked = True
+            except ValueError:
+                pass
+
+        if not otsu_worked:
+            # Fixed cutoff: 3 sigma above background
+            z_threshold = 3.0
+
+        df['is_positive'] = z_scores >= z_threshold
+        df['positive_probability'] = np.clip(
+            (z_scores - z_threshold) / max(z_threshold, 1.0) * 0.5 + 0.5,
+            0.0, 1.0
+        )
+        # Negative cells get probability based on distance below threshold
+        neg_mask = ~df['is_positive']
+        df.loc[neg_mask, 'positive_probability'] = np.clip(
+            z_scores[neg_mask] / z_threshold * 0.5, 0.0, 0.49
+        )
+
+        self.adaptive_diagnostics = {
+            'method_used': 'zscore_otsu' if otsu_worked else 'zscore_fixed',
+            'z_threshold': float(z_threshold),
+            'bg_std_used': float(bg_std),
+            'otsu_worked': otsu_worked,
+            'n_above_bg': int(np.sum(z_scores > 0)),
+            'z_score_max': float(z_scores.max()) if len(z_scores) > 0 else 0,
+            'z_score_median': float(np.median(z_scores)),
+        }
+
+        return df
+
+    def _classify_adaptive_gmm(self, df, intensity_col, fallback_threshold):
         """Classify cells by fitting GMM to their signal intensity distribution.
 
         Uses a cascade strategy to find bimodal subpopulations:
