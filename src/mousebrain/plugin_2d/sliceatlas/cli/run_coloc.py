@@ -203,13 +203,11 @@ def _run_single_pipeline(red_image, green_image, labels, args, t0, t_load, t_det
         'method': args.coloc_method,
         'threshold': args.coloc_threshold,
     }
+    if args.coloc_method in ('background_mean', 'local_snr', 'area_fraction'):
+        classify_kw['signal_image'] = green_image
+        classify_kw['nuclei_labels'] = labels
     if args.coloc_method == 'local_snr':
-        classify_kw['signal_image'] = green_image
-        classify_kw['nuclei_labels'] = labels
         classify_kw['local_snr_radius'] = getattr(args, 'local_snr_radius', 100)
-    elif args.coloc_method == 'area_fraction':
-        classify_kw['signal_image'] = green_image
-        classify_kw['nuclei_labels'] = labels
 
     classified = analyzer.classify_positive_negative(
         measurements, background, **classify_kw,
@@ -235,6 +233,23 @@ def _run_single_pipeline(red_image, green_image, labels, args, t0, t_load, t_det
                 print(f"    Ring rescue: {rr['n_rescued']} cells rescued "
                       f"(fc >= {rr['rescue_threshold_fc']:.2f}x, "
                       f"pos median fc={rr['pos_fc_median']:.2f}x)")
+        elif ad['method_used'] == 'background_mean':
+            print(f"    Background: mean={ad['background_mean']:.1f}, "
+                  f"std={ad['background_std']:.1f}")
+            print(f"    BG pixels: {ad['bg_pixels_used']} "
+                  f"(excl radius: {ad['bg_excl_radius']}px)")
+            n = ad['n_total']
+            print(f"    Sigma binning ({n} nuclei):")
+            print(f"      Above bg:     {ad['n_above_bg']:>4} "
+                  f"({100*ad['n_above_bg']/n:.1f}%)")
+            print(f"      Above 1 std:  {ad['n_above_1std']:>4} "
+                  f"({100*ad['n_above_1std']/n:.1f}%)")
+            print(f"      Above 1.5 std:{ad['n_above_1p5std']:>4} "
+                  f"({100*ad['n_above_1p5std']/n:.1f}%)")
+            print(f"      Above 2 std:  {ad['n_above_2std']:>4} "
+                  f"({100*ad['n_above_2std']/n:.1f}%)")
+            print(f"      Above 3 std:  {ad['n_above_3std']:>4} "
+                  f"({100*ad['n_above_3std']/n:.1f}%)")
         elif ad['method_used'] == 'local_snr_otsu':
             print(f"    Otsu threshold: {ad['otsu_threshold']:.2f} sigma")
             print(f"    SNR range: median={ad['snr_median']:.2f}, "
@@ -380,6 +395,7 @@ def _make_results_figure(red_image, green_image, labels, measurements,
 
     if measurements is not None and len(measurements) > 0:
         has_snr = 'local_snr' in measurements.columns
+        has_sigma = 'sigma_above_bg' in measurements.columns
         for _, row in measurements.iterrows():
             lbl = int(row['label'])
             label_fc[lbl] = row.get('fold_change', 0)
@@ -391,6 +407,18 @@ def _make_results_figure(red_image, green_image, labels, measurements,
                 if row.get('is_positive', False):
                     positive_labels.add(lbl)
                 elif snr > 0:
+                    borderline_labels.add(lbl)
+                else:
+                    negative_labels.add(lbl)
+            elif has_sigma:
+                # background_mean: tier by std devs above background
+                # lime = >1 std above bg (strong), orange = 0-1 std (weak),
+                # red = below bg
+                sigma = row['sigma_above_bg']
+                label_snr[lbl] = sigma  # reuse for display
+                if sigma > 1.0:
+                    positive_labels.add(lbl)
+                elif sigma > 0:
                     borderline_labels.add(lbl)
                 else:
                     negative_labels.add(lbl)
@@ -524,9 +552,10 @@ def _make_results_figure(red_image, green_image, labels, measurements,
                     colors=['lime'], alpha=0.7, antialiased=True)
         ax3.contour(pos_halo_smooth, levels=[0.5], linewidths=1.5,
                     colors=['yellow'], alpha=0.9, antialiased=True)
-    n_bord = len(borderline_labels)
+    n_bord_panel = len(borderline_labels)
     ax3.set_title(
-        f"Classified: {n_pos} pos / {n_bord} borderline / {n_neg} neg",
+        f"{len(positive_labels)} >1σ / {n_bord_panel} 0-1σ / "
+        f"{len(negative_labels)} <bg",
         color='white', fontsize=10,
     )
     ax3.axis('off')
@@ -561,11 +590,38 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     # Use nested gridspec for histogram on top, text below
     gs_stats = gs_top[0, 4].subgridspec(2, 1, height_ratios=[1, 1.2], hspace=0.3)
 
-    # Mini histogram — show SNR distribution when available, else fold-change
+    # Mini histogram — show sigma distribution for background_mean,
+    # SNR for local_snr, fold-change as fallback
     ax_hist = fig.add_subplot(gs_stats[0])
     ax_hist.set_facecolor('#1a1a1a')
+    has_sigma = measurements is not None and 'sigma_above_bg' in measurements.columns
     has_snr = measurements is not None and 'local_snr' in measurements.columns
-    if has_snr:
+    if has_sigma:
+        sig_vals = measurements['sigma_above_bg'].dropna().values
+        neg_sig = sig_vals[np.array([l in negative_labels for l in measurements['label']])]
+        bord_sig = sig_vals[np.array([l in borderline_labels for l in measurements['label']])]
+        pos_sig = sig_vals[np.array([l in positive_labels for l in measurements['label']])]
+        bins = np.linspace(min(sig_vals.min(), -3), max(sig_vals.max(), 5), 35)
+        if len(neg_sig) > 0:
+            ax_hist.hist(neg_sig, bins=bins, color='#ff4444', alpha=0.5,
+                         label=f'<bg ({len(neg_sig)})')
+        if len(bord_sig) > 0:
+            ax_hist.hist(bord_sig, bins=bins, color='#ffaa00', alpha=0.5,
+                         label=f'0-1σ ({len(bord_sig)})')
+        if len(pos_sig) > 0:
+            ax_hist.hist(pos_sig, bins=bins, color='lime', alpha=0.6,
+                         label=f'>1σ ({len(pos_sig)})')
+        ax_hist.axvline(0, color='white', ls='--', lw=1, alpha=0.6,
+                        label='bg mean')
+        ax_hist.axvline(1.0, color='yellow', ls=':', lw=0.8, alpha=0.5,
+                        label='1σ')
+        ax_hist.set_xlabel('σ above background', color='#ccc', fontsize=7)
+        ax_hist.tick_params(colors='#888', labelsize=6)
+        ax_hist.legend(fontsize=5, loc='upper right', facecolor='#333',
+                       edgecolor='#555', labelcolor='white')
+        for spine in ax_hist.spines.values():
+            spine.set_color('#555')
+    elif has_snr:
         snr_vals = measurements['local_snr'].dropna().values
         pos_snr = snr_vals[measurements['is_positive'].values == True]
         bord_snr = snr_vals[np.array([l in borderline_labels for l in measurements['label']])]
@@ -625,7 +681,23 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     adapt_text = ""
     ad = summary.get('adaptive_diagnostics')
     if ad:
-        if ad['method_used'] == 'gmm_2component':
+        if ad['method_used'] == 'background_mean':
+            n_t = ad['n_total']
+            adapt_text = (
+                f"bg={ad['background_mean']:.1f} "
+                f"std={ad['background_std']:.1f}\n"
+                f"  >bg:   {ad['n_above_bg']:>3} "
+                f"({100*ad['n_above_bg']/n_t:.0f}%)\n"
+                f"  >1σ:   {ad['n_above_1std']:>3} "
+                f"({100*ad['n_above_1std']/n_t:.0f}%)\n"
+                f"  >1.5σ: {ad['n_above_1p5std']:>3} "
+                f"({100*ad['n_above_1p5std']/n_t:.0f}%)\n"
+                f"  >2σ:   {ad['n_above_2std']:>3} "
+                f"({100*ad['n_above_2std']/n_t:.0f}%)\n"
+                f"  >3σ:   {ad['n_above_3std']:>3} "
+                f"({100*ad['n_above_3std']/n_t:.0f}%)\n"
+            )
+        elif ad['method_used'] == 'gmm_2component':
             adapt_text = (
                 f"GMM: neg={ad['negative_mean']:.0f}"
                 f"({ad['negative_weight']:.0%}) "
@@ -634,19 +706,16 @@ def _make_results_figure(red_image, green_image, labels, measurements,
                 f"Sep={ad['separation']:.1f} "
                 f"thresh={ad['adaptive_threshold']:.0f}\n"
             )
-        else:
-            adapt_text = f"Fallback: {ad.get('reason', 'N/A')}\n"
+        elif ad.get('reason'):
+            adapt_text = f"Fallback: {ad['reason']}\n"
     measure_type = 'soma' if args.soma_dilation > 0 else 'nuclear'
+    n_bord = len(borderline_labels)
     metrics_text = (
         f"{det_details['method']} detection\n"
-        f"  {labels.max()} nuclei, hysteresis "
-        f"{'ON' if det_details.get('use_hysteresis') else 'OFF'}\n\n"
-        f"{args.coloc_method} coloc\n"
-        f"  {n_pos}/{n_pos+n_neg} pos ({frac:.1f}%)\n"
-        f"  bg={summary['background_used']:.1f}\n"
-        f"  fc={summary['mean_fold_change']:.2f}\n"
+        f"  {labels.max()} nuclei\n\n"
+        f"{args.coloc_method}\n"
         f"  {measure_type} measurement\n"
-        f"  {adapt_text}\n"
+        f"{adapt_text}\n"
         f"Pearson:  {coloc_metrics['pearson_r']:.3f}\n"
         f"M1(r>g):  {coloc_metrics['manders_m1']:.3f}\n"
         f"M2(g>r):  {coloc_metrics['manders_m2']:.3f}\n"
@@ -767,19 +836,19 @@ def _make_results_figure(red_image, green_image, labels, measurements,
             if n_crop_neg > 0:
                 stat_parts.append(f"{n_crop_neg} neg")
             stat_str = ", ".join(stat_parts)
-            # Primary cell title with SNR score
-            snr_val = label_snr.get(lbl)
+            # Primary cell title with sigma/SNR score
+            sigma_val = label_snr.get(lbl)  # sigma_above_bg or local_snr
             if is_pos:
-                primary_status = "POS"
+                primary_status = ">1σ"
                 primary_color = 'lime'
             elif lbl in borderline_labels:
-                primary_status = "BORD"
+                primary_status = "0-1σ"
                 primary_color = '#ffaa00'
             else:
-                primary_status = "NEG"
+                primary_status = "<bg"
                 primary_color = '#ff4444'
-            if snr_val is not None:
-                title_str = f"{primary_status} SNR={snr_val:.1f}"
+            if sigma_val is not None:
+                title_str = f"{primary_status} ({sigma_val:.1f}σ)"
             else:
                 fc = label_fc.get(lbl, 0)
                 title_str = f"{primary_status} fc={fc:.1f}x"
@@ -1576,14 +1645,17 @@ Examples:
     coloc.add_argument('--bg-dilation', type=int, default=10,
                        help='Background estimation dilation (default: 10)')
     coloc.add_argument('--coloc-method',
-                       choices=['zscore', 'adaptive', 'fold_change', 'area_fraction',
-                                'local_snr'],
-                       default='local_snr',
-                       help='Classification method (default: local_snr). '
-                       'local_snr: per-cell local background comparison with '
-                       'Otsu threshold (recommended for dim enhancer-driven signals). '
-                       'zscore: global z-score + Otsu threshold. '
-                       'adaptive: GMM cascade (legacy).')
+                       choices=['background_mean', 'zscore', 'adaptive',
+                                'fold_change', 'area_fraction', 'local_snr'],
+                       default='background_mean',
+                       help='Classification method. '
+                       'DEFAULT: background_mean — active method under '
+                       'development. Computes tissue background mean (excluding '
+                       'black areas + dilated somas) and classifies green ROI '
+                       'above that mean as positive. All other methods are '
+                       'retained for comparison during development: '
+                       'local_snr, zscore, adaptive (GMM), fold_change, '
+                       'area_fraction.')
     coloc.add_argument('--coloc-threshold', type=float, default=2.0,
                        help='Minimum threshold for local_snr (default: 2.0 sigma). '
                        'Otsu overrides this if it finds a higher natural break.')
