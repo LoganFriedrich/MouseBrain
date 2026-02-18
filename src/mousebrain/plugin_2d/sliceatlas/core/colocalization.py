@@ -859,10 +859,13 @@ class ColocalizationAnalyzer:
             ndimage = _get_ndimage()
             from skimage.segmentation import expand_labels as _expand
 
-            # Step 3a: tissue mask — exclude black/near-black areas
-            # Anything below p5 is likely slide or empty space
-            tissue_floor = np.percentile(signal_image, 5)
-            tissue_mask = signal_image > tissue_floor
+            # Step 3a: tissue mask — use nuclei-dilation to find actual
+            # brain tissue extent.  The old approach (signal_image > p5)
+            # included non-tissue pixels (slide, mounting medium) which
+            # diluted the background mean downward → false positives.
+            tissue_mask = self.estimate_tissue_mask(
+                nuclei_labels, dilation_iterations=20,
+            )
 
             # Step 3b: generous dilation to exclude ALL possible somas
             # Must be large enough that no cell body signal contaminates
