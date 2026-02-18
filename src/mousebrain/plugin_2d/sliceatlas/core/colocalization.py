@@ -756,6 +756,7 @@ class ColocalizationAnalyzer:
         nuclei_labels: Optional[np.ndarray] = None,
         area_fraction: float = 0.5,
         local_snr_radius: int = 100,
+        tissue_mask: Optional[np.ndarray] = None,
     ):
         """
         Classify each nucleus as positive or negative for signal.
@@ -859,13 +860,19 @@ class ColocalizationAnalyzer:
             ndimage = _get_ndimage()
             from skimage.segmentation import expand_labels as _expand
 
-            # Step 3a: tissue mask — use nuclei-dilation to find actual
-            # brain tissue extent.  The old approach (signal_image > p5)
-            # included non-tissue pixels (slide, mounting medium) which
-            # diluted the background mean downward → false positives.
-            tissue_mask = self.estimate_tissue_mask(
-                nuclei_labels, dilation_iterations=20,
-            )
+            # Step 3a: tissue mask — use caller-provided mask if available,
+            # otherwise fall back to Otsu on the green channel.
+            if tissue_mask is not None:
+                pass  # use the provided mask (typically from red channel)
+            else:
+                # Fallback: Otsu on green to separate tissue from slide.
+                # Better than p5 which included nearly everything.
+                from skimage.filters import threshold_otsu as _otsu
+                try:
+                    otsu_val = _otsu(signal_image)
+                    tissue_mask = signal_image > otsu_val
+                except ValueError:
+                    tissue_mask = signal_image > np.percentile(signal_image, 5)
 
             # Step 3b: generous dilation to exclude ALL possible somas
             # Must be large enough that no cell body signal contaminates

@@ -17,6 +17,9 @@ contributions:
     - id: connectome-pipeline.curation
       python_name: mousebrain.plugin_3d.curation_widget:CurationWidget
       title: Curation
+    - id: connectome-pipeline.cell-viewer-3d
+      python_name: mousebrain.plugin_3d.cell_viewer_3d:Cell3DViewer
+      title: 3D Cell Viewer
   widgets:
     - command: connectome-pipeline.dashboard
       display_name: 1. Pipeline Dashboard
@@ -28,3 +31,5 @@ contributions:
       display_name: 4. Experiments
     - command: connectome-pipeline.curation
       display_name: 5. Curation
+    - command: connectome-pipeline.cell-viewer-3d
+      display_name: 6. 3D Cell Viewer
