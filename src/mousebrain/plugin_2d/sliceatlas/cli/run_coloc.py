@@ -1663,9 +1663,11 @@ Examples:
     det.add_argument('--hysteresis-low', type=float, default=0.5,
                      help='Hysteresis low fraction (default: 0.5)')
     det.add_argument('--min-solidity', type=float, default=0.0,
-                     help='Min solidity filter (0=off, 0.7-0.8 typical for nuclei)')
-    det.add_argument('--min-circularity', type=float, default=0.3,
-                     help='Min circularity filter (default: 0.3, nuclei are round-ish)')
+                     help='Min solidity filter (default: 0 = disabled; at low resolution all '
+                          'small nuclei share the same pixelation-limited solidity ~0.784)')
+    det.add_argument('--min-circularity', type=float, default=0.0,
+                     help='Min circularity filter (default: 0 = disabled; most nuclei already '
+                          'have circularity ~0.98 at typical 2D slice resolution)')
 
     # Colocalization parameters
     coloc = parser.add_argument_group('Colocalization')
