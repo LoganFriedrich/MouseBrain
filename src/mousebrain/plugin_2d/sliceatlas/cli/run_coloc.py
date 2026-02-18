@@ -412,11 +412,11 @@ def _make_results_figure(red_image, green_image, labels, measurements,
                     negative_labels.add(lbl)
             elif has_sigma:
                 # background_mean: tier by std devs above background
-                # lime = >1 std above bg (strong), orange = 0-1 std (weak),
+                # cyan = >1.5 std above bg (positive), yellow = 0-1.5 std (borderline),
                 # red = below bg
                 sigma = row['sigma_above_bg']
                 label_snr[lbl] = sigma  # reuse for display
-                if sigma > 1.0:
+                if sigma > 1.5:
                     positive_labels.add(lbl)
                 elif sigma > 0:
                     borderline_labels.add(lbl)
@@ -441,19 +441,48 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     pos_mask = np.clip(pos_mask, 0, 1)
     bord_mask = np.clip(bord_mask, 0, 1)
     neg_mask = np.clip(neg_mask, 0, 1)
-    # Smooth for vector-quality contours
+    # Smooth for vector-quality contours (zoom panels still use these)
     pos_mask_smooth = _smooth_mask(pos_mask) if pos_mask.any() else pos_mask
     bord_mask_smooth = _smooth_mask(bord_mask) if bord_mask.any() else bord_mask
     neg_mask_smooth = _smooth_mask(neg_mask) if neg_mask.any() else neg_mask
     all_nuc_smooth = _smooth_mask((labels > 0).astype(np.float64))
 
-    # Halo ring for positive cells only
-    if pos_mask.any():
-        from skimage.morphology import binary_dilation, disk
-        pos_halo_binary = binary_dilation(pos_mask > 0.5, disk(8))
-        pos_halo_smooth = _smooth_mask(pos_halo_binary.astype(np.float64), sigma=1.5)
-    else:
-        pos_halo_smooth = pos_mask
+    # Per-cell boundary overlays for overview panels.
+    # Each cell gets its own dilated outline so adjacent cells show a clear
+    # gap between them, making it obvious they are separate detections.
+    from skimage.morphology import binary_dilation, disk
+    _dil_inner = disk(5)  # inner edge of ring (standoff from cell)
+    _dil_outer = disk(7)  # outer edge of ring (thin ring = outer - inner)
+
+    def _build_boundary_mask(label_set):
+        """Build a thin ring mask well outside each cell.
+
+        Two-step dilation: dilate far for outer edge, less for inner edge.
+        Ring = outer - inner, giving a ~2px-wide ring sitting 5px away
+        from the cell.  Each cell processed individually to preserve gaps.
+        """
+        h, w = labels.shape
+        mask = np.zeros((h, w), dtype=bool)
+        for lbl in label_set:
+            cell = (labels == lbl)
+            inner = binary_dilation(cell, _dil_inner)
+            outer = binary_dilation(cell, _dil_outer)
+            mask |= (outer & ~inner)
+        return mask
+
+    def _blend_boundary(rgb_img, mask, color_rgb, alpha=0.6):
+        """Alpha-blend colored boundary pixels directly into an RGB image."""
+        out = rgb_img.copy()
+        for c in range(3):
+            out[mask, c] = out[mask, c] * (1 - alpha) + color_rgb[c] * alpha
+        return out
+
+    all_labels = set(int(l) for l in np.unique(labels) if l > 0)
+    # Build per-cell boundary masks (rings around each cell)
+    bnd_all = _build_boundary_mask(all_labels)
+    bnd_pos = _build_boundary_mask(positive_labels)
+    bnd_bord = _build_boundary_mask(borderline_labels)
+    bnd_neg = _build_boundary_mask(negative_labels)
 
     # Get nucleus regions for zoom panels
     props = regionprops(labels)
@@ -482,12 +511,13 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     neg_props_sorted = sorted(
         [p for p in props if p.label in negative_labels], key=lambda p: -p.area)
 
-    # Pick spread-out cells: up to 4 positive + 2 negative
+    # Pick spread-out cells: 3 positive + 3 negative (guaranteed examples of both)
     min_sep = zoom_pad * 2  # boxes must not overlap
-    zoom_pos = _pick_spread_cells(pos_props_sorted, 4, min_sep)
-    # For negative, also avoid overlap with already-picked positive
+    zoom_pos = _pick_spread_cells(pos_props_sorted, 3, min_sep)
+    zoom_neg = _pick_spread_cells(neg_props_sorted, 3, min_sep)
+    # Merge, avoiding spatial overlap between the two sets
     all_picked = list(zoom_pos)
-    for p in neg_props_sorted:
+    for p in zoom_neg:
         cy, cx = p.centroid
         too_close = any(
             abs(cy - q.centroid[0]) < min_sep and abs(cx - q.centroid[1]) < min_sep
@@ -495,8 +525,19 @@ def _make_results_figure(red_image, green_image, labels, measurements,
         )
         if not too_close:
             all_picked.append(p)
+    # If we have room, fill remaining slots from whichever has more
+    remaining = [p for p in pos_props_sorted + neg_props_sorted
+                 if p not in all_picked]
+    for p in remaining:
         if len(all_picked) >= 6:
             break
+        cy, cx = p.centroid
+        too_close = any(
+            abs(cy - q.centroid[0]) < min_sep and abs(cx - q.centroid[1]) < min_sep
+            for q in all_picked
+        )
+        if not too_close:
+            all_picked.append(p)
     zoom_props_final = all_picked[:6]
     n_zoom = len(zoom_props_final)
 
@@ -519,39 +560,37 @@ def _make_results_figure(red_image, green_image, labels, measurements,
 
     h, w = labels.shape
 
-    # Panel 1: Magenta channel — clean, no contours
+    # Panel 1: Magenta channel — per-cell cyan ring frames
     ax1 = fig.add_subplot(gs_top[0, 0])
-    red_rgb = np.stack([r, np.zeros_like(r), r], axis=-1)
-    ax1.imshow(np.clip(red_rgb, 0, 1))
+    red_rgb = np.clip(np.stack([r, np.zeros_like(r), r], axis=-1), 0, 1)
+    p1 = _blend_boundary(red_rgb, bnd_all, (0, 1, 1), alpha=0.3)
+    ax1.imshow(p1)
     ax1.set_title(f"Nuclear ({labels.max()} nuclei)", color='white', fontsize=10)
     ax1.axis('off')
 
-    # Panel 2: Green channel — clean, no contours
+    # Panel 2: Green channel — per-cell magenta ring frames (positive only)
     ax2 = fig.add_subplot(gs_top[0, 1])
-    grn_rgb = np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1)
-    ax2.imshow(np.clip(grn_rgb, 0, 1))
-    ax2.set_title("Signal (green)", color='white', fontsize=10)
+    grn_rgb = np.clip(np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1), 0, 1)
+    p2 = _blend_boundary(grn_rgb, bnd_pos, (1, 0, 1), alpha=0.3)
+    ax2.imshow(p2)
+    ax2.set_title(f"Signal ({n_pos} colocalized)", color='white', fontsize=10)
     ax2.axis('off')
 
-    # Panel 3: Clean composite — no contours, see the raw overlap
+    # Panel 3: Composite — per-cell white ring frames (subtle)
     ax3 = fig.add_subplot(gs_top[0, 2])
-    ax3.imshow(np.clip(composite, 0, 1))
+    p3 = _blend_boundary(np.clip(composite, 0, 1), bnd_all, (1, 1, 1), alpha=0.2)
+    ax3.imshow(p3)
     ax3.set_title("Composite", color='white', fontsize=10)
     ax3.axis('off')
 
-    # Panel 4: Classification overlay + zoom boxes
+    # Panel 4: Classification — per-cell tier-colored ring frames
     n_bord_panel = len(borderline_labels)
     ax4 = fig.add_subplot(gs_top[0, 3])
-    ax4.imshow(np.clip(composite, 0, 1))
-    if neg_mask.any():
-        ax4.contour(neg_mask_smooth, levels=[0.5], linewidths=0.3,
-                    colors=['#ff4444'], alpha=0.3, antialiased=True)
-    if bord_mask.any():
-        ax4.contour(bord_mask_smooth, levels=[0.5], linewidths=0.4,
-                    colors=['#ffaa00'], alpha=0.5, antialiased=True)
-    if pos_mask.any():
-        ax4.contour(pos_mask_smooth, levels=[0.5], linewidths=0.5,
-                    colors=['lime'], alpha=0.6, antialiased=True)
+    p4 = np.clip(composite.copy(), 0, 1)
+    p4 = _blend_boundary(p4, bnd_neg, (1, 0.27, 0.27), alpha=0.25)
+    p4 = _blend_boundary(p4, bnd_bord, (1, 0.67, 0), alpha=0.3)
+    p4 = _blend_boundary(p4, bnd_pos, (0, 1, 1), alpha=0.55)
+    ax4.imshow(p4)
     # Non-overlapping zoom rectangles
     for i, prop in enumerate(zoom_props_final):
         cy, cx = prop.centroid
@@ -564,7 +603,7 @@ def _make_results_figure(red_image, green_image, labels, measurements,
         ax4.text(x0 + 2, y0 - 2, str(i + 1), color='yellow', fontsize=8,
                  va='bottom', fontweight='bold')
     ax4.set_title(
-        f"{len(positive_labels)} >1σ / {n_bord_panel} 0-1σ / "
+        f"{len(positive_labels)} >1.5σ / {n_bord_panel} 0-1.5σ / "
         f"{len(negative_labels)} <bg",
         color='white', fontsize=10,
     )
@@ -591,14 +630,14 @@ def _make_results_figure(red_image, green_image, labels, measurements,
                          label=f'<bg ({len(neg_sig)})')
         if len(bord_sig) > 0:
             ax_hist.hist(bord_sig, bins=bins, color='#ffaa00', alpha=0.5,
-                         label=f'0-1σ ({len(bord_sig)})')
+                         label=f'0-1.5σ ({len(bord_sig)})')
         if len(pos_sig) > 0:
-            ax_hist.hist(pos_sig, bins=bins, color='lime', alpha=0.6,
-                         label=f'>1σ ({len(pos_sig)})')
+            ax_hist.hist(pos_sig, bins=bins, color='cyan', alpha=0.6,
+                         label=f'>1.5σ ({len(pos_sig)})')
         ax_hist.axvline(0, color='white', ls='--', lw=1, alpha=0.6,
                         label='bg mean')
-        ax_hist.axvline(1.0, color='yellow', ls=':', lw=0.8, alpha=0.5,
-                        label='1σ')
+        ax_hist.axvline(1.5, color='cyan', ls=':', lw=0.8, alpha=0.5,
+                        label='1.5σ')
         ax_hist.set_xlabel('σ above background', color='#ccc', fontsize=7)
         ax_hist.tick_params(colors='#888', labelsize=6)
         ax_hist.legend(fontsize=5, loc='upper right', facecolor='#333',
@@ -791,26 +830,26 @@ def _make_results_figure(red_image, green_image, labels, measurements,
             ax_r.set_title(f"#{i+1} Red", color='white', fontsize=9)
             ax_r.axis('off')
 
-            # Green channel zoom — contours trace actual green signal (not nuclei)
+            # Green channel zoom — nuclear ROI outlines (from red detection)
             ax_g = fig.add_subplot(gs_bot[row, col + 1])
             grn_crop_rgb = np.stack([np.zeros_like(g_crop), g_crop, np.zeros_like(g_crop)], axis=-1)
             ax_g.imshow(np.clip(grn_crop_rgb, 0, 1))
-            for gmask, _ in green_contours:
-                ax_g.contour(gmask, levels=[0.5], linewidths=0.5,
-                             colors=['cyan'], alpha=0.7, antialiased=True)
+            for cmask, lbl_pos, _ in cell_contours:
+                ax_g.contour(cmask, levels=[0.5], linewidths=0.5,
+                             colors=['magenta'], alpha=0.5, antialiased=True)
             ax_g.set_title(f"Green", color='white', fontsize=9)
             ax_g.axis('off')
 
-            # Composite zoom — 3-tier contours: pos=lime, borderline=orange, neg=red
+            # Composite zoom — 3-tier contours (colors contrast both channels)
             ax_c = fig.add_subplot(gs_bot[row, col + 2])
             ax_c.imshow(np.clip(comp_crop, 0, 1))
             for cmask, lbl_pos, crop_lbl_id in cell_contours:
                 if lbl_pos:
-                    cc, lw = 'lime', 0.6
+                    cc, lw = 'cyan', 1.5
                 elif crop_lbl_id in borderline_labels:
-                    cc, lw = '#ffaa00', 0.5
+                    cc, lw = 'yellow', 0.5
                 else:
-                    cc, lw = '#ff4444', 0.3
+                    cc, lw = 'white', 0.4
                 ax_c.contour(cmask, levels=[0.5], linewidths=lw,
                              colors=[cc], alpha=0.7, antialiased=True)
             # Stats text
@@ -823,14 +862,14 @@ def _make_results_figure(red_image, green_image, labels, measurements,
             # Primary cell title with sigma/SNR score
             sigma_val = label_snr.get(lbl)  # sigma_above_bg or local_snr
             if is_pos:
-                primary_status = ">1σ"
-                primary_color = 'lime'
+                primary_status = ">1.5σ"
+                primary_color = 'cyan'
             elif lbl in borderline_labels:
-                primary_status = "0-1σ"
-                primary_color = '#ffaa00'
+                primary_status = "0-1.5σ"
+                primary_color = 'yellow'
             else:
                 primary_status = "<bg"
-                primary_color = '#ff4444'
+                primary_color = 'white'
             if sigma_val is not None:
                 title_str = f"{primary_status} ({sigma_val:.1f}σ)"
             else:
@@ -1150,69 +1189,75 @@ def _make_dual_results_figure(red_image, green_image, labels, measurements,
                               left=0.02, right=0.98, wspace=0.04,
                               width_ratios=[1, 1, 1, 1, 0.7])
 
-    OVR_LW = 0.4   # overview contour linewidth (thin — don't obscure data)
-    OVR_ALPHA = 0.3  # overview contour alpha (transparent — see through)
+    # ── Per-cell standoff ring boundaries (same approach as single-channel) ──
+    from skimage.morphology import binary_dilation as _bd, disk as _dk
+    _dil_in = _dk(5)   # inner edge (standoff from cell)
+    _dil_out = _dk(7)  # outer edge (thin ring = outer - inner)
 
-    # Smooth all masks for vector-quality contour rendering
-    all_nuc_smooth = _smooth_mask(all_nuc_mask)
-    red_pos_smooth = _smooth_mask(red_pos_mask) if red_pos_mask.any() else red_pos_mask
-    green_pos_smooth = _smooth_mask(green_pos_mask) if green_pos_mask.any() else green_pos_mask
+    def _dual_boundary_mask(label_set):
+        """Thin ring mask well outside each cell (preserves gaps)."""
+        mask = np.zeros(labels.shape, dtype=bool)
+        for lbl in label_set:
+            cell = (labels == lbl)
+            mask |= (_bd(cell, _dil_out) & ~_bd(cell, _dil_in))
+        return mask
 
-    # Panel 1: Magenta channel — all detected nuclei (cyan vector contours)
+    def _dual_blend(rgb_img, mask, color_rgb, alpha=0.3):
+        """Alpha-blend colored boundary into RGB image."""
+        out = rgb_img.copy()
+        for c in range(3):
+            out[mask, c] = out[mask, c] * (1 - alpha) + color_rgb[c] * alpha
+        return out
+
+    # Label sets by classification
+    all_lbl = set(int(l) for l in np.unique(labels) if l > 0)
+    red_pos_lbls = {lbl for lbl, cat in label_cat.items() if cat in ('dual', 'red_only')}
+    grn_pos_lbls = {lbl for lbl, cat in label_cat.items() if cat in ('dual', 'green_only')}
+    dual_lbls = {lbl for lbl, cat in label_cat.items() if cat == 'dual'}
+    neither_lbls = {lbl for lbl, cat in label_cat.items() if cat == 'neither'}
+
+    bnd_all = _dual_boundary_mask(all_lbl)
+    bnd_red = _dual_boundary_mask(red_pos_lbls)
+    bnd_grn = _dual_boundary_mask(grn_pos_lbls)
+    bnd_dual = _dual_boundary_mask(dual_lbls)
+    bnd_neither = _dual_boundary_mask(neither_lbls)
+
+    # Panel 1: Magenta channel — per-cell cyan ring frames
     ax1 = fig.add_subplot(gs_top[0, 0])
-    red_rgb = np.stack([r, np.zeros_like(r), r], axis=-1)
-    ax1.imshow(np.clip(red_rgb, 0, 1))
-    ax1.contour(all_nuc_smooth, levels=[0.5], linewidths=OVR_LW,
-                colors=['cyan'], alpha=OVR_ALPHA, antialiased=True)
+    red_rgb = np.clip(np.stack([r, np.zeros_like(r), r], axis=-1), 0, 1)
+    p1 = _dual_blend(red_rgb, bnd_all, (0, 1, 1), alpha=0.3)
+    ax1.imshow(p1)
     ax1.set_title(f"Magenta / mCherry: {labels.max()} nuclei",
                   color='#FF55FF', fontsize=10)
     ax1.axis('off')
     _add_scale_bar(ax1, pixel_um)
 
-    # Panel 2: Green channel — nucleus + green-positive soma contours
+    # Panel 2: Green channel — per-cell magenta rings (signal indicator)
     ax2 = fig.add_subplot(gs_top[0, 1])
-    grn_rgb = np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1)
-    ax2.imshow(np.clip(grn_rgb, 0, 1))
-    ax2.contour(all_nuc_smooth, levels=[0.5], linewidths=0.3,
-                colors=['magenta'], alpha=0.35, antialiased=True)
-    if green_pos_mask.any():
-        ax2.contour(green_pos_smooth, levels=[0.5], linewidths=OVR_LW,
-                    colors=['#55FF55'], alpha=0.6, antialiased=True)
-    ax2.set_title("Green / eYFP", color='#55FF55', fontsize=10)
+    grn_rgb = np.clip(np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1), 0, 1)
+    p2 = _dual_blend(grn_rgb, bnd_grn, (1, 0, 1), alpha=0.3)
+    ax2.imshow(p2)
+    n_grn = len(grn_pos_lbls)
+    ax2.set_title(f"Green / eYFP ({n_grn} signal)", color='#55FF55', fontsize=10)
     ax2.axis('off')
     _add_scale_bar(ax2, pixel_um)
 
-    # Panel 3: Clean composite (no outlines)
+    # Panel 3: Composite — per-cell white rings (subtle)
     ax3 = fig.add_subplot(gs_top[0, 2])
-    ax3.imshow(np.clip(composite, 0, 1))
+    p3 = _dual_blend(np.clip(composite, 0, 1), bnd_all, (1, 1, 1), alpha=0.2)
+    ax3.imshow(p3)
     ax3.set_title("Composite", color='white', fontsize=10)
     ax3.axis('off')
     _add_scale_bar(ax3, pixel_um)
 
-    # Panel 4: Classification — vector contours for each channel + dual dots
+    # Panel 4: Classification — tier-colored rings + zoom boxes
     ax4 = fig.add_subplot(gs_top[0, 3])
-    ax4.imshow(np.clip(composite, 0, 1))
-    if red_pos_mask.any():
-        ax4.contour(red_pos_smooth, levels=[0.5], linewidths=OVR_LW,
-                    colors=['#FF55FF'], alpha=0.6, antialiased=True)
-    if green_pos_mask.any():
-        ax4.contour(green_pos_smooth, levels=[0.5], linewidths=OVR_LW,
-                    colors=['#55FF55'], alpha=0.6, antialiased=True,
-                    linestyles='dashed')
-    # Dual-positive arrows — point toward each colocalized cell from offset
-    # shrinkB keeps the arrowhead AWAY from the cell so it doesn't obscure it
-    for i_arrow, (cy, cx) in enumerate(dual_centroids):
-        # Alternate arrow direction to reduce overlap
-        angle = (i_arrow % 4) * 90 + 45  # 45, 135, 225, 315 degrees
-        dx = 35 * np.cos(np.radians(angle))
-        dy = 35 * np.sin(np.radians(angle))
-        ax4.annotate(
-            '', xy=(cx, cy), xytext=(cx + dx, cy + dy),
-            arrowprops=dict(
-                arrowstyle='->', color='yellow', lw=1.5,
-                shrinkA=0, shrinkB=10,
-            ),
-        )
+    p4 = np.clip(composite.copy(), 0, 1)
+    p4 = _dual_blend(p4, bnd_neither, (0.53, 0.53, 0.53), alpha=0.2)  # gray
+    p4 = _dual_blend(p4, bnd_red, (1, 0.33, 1), alpha=0.3)             # magenta
+    p4 = _dual_blend(p4, bnd_grn, (0.33, 1, 0.33), alpha=0.3)          # green
+    p4 = _dual_blend(p4, bnd_dual, (1, 1, 0), alpha=0.4)               # yellow
+    ax4.imshow(p4)
     # Zoom region boxes
     for i, prop in enumerate(props[:n_zoom]):
         cy, cx = prop.centroid

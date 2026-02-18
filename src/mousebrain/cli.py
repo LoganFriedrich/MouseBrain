@@ -100,7 +100,7 @@ def show_paths():
 def check_dependencies():
     """Check that all required dependencies are available, grouped by install extra."""
     from mousebrain import __version__
-    print(f"BrainTools v{__version__} — Dependency Check")
+    print(f"BrainTools v{__version__} -- Dependency Check")
     print("=" * 55)
 
     # Core (always required)

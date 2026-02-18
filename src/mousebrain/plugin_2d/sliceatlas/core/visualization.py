@@ -46,12 +46,6 @@ def _normalize_channel(channel, gamma=0.7, pmin=0.5, pmax=99.5,
     return img
 
 
-# Display standard constants — canonical source:
-# mousebrain.plugin_2d.sliceatlas.core.colocalization
-_DISP_RED_FLOOR, _DISP_RED_MAX = 0, 250
-_DISP_GRN_FLOOR, _DISP_GRN_MAX = 200, 450
-
-
 def _make_composite(red_channel=None, green_channel=None, gamma=0.7,
                     use_standard_display=False):
     """
@@ -60,31 +54,31 @@ def _make_composite(red_channel=None, green_channel=None, gamma=0.7,
     Pseudocolor: Magenta (R+B) for red channel, Green for green channel.
     Where both overlap → white. Colorblind-friendly.
 
-    use_standard_display=True uses fixed display ranges instead of
-    percentile-based normalization (recommended for dual-channel ENCR data).
+    use_standard_display=True uses per-image auto-normalization from
+    colocalization.normalize_for_display_auto.
     """
+    if use_standard_display:
+        from mousebrain.plugin_2d.sliceatlas.core.colocalization import (
+            normalize_for_display_auto,
+        )
+
     if red_channel is not None and green_channel is not None:
         if use_standard_display:
-            r = _normalize_channel(red_channel, display_max=_DISP_RED_MAX,
-                                   floor=_DISP_RED_FLOOR)
-            g = _normalize_channel(green_channel, display_max=_DISP_GRN_MAX,
-                                   floor=_DISP_GRN_FLOOR)
+            r = normalize_for_display_auto(red_channel, channel='red')
+            g = normalize_for_display_auto(green_channel, channel='green')
         else:
             r = _normalize_channel(red_channel, gamma=gamma)
             g = _normalize_channel(green_channel, gamma=gamma)
-        # Magenta + Green composite (white where both overlap)
         return np.stack([r, g, r], axis=-1)
     elif green_channel is not None:
         if use_standard_display:
-            g = _normalize_channel(green_channel, display_max=_DISP_GRN_MAX,
-                                   floor=_DISP_GRN_FLOOR)
+            g = normalize_for_display_auto(green_channel, channel='green')
         else:
             g = _normalize_channel(green_channel, gamma=gamma)
         return np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1)
     elif red_channel is not None:
         if use_standard_display:
-            r = _normalize_channel(red_channel, display_max=_DISP_RED_MAX,
-                                   floor=_DISP_RED_FLOOR)
+            r = normalize_for_display_auto(red_channel, channel='red')
         else:
             r = _normalize_channel(red_channel, gamma=gamma)
         return np.stack([r, np.zeros_like(r), r], axis=-1)

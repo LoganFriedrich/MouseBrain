@@ -1151,7 +1151,7 @@ Examples:
     if args.stats:
         stats = tracker.get_statistics()
         print(f"\nTotal calibration runs: {stats['total']}")
-        print(f"Rated: {stats['rated']} (avg: {stats['avg_rating']:.1f}★)")
+        print(f"Rated: {stats['rated']} (avg: {stats['avg_rating']:.1f}*)")
 
         print("\nBy type:")
         for t, count in sorted(stats['by_type'].items()):

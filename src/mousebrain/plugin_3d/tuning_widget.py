@@ -36,9 +36,15 @@ if str(_config_dir) not in sys.path:
     sys.path.insert(0, str(_config_dir))
 from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR, MODELS_DIR, DATA_SUMMARY_DIR
 
-# Try to import experiment tracker and comparison data
+# Repo root for finding scripts (scripts/utils/ lives here)
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent  # → MouseBrain/
+_utils_dir = _REPO_ROOT / "scripts" / "utils"
+if str(_utils_dir) not in sys.path:
+    sys.path.insert(0, str(_utils_dir))
+
+# Try to import experiment tracker (canonical location: mousebrain.tracker)
 try:
-    from experiment_tracker import ExperimentTracker
+    from mousebrain.tracker import ExperimentTracker
     TRACKER_AVAILABLE = True
 except ImportError:
     TRACKER_AVAILABLE = False
@@ -2184,7 +2190,7 @@ class TuningWidget(QWidget):
             current_z = int(current_step[0]) if len(current_step) >= 1 else total_z // 2
             z_start = max(0, current_z - 25)
             z_end = min(total_z, current_z + 25)
-            print(f"[Connectome] Scope: current slice ±25 (Z {z_start}-{z_end}, centered on {current_z})")
+            print(f"[Connectome] Scope: current slice +/-25 (Z {z_start}-{z_end}, centered on {current_z})")
         elif self.scope_range.isChecked():
             # User-specified range
             z_start = self.test_z_start.value()
@@ -3863,6 +3869,59 @@ class TuningWidget(QWidget):
         content_layout.addWidget(viz_group)
 
         # =================================================================
+        # XML BATCH DISCOVERY AND MERGE
+        # =================================================================
+        xml_group = QGroupBox("Curated XML Batches")
+        xml_layout = QVBoxLayout()
+        xml_group.setLayout(xml_layout)
+
+        xml_layout.addWidget(QLabel(
+            "Discover and merge XML batches from curation sessions\n"
+            "that haven't been exported to TIFFs yet."
+        ))
+
+        scan_btn = QPushButton("Scan for XML Batches")
+        scan_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        scan_btn.clicked.connect(self._discover_xml_batches)
+        xml_layout.addWidget(scan_btn)
+
+        # XML batches table
+        self.xml_batches_table = QTableWidget()
+        self.xml_batches_table.setColumnCount(5)
+        self.xml_batches_table.setHorizontalHeaderLabels(
+            ["Select", "Brain", "Date", "Cells", "Non-Cells"]
+        )
+        self.xml_batches_table.setMinimumHeight(100)
+        self.xml_batches_table.setMaximumHeight(200)
+        self.xml_batches_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.xml_batches_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.xml_batches_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.xml_batches_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.xml_batches_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.xml_batches_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        xml_layout.addWidget(self.xml_batches_table)
+
+        self.xml_batch_summary_label = QLabel("")
+        self.xml_batch_summary_label.setStyleSheet("color: #2196F3; font-style: italic;")
+        xml_layout.addWidget(self.xml_batch_summary_label)
+
+        merge_xml_btn = QPushButton("Merge Selected into Training Layers")
+        merge_xml_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 6px;")
+        merge_xml_btn.setToolTip(
+            "Load coordinates from all selected XML batches,\n"
+            "deduplicate, and put them in the training layers.\n"
+            "Then click 'Create Training Dataset' above to export TIFFs."
+        )
+        merge_xml_btn.clicked.connect(self._merge_xml_batches)
+        xml_layout.addWidget(merge_xml_btn)
+
+        xml_layout.addWidget(QLabel(
+            "<i>After merging, click 'Create Training Dataset' above to export TIFFs.</i>"
+        ))
+
+        content_layout.addWidget(xml_group)
+
+        # =================================================================
         # TRAINING DATA SOURCES (multi-brain accumulation)
         # =================================================================
         sources_group = QGroupBox("Training Data Sources")
@@ -3940,15 +3999,91 @@ class TuningWidget(QWidget):
             "100+ cells and non-cells each recommended."
         ))
 
+        # Override path
+        override_row = QHBoxLayout()
         self.training_data_path = QLineEdit()
         self.training_data_path.setPlaceholderText("Path to training data folder (override)...")
-        train_layout.addWidget(self.training_data_path)
-
+        override_row.addWidget(self.training_data_path)
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self.browse_training_data)
-        train_layout.addWidget(browse_btn)
+        override_row.addWidget(browse_btn)
+        train_layout.addLayout(override_row)
 
-        # Auto-classify option
+        # --- Training Parameters ---
+        param_group = QGroupBox("Training Parameters")
+        param_layout = QFormLayout()
+        param_group.setLayout(param_layout)
+
+        self.train_epochs_spin = QSpinBox()
+        self.train_epochs_spin.setRange(10, 500)
+        self.train_epochs_spin.setValue(100)
+        self.train_epochs_spin.setToolTip("Number of training epochs (passes over the data)")
+        param_layout.addRow("Epochs:", self.train_epochs_spin)
+
+        self.train_lr_spin = QDoubleSpinBox()
+        self.train_lr_spin.setRange(0.000001, 0.01)
+        self.train_lr_spin.setValue(0.00005)
+        self.train_lr_spin.setDecimals(6)
+        self.train_lr_spin.setSingleStep(0.00001)
+        self.train_lr_spin.setToolTip(
+            "Learning rate (how fast the network adjusts).\n"
+            "Lower = safer but slower. 0.00005 is a safe default.\n"
+            "Only increase if you have lots of training data (1000+)."
+        )
+        param_layout.addRow("Learning Rate:", self.train_lr_spin)
+
+        self.train_batch_spin = QSpinBox()
+        self.train_batch_spin.setRange(8, 128)
+        self.train_batch_spin.setValue(32)
+        self.train_batch_spin.setToolTip("Batch size (images per update). 32 is standard.")
+        param_layout.addRow("Batch Size:", self.train_batch_spin)
+
+        train_layout.addWidget(param_group)
+
+        # --- Safety Callbacks ---
+        safety_group = QGroupBox("Safety (recommended — leave ON)")
+        safety_layout = QVBoxLayout()
+        safety_group.setLayout(safety_layout)
+
+        self.train_early_stopping_cb = QCheckBox("Early stopping (stop if loss stops improving)")
+        self.train_early_stopping_cb.setChecked(True)
+        self.train_early_stopping_cb.setToolTip(
+            "Automatically stops training if the model hasn't improved\n"
+            "for 15 epochs. Saves your best model automatically.\n"
+            "This prevents wasting hours on training that's going nowhere."
+        )
+        safety_layout.addWidget(self.train_early_stopping_cb)
+
+        self.train_reduce_lr_cb = QCheckBox("Auto-reduce learning rate on plateau")
+        self.train_reduce_lr_cb.setChecked(True)
+        self.train_reduce_lr_cb.setToolTip(
+            "Automatically halves the learning rate when the model\n"
+            "stops improving. This helps the model fine-tune without\n"
+            "overshooting. Prevents the NaN explosion problem."
+        )
+        safety_layout.addWidget(self.train_reduce_lr_cb)
+
+        self.train_nan_guard_cb = QCheckBox("NaN guard (abort if training diverges)")
+        self.train_nan_guard_cb.setChecked(True)
+        self.train_nan_guard_cb.setToolTip(
+            "Immediately stops training if the loss becomes NaN\n"
+            "(not a number). This means the training has diverged\n"
+            "and continuing would produce a useless model."
+        )
+        safety_layout.addWidget(self.train_nan_guard_cb)
+
+        train_layout.addWidget(safety_group)
+
+        # --- Advanced Options ---
+        self.train_continue_cb = QCheckBox("Continue from most recent model")
+        self.train_continue_cb.setChecked(False)
+        self.train_continue_cb.setToolTip(
+            "Start training from where a previous model left off.\n"
+            "Uses the most recent model in the models directory.\n"
+            "Useful for incremental training with new data."
+        )
+        train_layout.addWidget(self.train_continue_cb)
+
         self.auto_classify_after_training = QCheckBox("Auto-classify after training completes")
         self.auto_classify_after_training.setChecked(True)
         self.auto_classify_after_training.setToolTip(
@@ -3958,8 +4093,12 @@ class TuningWidget(QWidget):
         )
         train_layout.addWidget(self.auto_classify_after_training)
 
+        # Start button
         start_train_btn = QPushButton("Start Training")
-        start_train_btn.setStyleSheet("background-color: #9C27B0; color: white; padding: 10px;")
+        start_train_btn.setStyleSheet(
+            "background-color: #9C27B0; color: white; padding: 10px; "
+            "font-weight: bold; font-size: 14px;"
+        )
         start_train_btn.clicked.connect(self.start_training)
         train_layout.addWidget(start_train_btn)
 
@@ -5560,6 +5699,262 @@ class TuningWidget(QWidget):
             self.training_data_path.setText(folder)
 
     # =================================================================
+    # XML BATCH DISCOVERY AND MERGE
+    # =================================================================
+
+    def _discover_xml_batches(self):
+        """Scan for all curated XML batches across brains and shared pools.
+
+        Finds timestamped curated_*.xml files in:
+        - BRAINS_ROOT/{mouse}/{brain}/training_data/cells/ and non_cells/
+        - MODELS_DIR/{paradigm}/training_data/
+        """
+        print("[DEBUG] Button clicked: _discover_xml_batches")
+        import re
+
+        self.xml_batches_table.setRowCount(0)
+        batches = []  # (brain_name, date_str, cells_xml, non_cells_xml, n_cells, n_non_cells)
+
+        # Helper: find matching cells/non-cells XML pairs
+        def find_xml_pairs(base_dir, source_name):
+            cells_dir = base_dir / "cells"
+            non_cells_dir = base_dir / "non_cells"
+
+            # Collect timestamped XML files from cells dir
+            cells_xmls = {}
+            if cells_dir.exists():
+                for xml_file in sorted(cells_dir.glob("curated_cells_*.xml")):
+                    # Extract timestamp from filename: curated_cells_20260216_082922.xml
+                    match = re.search(r'(\d{8}_\d{6})', xml_file.name)
+                    ts = match.group(1) if match else xml_file.stem
+                    cells_xmls[ts] = xml_file
+
+            # Collect timestamped XML files from non_cells dir
+            non_cells_xmls = {}
+            if non_cells_dir.exists():
+                for xml_file in sorted(non_cells_dir.glob("curated_non_cells_*.xml")):
+                    match = re.search(r'(\d{8}_\d{6})', xml_file.name)
+                    ts = match.group(1) if match else xml_file.stem
+                    non_cells_xmls[ts] = xml_file
+
+            # Also check for non-timestamped XML (auto-save files)
+            if cells_dir.exists():
+                auto_cells = cells_dir / "curated_cells.xml"
+                if auto_cells.exists():
+                    cells_xmls['auto'] = auto_cells
+            if non_cells_dir.exists():
+                auto_non = non_cells_dir / "curated_non_cells.xml"
+                if auto_non.exists():
+                    non_cells_xmls['auto'] = auto_non
+
+            # Also check base dir for auto-save files
+            auto_cells = base_dir / "curated_cells.xml"
+            if auto_cells.exists() and 'auto' not in cells_xmls:
+                cells_xmls['auto_base'] = auto_cells
+            auto_non = base_dir / "curated_non_cells.xml"
+            if auto_non.exists() and 'auto' not in non_cells_xmls:
+                non_cells_xmls['auto_base'] = auto_non
+
+            # Match pairs by timestamp, count coords
+            all_timestamps = set(list(cells_xmls.keys()) + list(non_cells_xmls.keys()))
+            for ts in sorted(all_timestamps):
+                cells_xml = cells_xmls.get(ts)
+                non_cells_xml = non_cells_xmls.get(ts)
+                n_cells = len(self._load_xml_coordinates(cells_xml)) if cells_xml else 0
+                n_non = len(self._load_xml_coordinates(non_cells_xml)) if non_cells_xml else 0
+
+                if n_cells == 0 and n_non == 0:
+                    continue
+
+                # Format date for display
+                if ts.startswith('auto'):
+                    date_str = "(auto-save)"
+                else:
+                    try:
+                        date_str = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                    except (IndexError, ValueError):
+                        date_str = ts
+
+                batches.append((source_name, date_str, cells_xml, non_cells_xml, n_cells, n_non))
+
+        # Scan per-brain training data
+        if BRAINS_ROOT.exists():
+            for mouse_dir in sorted(BRAINS_ROOT.iterdir()):
+                if not mouse_dir.is_dir():
+                    continue
+                for brain_dir in sorted(mouse_dir.iterdir()):
+                    if not brain_dir.is_dir():
+                        continue
+                    td = brain_dir / "training_data"
+                    if td.exists():
+                        find_xml_pairs(td, brain_dir.name)
+
+        # Scan shared pool
+        if MODELS_DIR.exists():
+            for paradigm_dir in sorted(MODELS_DIR.iterdir()):
+                if not paradigm_dir.is_dir():
+                    continue
+                td = paradigm_dir / "training_data"
+                if td.exists():
+                    find_xml_pairs(td, f"Shared: {paradigm_dir.name}")
+
+        # Populate table
+        self.xml_batches_table.setRowCount(len(batches))
+        self._xml_batch_data = batches  # Store for merge
+
+        total_cells = 0
+        total_non = 0
+
+        for row, (source, date_str, cells_xml, non_cells_xml, n_cells, n_non) in enumerate(batches):
+            # Checkbox
+            cb = QCheckBox()
+            cb.setChecked(True)
+            cb.stateChanged.connect(self._update_xml_batch_summary)
+            self.xml_batches_table.setCellWidget(row, 0, cb)
+
+            # Brain name
+            name_item = QTableWidgetItem(source)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
+            self.xml_batches_table.setItem(row, 1, name_item)
+
+            # Date
+            date_item = QTableWidgetItem(date_str)
+            date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
+            self.xml_batches_table.setItem(row, 2, date_item)
+
+            # Cells count
+            cells_item = QTableWidgetItem(str(n_cells))
+            cells_item.setFlags(cells_item.flags() & ~Qt.ItemIsEditable)
+            self.xml_batches_table.setItem(row, 3, cells_item)
+
+            # Non-cells count
+            non_item = QTableWidgetItem(str(n_non))
+            non_item.setFlags(non_item.flags() & ~Qt.ItemIsEditable)
+            self.xml_batches_table.setItem(row, 4, non_item)
+
+            total_cells += n_cells
+            total_non += n_non
+
+        self._update_xml_batch_summary()
+        print(f"[Connectome] Found {len(batches)} XML batch(es): {total_cells} cells, {total_non} non-cells")
+
+    def _update_xml_batch_summary(self):
+        """Update the XML batch summary label based on checked rows."""
+        if not hasattr(self, '_xml_batch_data'):
+            return
+
+        total_cells = 0
+        total_non = 0
+        n_checked = 0
+
+        for row in range(self.xml_batches_table.rowCount()):
+            cb = self.xml_batches_table.cellWidget(row, 0)
+            if cb and cb.isChecked():
+                n_checked += 1
+                if row < len(self._xml_batch_data):
+                    total_cells += self._xml_batch_data[row][4]
+                    total_non += self._xml_batch_data[row][5]
+
+        self.xml_batch_summary_label.setText(
+            f"Selected: {n_checked} batch(es) | "
+            f"{total_cells} cells, {total_non} non-cells (before dedup)"
+        )
+
+    def _merge_xml_batches(self):
+        """Merge selected XML batches into the training layers.
+
+        Loads coordinates from all checked XML files, deduplicates by (z,y,x),
+        and populates the 'Train: Cells' and 'Train: Non-Cells' napari layers.
+        """
+        print("[DEBUG] Button clicked: _merge_xml_batches")
+        import numpy as np
+
+        if not hasattr(self, '_xml_batch_data') or not self._xml_batch_data:
+            QMessageBox.warning(self, "No Batches",
+                "Click 'Scan for XML Batches' first to discover available data.")
+            return
+
+        if not self.current_brain:
+            QMessageBox.warning(self, "No Brain",
+                "Load a brain first so training layers can be created.")
+            return
+
+        # Collect coordinates from all checked batches
+        all_cells = []
+        all_non_cells = []
+
+        for row in range(self.xml_batches_table.rowCount()):
+            cb = self.xml_batches_table.cellWidget(row, 0)
+            if not cb or not cb.isChecked():
+                continue
+            if row >= len(self._xml_batch_data):
+                continue
+
+            _, _, cells_xml, non_cells_xml, _, _ = self._xml_batch_data[row]
+
+            if cells_xml:
+                coords = self._load_xml_coordinates(cells_xml)
+                if len(coords) > 0:
+                    all_cells.append(coords)
+
+            if non_cells_xml:
+                coords = self._load_xml_coordinates(non_cells_xml)
+                if len(coords) > 0:
+                    all_non_cells.append(coords)
+
+        # Merge and deduplicate
+        if all_cells:
+            merged_cells = np.vstack(all_cells)
+            # Deduplicate by (z, y, x) — round to int and use unique
+            merged_cells = np.unique(merged_cells.astype(int), axis=0).astype(float)
+        else:
+            merged_cells = np.array([]).reshape(0, 3)
+
+        if all_non_cells:
+            merged_non_cells = np.vstack(all_non_cells)
+            merged_non_cells = np.unique(merged_non_cells.astype(int), axis=0).astype(float)
+        else:
+            merged_non_cells = np.array([]).reshape(0, 3)
+
+        if len(merged_cells) == 0 and len(merged_non_cells) == 0:
+            QMessageBox.warning(self, "No Data",
+                "No coordinates found in selected XML batches.")
+            return
+
+        # Ensure training layers exist
+        self.create_training_layers()
+
+        # Populate layers
+        train_cells = self._get_layer_by_type('train_cells')
+        train_non_cells = self._get_layer_by_type('train_non_cells')
+
+        if train_cells and len(merged_cells) > 0:
+            train_cells.data = merged_cells
+            train_cells.name = f"Train: Cells ({len(merged_cells)})"
+
+        if train_non_cells and len(merged_non_cells) > 0:
+            train_non_cells.data = merged_non_cells
+            train_non_cells.name = f"Train: Non-Cells ({len(merged_non_cells)})"
+
+        self.refresh_training_data_counts()
+
+        # Report
+        n_batches = sum(1 for row in range(self.xml_batches_table.rowCount())
+                       if self.xml_batches_table.cellWidget(row, 0)
+                       and self.xml_batches_table.cellWidget(row, 0).isChecked())
+
+        QMessageBox.information(
+            self, "XML Batches Merged",
+            f"Merged {n_batches} batch(es) into training layers:\n\n"
+            f"Cells: {len(merged_cells)} unique coordinates\n"
+            f"Non-cells: {len(merged_non_cells)} unique coordinates\n\n"
+            f"Next step: Click 'Create Training Dataset' to export TIFFs,\n"
+            f"then 'Start Training' to train the network."
+        )
+        print(f"[Connectome] Merged {n_batches} XML batches: "
+              f"{len(merged_cells)} cells, {len(merged_non_cells)} non-cells")
+
+    # =================================================================
     # TRAINING DATA SOURCES - multi-brain accumulation
     # =================================================================
 
@@ -5917,10 +6312,14 @@ class TuningWidget(QWidget):
         """
         print("[DEBUG] Button clicked: start_training")
 
-        script = SCRIPTS_DIR / "util_train_model.py"
+        script = _REPO_ROOT / "scripts" / "utils" / "util_train_model.py"
+        if not script.exists():
+            # Fallback to SCRIPTS_DIR (legacy location)
+            script = SCRIPTS_DIR / "util_train_model.py"
         if not script.exists():
             QMessageBox.warning(self, "Error",
-                f"Training script not found:\n{script}")
+                f"Training script not found:\n{script}\n\n"
+                f"Searched:\n  {_REPO_ROOT / 'scripts' / 'utils'}\n  {SCRIPTS_DIR}")
             return
 
         # --- Strategy 1: Multi-source from training sources table ---
@@ -5985,6 +6384,32 @@ class TuningWidget(QWidget):
                 "--non-cells", str(non_cells_path)
             ]
             data_note = f"1 source: {n_cells} cells, {n_non_cells} non-cells"
+
+        # Add n_free_cpus to prevent Windows handle limit crash (max 63 handles)
+        import os as _os
+        n_cpus = _os.cpu_count() or 4
+        n_free = max(n_cpus - 30, 2)  # Keep workers well under 63
+        cmd.extend(["--n-free-cpus", str(n_free)])
+
+        # Add training hyperparameters from UI controls (if they exist)
+        if hasattr(self, 'train_epochs_spin'):
+            cmd.extend(["--epochs", str(self.train_epochs_spin.value())])
+        if hasattr(self, 'train_lr_spin'):
+            cmd.extend(["--learning-rate", str(self.train_lr_spin.value())])
+        if hasattr(self, 'train_batch_spin'):
+            cmd.extend(["--batch-size", str(self.train_batch_spin.value())])
+        # Safety flags
+        if hasattr(self, 'train_early_stopping_cb') and not self.train_early_stopping_cb.isChecked():
+            cmd.append("--no-early-stopping")
+        if hasattr(self, 'train_reduce_lr_cb') and not self.train_reduce_lr_cb.isChecked():
+            cmd.append("--no-reduce-lr")
+        if hasattr(self, 'train_nan_guard_cb') and not self.train_nan_guard_cb.isChecked():
+            cmd.append("--no-nan-guard")
+        # Continue from previous model
+        if hasattr(self, 'train_continue_cb') and self.train_continue_cb.isChecked():
+            model = self._find_most_recent_model()
+            if model:
+                cmd.extend(["--continue-from", str(model)])
 
         # Store current model count before training
         self._models_before_training = self._count_models()
@@ -7668,7 +8093,7 @@ class TuningWidget(QWidget):
                 )
                 print(f"    Region labels shape: {atlas_labels.shape}")
 
-            print(f"  ✓ Registration QC view ready")
+            print(f"  [OK] Registration QC view ready")
             self.brain_status_label.setText(f"Registration QC: {self.current_brain.name}")
             self.brain_status_label.setStyleSheet("color: #4CAF50;")
             return True
