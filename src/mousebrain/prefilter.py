@@ -656,7 +656,7 @@ def _view_in_napari(result: dict, registration_path: Path, brain_name: str):
             face_color='#FF0000', size=4, opacity=0.8,
         )
 
-    print(f"\nnapari viewer open — close window to exit.")
+    print(f"\nnapari viewer open -- close window to exit.")
     napari.run()
 
 

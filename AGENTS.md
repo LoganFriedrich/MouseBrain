@@ -44,3 +44,6 @@ from mousebrain.tracker import ExperimentTracker
 - `tuning_widget.py` is 10,000+ lines with 9 tabs. Be very careful with edits.
 - Install: `cd Tissue/MouseBrain && pip install -e ".[all]"`
 - Launch: `mousebrain` CLI command
+
+### Terminal Output: ASCII Only
+**NEVER use non-ASCII/Unicode characters in `print()` or `logging` calls.** Windows consoles crash on Unicode symbols (`UnicodeEncodeError`). Use ASCII replacements: `->` not arrows, `[OK]`/`[FAIL]`/`[!]` not check/x/warning symbols, `*` not stars, `+/-` not plus-minus. Qt widget text and matplotlib are fine. See root CLAUDE.md for the full replacement table.

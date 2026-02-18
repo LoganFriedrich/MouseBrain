@@ -45,12 +45,15 @@ except ImportError:
 
 SCRIPT_VERSION = "1.0.0"
 
-from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT
-from mousebrain.config import MODELS_DIR as DEFAULT_MODELS_DIR
+from mousebrain.config import BRAINS_ROOT, MODELS_DIR
+
+# Aliases for backward compat
+DEFAULT_BRAINGLOBE_ROOT = BRAINS_ROOT
+DEFAULT_MODELS_DIR = MODELS_DIR
 
 # Default training parameters
 DEFAULT_EPOCHS = 100
-DEFAULT_LEARNING_RATE = 0.0001
+DEFAULT_LEARNING_RATE = 0.00005
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_TEST_FRACTION = 0.1
 
@@ -63,6 +66,52 @@ def timestamp():
     return datetime.now().strftime("%H:%M:%S")
 
 
+def discover_training_yamls(paradigm: str) -> list:
+    """Auto-discover all training.yml files for a given paradigm (e.g. '1p625x_z4').
+
+    Searches:
+      1. Shared pool: MODELS_DIR/{paradigm}/training_data/training.yml
+      2. Per-brain:   BRAINS_ROOT/{mouse}/{brain}/training_data/training.yml
+         where {brain} ends with _{paradigm}
+
+    Returns list of Paths, shared pool first, then per-brain sorted alphabetically.
+    Only includes YAMLs whose cube directories actually contain TIFFs.
+    """
+    found = []
+
+    # 1. Shared model pool
+    shared = MODELS_DIR / paradigm / "training_data" / "training.yml"
+    if shared.exists():
+        found.append(shared)
+
+    # 2. Per-brain directories
+    per_brain = []
+    if BRAINS_ROOT.exists():
+        for mouse_dir in sorted(BRAINS_ROOT.iterdir()):
+            if not mouse_dir.is_dir():
+                continue
+            for brain_dir in sorted(mouse_dir.iterdir()):
+                if not brain_dir.is_dir():
+                    continue
+                if not brain_dir.name.endswith(f"_{paradigm}"):
+                    continue
+                yml = brain_dir / "training_data" / "training.yml"
+                if yml.exists():
+                    # Check that at least one cube dir has TIFFs
+                    cells_dir = brain_dir / "training_data" / "cells"
+                    non_cells_dir = brain_dir / "training_data" / "non_cells"
+                    has_data = False
+                    for d in [cells_dir, non_cells_dir]:
+                        if d.exists() and any(d.glob("*.tif")):
+                            has_data = True
+                            break
+                    if has_data:
+                        per_brain.append(yml)
+
+    found.extend(per_brain)
+    return found
+
+
 def run_cellfinder_train(
     yaml_paths: list,
     output_dir: Path,
@@ -73,9 +122,17 @@ def run_cellfinder_train(
     continue_from: Path = None,
     augment: bool = True,
     n_free_cpus: int = 2,
+    early_stopping: bool = True,
+    reduce_lr: bool = True,
+    nan_guard: bool = True,
+    patience: int = 15,
 ) -> tuple:
     """
-    Run cellfinder training using the BrainGlobe Python API directly.
+    Run cellfinder training with custom Keras callbacks for safety.
+
+    Uses cellfinder's internal components (model builder, data generators) but
+    runs model.fit() ourselves so we can add EarlyStopping, ReduceLROnPlateau,
+    and TerminateOnNaN callbacks.
 
     Args:
         yaml_paths: List of paths to training.yml config file(s)
@@ -86,14 +143,18 @@ def run_cellfinder_train(
         test_fraction: Fraction of data for testing
         continue_from: Path to existing model to continue training
         augment: Whether to use data augmentation
-        n_free_cpus: Number of CPUs to leave free (default: 2)
+        n_free_cpus: Number of CPUs to leave free
+        early_stopping: Enable early stopping when val_loss stops improving
+        reduce_lr: Enable learning rate reduction on plateau
+        nan_guard: Enable NaN termination guard
+        patience: Early stopping patience (epochs)
 
     Returns:
         (success, duration, best_loss, best_accuracy)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\n[{timestamp()}] Running cellfinder training via Python API...")
+    print(f"\n[{timestamp()}] Running cellfinder training with safety callbacks...")
     print(f"    YAML sources: {len(yaml_paths)}")
     for yp in yaml_paths:
         print(f"      - {yp}")
@@ -104,6 +165,9 @@ def run_cellfinder_train(
     print(f"    Test fraction: {test_fraction}")
     print(f"    n_free_cpus: {n_free_cpus}")
     print(f"    Augmentation: {augment}")
+    print(f"    Early stopping: {early_stopping} (patience={patience})")
+    print(f"    Reduce LR on plateau: {reduce_lr}")
+    print(f"    NaN guard: {nan_guard}")
     if continue_from:
         print(f"    Continue from: {continue_from}")
     print()
@@ -111,58 +175,301 @@ def run_cellfinder_train(
     start_time = time.time()
 
     try:
-        # Import the training module directly
-        from cellfinder.core.train.train_yml import run as train_run
+        return _run_with_callbacks(
+            yaml_paths, output_dir, epochs, learning_rate, batch_size,
+            test_fraction, continue_from, augment, n_free_cpus,
+            early_stopping, reduce_lr, nan_guard, patience,
+        )
+    except Exception as e:
+        print(f"\n[{timestamp()}] Custom training loop failed: {e}")
+        print(f"[{timestamp()}] Falling back to cellfinder's built-in training...")
+        try:
+            return _run_cellfinder_fallback(
+                yaml_paths, output_dir, epochs, learning_rate, batch_size,
+                test_fraction, continue_from, augment, n_free_cpus,
+            )
+        except Exception as e2:
+            import traceback
+            print(f"\n[{timestamp()}] ERROR during fallback training: {e2}")
+            traceback.print_exc()
+            return False, time.time() - start_time, None, None
 
-        # Call the Python API directly - this gives us better control
-        # Enable save_progress to write training.csv for monitoring
-        train_run(
-            output_dir=output_dir,
-            yaml_file=[str(p) for p in yaml_paths],
-            n_free_cpus=n_free_cpus,
-            trained_model=str(continue_from) if continue_from else None,
-            model_weights=None,  # Will use default
-            network_depth="50",
+
+def _run_with_callbacks(
+    yaml_paths, output_dir, epochs, learning_rate, batch_size,
+    test_fraction, continue_from, augment, n_free_cpus,
+    early_stopping, reduce_lr, nan_guard, patience,
+) -> tuple:
+    """Custom training loop with Keras callbacks for safety."""
+    import numpy as np
+
+    start_time = time.time()
+
+    # --- 1. Parse YAML to get data paths ---
+    # Accumulate signal/background file lists from all YAML sources
+    all_signal = []
+    all_background = []
+    all_labels = []
+
+    for yp in yaml_paths:
+        try:
+            import yaml as _yaml
+            with open(yp) as f:
+                config = _yaml.safe_load(f)
+        except ImportError:
+            # Manual YAML parsing fallback
+            config = {'data': []}
+            with open(yp) as f:
+                current_item = {}
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('- '):
+                        if current_item:
+                            config['data'].append(current_item)
+                        current_item = {}
+                        if ':' in line[2:]:
+                            key, val = line[2:].split(':', 1)
+                            current_item[key.strip()] = val.strip().strip("'\"")
+                    elif ':' in line and current_item is not None:
+                        key, val = line.split(':', 1)
+                        current_item[key.strip()] = val.strip().strip("'\"")
+                if current_item:
+                    config['data'].append(current_item)
+
+        for item in config.get('data', []):
+            cube_dir = Path(item.get('cube_dir', ''))
+            item_type = item.get('type', '')
+            signal_ch = int(item.get('signal_channel', 0))
+            bg_ch = int(item.get('bg_channel', 1))
+
+            if not cube_dir.exists():
+                print(f"[{timestamp()}] Warning: cube_dir not found: {cube_dir}")
+                continue
+
+            # Find all signal channel TIFFs
+            signal_files = sorted(cube_dir.glob(f"*Ch{signal_ch}.tif*"))
+            for sf in signal_files:
+                # Find matching background file
+                bg_name = sf.name.replace(f"Ch{signal_ch}.", f"Ch{bg_ch}.")
+                bf = sf.parent / bg_name
+                if bf.exists():
+                    all_signal.append(str(sf))
+                    all_background.append(str(bf))
+                    all_labels.append(1 if item_type == 'cell' else 0)
+
+    if not all_signal:
+        raise ValueError("No training data found in YAML sources")
+
+    labels_array = np.array(all_labels)
+    n_cells = int(np.sum(labels_array == 1))
+    n_non_cells = int(np.sum(labels_array == 0))
+    print(f"[{timestamp()}] Loaded {len(all_signal)} samples: {n_cells} cells, {n_non_cells} non-cells")
+
+    # --- 2. Split into train/validation ---
+    from sklearn.model_selection import train_test_split
+
+    (signal_train, signal_test,
+     bg_train, bg_test,
+     labels_train, labels_test) = train_test_split(
+        all_signal, all_background, all_labels,
+        test_size=test_fraction,
+        random_state=42,
+        stratify=all_labels,
+    )
+
+    print(f"[{timestamp()}] Train: {len(signal_train)} samples, Validation: {len(signal_test)} samples")
+
+    # --- 3. Build model ---
+    from cellfinder.core.classify.tools import get_model
+
+    if continue_from and Path(continue_from).exists():
+        print(f"[{timestamp()}] Loading model from: {continue_from}")
+        model = get_model(
+            existing_model=str(continue_from),
+            network_depth=None,
             learning_rate=learning_rate,
-            continue_training=bool(continue_from),
-            test_fraction=test_fraction,
-            batch_size=batch_size,
-            no_augment=not augment,
-            tensorboard=True,  # Enable TensorBoard for monitoring
-            save_weights=False,
-            no_save_checkpoints=False,
-            save_progress=True,  # Write training.csv for monitoring
-            epochs=epochs,
+            continue_training=True,
+        )
+    else:
+        print(f"[{timestamp()}] Building new ResNet-50 model...")
+        model = get_model(
+            network_depth="50-layer",
+            learning_rate=learning_rate,
         )
 
-        duration = time.time() - start_time
+    # --- 4. Create data generators ---
+    from cellfinder.core.classify.cube_generator import CubeGeneratorFromDisk
 
-        # Parse training.csv for final metrics
-        csv_file = output_dir / "training.csv"
-        best_loss = None
-        best_accuracy = None
+    training_generator = CubeGeneratorFromDisk(
+        signal_train, bg_train,
+        labels=labels_train,
+        batch_size=batch_size,
+        shuffle=True,
+        train=True,
+        augment=augment,
+    )
 
-        if csv_file.exists():
-            try:
-                import csv
-                with open(csv_file, 'r') as f:
-                    reader = csv.DictReader(f)
-                    rows = list(reader)
-                    if rows:
-                        last_row = rows[-1]
-                        best_loss = float(last_row.get('val_loss', 0))
-                        best_accuracy = float(last_row.get('val_accuracy', 0))
-                        print(f"\n[{timestamp()}] Final metrics: loss={best_loss:.4f}, accuracy={best_accuracy:.4f}")
-            except Exception as e:
-                print(f"Warning: Could not parse training.csv: {e}")
+    validation_generator = CubeGeneratorFromDisk(
+        signal_test, bg_test,
+        labels=labels_test,
+        batch_size=batch_size,
+        train=True,
+    )
 
-        return True, duration, best_loss, best_accuracy
+    # --- 5. Set up callbacks ---
+    import tensorflow as tf
 
-    except Exception as e:
-        import traceback
-        print(f"\n[{timestamp()}] ERROR during training: {e}")
-        traceback.print_exc()
-        return False, time.time() - start_time, None, None
+    callbacks = []
+
+    # Model checkpoint - save best model
+    checkpoint_path = str(output_dir / "model-epoch.{epoch:02d}-loss-{val_loss:.4f}.h5")
+    callbacks.append(tf.keras.callbacks.ModelCheckpoint(
+        checkpoint_path,
+        save_best_only=False,
+        verbose=1,
+    ))
+
+    # CSV logger for monitoring
+    csv_path = str(output_dir / "training.csv")
+    callbacks.append(tf.keras.callbacks.CSVLogger(csv_path))
+
+    # TensorBoard
+    tb_dir = str(output_dir / "tensorboard")
+    callbacks.append(tf.keras.callbacks.TensorBoard(log_dir=tb_dir))
+
+    # --- Safety callbacks (the whole point of this custom loop) ---
+    if nan_guard:
+        callbacks.append(tf.keras.callbacks.TerminateOnNaN())
+        print(f"[{timestamp()}] NaN guard: ON - training will abort if NaN loss detected")
+
+    if reduce_lr:
+        callbacks.append(tf.keras.callbacks.ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=max(patience // 2, 3),
+            min_lr=1e-7,
+            verbose=1,
+        ))
+        print(f"[{timestamp()}] Reduce LR: ON - LR halved if val_loss plateaus for {max(patience // 2, 3)} epochs")
+
+    if early_stopping:
+        callbacks.append(tf.keras.callbacks.EarlyStopping(
+            monitor='val_loss',
+            patience=patience,
+            restore_best_weights=True,
+            verbose=1,
+        ))
+        print(f"[{timestamp()}] Early stopping: ON - training stops if val_loss doesn't improve for {patience} epochs")
+
+    # Also save the best model separately
+    best_model_path = str(output_dir / "best_model.h5")
+    callbacks.append(tf.keras.callbacks.ModelCheckpoint(
+        best_model_path,
+        monitor='val_loss',
+        save_best_only=True,
+        verbose=1,
+    ))
+
+    # --- 6. Train! ---
+    print(f"\n[{timestamp()}] Starting training for {epochs} epochs...")
+    print(f"{'='*60}")
+
+    history = model.fit(
+        training_generator,
+        validation_data=validation_generator,
+        use_multiprocessing=False,
+        epochs=epochs,
+        callbacks=callbacks,
+    )
+
+    duration = time.time() - start_time
+
+    # --- 7. Save final model ---
+    final_model_path = output_dir / "model.keras"
+    try:
+        model.save(str(final_model_path))
+        print(f"\n[{timestamp()}] Final model saved: {final_model_path}")
+    except Exception:
+        # Fallback to .h5 format
+        final_model_path = output_dir / "model.h5"
+        model.save(str(final_model_path))
+        print(f"\n[{timestamp()}] Final model saved: {final_model_path}")
+
+    # --- 8. Extract best metrics ---
+    best_loss = None
+    best_accuracy = None
+
+    if 'val_loss' in history.history:
+        val_losses = history.history['val_loss']
+        # Filter out NaN values
+        valid_losses = [(i, l) for i, l in enumerate(val_losses) if not np.isnan(l)]
+        if valid_losses:
+            best_epoch, best_loss = min(valid_losses, key=lambda x: x[1])
+            if 'val_accuracy' in history.history:
+                best_accuracy = history.history['val_accuracy'][best_epoch]
+            print(f"\n[{timestamp()}] Best validation loss: {best_loss:.4f} at epoch {best_epoch + 1}")
+            if best_accuracy is not None:
+                print(f"[{timestamp()}] Best validation accuracy: {best_accuracy:.4f}")
+
+    actual_epochs = len(history.history.get('loss', []))
+    if actual_epochs < epochs:
+        print(f"\n[{timestamp()}] Training stopped early at epoch {actual_epochs}/{epochs}")
+        if early_stopping:
+            print(f"[{timestamp()}] (Early stopping triggered - best weights restored)")
+
+    return True, duration, best_loss, best_accuracy
+
+
+def _run_cellfinder_fallback(
+    yaml_paths, output_dir, epochs, learning_rate, batch_size,
+    test_fraction, continue_from, augment, n_free_cpus,
+) -> tuple:
+    """Fallback: use cellfinder's built-in training (no custom callbacks)."""
+    start_time = time.time()
+
+    from cellfinder.core.train.train_yml import run as train_run
+
+    train_run(
+        output_dir=output_dir,
+        yaml_file=[str(p) for p in yaml_paths],
+        n_free_cpus=n_free_cpus,
+        trained_model=str(continue_from) if continue_from else None,
+        model_weights=None,
+        network_depth="50-layer",
+        learning_rate=learning_rate,
+        continue_training=bool(continue_from),
+        test_fraction=test_fraction,
+        batch_size=batch_size,
+        no_augment=not augment,
+        tensorboard=True,
+        save_weights=False,
+        no_save_checkpoints=False,
+        save_progress=True,
+        epochs=epochs,
+    )
+
+    duration = time.time() - start_time
+
+    # Parse training.csv for final metrics
+    csv_file = output_dir / "training.csv"
+    best_loss = None
+    best_accuracy = None
+
+    if csv_file.exists():
+        try:
+            import csv
+            with open(csv_file, 'r') as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+                if rows:
+                    last_row = rows[-1]
+                    best_loss = float(last_row.get('val_loss', 0))
+                    best_accuracy = float(last_row.get('val_accuracy', 0))
+                    print(f"\n[{timestamp()}] Final metrics: loss={best_loss:.4f}, accuracy={best_accuracy:.4f}")
+        except Exception as e:
+            print(f"Warning: Could not parse training.csv: {e}")
+
+    return True, duration, best_loss, best_accuracy
 
 
 # =============================================================================
@@ -175,12 +482,20 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+    # Simplest: auto-discover all training data for paradigm
+    python util_train_model.py --paradigm 1p625x_z4
+
+    # Explicit YAML sources
+    python util_train_model.py --yaml training1.yml training2.yml
+
+    # Direct paths
     python util_train_model.py --cells data/cells --non-cells data/non_cells
-    python util_train_model.py --yaml training_data/training.yml
-    python util_train_model.py --continue-from models/best.h5 --cells data/cells --non-cells data/non_cells
         """
     )
 
+    parser.add_argument('--paradigm', '-p',
+                        help='Auto-discover all training.yml for this imaging paradigm '
+                             '(e.g. "1p625x_z4"). Finds shared pool + all per-brain data.')
     parser.add_argument('--yaml', '-y', type=Path, nargs='+',
                         help='Path(s) to training.yml file(s). Multiple sources supported.')
     parser.add_argument('--cells', '-c', type=Path,
@@ -198,8 +513,22 @@ Examples:
     parser.add_argument('--test-fraction', type=float, default=DEFAULT_TEST_FRACTION)
     parser.add_argument('--continue-from', type=Path, help='Continue from existing model')
     parser.add_argument('--no-augment', action='store_true', help='Disable augmentation')
-    parser.add_argument('--n-free-cpus', type=int, default=2,
-                        help='Number of CPUs to leave free (default: 2)')
+    import os as _os
+    _cpu_count = _os.cpu_count() or 4
+    _default_free = max(_cpu_count - 30, 2) if _cpu_count > 63 else 2
+    parser.add_argument('--n-free-cpus', type=int, default=_default_free,
+                        help=f'Number of CPUs to leave free (default: {_default_free}, '
+                             f'auto-computed for {_cpu_count} CPUs)')
+
+    # Safety callbacks (all ON by default)
+    parser.add_argument('--no-early-stopping', action='store_true',
+                        help='Disable early stopping (NOT recommended)')
+    parser.add_argument('--no-reduce-lr', action='store_true',
+                        help='Disable automatic learning rate reduction (NOT recommended)')
+    parser.add_argument('--no-nan-guard', action='store_true',
+                        help='Disable NaN termination guard (NOT recommended)')
+    parser.add_argument('--patience', type=int, default=15,
+                        help='Early stopping patience in epochs (default: 15)')
 
     parser.add_argument('--notes', help='Notes to add to log')
     parser.add_argument('--dry-run', action='store_true')
@@ -211,6 +540,25 @@ Examples:
                              'Example: --post-run "python 5_classify_cells.py --brain {brain} --model {output_dir}"')
     
     args = parser.parse_args()
+
+    # Handle --paradigm: auto-discover all training YAMLs
+    if args.paradigm:
+        if args.yaml:
+            print("ERROR: --paradigm and --yaml are mutually exclusive.")
+            sys.exit(1)
+        discovered = discover_training_yamls(args.paradigm)
+        if not discovered:
+            print(f"ERROR: No training data found for paradigm '{args.paradigm}'")
+            print(f"  Searched: {MODELS_DIR / args.paradigm / 'training_data'}")
+            print(f"  Searched: {BRAINS_ROOT} / */  *_{args.paradigm} / training_data/")
+            sys.exit(1)
+        args.yaml = discovered
+        print(f"Auto-discovered {len(discovered)} training source(s) for paradigm '{args.paradigm}':")
+        for yp in discovered:
+            print(f"  - {yp}")
+        # Default name from paradigm if not set
+        if not args.name:
+            args.name = args.paradigm
 
     # Handle --yaml option: parse training.yml to get cells/non-cells paths
     if args.yaml:
@@ -387,6 +735,10 @@ Examples:
         continue_from=args.continue_from,
         augment=not args.no_augment,
         n_free_cpus=args.n_free_cpus,
+        early_stopping=not args.no_early_stopping,
+        reduce_lr=not args.no_reduce_lr,
+        nan_guard=not args.no_nan_guard,
+        patience=args.patience,
     )
     
     # Update tracker
