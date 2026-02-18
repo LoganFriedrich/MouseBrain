@@ -187,7 +187,7 @@ def _run_single_pipeline(red_image, green_image, labels, args, t0, t_load, t_det
         green_image, labels, dilation_iterations=args.bg_dilation,
     )
 
-    # Tissue mask
+    # Tissue mask for Manders metrics (nuclei-dilation based)
     tissue_mask = analyzer.estimate_tissue_mask(labels, args.bg_dilation)
 
     # Measure intensities — nuclear by default, cytoplasm ring if soma requested
@@ -198,7 +198,7 @@ def _run_single_pipeline(red_image, green_image, labels, args, t0, t_load, t_det
     else:
         measurements = analyzer.measure_nuclei_intensities(green_image, labels)
 
-    # Classify
+    # Classify — tissue_mask=None lets background_mean use green-Otsu internally
     classify_kw = {
         'method': args.coloc_method,
         'threshold': args.coloc_threshold,
