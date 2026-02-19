@@ -757,6 +757,7 @@ class ColocalizationAnalyzer:
         area_fraction: float = 0.5,
         local_snr_radius: int = 100,
         tissue_mask: Optional[np.ndarray] = None,
+        sigma_threshold: float = 1.5,
     ):
         """
         Classify each nucleus as positive or negative for signal.
@@ -771,9 +772,8 @@ class ColocalizationAnalyzer:
                 - 'background_mean': **CURRENT DEFAULT** (under active
                   development). Estimates tissue green background (excluding
                   black areas and generously dilated somas), then classifies
-                  as positive if green ROI > background mean. Simple,
-                  interpretable, no tuning needed. Requires signal_image
-                  and nuclei_labels.
+                  as positive if green ROI > background mean + sigma_threshold
+                  * bg_std. Requires signal_image and nuclei_labels.
                 All methods below retained for comparison during development:
                 - 'fold_change': positive if mean >= threshold * background
                 - 'local_snr': positive if local signal-to-noise ratio exceeds
@@ -801,6 +801,9 @@ class ColocalizationAnalyzer:
                 Only used with method='area_fraction'.
             local_snr_radius: Radius in pixels for local background estimation
                 around each cell (default 100). Only used with method='local_snr'.
+            sigma_threshold: Number of std deviations above background mean
+                for a cell to be classified positive (default 1.5).
+                Only used with method='background_mean'.
 
         Returns:
             DataFrame with added columns:
@@ -908,8 +911,9 @@ class ColocalizationAnalyzer:
             if bg_std < 1e-6:
                 bg_std = max(bg_mean * 0.05, 1.0)
 
-            # Step 4: classify — green ROI above background mean?
-            df['is_positive'] = df[intensity_col] > bg_mean
+            # Step 4: classify — green ROI above bg + sigma_threshold * std
+            pos_cutoff = bg_mean + sigma_threshold * bg_std
+            df['is_positive'] = df[intensity_col] > pos_cutoff
 
             # How many std devs above background each cell is
             df['sigma_above_bg'] = (
@@ -933,6 +937,8 @@ class ColocalizationAnalyzer:
                 'method_used': 'background_mean',
                 'background_mean': bg_mean,
                 'background_std': bg_std,
+                'sigma_threshold': sigma_threshold,
+                'positive_cutoff': pos_cutoff,
                 'bg_excl_radius': bg_excl_radius,
                 'tissue_pixels': int(np.sum(tissue_mask)),
                 'excluded_pixels': int(np.sum(soma_exclusion & tissue_mask)),

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-MouseBrain CLI - Launch napari with all plugins loaded.
+MouseBrain CLI - Tissue analysis tools for 3D cleared brains and 2D slices.
 
 Usage:
-    mousebrain              # Launch napari
-    mousebrain --crop BRAIN # Launch manual crop for specific brain
-    mousebrain --check      # Check dependencies
-    mousebrain --paths      # Show configured paths
-    mousebrain --help       # Show help
+    mousebrain                      # Launch napari with all plugins
+    mousebrain coloc IMAGE          # Run colocalization on a single image
+    mousebrain coloc FOLDER         # Batch colocalization on all ND2s in folder
+    mousebrain coloc IMAGE --open   # Run and open result image
+    mousebrain --crop BRAIN         # Launch manual crop for specific brain
+    mousebrain --check              # Check dependencies
+    mousebrain --paths              # Show configured paths
 """
 
 import sys
@@ -18,7 +20,7 @@ def main():
     """Main entry point for mousebrain command."""
     parser = argparse.ArgumentParser(
         prog="mousebrain",
-        description="Launch napari with MouseBrain pipeline tools"
+        description="MouseBrain - tissue analysis tools for 3D cleared brains and 2D slices",
     )
     parser.add_argument(
         "--version", "-v",
@@ -41,6 +43,46 @@ def main():
         help="Launch manual crop tool for specified brain (e.g., 349_CNT_01_02_1p625x_z4)"
     )
 
+    # Subcommands
+    subparsers = parser.add_subparsers(dest="command")
+
+    # ── mousebrain coloc ──
+    coloc_parser = subparsers.add_parser(
+        "coloc",
+        help="Nuclear signal colocalization analysis",
+        description=(
+            "Detect nuclei in the red channel, classify each as green-positive "
+            "or negative using background_mean + sigma threshold, and generate "
+            "a result figure. Works on single ND2/TIFF files or batch-processes "
+            "all ND2 files in a folder."
+        ),
+    )
+    coloc_parser.add_argument(
+        "input",
+        help="ND2/TIFF file or folder of ND2 files",
+    )
+    coloc_parser.add_argument(
+        "--open", action="store_true", dest="open_result",
+        help="Open result image(s) after processing",
+    )
+    coloc_parser.add_argument(
+        "--sigma", type=float, default=1.5,
+        help="Sigma threshold for positive classification (default: 1.5)",
+    )
+    coloc_parser.add_argument(
+        "--edge-exclusion", type=int, default=50,
+        help="Exclude detections within N pixels of tissue edge (default: 50)",
+    )
+    coloc_parser.add_argument(
+        "--method", default="zscore",
+        choices=["zscore", "otsu", "percentile", "manual"],
+        help="Detection threshold method (default: zscore)",
+    )
+    coloc_parser.add_argument(
+        "--min-diameter", type=float, default=8.0,
+        help="Minimum nucleus diameter in um (default: 8.0)",
+    )
+
     args = parser.parse_args()
 
     if args.version:
@@ -54,10 +96,90 @@ def main():
     if args.check:
         return check_dependencies()
 
+    if args.command == "coloc":
+        return run_coloc_command(args)
+
     if args.crop:
         return launch_manual_crop(args.crop)
 
     return launch_napari()
+
+
+def run_coloc_command(args):
+    """Run colocalization on a file or folder."""
+    from pathlib import Path
+    import time
+
+    target = Path(args.input)
+    if not target.exists():
+        print(f"Error: {target} does not exist")
+        return 1
+
+    # Collect files to process
+    if target.is_file():
+        files = [target]
+    else:
+        files = sorted(target.glob("*.nd2"))
+        tiffs = sorted(target.glob("*.tif")) + sorted(target.glob("*.tiff"))
+        files.extend(tiffs)
+        if not files:
+            print(f"No ND2 or TIFF files found in {target}")
+            return 1
+        print(f"Found {len(files)} images in {target.name}/")
+
+    # Build CLI args for run_coloc
+    coloc_argv = [
+        "--method", args.method,
+        "--min-diameter-um", str(args.min_diameter),
+        "--sigma-threshold", str(args.sigma),
+        "--edge-exclusion", str(args.edge_exclusion),
+    ]
+
+    # Process each file
+    results = []
+    t_total = time.time()
+
+    for i, f in enumerate(files):
+        if len(files) > 1:
+            print(f"\n{'='*60}")
+            print(f"[{i+1}/{len(files)}] {f.name}")
+            print(f"{'='*60}")
+
+        from mousebrain.plugin_2d.sliceatlas.cli.run_coloc import main as coloc_main
+        # Temporarily replace sys.argv for the coloc CLI
+        import sys as _sys
+        saved_argv = _sys.argv
+        _sys.argv = ["coloc", str(f)] + coloc_argv
+        try:
+            coloc_main()
+            results.append((f.name, True))
+        except SystemExit:
+            results.append((f.name, True))  # argparse exits on success
+        except Exception as e:
+            print(f"  ERROR: {e}")
+            results.append((f.name, False))
+        finally:
+            _sys.argv = saved_argv
+
+        # Open result if requested
+        if args.open_result:
+            result_png = f.with_suffix('.coloc_result.png')
+            if result_png.exists():
+                import os
+                os.startfile(str(result_png))
+
+    # Batch summary
+    if len(files) > 1:
+        elapsed = time.time() - t_total
+        n_ok = sum(1 for _, ok in results if ok)
+        print(f"\n{'='*60}")
+        print(f"BATCH COMPLETE: {n_ok}/{len(files)} succeeded in {elapsed:.1f}s")
+        for name, ok in results:
+            status = "OK" if ok else "FAILED"
+            print(f"  [{status}] {name}")
+        print(f"{'='*60}")
+
+    return 0
 
 
 def show_paths():
