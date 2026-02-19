@@ -19,7 +19,7 @@ from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QLabel, QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
     QGroupBox, QFileDialog, QTableWidget, QTableWidgetItem,
-    QMessageBox, QProgressBar, QCheckBox, QLineEdit,
+    QMessageBox, QProgressBar, QCheckBox, QLineEdit, QScrollArea,
 )
 from qtpy.QtCore import Qt
 
@@ -94,7 +94,7 @@ class BrainSliceWidget(QWidget):
         layout.addWidget(self.tabs)
 
         # Create tabs
-        self.tabs.addTab(self._create_load_tab(), "1. Load")
+        self.tabs.addTab(self._scrollable(self._create_load_tab()), "1. Load")
 
         # Alignment widget for atlas overlay
         from .alignment_widget import AlignmentWidget
@@ -106,9 +106,9 @@ class BrainSliceWidget(QWidget):
         self.inset_widget = InsetWidget(self)
         self.tabs.addTab(self.inset_widget, "3. Insets")
 
-        self.tabs.addTab(self._create_detect_tab(), "4. Detect")
-        self.tabs.addTab(self._create_coloc_tab(), "5. Colocalize")
-        self.tabs.addTab(self._create_quantify_tab(), "6. Quantify")
+        self.tabs.addTab(self._scrollable(self._create_detect_tab()), "4. Detect")
+        self.tabs.addTab(self._scrollable(self._create_coloc_tab()), "5. Colocalize")
+        self.tabs.addTab(self._scrollable(self._create_quantify_tab()), "6. Quantify")
 
         # Annotator widget (ND2 annotation & export)
         from .annotator_widget import SliceAnnotatorWidget
@@ -124,6 +124,15 @@ class BrainSliceWidget(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
+
+    @staticmethod
+    def _scrollable(widget: QWidget) -> QScrollArea:
+        """Wrap a widget in a scroll area so tall tabs are scrollable."""
+        scroll = QScrollArea()
+        scroll.setWidget(widget)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(0)  # NoFrame
+        return scroll
 
     def _create_load_tab(self) -> QWidget:
         """Create the Load tab for image loading."""
@@ -387,9 +396,11 @@ class BrainSliceWidget(QWidget):
         thresh_method_row = QHBoxLayout()
         thresh_method_row.addWidget(QLabel("Method:"))
         self.thresh_detect_method_combo = QComboBox()
-        self.thresh_detect_method_combo.addItems(['otsu', 'percentile', 'manual'])
+        self.thresh_detect_method_combo.addItems(['zscore', 'otsu', 'percentile', 'manual'])
         self.thresh_detect_method_combo.setToolTip(
-            "Otsu: automatic threshold (good default for bimodal images)\n"
+            "Zscore: z-score peak detection — finds bright spots above background\n"
+            "  (recommended for sparse fluorescent nuclei)\n"
+            "Otsu: automatic threshold (good for bimodal images)\n"
             "Percentile: threshold at Nth percentile intensity\n"
             "Manual: user-specified threshold value"
         )
@@ -400,19 +411,21 @@ class BrainSliceWidget(QWidget):
         thresh_det_layout.addLayout(thresh_method_row)
 
         thresh_pct_row = QHBoxLayout()
-        thresh_pct_row.addWidget(QLabel("Percentile:"))
+        self.thresh_percentile_label = QLabel("Z-score cutoff:")
+        thresh_pct_row.addWidget(self.thresh_percentile_label)
         self.thresh_detect_percentile_spin = QDoubleSpinBox()
-        self.thresh_detect_percentile_spin.setRange(80.0, 99.9)
+        self.thresh_detect_percentile_spin.setRange(1.0, 20.0)
         self.thresh_detect_percentile_spin.setSingleStep(0.5)
-        self.thresh_detect_percentile_spin.setValue(99.0)
+        self.thresh_detect_percentile_spin.setValue(5.0)
         self.thresh_detect_percentile_spin.setToolTip(
-            "Intensity percentile to use as threshold.\n"
-            "99 = only brightest 1% of pixels."
+            "Number of standard deviations above background.\n"
+            "5.0 = good default for sparse fluorescent nuclei.\n"
+            "Lower catches dimmer nuclei but adds noise."
         )
         thresh_pct_row.addWidget(self.thresh_detect_percentile_spin)
         self.thresh_percentile_row = QWidget()
         self.thresh_percentile_row.setLayout(thresh_pct_row)
-        self.thresh_percentile_row.setVisible(False)
+        self.thresh_percentile_row.setVisible(True)  # Visible by default (zscore is default)
         thresh_det_layout.addWidget(self.thresh_percentile_row)
 
         thresh_manual_row = QHBoxLayout()
@@ -728,8 +741,26 @@ class BrainSliceWidget(QWidget):
 
     def _on_thresh_detect_method_changed(self, method: str):
         """Toggle threshold detection sub-parameters."""
-        self.thresh_percentile_row.setVisible(method == 'percentile')
+        self.thresh_percentile_row.setVisible(method in ('percentile', 'zscore'))
         self.thresh_manual_row.setVisible(method == 'manual')
+        # Relabel and re-default the percentile spin for zscore mode
+        if method == 'zscore':
+            self.thresh_percentile_label.setText("Z-score cutoff:")
+            self.thresh_detect_percentile_spin.setRange(1.0, 20.0)
+            self.thresh_detect_percentile_spin.setValue(5.0)
+            self.thresh_detect_percentile_spin.setToolTip(
+                "Number of standard deviations above background.\n"
+                "5.0 = good default for sparse fluorescent nuclei.\n"
+                "Lower catches dimmer nuclei but adds noise."
+            )
+        else:
+            self.thresh_percentile_label.setText("Percentile:")
+            self.thresh_detect_percentile_spin.setRange(80.0, 99.9)
+            self.thresh_detect_percentile_spin.setValue(99.0)
+            self.thresh_detect_percentile_spin.setToolTip(
+                "Intensity percentile to use as threshold.\n"
+                "99 = only brightest 1% of pixels."
+            )
 
     def _on_hysteresis_check_changed(self, state):
         """Toggle hysteresis low fraction visibility."""
@@ -816,7 +847,7 @@ class BrainSliceWidget(QWidget):
         dilation_layout.addWidget(QLabel("Nuclei exclusion radius:"))
         self.bg_dilation_spin = QSpinBox()
         self.bg_dilation_spin.setRange(5, 200)
-        self.bg_dilation_spin.setValue(50)
+        self.bg_dilation_spin.setValue(10)
         self.bg_dilation_spin.setToolTip(
             "Dilation iterations for excluding signal around nuclei from background.\n"
             "Increase for non-nuclear signals (e.g., eYFP in soma/processes)."
@@ -854,7 +885,7 @@ class BrainSliceWidget(QWidget):
         soma_dil_row.addWidget(QLabel("Soma dilation (px):"))
         self.soma_dilation_spin = QSpinBox()
         self.soma_dilation_spin.setRange(0, 50)
-        self.soma_dilation_spin.setValue(5)
+        self.soma_dilation_spin.setValue(0)
         self.soma_dilation_spin.setToolTip(
             "Dilate each nucleus ROI to include the surrounding soma.\n"
             "Signal (eYFP, etc.) is cytoplasmic, not nuclear — measure\n"
@@ -1722,11 +1753,11 @@ class BrainSliceWidget(QWidget):
                     self.viewer.layers.remove(layer)
 
             # Add merged labels
-            self.viewer.add_labels(
+            lbl_layer = self.viewer.add_labels(
                 results['merged_labels'],
                 name=f"Nuclei ({count})",
-                contour=2,
             )
+            lbl_layer.contour = 2
 
             # Show inset vs base detections differently
             if results['merged_properties'] is not None and len(results['merged_properties']) > 0:
@@ -1783,26 +1814,40 @@ class BrainSliceWidget(QWidget):
     def _on_detect_finished(self, success: bool, message: str, count: int, labels, metrics=None):
         """Handle detection completion."""
         self.detect_btn.setEnabled(True)
+        print(f"[BrainSlice] _on_detect_finished called: success={success}, count={count}, "
+              f"labels type={type(labels)}, labels shape={getattr(labels, 'shape', 'N/A')}")
 
         if success:
             self.nuclei_labels = labels
 
-            # Update tracker
-            if self.tracker and self.last_run_id:
-                self.tracker.update_status(
-                    self.last_run_id,
-                    status='completed',
-                    det_nuclei_found=count,
-                )
-                self.session_run_ids.append(self.last_run_id)
+            # Update tracker (wrapped so failures don't block layer creation)
+            try:
+                if self.tracker and self.last_run_id:
+                    self.tracker.update_status(
+                        self.last_run_id,
+                        status='completed',
+                        det_nuclei_found=count,
+                    )
+                    self.session_run_ids.append(self.last_run_id)
+            except Exception as e:
+                print(f"[BrainSlice] WARNING: Tracker update failed (non-fatal): {e}")
 
             # Add labels to napari
-            # Remove old detection layer if exists
-            for layer in list(self.viewer.layers):
-                if 'Nuclei' in layer.name:
-                    self.viewer.layers.remove(layer)
+            try:
+                # Remove old detection layer if exists
+                for layer in list(self.viewer.layers):
+                    if 'Nuclei' in layer.name:
+                        self.viewer.layers.remove(layer)
 
-            self.viewer.add_labels(labels, name=f"Nuclei ({count})", contour=2)
+                print(f"[BrainSlice] Adding labels layer: shape={labels.shape}, "
+                      f"dtype={labels.dtype}, max_label={labels.max()}")
+                lbl_layer = self.viewer.add_labels(labels, name=f"Nuclei ({count})")
+                lbl_layer.contour = 2
+                print(f"[BrainSlice] Labels layer added successfully")
+            except Exception as e:
+                import traceback
+                print(f"[BrainSlice] ERROR adding labels layer: {e}")
+                traceback.print_exc()
 
             # Update UI
             self.status_label.setText(message)
@@ -1819,7 +1864,10 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(f"Error: {message}")
             self.detect_metrics_label.setText("")
             if self.tracker and self.last_run_id:
-                self.tracker.update_status(self.last_run_id, status='failed')
+                try:
+                    self.tracker.update_status(self.last_run_id, status='failed')
+                except Exception:
+                    pass
 
     def _display_detection_metrics(self, metrics: dict):
         """Display detection metrics in the UI."""
@@ -2062,40 +2110,58 @@ class BrainSliceWidget(QWidget):
             self._coloc_background_surface = getattr(self.coloc_worker, 'background_surface', None)
             self._coloc_summary = summary
 
-            # Auto-save measurements CSV
+            # Auto-save measurements CSV (non-fatal if fails)
             measurements_path = None
-            if self.current_file is not None:
-                from ..core.config import get_sample_dir, SampleDirs
-                stem = self.current_file.stem
-                sample_dir = get_sample_dir(stem)
-                results_dir = sample_dir / SampleDirs.QUANTIFIED
-                results_dir.mkdir(parents=True, exist_ok=True)
-                run_tag = self.last_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
-                measurements_path = results_dir / f"{stem}_{run_tag}_measurements.csv"
-                measurements.to_csv(measurements_path, index=False)
+            try:
+                if self.current_file is not None:
+                    from ..core.config import get_sample_dir, SampleDirs
+                    stem = self.current_file.stem
+                    sample_dir = get_sample_dir(stem)
+                    results_dir = sample_dir / SampleDirs.QUANTIFIED
+                    results_dir.mkdir(parents=True, exist_ok=True)
+                    run_tag = self.last_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+                    measurements_path = results_dir / f"{stem}_{run_tag}_measurements.csv"
+                    measurements.to_csv(measurements_path, index=False)
+            except Exception as e:
+                print(f"[BrainSlice] WARNING: Auto-save measurements failed (non-fatal): {e}")
 
-            # Update tracker
-            if self.tracker and self.last_run_id:
-                update_kwargs = dict(
-                    status='completed',
-                    coloc_positive_cells=summary['positive_cells'],
-                    coloc_negative_cells=summary['negative_cells'],
-                    coloc_positive_fraction=summary['positive_fraction'],
-                    coloc_background_value=summary['background_used'],
-                )
-                if measurements_path is not None:
-                    update_kwargs['measurements_path'] = str(measurements_path)
-                self.tracker.update_status(self.last_run_id, **update_kwargs)
-                self.session_run_ids.append(self.last_run_id)
+            # Update tracker (non-fatal if fails)
+            try:
+                if self.tracker and self.last_run_id:
+                    update_kwargs = dict(
+                        status='completed',
+                        coloc_positive_cells=summary['positive_cells'],
+                        coloc_negative_cells=summary['negative_cells'],
+                        coloc_positive_fraction=summary['positive_fraction'],
+                        coloc_background_value=summary['background_used'],
+                    )
+                    if measurements_path is not None:
+                        update_kwargs['measurements_path'] = str(measurements_path)
+                    self.tracker.update_status(self.last_run_id, **update_kwargs)
+                    self.session_run_ids.append(self.last_run_id)
+            except Exception as e:
+                print(f"[BrainSlice] WARNING: Tracker update failed (non-fatal): {e}")
 
             # Refresh run history panel
-            self._refresh_run_history()
+            try:
+                self._refresh_run_history()
+            except Exception as e:
+                print(f"[BrainSlice] WARNING: Run history refresh failed (non-fatal): {e}")
 
             # Visualize results - color nuclei by positive/negative
-            self._visualize_colocalization(measurements)
+            try:
+                self._visualize_colocalization(measurements)
+                print(f"[BrainSlice] Colocalization visualization added successfully")
+            except Exception as e:
+                import traceback
+                print(f"[BrainSlice] ERROR adding colocalization layers: {e}")
+                traceback.print_exc()
 
             # Update diagnostic plot
-            self._update_diagnostic_plot()
+            try:
+                self._update_diagnostic_plot()
+            except Exception as e:
+                print(f"[BrainSlice] WARNING: Diagnostic plot update failed (non-fatal): {e}")
 
             # Update UI
             self.status_label.setText(message)
@@ -2124,7 +2190,10 @@ class BrainSliceWidget(QWidget):
         else:
             self.status_label.setText(f"Error: {message}")
             if self.tracker and self.last_run_id:
-                self.tracker.update_status(self.last_run_id, status='failed')
+                try:
+                    self.tracker.update_status(self.last_run_id, status='failed')
+                except Exception:
+                    pass
 
     def _on_dual_coloc_finished(self, success: bool, message: str, measurements, summary, tissue_mask):
         """Handle dual-channel colocalization completion."""
