@@ -127,6 +127,45 @@ def run_pipeline(args):
     if details.get('removed_by_morphology', 0) > 0:
         print(f"  Removed by morphology: {details['removed_by_morphology']}")
 
+    # ── Edge exclusion: remove detections near tissue-slide boundary ──
+    if args.edge_exclusion > 0 and n_nuclei > 0:
+        from scipy.ndimage import distance_transform_edt as _edt
+        from skimage.measure import regionprops as _edge_rp
+
+        # Tissue mask: any pixel with signal above noise floor in EITHER channel.
+        # Use a low percentile (p5) to catch all tissue, not just bright regions.
+        noise_floor = max(
+            np.percentile(red_image, 5),
+            np.percentile(green_image, 5),
+        )
+        tissue = (red_image > noise_floor) | (green_image > noise_floor)
+
+        # Distance from each tissue pixel to nearest non-tissue (slide) pixel
+        dist_from_edge = _edt(tissue)
+
+        # Remove nuclei whose centroids are too close to tissue boundary
+        props = _edge_rp(labels)
+        edge_labels = set()
+        for p in props:
+            cy, cx = p.centroid
+            iy, ix = int(round(cy)), int(round(cx))
+            iy = max(0, min(iy, dist_from_edge.shape[0] - 1))
+            ix = max(0, min(ix, dist_from_edge.shape[1] - 1))
+            if dist_from_edge[iy, ix] < args.edge_exclusion:
+                edge_labels.add(p.label)
+
+        if edge_labels:
+            for lbl in edge_labels:
+                labels[labels == lbl] = 0
+            # Relabel consecutively
+            from skimage.measure import label as _relabel
+            labels = _relabel(labels > 0).astype(labels.dtype)
+            n_removed_edge = len(edge_labels)
+            n_nuclei = labels.max()
+            details['filtered_count'] = int(n_nuclei)
+            print(f"  Edge exclusion ({args.edge_exclusion}px): removed "
+                  f"{n_removed_edge}, kept {n_nuclei}")
+
     if n_nuclei == 0:
         print("\nNo nuclei found. Try lowering threshold or min_area.")
         return
@@ -206,6 +245,8 @@ def _run_single_pipeline(red_image, green_image, labels, args, t0, t_load, t_det
     if args.coloc_method in ('background_mean', 'local_snr', 'area_fraction'):
         classify_kw['signal_image'] = green_image
         classify_kw['nuclei_labels'] = labels
+    if args.coloc_method == 'background_mean':
+        classify_kw['sigma_threshold'] = args.sigma_threshold
     if args.coloc_method == 'local_snr':
         classify_kw['local_snr_radius'] = getattr(args, 'local_snr_radius', 100)
 
@@ -234,8 +275,11 @@ def _run_single_pipeline(red_image, green_image, labels, args, t0, t_load, t_det
                       f"(fc >= {rr['rescue_threshold_fc']:.2f}x, "
                       f"pos median fc={rr['pos_fc_median']:.2f}x)")
         elif ad['method_used'] == 'background_mean':
+            sig_t = ad.get('sigma_threshold', 0)
             print(f"    Background: mean={ad['background_mean']:.1f}, "
                   f"std={ad['background_std']:.1f}")
+            print(f"    Positive cutoff: {ad.get('positive_cutoff', ad['background_mean']):.1f} "
+                  f"(mean + {sig_t:.1f} std)")
             print(f"    BG pixels: {ad['bg_pixels_used']} "
                   f"(excl radius: {ad['bg_excl_radius']}px)")
             n = ad['n_total']
@@ -488,6 +532,19 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     props = regionprops(labels)
     zoom_pad = 60  # pixels of padding around each nucleus
 
+    # Edge-distance map: prefer cells far from tissue boundary for zoom panels
+    from scipy.ndimage import distance_transform_edt as _zoom_edt
+    _noise_fl = max(np.percentile(red_image, 5), np.percentile(green_image, 5))
+    _tissue = (red_image > _noise_fl) | (green_image > _noise_fl)
+    _edge_dist = _zoom_edt(_tissue)
+
+    def _cell_edge_dist(p):
+        """Distance from cell centroid to nearest tissue boundary."""
+        cy, cx = p.centroid
+        iy = max(0, min(int(round(cy)), _edge_dist.shape[0] - 1))
+        ix = max(0, min(int(round(cx)), _edge_dist.shape[1] - 1))
+        return _edge_dist[iy, ix]
+
     # Select spatially-spread zoom cells (no overlapping boxes)
     def _pick_spread_cells(candidates, n_pick, min_sep):
         """Pick up to n_pick cells with at least min_sep pixels between centroids."""
@@ -506,10 +563,13 @@ def _make_results_figure(red_image, green_image, labels, measurements,
                 break
         return picked
 
+    # Sort by edge distance (prefer interior cells), then by area
     pos_props_sorted = sorted(
-        [p for p in props if p.label in positive_labels], key=lambda p: -p.area)
+        [p for p in props if p.label in positive_labels],
+        key=lambda p: (-_cell_edge_dist(p), -p.area))
     neg_props_sorted = sorted(
-        [p for p in props if p.label in negative_labels], key=lambda p: -p.area)
+        [p for p in props if p.label in negative_labels],
+        key=lambda p: (-_cell_edge_dist(p), -p.area))
 
     # Pick spread-out cells: 3 positive + 3 negative (guaranteed examples of both)
     min_sep = zoom_pad * 2  # boxes must not overlap
@@ -1160,11 +1220,25 @@ def _make_dual_results_figure(red_image, green_image, labels, measurements,
             if row.get('classification') == 'dual':
                 dual_centroids.append((row['centroid_y'], row['centroid_x']))
 
-    # Get nucleus regions for zoom panels — prioritize positive cells
+    # Get nucleus regions for zoom panels — prioritize positive cells far from edge
     props = regionprops(labels)
     _cat_priority = {'dual': 0, 'red_only': 1, 'green_only': 2, 'neither': 3}
+
+    # Edge-distance map: prefer cells far from tissue boundary for zoom panels
+    from scipy.ndimage import distance_transform_edt as _zoom_edt
+    _noise_fl = max(np.percentile(red_image, 5), np.percentile(green_image, 5))
+    _tissue = (red_image > _noise_fl) | (green_image > _noise_fl)
+    _edge_dist = _zoom_edt(_tissue)
+
+    def _cell_edge_dist(p):
+        cy, cx = p.centroid
+        iy = max(0, min(int(round(cy)), _edge_dist.shape[0] - 1))
+        ix = max(0, min(int(round(cx)), _edge_dist.shape[1] - 1))
+        return _edge_dist[iy, ix]
+
+    # Sort by category priority, then edge distance (prefer interior), then area
     props.sort(key=lambda p: (_cat_priority.get(label_cat.get(p.label, 'neither'), 3),
-                               -p.area))
+                               -_cell_edge_dist(p), -p.area))
     n_zoom = min(6, len(props))
     zoom_pad = 60
 
@@ -1638,8 +1712,9 @@ Examples:
                      help='Percentile for percentile method (default: 99)')
     det.add_argument('--manual-threshold', type=float, default=None,
                      help='Manual threshold value')
-    det.add_argument('--min-diameter-um', type=float, default=6.0,
-                     help='Minimum nucleus diameter in um (default: 6.0)')
+    det.add_argument('--min-diameter-um', type=float, default=8.0,
+                     help='Minimum nucleus diameter in um (default: 8.0). '
+                     'At 2.5 um/px, 6um is only 4px area (indistinguishable from noise).')
     det.add_argument('--max-diameter-um', type=float, default=25.0,
                      help='Maximum nucleus diameter in µm (default: 25.0)')
     det.add_argument('--min-area', type=int, default=10,
@@ -1668,6 +1743,9 @@ Examples:
     det.add_argument('--min-circularity', type=float, default=0.0,
                      help='Min circularity filter (default: 0 = disabled; most nuclei already '
                           'have circularity ~0.98 at typical 2D slice resolution)')
+    det.add_argument('--edge-exclusion', type=int, default=50,
+                     help='Exclude detections within N pixels of tissue boundary '
+                     '(default: 50). Removes tissue-edge artifacts. 0 = disabled.')
 
     # Colocalization parameters
     coloc = parser.add_argument_group('Colocalization')
@@ -1690,6 +1768,10 @@ Examples:
     coloc.add_argument('--coloc-threshold', type=float, default=2.0,
                        help='Minimum threshold for local_snr (default: 2.0 sigma). '
                        'Otsu overrides this if it finds a higher natural break.')
+    coloc.add_argument('--sigma-threshold', type=float, default=1.5,
+                       help='For background_mean method: number of std deviations above '
+                       'background mean for a cell to be positive (default: 1.5). '
+                       '0 = any signal above mean, 1.5 = moderate, 2.0 = strict.')
     coloc.add_argument('--local-snr-radius', type=int, default=100,
                        help='Radius for local SNR background estimation '
                        '(default: 100px, used with --coloc-method local_snr)')
