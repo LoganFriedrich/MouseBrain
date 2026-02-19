@@ -206,6 +206,180 @@ def _get_group_for_name(name, name_to_group):
 
 
 # =============================================================================
+# REGION OUTLINES & LEGEND
+# =============================================================================
+
+# Key brain regions for spatial context (front-face culled in dark mode).
+# Each region becomes a "glass wall" — near side invisible, far side shows
+# as a subtly colored backdrop behind cell points. This gives spatial reference
+# for where major regions are without wireframe density problems.
+# Format: acronym -> (display_name, color_dark_mode, color_light_mode)
+CONTEXT_REGIONS = {
+    'CB':        ('Cerebellum',    [0.4, 0.9, 0.4],  [0.15, 0.55, 0.15]),
+    'MY':        ('Medulla',       [0.9, 0.4, 0.4],  [0.55, 0.15, 0.15]),
+    'TH':        ('Thalamus',      [0.4, 0.4, 0.9],  [0.15, 0.15, 0.55]),
+    'HY':        ('Hypothalamus',  [0.9, 0.7, 0.3],  [0.55, 0.40, 0.10]),
+    'MB':        ('Midbrain',      [0.8, 0.4, 0.8],  [0.50, 0.15, 0.50]),
+    'Isocortex': ('Cortex',        [0.4, 0.6, 0.9],  [0.15, 0.30, 0.55]),
+    'HPF':       ('Hippocampus',   [0.3, 0.9, 0.7],  [0.10, 0.50, 0.35]),
+}
+CONTEXT_ALPHA_DARK = 0.30
+CONTEXT_ALPHA_LIGHT = 0.15
+
+
+def add_context_regions(scene, regions=None, dark=False):
+    """Add key brain regions as transparent context surfaces.
+
+    With VTK depth peeling enabled, these render as true transparent overlays.
+    No front-face culling needed — both near and far sides are transparent.
+    """
+    regions = regions or CONTEXT_REGIONS
+    alpha = CONTEXT_ALPHA_DARK if dark else CONTEXT_ALPHA_LIGHT
+    color_idx = 1 if dark else 2  # dark mode uses bright, light mode uses muted
+    added = 0
+
+    for acronym, vals in regions.items():
+        display_name = vals[0]
+        color = vals[color_idx]
+        try:
+            actor = scene.add_brain_region(acronym, alpha=alpha, color=color)
+            # Disable wireframe edges — just show smooth transparent fill
+            try:
+                actor.lw(0)
+            except Exception:
+                pass
+            added += 1
+        except Exception:
+            pass
+
+    print(f"  Added {added}/{len(regions)} context regions (alpha={alpha})")
+
+
+def get_active_elife_groups(cell_data):
+    """Determine which eLife groups have cells in the current brain.
+
+    Returns dict: {group_name: cell_count}
+    """
+    name_to_group = _build_name_to_group()
+    group_counts = {}
+
+    for name in cell_data['structure_names']:
+        group = _get_group_for_name(name, name_to_group) or '[Unmapped]'
+        group_counts[group] = group_counts.get(group, 0) + 1
+
+    return group_counts
+
+
+def create_legend_image(group_colors, active_groups, dark_mode=True, max_items=15):
+    """Create a legend image with color swatches and eLife group names.
+
+    Returns PIL Image (RGBA) ready to composite onto frames.
+    Only includes groups that have cells (from active_groups dict).
+    Capped to max_items (top groups by count) to keep legend compact.
+    """
+    from PIL import Image, ImageDraw
+
+    # Sort groups by cell count (most cells first), exclude unmapped
+    sorted_items = sorted(
+        [(g, c) for g, c in active_groups.items() if g != '[Unmapped]'],
+        key=lambda x: x[1], reverse=True,
+    )
+    if max_items:
+        sorted_items = sorted_items[:max_items]
+
+    line_height = 16
+    swatch_size = 10
+    padding = 8
+    max_label_width = 180
+    width = swatch_size + max_label_width + padding * 3
+    height = len(sorted_items) * line_height + padding * 2 + 18
+
+    # Semi-transparent background
+    bg_alpha = 180 if dark_mode else 160
+    bg_color = (10, 10, 20, bg_alpha) if dark_mode else (240, 240, 240, bg_alpha)
+    text_color = (220, 220, 230, 255) if dark_mode else (30, 30, 30, 255)
+    title_color = (180, 180, 200, 255) if dark_mode else (60, 60, 60, 255)
+
+    img = Image.new('RGBA', (width, height), bg_color)
+    draw = ImageDraw.Draw(img)
+
+    # Title
+    draw.text((padding, padding), "eLife Groups", fill=title_color)
+
+    for i, (group_name, count) in enumerate(sorted_items):
+        y = padding + 18 + i * line_height
+
+        # Color swatch
+        if group_name in group_colors:
+            hex_c = group_colors[group_name]['bright']
+            r = int(hex_c[1:3], 16)
+            g = int(hex_c[3:5], 16)
+            b = int(hex_c[5:7], 16)
+        else:
+            r, g, b = 136, 136, 136
+
+        draw.rectangle(
+            [padding, y + 1, padding + swatch_size, y + 1 + swatch_size],
+            fill=(r, g, b, 255),
+        )
+
+        # Label with count
+        label = f"{group_name} ({count:,})"
+        if len(label) > 28:
+            label = label[:26] + "..."
+        draw.text((padding + swatch_size + 5, y), label, fill=text_color)
+
+    return img
+
+
+def composite_legend(frame, legend_img, position='bottom_left'):
+    """Composite legend image onto a frame (numpy array).
+
+    Scales the legend to fit within 22% of frame width and 55% of frame height,
+    whichever is more constraining. This prevents the legend from dominating
+    the frame regardless of output resolution.
+
+    Returns numpy array (RGB).
+    """
+    from PIL import Image
+
+    frame_pil = Image.fromarray(frame)
+    if frame_pil.mode != 'RGBA':
+        frame_pil = frame_pil.convert('RGBA')
+
+    fw, fh = frame_pil.size
+
+    # Scale legend to TARGET a fraction of frame width (20%), constrained by
+    # height (55%). Allows scaling up for large screenshots and down for small GIFs.
+    target_w = int(fw * 0.20)
+    max_h = int(fh * 0.55)
+    lw, lh = legend_img.size
+    scale = min(target_w / max(lw, 1), max_h / max(lh, 1))
+
+    new_size = (max(1, int(lw * scale)), max(1, int(lh * scale)))
+    legend_scaled = legend_img.resize(new_size, Image.LANCZOS)
+
+    # Position legend
+    margin = 10
+    if position == 'bottom_left':
+        x = margin
+        y = fh - legend_scaled.height - margin
+    elif position == 'top_left':
+        x = margin
+        y = margin
+    elif position == 'bottom_right':
+        x = fw - legend_scaled.width - margin
+        y = fh - legend_scaled.height - margin
+    else:
+        x, y = margin, margin
+
+    frame_pil.paste(legend_scaled, (x, y), legend_scaled)
+
+    # Convert back to RGB numpy
+    return np.array(frame_pil.convert('RGB'))
+
+
+# =============================================================================
 # RENDER FUNCTIONS
 # =============================================================================
 
@@ -371,6 +545,174 @@ def render_combined(scene, cell_data, region_counts, atlas_name, args):
 
 
 # =============================================================================
+# VIDEO
+# =============================================================================
+
+def _enable_depth_peeling(scene):
+    """Enable VTK depth peeling for order-independent transparency.
+
+    This fixes the offscreen alpha bug on Windows where alpha < 1.0
+    makes surfaces invisible. Must be called AFTER scene.render() so
+    the plotter/window exist, then a re-render is forced.
+    """
+    try:
+        ren = scene.plotter.renderer
+        rw = scene.plotter.window
+
+        # Alpha bit planes + no multisampling are REQUIRED for depth peeling
+        if rw:
+            rw.SetAlphaBitPlanes(True)
+            rw.SetMultiSamples(0)
+
+        ren.SetUseDepthPeeling(True)
+        ren.SetMaximumNumberOfPeels(100)
+        ren.SetOcclusionRatio(0.0)
+
+        # Force re-render with depth peeling enabled
+        scene.plotter.render()
+        used = ren.GetLastRenderingUsedDepthPeeling()
+        print(f"  Depth peeling: {'active' if used else 'NOT active (fallback)'}")
+    except Exception as e:
+        print(f"  Depth peeling setup error: {e}")
+
+
+def _rotation_matrix(ax, ay, az):
+    """Combined rotation matrix for Euler angles (radians). Order: Rz @ Ry @ Rx."""
+    cx, sx = np.cos(ax), np.sin(ax)
+    cy, sy = np.cos(ay), np.sin(ay)
+    cz, sz = np.cos(az), np.sin(az)
+    return np.array([
+        [cy*cz, sx*sy*cz - cx*sz, cx*sy*cz + sx*sz],
+        [cy*sz, sx*sy*sz + cx*cz, cx*sy*sz - sx*cz],
+        [-sy,   sx*cy,            cx*cy],
+    ])
+
+
+def render_video(scene, output_path, args, legend_img=None):
+    """Record a 3-axis tumble video or GIF of the brain scene.
+
+    Rotation rates: X×1, Y×2, Z×3 over the duration. All axes complete
+    integer multiples of 360°, so the camera returns exactly home —
+    perfect seamless loop for GIF. The different rates create a Lissajous
+    tumble that exposes the brain from many angles, maximizing visibility
+    of every cell point.
+
+    If legend_img is provided (PIL Image), composites it onto each frame.
+    """
+    fps = args.video_fps
+    duration = args.video_duration
+    total_frames = int(fps * duration)
+    is_gif = output_path.lower().endswith('.gif')
+
+    # Initial render (offscreen)
+    scene.render(interactive=False, camera=args.camera)
+    _enable_depth_peeling(scene)
+
+    # Apply zoom if requested
+    zoom = getattr(args, 'zoom', None)
+    if zoom:
+        scene.plotter.camera.Zoom(zoom)
+
+    scene.plotter.render()
+
+    # Capture initial camera state for tumble base
+    cam = scene.plotter.camera
+    focal = np.array(cam.GetFocalPoint())
+    offset0 = np.array(cam.GetPosition()) - focal
+    up0 = np.array(cam.GetViewUp())
+
+    fmt = "GIF" if is_gif else "video"
+    print(f"\n  Recording {fmt}: {total_frames} frames, {fps} fps, {duration}s")
+    print(f"  Tumble: Xx1, Yx2, Zx3 rotations (seamless loop)")
+
+    def set_tumble_camera(frame_idx):
+        """Set camera to tumble position at given frame index."""
+        t = frame_idx / total_frames  # 0.0 to just-under-1.0
+        ax = 2 * np.pi * 1 * t  # 1 full rotation around X
+        ay = 2 * np.pi * 2 * t  # 2 full rotations around Y
+        az = 2 * np.pi * 3 * t  # 3 full rotations around Z
+        R = _rotation_matrix(ax, ay, az)
+        cam.SetPosition(*(focal + R @ offset0))
+        cam.SetViewUp(*(R @ up0))
+
+    # --- MP4: use vedo.Video for efficiency (only when no legend overlay) ---
+    if not is_gif and legend_img is None:
+        try:
+            from vedo import Video as VedoVideo
+            vid = VedoVideo(output_path, fps=fps, backend='imageio')
+
+            for i in range(total_frames):
+                set_tumble_camera(i)
+                scene.plotter.render()
+                vid.add_frame()
+                if (i + 1) % (fps * 2) == 0:
+                    print(f"    {(i+1)/total_frames*100:.0f}% ({i+1}/{total_frames})")
+
+            vid.close()
+            scene.close()
+            print(f"\n  Video saved: {output_path}")
+            return output_path
+
+        except Exception as e:
+            print(f"  vedo.Video failed ({e}), falling back to manual capture...")
+
+    # --- Manual frame capture (GIF or MP4 fallback) ---
+    frames = []
+    for i in range(total_frames):
+        set_tumble_camera(i)
+        scene.plotter.render()
+        frame = scene.plotter.screenshot(asarray=True)
+        if frame is not None:
+            if legend_img is not None:
+                frame = composite_legend(frame, legend_img)
+            frames.append(frame)
+        if (i + 1) % (fps * 2) == 0:
+            print(f"    {(i+1)/total_frames*100:.0f}% ({i+1}/{total_frames})")
+
+    scene.close()
+
+    if not frames:
+        print("  Error: No frames captured")
+        return None
+
+    import imageio
+
+    if is_gif:
+        # Subsample to ~10fps for reasonable GIF file size
+        gif_fps = min(fps, 10)
+        step = max(1, round(fps / gif_fps))
+        gif_frames = frames[::step]
+
+        # Resize for PPTX-friendly file size
+        gif_width = getattr(args, 'gif_width', 640) or 640
+        from PIL import Image
+        resized = []
+        for f in gif_frames:
+            img = Image.fromarray(f)
+            ratio = gif_width / img.width
+            new_size = (gif_width, int(img.height * ratio))
+            resized.append(np.array(img.resize(new_size, Image.LANCZOS)))
+        gif_frames = resized
+
+        frame_duration = int(1000 / gif_fps)
+        imageio.mimwrite(output_path, gif_frames, duration=frame_duration, loop=0)
+        size_mb = Path(output_path).stat().st_size / (1024 * 1024)
+        print(f"\n  GIF saved: {output_path}")
+        print(f"  {len(gif_frames)} frames, {gif_fps} fps, {gif_width}px wide, {size_mb:.1f} MB")
+    else:
+        try:
+            imageio.mimwrite(output_path, frames, fps=fps)
+        except Exception:
+            gif_path = str(Path(output_path).with_suffix('.gif'))
+            imageio.mimwrite(gif_path, frames[::3],
+                             duration=int(1000 / max(1, fps // 3)))
+            output_path = gif_path
+        print(f"\n  Video saved: {output_path}")
+
+    return output_path
+
+
+# =============================================================================
 # HELPERS
 # =============================================================================
 
@@ -439,14 +781,22 @@ Examples:
                         help='Colormap for heatmap mode (default: Reds)')
     parser.add_argument('--camera', default='three_quarters',
                         help='Camera angle (default: three_quarters)')
-    parser.add_argument('--point-radius', type=float, default=100,
-                        help='Cell point radius in microns (default: 100)')
+    parser.add_argument('--point-radius', type=float, default=10,
+                        help='Cell point radius in microns (default: 10, ~nucleus size)')
     parser.add_argument('--point-alpha', type=float, default=1.0,
                         help='Cell point opacity 0-1 (default: 1.0; values <1 may not render in screenshot mode)')
     parser.add_argument('--region-alpha', type=float, default=0.4,
                         help='Region mesh opacity 0-1 (default: 0.4)')
     parser.add_argument('--no-root', action='store_true',
                         help='Hide the transparent brain outline')
+    parser.add_argument('--dark', action='store_true',
+                        help='Dark background with glass brain + context regions + legend')
+    parser.add_argument('--no-legend', action='store_true',
+                        help='Disable legend overlay (only relevant with --dark)')
+    parser.add_argument('--no-outlines', action='store_true',
+                        help='Disable context region overlays (only relevant with --dark)')
+    parser.add_argument('--zoom', type=float, default=None,
+                        help='Camera zoom multiplier (e.g. 0.8 to zoom out, 1.2 to zoom in)')
     parser.add_argument('--max-points', type=int, default=None,
                         help='Max cells to render (random subsample if exceeded)')
 
@@ -457,6 +807,18 @@ Examples:
                         help='Screenshot output path')
     parser.add_argument('--scale', type=int, default=2,
                         help='Screenshot resolution scale (default: 2)')
+
+    # Video
+    parser.add_argument('--video', action='store_true',
+                        help='Save rotation video (MP4) instead of screenshot/interactive')
+    parser.add_argument('--gif', action='store_true',
+                        help='Save rotation as looping GIF (PPTX-embeddable, auto-loops)')
+    parser.add_argument('--video-fps', type=int, default=30,
+                        help='Video frames per second (default: 30)')
+    parser.add_argument('--video-duration', type=int, default=20,
+                        help='Video duration in seconds (default: 20)')
+    parser.add_argument('--gif-width', type=int, default=640,
+                        help='GIF output width in pixels (default: 640)')
 
     # Atlas override
     parser.add_argument('--atlas', default=None,
@@ -528,8 +890,24 @@ Examples:
         sys.exit(1)
 
     # --- Configure rendering ---
-    if args.screenshot:
+    if args.screenshot or args.video or args.gif:
         brainrender.settings.OFFSCREEN = True
+
+    # Use plastic shader (no cartoon silhouette outlines on meshes)
+    brainrender.settings.SHADER_STYLE = "plastic"
+    brainrender.settings.SHOW_AXES = False
+
+    # Dark mode: light surfaces on dark background
+    if args.dark:
+        brainrender.settings.BACKGROUND_COLOR = [0.05, 0.05, 0.08]
+        brainrender.settings.ROOT_ALPHA = 0.40
+        brainrender.settings.ROOT_COLOR = [0.65, 0.65, 0.9]
+        print(f"  Style: dark (depth-peeled transparency)")
+    else:
+        # White background: surfaces are darker than bg, need higher alpha
+        brainrender.settings.ROOT_ALPHA = 0.08
+        brainrender.settings.ROOT_COLOR = [0.5, 0.5, 0.6]
+        print(f"  Style: light")
 
     print(f"\n  Loading atlas and building scene...")
 
@@ -557,9 +935,24 @@ Examples:
     scene = Scene(
         atlas_name=atlas_name,
         root=not args.no_root,
-        title=f"{pipeline_folder.name} — {args.mode}",
+        title='',
         screenshots_folder=str(analysis_dir) if args.screenshot else None,
     )
+
+    # Disable edges on root mesh for clean transparent look
+    if scene.root and not args.no_root:
+        try:
+            scene.root.lw(0)
+        except Exception:
+            pass
+
+    # Add transparent context regions for spatial reference
+    if not args.no_outlines:
+        add_context_regions(scene, dark=args.dark)
+
+    # Default zoom: show full brain with generous margin
+    if args.zoom is None:
+        args.zoom = 0.20
 
     if args.mode == 'points':
         render_points(scene, cell_data, atlas_name, args)
@@ -568,11 +961,35 @@ Examples:
     elif args.mode == 'combined':
         render_combined(scene, cell_data, region_counts, atlas_name, args)
 
+    # Build legend image for dark mode
+    legend_img = None
+    if args.dark and not args.no_legend and cell_data:
+        group_colors = build_elife_colormap()
+        active_groups = get_active_elife_groups(cell_data)
+        legend_img = create_legend_image(group_colors, active_groups, dark_mode=True)
+        print(f"  Legend: {len([g for g in active_groups if g != '[Unmapped]'])} active groups")
+
     # --- Render ---
-    if args.screenshot:
+    if args.gif:
+        output_path = args.output or str(analysis_dir / f"brain3d_{args.mode}.gif")
+        render_video(scene, output_path, args, legend_img=legend_img)
+    elif args.video:
+        output_path = args.output or str(analysis_dir / f"brain3d_{args.mode}.mp4")
+        render_video(scene, output_path, args, legend_img=legend_img)
+    elif args.screenshot:
         output_name = args.output or f"brain3d_{args.mode}.png"
         scene.render(interactive=False, camera=args.camera)
+        _enable_depth_peeling(scene)
+        if args.zoom:
+            scene.plotter.camera.Zoom(args.zoom)
+        scene.plotter.render()
         savepath = scene.screenshot(name=output_name, scale=args.scale)
+        # Composite legend onto saved screenshot (uses proportional scaling)
+        if legend_img is not None and savepath:
+            from PIL import Image
+            shot = np.array(Image.open(savepath).convert('RGB'))
+            shot = composite_legend(shot, legend_img)
+            Image.fromarray(shot).save(savepath)
         print(f"\n  Screenshot saved: {savepath}")
         scene.close()
     else:
