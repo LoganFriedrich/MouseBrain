@@ -115,27 +115,64 @@ def find_detection_output(pipeline_folder: Path):
     return None
 
 
+def _best_model_in_dir(model_dir):
+    """Find the best model file in a training output directory.
+
+    Priority: best_model.keras > best_model.h5 > lowest-loss .keras > lowest-loss .h5
+    """
+    # Check for explicitly saved best model
+    for ext in ('.keras', '.h5'):
+        best = model_dir / f"best_model{ext}"
+        if best.exists():
+            return best
+
+    # Fall back to lowest-loss checkpoint
+    for pattern in ('*.keras', '*.h5'):
+        checkpoints = list(model_dir.glob(f"model-epoch.*{pattern.replace('*', '')}"))
+        if checkpoints:
+            # Parse loss from filename: model-epoch.19-loss-0.0898.h5
+            def parse_loss(p):
+                try:
+                    return float(p.stem.split('loss-')[1])
+                except (IndexError, ValueError):
+                    return float('inf')
+            checkpoints.sort(key=parse_loss)
+            return checkpoints[0]
+
+    # Last resort: any model file
+    for pattern in ('*.keras', '*.h5'):
+        files = list(model_dir.glob(pattern))
+        if files:
+            return files[0]
+
+    return None
+
+
 def find_default_model():
-    """Find the most recent trained model (.keras preferred, .h5 fallback)."""
+    """Find the best model from the most recent training run.
+
+    Sorts training directories by timestamp in name (most recent first),
+    then picks the best model file from that directory.
+    """
     if not DEFAULT_MODELS_DIR.exists():
         return None
 
-    models = []
+    # Collect directories that contain at least one model file
+    candidates = []
     for model_dir in DEFAULT_MODELS_DIR.iterdir():
-        if model_dir.is_dir():
-            # Prefer .keras over .h5 (both are full models)
-            keras_files = list(model_dir.glob("*.keras"))
-            if keras_files:
-                models.append((model_dir, keras_files[0]))
-                continue
-            h5_files = list(model_dir.glob("*.h5"))
-            if h5_files:
-                models.append((model_dir, h5_files[0]))
+        if not model_dir.is_dir():
+            continue
+        best = _best_model_in_dir(model_dir)
+        if best:
+            candidates.append((model_dir, best))
 
-    if models:
-        # Sort by folder name (usually contains timestamp)
-        models.sort(key=lambda x: x[0].name, reverse=True)
-        return models[0][1]
+    if candidates:
+        # Sort by best model file's modification time (most recent first)
+        candidates.sort(key=lambda x: x[1].stat().st_mtime, reverse=True)
+        chosen_dir, chosen_model = candidates[0]
+        print(f"  Default model dir: {chosen_dir.name}")
+        print(f"  Default model:     {chosen_model.name}")
+        return chosen_model
 
     return None
 
