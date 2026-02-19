@@ -170,6 +170,39 @@ class Cell3DViewer(QWidget):
         self.clear_btn.clicked.connect(self._clear_3d_layers)
         layout.addWidget(self.clear_btn)
 
+        # --- Video Recording ---
+        video_group = QGroupBox("Video")
+        video_layout = QVBoxLayout()
+        video_group.setLayout(video_layout)
+
+        vid_row = QHBoxLayout()
+        vid_row.addWidget(QLabel("FPS:"))
+        self.video_fps_spin = QSpinBox()
+        self.video_fps_spin.setRange(10, 60)
+        self.video_fps_spin.setValue(30)
+        vid_row.addWidget(self.video_fps_spin)
+        vid_row.addWidget(QLabel("Duration:"))
+        self.video_duration_spin = QSpinBox()
+        self.video_duration_spin.setRange(3, 30)
+        self.video_duration_spin.setValue(10)
+        self.video_duration_spin.setSuffix("s")
+        vid_row.addWidget(self.video_duration_spin)
+        vid_row.addStretch()
+        video_layout.addLayout(vid_row)
+
+        self.record_btn = QPushButton("Record Rotation Video")
+        self.record_btn.setStyleSheet(
+            "QPushButton { background-color: #FF5722; color: white; "
+            "font-weight: bold; padding: 6px; }"
+            "QPushButton:hover { background-color: #E64A19; }"
+            "QPushButton:disabled { background-color: #555; color: #888; }"
+        )
+        self.record_btn.setEnabled(False)
+        self.record_btn.clicked.connect(self._record_video)
+        video_layout.addWidget(self.record_btn)
+
+        layout.addWidget(video_group)
+
         # --- Status ---
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
@@ -320,6 +353,7 @@ class Cell3DViewer(QWidget):
             self._do_load()
             self.status_label.setText(f"Loaded: {self.current_brain}")
             self.status_label.setStyleSheet("color: #4CAF50; font-size: 11px;")
+            self.record_btn.setEnabled(True)
         except Exception as e:
             self.status_label.setText(f"Error: {e}")
             self.status_label.setStyleSheet("color: #F44336; font-size: 11px;")
@@ -446,6 +480,100 @@ class Cell3DViewer(QWidget):
         ]
         for layer in to_remove:
             self.viewer.layers.remove(layer)
+        self.record_btn.setEnabled(False)
+
+    # -------------------------------------------------------------------------
+    # VIDEO RECORDING
+    # -------------------------------------------------------------------------
+
+    def _record_video(self):
+        """Record a turntable rotation video of the current 3D view.
+
+        Rotates 405 degrees (360 + 45 overlap) around the vertical axis,
+        capturing each frame from napari's 3D canvas.
+        """
+        if self.viewer.dims.ndisplay != 3:
+            self.status_label.setText("Switch to 3D view first (Load 3D View)")
+            self.status_label.setStyleSheet("color: #F44336; font-size: 11px;")
+            return
+
+        if not self.current_brain_path:
+            return
+
+        fps = self.video_fps_spin.value()
+        duration = self.video_duration_spin.value()
+        total_frames = fps * duration
+        # Exact 360 for seamless looping GIF/video
+        degrees_per_frame = 360.0 / total_frames
+
+        output_dir = self.current_brain_path / FOLDER_ANALYSIS
+        output_path = str(output_dir / "brain3d_rotation.mp4")
+
+        self.record_btn.setEnabled(False)
+        self.load_btn.setEnabled(False)
+        self.status_label.setText("Recording video...")
+        self.status_label.setStyleSheet("color: #FF9800; font-size: 11px;")
+
+        from qtpy.QtWidgets import QApplication
+        QApplication.processEvents()
+
+        initial_angles = self.viewer.camera.angles
+        initial_azimuth = initial_angles[1]
+
+        frames = []
+        try:
+            for i in range(total_frames):
+                new_azimuth = initial_azimuth + degrees_per_frame * (i + 1)
+                self.viewer.camera.angles = (
+                    initial_angles[0], new_azimuth, initial_angles[2]
+                )
+                QApplication.processEvents()
+
+                frame = self.viewer.screenshot(canvas_only=True)
+                # Drop alpha channel for video compatibility
+                if frame.shape[-1] == 4:
+                    frame = frame[:, :, :3]
+                frames.append(frame)
+
+                if (i + 1) % fps == 0:
+                    pct = (i + 1) / total_frames * 100
+                    self.status_label.setText(
+                        f"Recording: {pct:.0f}% ({i+1}/{total_frames} frames)"
+                    )
+                    QApplication.processEvents()
+
+            # Reset camera
+            self.viewer.camera.angles = initial_angles
+
+            # Encode video
+            self.status_label.setText("Encoding video...")
+            QApplication.processEvents()
+
+            import imageio
+            try:
+                imageio.mimwrite(output_path, frames, fps=fps)
+            except Exception:
+                # Fall back to GIF if MP4 encoding unavailable
+                output_path = str(output_dir / "brain3d_rotation.gif")
+                step = max(1, len(frames) // 100)
+                imageio.mimwrite(
+                    output_path, frames[::step],
+                    duration=int(1000 / max(1, fps // step)),
+                )
+
+            self.status_label.setText(f"Video saved: {Path(output_path).name}")
+            self.status_label.setStyleSheet("color: #4CAF50; font-size: 11px;")
+
+        except Exception as e:
+            self.viewer.camera.angles = initial_angles
+            self.status_label.setText(f"Error: {e}")
+            self.status_label.setStyleSheet("color: #F44336; font-size: 11px;")
+            import traceback
+            traceback.print_exc()
+
+        finally:
+            self.record_btn.setEnabled(True)
+            self.load_btn.setEnabled(True)
 
 
 # =============================================================================
