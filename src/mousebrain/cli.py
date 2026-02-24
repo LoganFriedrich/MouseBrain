@@ -83,6 +83,18 @@ def main():
         help="Minimum nucleus diameter in um (default: 8.0)",
     )
 
+    # ── mousebrain roi ──
+    roi_parser = subparsers.add_parser(
+        "roi",
+        help="ROI drawing and cell counting",
+        description="Draw ROI polygons, count cells within them, and visualize results.",
+    )
+    roi_parser.add_argument(
+        "roi_args",
+        nargs=argparse.REMAINDER,
+        help="Arguments passed to the ROI sub-command (draw, count, or view)",
+    )
+
     args = parser.parse_args()
 
     if args.version:
@@ -98,6 +110,9 @@ def main():
 
     if args.command == "coloc":
         return run_coloc_command(args)
+
+    if args.command == "roi":
+        return run_roi_command(args)
 
     if args.crop:
         return launch_manual_crop(args.crop)
@@ -179,6 +194,21 @@ def run_coloc_command(args):
             print(f"  [{status}] {name}")
         print(f"{'='*60}")
 
+    return 0
+
+
+def run_roi_command(args):
+    """Dispatch to the ROI CLI."""
+    from mousebrain.plugin_2d.sliceatlas.cli.run_roi import main as roi_main
+    import sys as _sys
+    saved_argv = _sys.argv
+    _sys.argv = ["brainslice-roi"] + args.roi_args
+    try:
+        roi_main()
+    except SystemExit as e:
+        return e.code if e.code else 0
+    finally:
+        _sys.argv = saved_argv
     return 0
 
 

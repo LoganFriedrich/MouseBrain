@@ -475,6 +475,318 @@ def _watershed_split(
     return ws_labels, n_splits
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# LOG-AUGMENTED DETECTION (threshold + LoG union)
+# ══════════════════════════════════════════════════════════════════════════
+
+def detect_with_log_augmentation(
+    image: np.ndarray,
+    pixel_um: float,
+    min_diameter_um: float = 10.0,
+    max_diameter_um: float = 25.0,
+    threshold_fraction: float = 0.20,
+    log_threshold: float = 0.005,
+    overlap_radius_factor: float = 1.5,
+    gaussian_sigma: float = 1.0,
+    use_hysteresis: bool = True,
+    hysteresis_low_fraction: float = 0.5,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Detect nuclei using threshold detection augmented with LoG blob detection.
+
+    Uses a decision tree to determine detection strategy based on image quality:
+
+    1. GOOD SIGNAL (Otsu finds >= 5 nuclei):
+       Run full LoG augmentation. Otsu detections provide a reference intensity
+       floor -- LoG blobs must have peak intensity >= 50% of the dimmest Otsu
+       nucleus to be accepted. This prevents noise blobs while catching dim
+       real nuclei.
+
+    2. MARGINAL SIGNAL (Otsu finds 1-4 nuclei, but image has dynamic range):
+       Run LoG with stricter filtering: blobs must have peak intensity >= the
+       median intensity of Otsu detections. Conservative -- only adds blobs
+       that look like confirmed detections.
+
+    3. NO SIGNAL (Otsu finds 0 nuclei, or image is essentially flat):
+       Skip LoG entirely. Return Otsu-only results (0 or few nuclei).
+       Flat = Otsu threshold < 3x image median (no bimodal distribution).
+
+    Args:
+        image: 2D nuclear channel image (any dtype).
+        pixel_um: Pixel size in micrometers per pixel.
+        min_diameter_um: Minimum nucleus diameter in micrometers.
+        max_diameter_um: Maximum nucleus diameter in micrometers.
+        threshold_fraction: Fraction of Otsu threshold to use as the primary
+            detection threshold. 0.20 = 20% of Otsu.
+        log_threshold: LoG blob detection threshold on the normalized [0,1]
+            image. Lower = more sensitive. 0.005 catches faint circular blobs.
+        overlap_radius_factor: LoG blobs within this factor of their radius
+            from a threshold centroid are considered overlapping and discarded.
+        gaussian_sigma: Gaussian blur sigma for threshold detection.
+        use_hysteresis: Whether to use hysteresis thresholding.
+        hysteresis_low_fraction: Low threshold fraction for hysteresis.
+
+    Returns:
+        Tuple of (labels, details) where:
+        - labels: 2D label image (0 = background, 1..N = nuclei). Threshold
+          detections get labels 1..M, LoG-only detections get labels M+1..N.
+        - details: dict with detection diagnostics including counts from
+          each method and combined total.
+    """
+    from skimage.feature import blob_log
+    from skimage.filters import threshold_otsu
+    from skimage.measure import regionprops
+    from scipy.ndimage import gaussian_filter
+    import math
+
+    if image.ndim != 2:
+        raise ValueError(f"Expected 2D image, got {image.ndim}D")
+
+    # Convert size filter from physical to pixel units (diameter-based)
+    min_area = int(math.pi * (min_diameter_um / 2 / pixel_um) ** 2)
+    max_area = int(math.pi * (max_diameter_um / 2 / pixel_um) ** 2)
+
+    # --- Step 1: Image quality assessment ---
+    img_f = gaussian_filter(image.astype(np.float32), sigma=gaussian_sigma)
+    otsu_val = float(threshold_otsu(img_f))
+    img_median = float(np.median(img_f))
+    img_mean = float(np.mean(img_f))
+
+    # Dynamic range: how far above background does signal extend?
+    # Flat images have otsu close to median (no bimodal separation)
+    otsu_to_median = otsu_val / max(img_median, 1.0)
+    is_flat = otsu_to_median < 3.0
+
+    # --- Step 2: Threshold detection (always runs) ---
+    manual_thresh = otsu_val * threshold_fraction
+
+    labels_thresh, det_thresh = detect_by_threshold(
+        image,
+        method='manual',
+        manual_threshold=manual_thresh,
+        min_area=min_area,
+        max_area=max_area,
+        gaussian_sigma=gaussian_sigma,
+        use_hysteresis=use_hysteresis,
+        hysteresis_low_fraction=hysteresis_low_fraction,
+    )
+    n_threshold = det_thresh['filtered_count']
+
+    # Collect threshold detection properties for intensity reference
+    thresh_centroids = []
+    thresh_peak_intensities = []
+    if n_threshold > 0:
+        for prop in regionprops(labels_thresh, intensity_image=image):
+            thresh_centroids.append(np.array(prop.centroid))
+            thresh_peak_intensities.append(float(prop.max_intensity))
+
+    # --- Step 3: Decision tree ---
+    GOOD_SIGNAL_MIN = 5
+    MARGINAL_SIGNAL_MIN = 1
+
+    if n_threshold >= GOOD_SIGNAL_MIN:
+        decision = 'good_signal'
+        # LoG blobs must have peak intensity >= 50% of dimmest Otsu detection
+        intensity_floor = min(thresh_peak_intensities) * 0.5
+    elif n_threshold >= MARGINAL_SIGNAL_MIN and not is_flat:
+        decision = 'marginal_signal'
+        # Stricter: blobs must be >= median of Otsu detection intensities
+        intensity_floor = float(np.median(thresh_peak_intensities))
+    else:
+        decision = 'no_signal'
+        intensity_floor = float('inf')  # blocks all LoG blobs
+
+    # --- Step 4: LoG blob detection (skipped for no_signal) ---
+    n_log_raw = 0
+    n_log_rejected_overlap = 0
+    n_log_rejected_intensity = 0
+    new_blobs = []
+
+    if decision != 'no_signal':
+        # Normalize for LoG (standard [0,1] range)
+        img_norm = image.astype(np.float64)
+        img_range = img_norm.max() - img_norm.min()
+        if img_range > 0:
+            img_norm = (img_norm - img_norm.min()) / img_range
+        else:
+            img_norm = np.zeros_like(img_norm)
+
+        min_sigma = (min_diameter_um / 2 / pixel_um) / np.sqrt(2)
+        max_sigma = (max_diameter_um / 2 / pixel_um) / np.sqrt(2)
+
+        blobs = blob_log(
+            img_norm,
+            min_sigma=max(0.5, min_sigma),
+            max_sigma=max_sigma,
+            num_sigma=10,
+            threshold=log_threshold,
+            overlap=0.5,
+        )
+        n_log_raw = len(blobs)
+
+        # --- Step 5: Filter LoG blobs ---
+        for blob in blobs:
+            y, x, sigma = blob
+            yi, xi = int(round(y)), int(round(x))
+
+            # Reject if blob center lands on existing threshold detection
+            if 0 <= yi < labels_thresh.shape[0] and 0 <= xi < labels_thresh.shape[1]:
+                if labels_thresh[yi, xi] > 0:
+                    n_log_rejected_overlap += 1
+                    continue
+
+            # Reject if too close to a threshold centroid
+            if thresh_centroids:
+                blob_radius = sigma * np.sqrt(2)
+                too_close = False
+                for c in thresh_centroids:
+                    dist = np.sqrt((y - c[0]) ** 2 + (x - c[1]) ** 2)
+                    if dist < blob_radius * overlap_radius_factor:
+                        too_close = True
+                        break
+                if too_close:
+                    n_log_rejected_overlap += 1
+                    continue
+
+            # INTENSITY GATE: reject blobs whose peak pixel is below floor
+            # This prevents noise blobs on high-background images
+            radius_px = max(1, int(round(sigma * np.sqrt(2))))
+            y0g = max(0, yi - radius_px)
+            y1g = min(image.shape[0], yi + radius_px + 1)
+            x0g = max(0, xi - radius_px)
+            x1g = min(image.shape[1], xi + radius_px + 1)
+            blob_peak = float(image[y0g:y1g, x0g:x1g].max())
+
+            if blob_peak < intensity_floor:
+                n_log_rejected_intensity += 1
+                continue
+
+            new_blobs.append(blob)
+
+    # --- Step 6: Stamp LoG blobs into the label image ---
+    # Use at least the minimum physical nucleus radius for stamps so that
+    # LoG detections respect the same size constraint as threshold detections.
+    min_radius_px = max(1, int(round(min_diameter_um / 2 / pixel_um)))
+    next_label = n_threshold + 1
+    h_img, w_img = labels_thresh.shape
+    labels_combined = labels_thresh.copy()
+    n_log_rejected_size = 0
+
+    for blob in new_blobs:
+        y, x, sigma = blob
+        blob_radius = max(1, int(round(sigma * np.sqrt(2))))
+        # Use the larger of the detected blob radius and the physical
+        # minimum — ensures stamps are never below the size filter.
+        radius_px = max(blob_radius, min_radius_px)
+
+        y0 = max(0, int(round(y)) - radius_px)
+        y1 = min(h_img, int(round(y)) + radius_px + 1)
+        x0 = max(0, int(round(x)) - radius_px)
+        x1 = min(w_img, int(round(x)) + radius_px + 1)
+
+        yy, xx = np.ogrid[y0 - int(round(y)):y1 - int(round(y)),
+                           x0 - int(round(x)):x1 - int(round(x))]
+        circle = (yy ** 2 + xx ** 2) <= radius_px ** 2
+        region = labels_combined[y0:y1, x0:x1]
+        region[(circle) & (region == 0)] = next_label
+        next_label += 1
+
+    n_log_new = next_label - n_threshold - 1
+    n_combined = n_threshold + n_log_new
+
+    # --- Step 7: Trim smallest 5% of detections ---
+    # Removes spurious tiny detections that passed individual filters
+    # but are clearly outliers in the size distribution.
+    n_trimmed_small = 0
+    if n_combined > 10:
+        all_props = regionprops(labels_combined)
+        all_areas = np.array([p.area for p in all_props])
+        p5_area = float(np.percentile(all_areas, 5))
+        if p5_area > 0:
+            to_remove = [p.label for p in all_props if p.area < p5_area]
+            for lbl in to_remove:
+                labels_combined[labels_combined == lbl] = 0
+                n_trimmed_small += 1
+            # Relabel to keep IDs contiguous
+            if n_trimmed_small > 0:
+                unique_labels = np.unique(labels_combined)
+                unique_labels = unique_labels[unique_labels > 0]
+                relabeled = np.zeros_like(labels_combined)
+                for new_id, old_id in enumerate(unique_labels, 1):
+                    relabeled[labels_combined == old_id] = new_id
+                labels_combined = relabeled
+                n_combined -= n_trimmed_small
+
+    # --- Step 8: Circularity / eccentricity filter ---
+    # Remove objects that are clearly not round nuclei (artifacts, debris,
+    # elongated smears). Uses eccentricity from the fitted ellipse (robust
+    # even at low pixel counts) rather than perimeter-based circularity
+    # which is unreliable for small regions with jaggy edges.
+    # Eccentricity: 0 = perfect circle, 1 = line. Nuclei viewed from above
+    # are roughly round, so eccentricity should be < ~0.85. We use a generous
+    # threshold to avoid rejecting legitimate oblique or slightly elongated
+    # nuclei.
+    max_eccentricity = 0.88  # allows ~2:1 aspect ratio
+    min_solidity_val = 0.5   # must be at least half-filled (no hollow/C-shapes)
+    n_removed_morph = 0
+    if n_combined > 0:
+        morph_props = regionprops(labels_combined)
+        keep_labels = []
+        for p in morph_props:
+            # Skip eccentricity check for very small objects (< 6px) where
+            # the fitted ellipse is unreliable
+            if p.area >= 6 and p.eccentricity > max_eccentricity:
+                n_removed_morph += 1
+                continue
+            if p.solidity < min_solidity_val:
+                n_removed_morph += 1
+                continue
+            keep_labels.append(p.label)
+
+        if n_removed_morph > 0:
+            filtered = np.zeros_like(labels_combined)
+            for new_id, old_lbl in enumerate(keep_labels, 1):
+                filtered[labels_combined == old_lbl] = new_id
+            labels_combined = filtered
+            n_combined -= n_removed_morph
+
+    details = {
+        'method': 'threshold+log',
+        'threshold': manual_thresh,
+        'otsu_threshold': otsu_val,
+        'threshold_fraction': threshold_fraction,
+        'log_threshold': log_threshold,
+        'n_threshold': int(n_threshold),
+        'n_log_raw': int(n_log_raw),
+        'n_log_new': int(n_log_new),
+        'n_log_rejected_overlap': int(n_log_rejected_overlap),
+        'n_log_rejected_intensity': int(n_log_rejected_intensity),
+        'n_log_rejected_size': int(n_log_rejected_size),
+        'n_trimmed_small': int(n_trimmed_small),
+        'filtered_count': int(n_combined),
+        'raw_count': int(n_threshold + n_log_raw),
+        'min_area': min_area,
+        'max_area': max_area,
+        'pixel_um': pixel_um,
+        'min_diameter_um': min_diameter_um,
+        'max_diameter_um': max_diameter_um,
+        'decision': decision,
+        'intensity_floor': float(intensity_floor) if intensity_floor != float('inf') else None,
+        'otsu_to_median': otsu_to_median,
+        'is_flat': is_flat,
+        'removed_by_size': det_thresh.get('removed_by_size', 0),
+        'removed_by_morphology': int(n_removed_morph),
+        'n_watershed_splits': det_thresh.get('n_watershed_splits', 0),
+        'use_hysteresis': use_hysteresis,
+        'hysteresis_low_fraction': hysteresis_low_fraction,
+        'fill_holes': det_thresh.get('fill_holes', True),
+        'closing_radius': det_thresh.get('closing_radius', 0),
+        'split_touching': det_thresh.get('split_touching', False),
+    }
+
+    return labels_combined, details
+
+
 # Available pretrained models
 PRETRAINED_MODELS = {
     '2D_versatile_fluo': 'Versatile fluorescence microscopy (recommended)',

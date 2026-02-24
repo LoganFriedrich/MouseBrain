@@ -771,8 +771,10 @@ class BrainSliceWidget(QWidget):
         self.thresh_split_footprint_row.setVisible(bool(state))
 
     def _on_thresh_method_changed(self, method: str):
-        """Toggle visibility of area_fraction parameter."""
+        """Toggle visibility of method-specific parameters."""
         self.area_fraction_widget.setVisible(method == 'area_fraction')
+        self.sigma_threshold_widget.setVisible(method == 'background_mean')
+        self.thresh_value_widget.setVisible(method != 'background_mean')
 
     def _on_coloc_mode_changed(self, mode_text: str):
         """Show/hide Channel 2 controls based on mode."""
@@ -885,12 +887,13 @@ class BrainSliceWidget(QWidget):
         soma_dil_row.addWidget(QLabel("Soma dilation (px):"))
         self.soma_dilation_spin = QSpinBox()
         self.soma_dilation_spin.setRange(0, 50)
-        self.soma_dilation_spin.setValue(0)
+        self.soma_dilation_spin.setValue(6)
         self.soma_dilation_spin.setToolTip(
             "Dilate each nucleus ROI to include the surrounding soma.\n"
-            "Signal (eYFP, etc.) is cytoplasmic, not nuclear — measure\n"
+            "Signal (eYFP, etc.) is cytoplasmic, not nuclear -- measure\n"
             "intensity in this dilated region instead of the nucleus alone.\n"
-            "0 = measure only within nucleus (old behavior)."
+            "6 = validated default for ENCR retrograde tracer.\n"
+            "0 = measure only within nucleus (misses cytoplasmic signal)."
         )
         soma_dil_row.addWidget(self.soma_dilation_spin)
         soma_layout.addLayout(soma_dil_row)
@@ -905,7 +908,7 @@ class BrainSliceWidget(QWidget):
         thresh_method_layout = QHBoxLayout()
         thresh_method_layout.addWidget(QLabel("Method:"))
         self.thresh_method_combo = QComboBox()
-        self.thresh_method_combo.addItems(['fold_change', 'area_fraction', 'absolute', 'percentile'])
+        self.thresh_method_combo.addItems(['background_mean', 'fold_change', 'area_fraction', 'absolute', 'percentile'])
         self.thresh_method_combo.currentTextChanged.connect(self._on_thresh_method_changed)
         thresh_method_layout.addWidget(self.thresh_method_combo)
         thresh_layout.addLayout(thresh_method_layout)
@@ -917,7 +920,28 @@ class BrainSliceWidget(QWidget):
         self.thresh_value_spin.setValue(2.0)
         self.thresh_value_spin.setSingleStep(0.5)
         thresh_value_layout.addWidget(self.thresh_value_spin)
-        thresh_layout.addLayout(thresh_value_layout)
+        self.thresh_value_widget = QWidget()
+        self.thresh_value_widget.setLayout(thresh_value_layout)
+        self.thresh_value_widget.setVisible(False)  # hidden by default since background_mean is default
+        thresh_layout.addWidget(self.thresh_value_widget)
+
+        # Sigma threshold (for background_mean method)
+        sigma_thresh_layout = QHBoxLayout()
+        sigma_thresh_layout.addWidget(QLabel("Sigma threshold:"))
+        self.sigma_threshold_spin = QDoubleSpinBox()
+        self.sigma_threshold_spin.setRange(0.0, 10.0)
+        self.sigma_threshold_spin.setValue(0.0)
+        self.sigma_threshold_spin.setSingleStep(0.5)
+        self.sigma_threshold_spin.setToolTip(
+            "Std devs above background mean for positive classification.\n"
+            "0 = background mean IS the threshold (PI's method).\n"
+            "Only used with background_mean method."
+        )
+        sigma_thresh_layout.addWidget(self.sigma_threshold_spin)
+        self.sigma_threshold_widget = QWidget()
+        self.sigma_threshold_widget.setLayout(sigma_thresh_layout)
+        self.sigma_threshold_widget.setVisible(True)  # visible by default since background_mean is default
+        thresh_layout.addWidget(self.sigma_threshold_widget)
 
         # Area fraction parameter (visible only when area_fraction method selected)
         area_frac_layout = QHBoxLayout()
@@ -1967,6 +1991,7 @@ class BrainSliceWidget(QWidget):
             'background_percentile': self.bg_percentile_spin.value(),
             'threshold_method': self.thresh_method_combo.currentText(),
             'threshold_value': self.thresh_value_spin.value(),
+            'sigma_threshold': self.sigma_threshold_spin.value(),
             'dilation_iterations': self.bg_dilation_spin.value(),
             'area_fraction': self.area_fraction_spin.value(),
             'use_local_background': self.bg_local_check.isChecked(),
@@ -2034,12 +2059,13 @@ class BrainSliceWidget(QWidget):
         self.status_label.setText("Running dual-channel colocalization...")
         self.coloc_btn.setEnabled(False)
 
-        # Ch1 params (red / mCherry — nuclear)
+        # Ch1 params (red / mCherry -- nuclear)
         params_ch1 = {
             'background_method': self.bg_method_combo.currentText(),
             'background_percentile': self.bg_percentile_spin.value(),
             'threshold_method': self.thresh_method_combo.currentText(),
             'threshold_value': self.thresh_value_spin.value(),
+            'sigma_threshold': self.sigma_threshold_spin.value(),
             'dilation_iterations': self.bg_dilation_spin.value(),
             'area_fraction': self.area_fraction_spin.value(),
             'soma_dilation': self.soma_dilation_spin.value(),

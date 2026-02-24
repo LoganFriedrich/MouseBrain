@@ -148,6 +148,8 @@ class ColocalizationAnalyzer:
         self.background_percentile = background_percentile
         # Populated after estimate_background() when using 'gmm'
         self.background_diagnostics = None
+        # Populated after classify_positive_negative() when using adaptive methods
+        self.adaptive_diagnostics = None
 
     def estimate_tissue_mask(
         self,
@@ -638,6 +640,7 @@ class ColocalizationAnalyzer:
                 'soma_mean_intensity': float(np.mean(soma_pixels)),
                 'soma_max_intensity': float(np.max(soma_pixels)),
                 'soma_median_intensity': float(np.median(soma_pixels)),
+                'soma_p75_intensity': float(np.percentile(soma_pixels, 75)),
             })
 
         return pd.DataFrame(rows)
@@ -741,7 +744,185 @@ class ColocalizationAnalyzer:
                 'soma_mean_intensity': float(np.mean(ring_pixels)),
                 'soma_max_intensity': float(np.max(ring_pixels)),
                 'soma_median_intensity': float(np.median(ring_pixels)),
+                'soma_p75_intensity': float(np.percentile(ring_pixels, 75)),
                 'soma_p90_intensity': float(np.percentile(ring_pixels, 90)),
+                'soma_area': ring_area,
+            })
+
+        return pd.DataFrame(rows)
+
+    def measure_validated_intensities(
+        self,
+        signal_image: np.ndarray,
+        nuclei_labels: np.ndarray,
+        consideration_radius_px: int = 15,
+        neighbor_exclusion_radius_px: Optional[int] = None,
+        background: float = 0.0,
+    ):
+        """
+        Measure signal with spatial validation against neighbor bleed.
+
+        For each nucleus:
+        1. Define a circular consideration zone around the centroid
+        2. Exclude all nuclear pixels (ring-only, same as Voronoi method)
+        3. Exclude pixels within exclusion radius of any OTHER nucleus
+           centroid -- these could carry bleed from a neighbor's signal
+        4. Measure green signal only in the remaining clean pixels
+        5. Compute signal_distance: distance from the intensity-weighted
+           center of mass of above-background signal to the nucleus
+           centroid. Short distance = signal genuinely surrounds this
+           cell. Long distance or inf = signal is absent or off-center
+           (likely bleed or noise)
+
+        This addresses the main failure mode of Voronoi measurement:
+        a bright positive cell's signal bleeds into the Voronoi
+        territory of an adjacent negative cell, causing false positives.
+
+        Args:
+            signal_image: Signal channel (green/eYFP).
+            nuclei_labels: Label image from detection.
+            consideration_radius_px: Radius of the measurement circle
+                around each nucleus centroid. Should cover the expected
+                soma extent. ~12-15 px for 20x brainstem neurons.
+            neighbor_exclusion_radius_px: Radius around each OTHER
+                nucleus centroid to exclude from this cell's measurement.
+                Defaults to consideration_radius_px (conservative).
+            background: Background intensity (from estimate_background).
+                Used to compute signal center of mass (only pixels above
+                this value contribute).
+
+        Returns:
+            DataFrame with standard soma_* columns (compatible with
+            classify_positive_negative) plus:
+            - clean_area: pixels in the clean measurement zone
+            - signal_distance: distance from signal COM to nucleus centroid
+              (inf if no above-background signal found)
+        """
+        pd = _get_pandas()
+        from skimage.measure import regionprops
+
+        if neighbor_exclusion_radius_px is None:
+            neighbor_exclusion_radius_px = consideration_radius_px
+
+        props = regionprops(nuclei_labels)
+        n_cells = len(props)
+        h, w = signal_image.shape
+
+        # Precompute centroid arrays for fast neighbor distance checks
+        centroids = np.array([p.centroid for p in props])  # (N, 2) as (y, x)
+
+        rows = []
+        for i, prop in enumerate(props):
+            cy, cx = prop.centroid
+            iy, ix = int(round(cy)), int(round(cx))
+            r = consideration_radius_px
+            nr = neighbor_exclusion_radius_px
+
+            # Local bounding box for the consideration circle
+            y0 = max(0, iy - r)
+            y1 = min(h, iy + r + 1)
+            x0 = max(0, ix - r)
+            x1 = min(w, ix + r + 1)
+
+            # Local coordinate grid relative to centroid
+            yy, xx = np.ogrid[y0 - iy:y1 - iy, x0 - ix:x1 - ix]
+            dist_sq = yy ** 2 + xx ** 2
+
+            # My consideration circle
+            my_circle = dist_sq <= r * r
+
+            # Exclude ALL nuclear pixels (ring-only)
+            local_labels = nuclei_labels[y0:y1, x0:x1]
+            not_nuclear = local_labels == 0
+
+            # Exclude pixels within exclusion radius of other centroids
+            neighbor_excl = np.zeros_like(my_circle)
+            for j in range(n_cells):
+                if j == i:
+                    continue
+                oy, ox = centroids[j]
+                # Quick bounding check -- skip if clearly out of range
+                if abs(oy - cy) > r + nr or abs(ox - cx) > r + nr:
+                    continue
+                # Distance from each local pixel to other centroid
+                dy = yy + iy - oy
+                dx = xx + ix - ox
+                neighbor_excl |= (dy * dy + dx * dx) <= nr * nr
+
+            # Clean measurement zone
+            clean_mask = my_circle & not_nuclear & ~neighbor_excl
+            local_signal = signal_image[y0:y1, x0:x1]
+            clean_pixels = local_signal[clean_mask]
+
+            used_fallback = False
+            if len(clean_pixels) == 0:
+                # Dense region: fall back to consideration circle minus nuclei
+                fallback_mask = my_circle & not_nuclear
+                clean_pixels = local_signal[fallback_mask]
+                clean_area = int(fallback_mask.sum())
+                used_fallback = True
+            else:
+                clean_area = int(clean_mask.sum())
+
+            if len(clean_pixels) == 0:
+                rows.append({
+                    'label': prop.label,
+                    'centroid_y': cy,
+                    'centroid_x': cx,
+                    'nucleus_area': prop.area,
+                    'cyto_area': clean_area,
+                    'clean_area': 0,
+                    'mean_intensity': 0.0,
+                    'soma_mean_intensity': 0.0,
+                    'soma_max_intensity': 0.0,
+                    'soma_median_intensity': 0.0,
+                    'soma_p75_intensity': 0.0,
+                    'soma_p90_intensity': 0.0,
+                    'soma_area': 0,
+                    'signal_distance': float('inf'),
+                })
+                continue
+
+            # Measure intensity in clean zone
+            nuc_pixels = signal_image[nuclei_labels == prop.label]
+            nuc_mean = float(np.mean(nuc_pixels)) if len(nuc_pixels) > 0 else 0.0
+
+            # Signal proximity: intensity-weighted COM of above-background
+            # pixels within the clean zone. If signal genuinely surrounds
+            # this cell, COM will be near the centroid. If it's bleed from
+            # a neighbor, COM will be offset toward that neighbor.
+            active_mask = (local_signal > background) if background > 0 else my_circle
+            signal_mask = clean_mask & active_mask
+            signal_coords = np.argwhere(signal_mask)  # local (row, col)
+
+            if len(signal_coords) > 0:
+                weights = local_signal[signal_mask] - background
+                weights = np.maximum(weights, 0)
+                total_w = float(weights.sum())
+                if total_w > 0:
+                    com_y = float(np.average(signal_coords[:, 0], weights=weights)) + y0
+                    com_x = float(np.average(signal_coords[:, 1], weights=weights)) + x0
+                else:
+                    com_y, com_x = cy, cx
+                signal_distance = float(np.sqrt((com_y - cy) ** 2 + (com_x - cx) ** 2))
+            else:
+                signal_distance = float('inf')
+
+            rows.append({
+                'label': prop.label,
+                'centroid_y': cy,
+                'centroid_x': cx,
+                'nucleus_area': prop.area,
+                'cyto_area': clean_area,
+                'clean_area': clean_area,
+                'mean_intensity': nuc_mean,
+                'soma_mean_intensity': float(np.mean(clean_pixels)),
+                'soma_max_intensity': float(np.max(clean_pixels)),
+                'soma_median_intensity': float(np.median(clean_pixels)),
+                'soma_p75_intensity': float(np.percentile(clean_pixels, 75)),
+                'soma_p90_intensity': float(np.percentile(clean_pixels, 90)),
+                'soma_area': clean_area,
+                'signal_distance': float(signal_distance),
             })
 
         return pd.DataFrame(rows)
@@ -818,9 +999,14 @@ class ColocalizationAnalyzer:
         df = measurements.copy()
 
         # Determine which intensity column to use for classification.
-        # If soma_mean_intensity exists (from measure_soma_intensities), use it.
-        # Otherwise use mean_intensity (from measure_nuclei_intensities).
-        if 'soma_mean_intensity' in df.columns:
+        # Prefer soma_p75_intensity (75th percentile of dilated soma region):
+        # this captures offset signal where green is not centered on the
+        # nucleus (e.g., cytoplasmic protein, asymmetric dendrites).
+        # The mean would be diluted by empty pixels on the non-signal side.
+        # Fall back to soma_mean, then nuclear mean.
+        if 'soma_p75_intensity' in df.columns:
+            intensity_col = 'soma_p75_intensity'
+        elif 'soma_mean_intensity' in df.columns:
             intensity_col = 'soma_mean_intensity'
         else:
             intensity_col = 'mean_intensity'
@@ -847,85 +1033,102 @@ class ColocalizationAnalyzer:
 
         elif method == 'background_mean':
             # PI's method: simple comparison to tissue background mean.
+            # The background mean IS the threshold (sigma_threshold=0).
             #
-            # 1. Exclude black/near-black areas (slide, empty regions)
-            # 2. Dilate all nuclear ROIs generously to block all somas
-            # 3. Average remaining green in tissue = background threshold
-            # 4. Cell is positive if its green ROI mean > background mean
-            #
-            # No standard deviations, no Otsu, no tiers. The background
-            # mean IS the threshold.
+            # If the caller already estimated background (e.g. via GMM in
+            # estimate_background()), use that directly. Otherwise compute
+            # from the green channel here as a fallback.
             if signal_image is None or nuclei_labels is None:
                 raise ValueError(
                     "background_mean method requires signal_image and "
                     "nuclei_labels"
                 )
-            ndimage = _get_ndimage()
-            from skimage.segmentation import expand_labels as _expand
 
-            # Step 3a: tissue mask — use caller-provided mask if available,
-            # otherwise fall back to Otsu on the green channel.
-            if tissue_mask is not None:
-                pass  # use the provided mask (typically from red channel)
+            # Use caller-provided background if it's a valid scalar.
+            # The caller's estimate_background() uses GMM which extracts
+            # the true low-intensity background component. Recomputing
+            # here with np.mean would include neuropil/autofluorescence
+            # and inflate the threshold.
+            caller_bg = float(background) if not isinstance(
+                background, np.ndarray) else None
+            if caller_bg is not None and caller_bg > 0:
+                bg_mean = caller_bg
             else:
-                # Fallback: Otsu on green to separate tissue from slide.
-                # Better than p5 which included nearly everything.
+                # Fallback: compute from image (no pre-computed background)
+                ndimage = _get_ndimage()
+                from skimage.segmentation import expand_labels as _expand
+
+                if tissue_mask is not None:
+                    pass
+                else:
+                    from skimage.filters import threshold_otsu as _otsu
+                    try:
+                        otsu_val = _otsu(signal_image)
+                        tissue_mask = signal_image > otsu_val
+                    except ValueError:
+                        tissue_mask = signal_image > np.percentile(
+                            signal_image, 5)
+
+                soma_dil = 8
+                if ('cyto_area' in df.columns
+                        and 'nucleus_area' in df.columns):
+                    avg_nuc = df['nucleus_area'].median()
+                    avg_ring = df['cyto_area'].median()
+                    if avg_nuc > 0:
+                        import math
+                        soma_dil = int(
+                            math.sqrt((avg_nuc + avg_ring) / math.pi)
+                            - math.sqrt(avg_nuc / math.pi))
+                bg_excl_radius = max(soma_dil * 3, 25)
+                expanded_all = _expand(nuclei_labels, distance=bg_excl_radius)
+                soma_exclusion = expanded_all > 0
+
+                bg_mask = tissue_mask & ~soma_exclusion
+                bg_pixels = signal_image[bg_mask]
+
+                if len(bg_pixels) < 100:
+                    bg_mask_fallback = tissue_mask & (nuclei_labels == 0)
+                    bg_pixels = signal_image[bg_mask_fallback]
+
+                bg_mean = float(np.mean(bg_pixels))
+
+            # Estimate std from tissue pixels outside somas for sigma bins.
+            # Always compute this even when using caller's background, so
+            # we can report sigma_above_bg meaningfully.
+            if tissue_mask is None:
                 from skimage.filters import threshold_otsu as _otsu
                 try:
                     otsu_val = _otsu(signal_image)
                     tissue_mask = signal_image > otsu_val
                 except ValueError:
-                    tissue_mask = signal_image > np.percentile(signal_image, 5)
-
-            # Step 3b: generous dilation to exclude ALL possible somas
-            # Must be large enough that no cell body signal contaminates
-            # the background estimate
-            soma_dil = 8  # default
-            if 'cyto_area' in df.columns and 'nucleus_area' in df.columns:
-                avg_nuc = df['nucleus_area'].median()
-                avg_ring = df['cyto_area'].median()
-                if avg_nuc > 0:
-                    import math
-                    soma_dil = int(math.sqrt((avg_nuc + avg_ring) / math.pi)
-                                   - math.sqrt(avg_nuc / math.pi))
-            bg_excl_radius = max(soma_dil * 3, 25)
-            expanded_all = _expand(nuclei_labels, distance=bg_excl_radius)
-            soma_exclusion = expanded_all > 0
-
-            # Step 3c: background = mean of green in tissue, outside somas
-            bg_mask = tissue_mask & ~soma_exclusion
-            bg_pixels = signal_image[bg_mask]
-
-            if len(bg_pixels) < 100:
-                # Dense image: fall back to tissue excluding just nuclei
-                bg_mask_fallback = tissue_mask & (nuclei_labels == 0)
-                bg_pixels = signal_image[bg_mask_fallback]
-
-            bg_mean = float(np.mean(bg_pixels))
-            # Use below-median pixels for robust std (avoids any signal bleed)
-            below_med = bg_pixels[bg_pixels <= np.median(bg_pixels)]
-            if len(below_med) > 10:
-                bg_std = float(np.std(below_med))
+                    tissue_mask = signal_image > np.percentile(
+                        signal_image, 5)
+            bg_region = tissue_mask & (nuclei_labels == 0)
+            bg_pixels_for_std = signal_image[bg_region]
+            if len(bg_pixels_for_std) > 10:
+                below_med = bg_pixels_for_std[
+                    bg_pixels_for_std <= np.median(bg_pixels_for_std)]
+                if len(below_med) > 10:
+                    bg_std = float(np.std(below_med))
+                else:
+                    bg_std = float(np.std(bg_pixels_for_std))
             else:
-                bg_std = float(np.std(bg_pixels))
+                bg_std = max(bg_mean * 0.05, 1.0)
             if bg_std < 1e-6:
                 bg_std = max(bg_mean * 0.05, 1.0)
 
-            # Step 4: classify — green ROI above bg + sigma_threshold * std
+            # Classify: cell positive if intensity > bg_mean + sigma * std
             pos_cutoff = bg_mean + sigma_threshold * bg_std
             df['is_positive'] = df[intensity_col] > pos_cutoff
 
-            # How many std devs above background each cell is
             df['sigma_above_bg'] = (
                 (df[intensity_col] - bg_mean) / bg_std
             )
 
-            # Overwrite the background column with our computed value
             df['background'] = bg_mean
             df['bg_std'] = bg_std
             df['fold_change'] = df[intensity_col] / max(bg_mean, 1e-10)
 
-            # Binning: how many cells at each sigma level
             sigmas = df['sigma_above_bg'].values
             n_above_0 = int(np.sum(sigmas > 0))
             n_above_1 = int(np.sum(sigmas > 1.0))
@@ -939,10 +1142,9 @@ class ColocalizationAnalyzer:
                 'background_std': bg_std,
                 'sigma_threshold': sigma_threshold,
                 'positive_cutoff': pos_cutoff,
-                'bg_excl_radius': bg_excl_radius,
-                'tissue_pixels': int(np.sum(tissue_mask)),
-                'excluded_pixels': int(np.sum(soma_exclusion & tissue_mask)),
-                'bg_pixels_used': len(bg_pixels),
+                'bg_source': 'caller' if (caller_bg and caller_bg > 0
+                                          ) else 'recomputed',
+                'bg_pixels_for_std': len(bg_pixels_for_std),
                 'n_total': len(df),
                 'n_above_bg': n_above_0,
                 'n_above_1std': n_above_1,
@@ -1523,6 +1725,7 @@ def analyze_dual_colocalization(
     cell_body_dilation_1: int = 8,
     area_fraction_1: float = 0.5,
     soma_dilation_1: int = 0,
+    sigma_threshold_1: float = 0,
     # Channel 2 params
     background_method_2: str = 'gmm',
     background_percentile_2: float = 10.0,
@@ -1531,6 +1734,7 @@ def analyze_dual_colocalization(
     cell_body_dilation_2: int = 8,
     area_fraction_2: float = 0.5,
     soma_dilation_2: int = 5,
+    sigma_threshold_2: float = 0,
     # Measurement mode
     use_cytoplasm_ring: bool = True,
     # Channel labels
@@ -1599,10 +1803,14 @@ def analyze_dual_colocalization(
             )
 
     def _classify_channel(analyzer, meas, bg, method, threshold, signal_image,
-                          nuclei_labels, area_fraction):
+                          nuclei_labels, area_fraction, sigma_threshold=0):
         """Build classify kwargs and run classification."""
         kw = {'method': method, 'threshold': threshold}
-        if method == 'area_fraction':
+        if method == 'background_mean':
+            kw['sigma_threshold'] = sigma_threshold
+            kw['signal_image'] = signal_image
+            kw['nuclei_labels'] = nuclei_labels
+        elif method == 'area_fraction':
             kw['signal_image'] = signal_image
             kw['nuclei_labels'] = nuclei_labels
             kw['area_fraction'] = area_fraction
@@ -1626,7 +1834,7 @@ def analyze_dual_colocalization(
     )
     classified1 = _classify_channel(
         analyzer1, meas1, bg1, threshold_method_1, threshold_value_1,
-        signal_image_1, nuclei_labels, area_fraction_1,
+        signal_image_1, nuclei_labels, area_fraction_1, sigma_threshold_1,
     )
 
     # --- Channel 2 analysis ---
@@ -1644,7 +1852,7 @@ def analyze_dual_colocalization(
     )
     classified2 = _classify_channel(
         analyzer2, meas2, bg2, threshold_method_2, threshold_value_2,
-        signal_image_2, nuclei_labels, area_fraction_2,
+        signal_image_2, nuclei_labels, area_fraction_2, sigma_threshold_2,
     )
 
     # --- Merge ---

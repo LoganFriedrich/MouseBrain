@@ -400,9 +400,64 @@ def _run_dual_pipeline(red_image, green_image, labels, args, t0, t_load, t_detec
     return classified, summary, None
 
 
+def _add_scale_bar(ax, pixel_um, bar_um=None, location='lower right',
+                   color='white', fontsize=7, height_fraction=0.015, pad=0.03):
+    """Add a physical scale bar to a matplotlib axes showing an image.
+
+    Args:
+        ax: matplotlib Axes with an image displayed.
+        pixel_um: Physical size of one pixel in micrometers.
+        bar_um: Desired bar length in um. Auto-chosen if None.
+        location: 'lower right' or 'lower left'.
+        color: Bar and label color.
+        fontsize: Label font size.
+        height_fraction: Bar thickness as fraction of image height.
+        pad: Padding from edges as fraction of image dimensions.
+    """
+    from matplotlib.patches import Rectangle as _SBRect
+
+    # Get image extent in pixels from the axes
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    img_w = abs(xlim[1] - xlim[0])
+    img_h = abs(ylim[1] - ylim[0])
+
+    # Field of view in um
+    fov_um = img_w * pixel_um
+
+    # Auto-select bar length: nice round number ~15-25% of FOV
+    if bar_um is None:
+        target = fov_um * 0.2
+        nice = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000]
+        bar_um = min(nice, key=lambda x: abs(x - target))
+
+    bar_px = bar_um / pixel_um
+    bar_h = img_h * height_fraction
+
+    # Position
+    if location == 'lower right':
+        x0 = xlim[0] + img_w * (1 - pad) - bar_px
+    else:
+        x0 = xlim[0] + img_w * pad
+
+    # ylim is inverted for images (top=0)
+    y_bottom = min(ylim) + img_h * (1 - pad)
+    y0 = y_bottom - bar_h
+
+    rect = _SBRect((x0, y0), bar_px, bar_h, facecolor=color,
+                    edgecolor='none', alpha=0.9, zorder=10)
+    ax.add_patch(rect)
+
+    # Label
+    label = f"{bar_um} um" if bar_um >= 1 else f"{bar_um*1000:.0f} nm"
+    ax.text(x0 + bar_px / 2, y0 - bar_h * 0.5, label,
+            color=color, fontsize=fontsize, ha='center', va='top',
+            fontweight='bold', zorder=10)
+
+
 def _make_results_figure(red_image, green_image, labels, measurements,
                          summary, det_details, coloc_metrics, args,
-                         pixel_um=None):
+                         pixel_um=None, zoom_override=None):
     """Build a matplotlib figure with detection + colocalization results.
 
     Layout:
@@ -496,7 +551,7 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     # gap between them, making it obvious they are separate detections.
     from skimage.morphology import binary_dilation, disk
     _dil_inner = disk(5)  # inner edge of ring (standoff from cell)
-    _dil_outer = disk(7)  # outer edge of ring (thin ring = outer - inner)
+    _dil_outer = disk(9)  # outer edge of ring (~4px-wide ring, more visible)
 
     def _build_boundary_mask(label_set):
         """Build a thin ring mask well outside each cell.
@@ -599,6 +654,11 @@ def _make_results_figure(red_image, green_image, labels, measurements,
         if not too_close:
             all_picked.append(p)
     zoom_props_final = all_picked[:6]
+
+    # Allow caller to override zoom cell selection (e.g. ROI-aware picking)
+    if zoom_override is not None:
+        zoom_props_final = zoom_override[:6]
+
     n_zoom = len(zoom_props_final)
 
     # ── Figure layout ──
@@ -631,7 +691,7 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     # Panel 2: Green channel — per-cell magenta ring frames (positive only)
     ax2 = fig.add_subplot(gs_top[0, 1])
     grn_rgb = np.clip(np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1), 0, 1)
-    p2 = _blend_boundary(grn_rgb, bnd_pos, (1, 0, 1), alpha=0.3)
+    p2 = _blend_boundary(grn_rgb, bnd_pos, (1, 0, 1), alpha=0.5)
     ax2.imshow(p2)
     ax2.set_title(f"Signal ({n_pos} colocalized)", color='white', fontsize=10)
     ax2.axis('off')
@@ -649,7 +709,7 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     p4 = np.clip(composite.copy(), 0, 1)
     p4 = _blend_boundary(p4, bnd_neg, (1, 0.27, 0.27), alpha=0.25)
     p4 = _blend_boundary(p4, bnd_bord, (1, 0.67, 0), alpha=0.3)
-    p4 = _blend_boundary(p4, bnd_pos, (0, 1, 1), alpha=0.55)
+    p4 = _blend_boundary(p4, bnd_pos, (0, 1, 1), alpha=0.7)
     ax4.imshow(p4)
     # Non-overlapping zoom rectangles
     for i, prop in enumerate(zoom_props_final):
@@ -668,6 +728,11 @@ def _make_results_figure(red_image, green_image, labels, measurements,
         color='white', fontsize=10,
     )
     ax4.axis('off')
+
+    # Scale bars on overview panels
+    if pixel_um is not None:
+        for ov_ax in [ax1, ax2, ax3, ax4]:
+            _add_scale_bar(ov_ax, pixel_um)
 
     # Panel 5: Stats — text + mini histogram
     # Use nested gridspec for histogram on top, text below
@@ -905,11 +970,11 @@ def _make_results_figure(red_image, green_image, labels, measurements,
             ax_c.imshow(np.clip(comp_crop, 0, 1))
             for cmask, lbl_pos, crop_lbl_id in cell_contours:
                 if lbl_pos:
-                    cc, lw = 'cyan', 1.5
+                    cc, lw = 'cyan', 2.5
                 elif crop_lbl_id in borderline_labels:
-                    cc, lw = 'yellow', 0.5
+                    cc, lw = 'yellow', 1.0
                 else:
-                    cc, lw = 'white', 0.4
+                    cc, lw = 'white', 0.6
                 ax_c.contour(cmask, levels=[0.5], linewidths=lw,
                              colors=[cc], alpha=0.7, antialiased=True)
             # Stats text
@@ -942,6 +1007,10 @@ def _make_results_figure(red_image, green_image, labels, measurements,
                       bbox=dict(boxstyle='round,pad=0.2', facecolor='black',
                                 alpha=0.6, edgecolor='none'))
             ax_c.axis('off')
+
+            # Scale bar on first zoom panel only (same scale for all zooms)
+            if i == 0 and pixel_um is not None:
+                _add_scale_bar(ax_r, pixel_um, fontsize=6, location='lower left')
 
     plt.suptitle(fname, color='white', fontsize=14, fontweight='bold', y=0.97)
     return fig
