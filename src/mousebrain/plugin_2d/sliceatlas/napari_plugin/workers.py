@@ -403,6 +403,12 @@ class ColocalizationWorker(QThread):
                 'threshold': self.params.get('threshold_value', 2.0),
             }
 
+            # For background_mean method, pass sigma_threshold, signal_image, labels
+            if thresh_method == 'background_mean':
+                classify_kwargs['sigma_threshold'] = self.params.get('sigma_threshold', 0)
+                classify_kwargs['signal_image'] = self.signal_image
+                classify_kwargs['nuclei_labels'] = self.nuclei_labels
+
             # For area_fraction method, pass the signal image and labels
             if thresh_method == 'area_fraction':
                 classify_kwargs['signal_image'] = self.signal_image_for_area
@@ -496,7 +502,8 @@ class DualColocalizationWorker(QThread):
                 threshold_value_1=self.params_ch1.get('threshold_value', 2.0),
                 cell_body_dilation_1=self.params_ch1.get('dilation_iterations', 10),
                 area_fraction_1=self.params_ch1.get('area_fraction', 0.5),
-                soma_dilation_1=self.params_ch1.get('soma_dilation', 0),
+                soma_dilation_1=self.params_ch1.get('soma_dilation', 6),
+                sigma_threshold_1=self.params_ch1.get('sigma_threshold', 0),
                 # Ch2 params
                 background_method_2=self.params_ch2.get('background_method', 'gmm'),
                 background_percentile_2=self.params_ch2.get('background_percentile', 10.0),

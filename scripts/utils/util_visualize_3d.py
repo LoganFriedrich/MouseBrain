@@ -52,6 +52,7 @@ from mousebrain.region_mapping import get_elife_group, ELIFE_GROUPS
 
 FOLDER_REGISTERED = "3_Registered_Atlas"
 FOLDER_ANALYSIS = "6_Region_Analysis"
+DEFAULT_FIGURES_DIR = Path(r'Y:\2_Connectome\Databases\figures\Connectome_Grant\Tissue\3D')
 
 
 # =============================================================================
@@ -223,7 +224,7 @@ CONTEXT_REGIONS = {
     'Isocortex': ('Cortex',        [0.4, 0.6, 0.9],  [0.15, 0.30, 0.55]),
     'HPF':       ('Hippocampus',   [0.3, 0.9, 0.7],  [0.10, 0.50, 0.35]),
 }
-CONTEXT_ALPHA_DARK = 0.30
+CONTEXT_ALPHA_DARK = 0.01
 CONTEXT_ALPHA_LIGHT = 0.15
 
 
@@ -900,7 +901,7 @@ Examples:
     # Dark mode: light surfaces on dark background
     if args.dark:
         brainrender.settings.BACKGROUND_COLOR = [0.05, 0.05, 0.08]
-        brainrender.settings.ROOT_ALPHA = 0.40
+        brainrender.settings.ROOT_ALPHA = 0.01
         brainrender.settings.ROOT_COLOR = [0.65, 0.65, 0.9]
         print(f"  Style: dark (depth-peeled transparency)")
     else:
@@ -970,14 +971,17 @@ Examples:
         print(f"  Legend: {len([g for g in active_groups if g != '[Unmapped]'])} active groups")
 
     # --- Render ---
+    # Figures go to central figures repo; fall back to analysis dir if unavailable
+    fig_dir = DEFAULT_FIGURES_DIR if DEFAULT_FIGURES_DIR.is_dir() else analysis_dir
+    brain_short = pipeline_folder.name.split('_')[0]
     if args.gif:
-        output_path = args.output or str(analysis_dir / f"brain3d_{args.mode}.gif")
+        output_path = args.output or str(fig_dir / f"brain_{brain_short}_3d.gif")
         render_video(scene, output_path, args, legend_img=legend_img)
     elif args.video:
-        output_path = args.output or str(analysis_dir / f"brain3d_{args.mode}.mp4")
+        output_path = args.output or str(fig_dir / f"brain_{brain_short}_3d.mp4")
         render_video(scene, output_path, args, legend_img=legend_img)
     elif args.screenshot:
-        output_name = args.output or f"brain3d_{args.mode}.png"
+        output_name = args.output or str(fig_dir / f"brain_{brain_short}_3d.png")
         scene.render(interactive=False, camera=args.camera)
         _enable_depth_peeling(scene)
         if args.zoom:

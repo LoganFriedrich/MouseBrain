@@ -425,7 +425,10 @@ def create_fold_change_histogram(measurements_df, threshold, background, figsize
     is_positive = measurements_df['is_positive'].values
 
     n_bins = 50
-    hist_range = (fold_changes.min(), min(fold_changes.max(), threshold * 5))
+    fc_max = fold_changes.max() if len(fold_changes) > 0 else 1.0
+    fc_min = fold_changes.min() if len(fold_changes) > 0 else 0.0
+    range_max = max(fc_max, threshold * 5, fc_min + 0.1)
+    hist_range = (fc_min, range_max)
 
     counts, bins, patches = ax.hist(fold_changes, bins=n_bins, range=hist_range,
                                      edgecolor='#333333', linewidth=0.5)

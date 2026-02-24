@@ -94,6 +94,7 @@ dev = [
 [project.scripts]
 mousebrain = "mousebrain.cli:main"
 brainslice-coloc = "mousebrain.plugin_2d.sliceatlas.cli.run_coloc:main"
+brainslice-roi = "mousebrain.plugin_2d.sliceatlas.cli.run_roi:main"
 
 # Single napari manifest with all widgets (napari requires name == package name)
 [project.entry-points."napari.manifest"]
