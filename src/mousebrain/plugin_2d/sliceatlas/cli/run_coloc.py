@@ -511,11 +511,12 @@ def _make_results_figure(red_image, green_image, labels, measurements,
                     negative_labels.add(lbl)
             elif has_sigma:
                 # background_mean: tier by std devs above background
-                # cyan = >1.5 std above bg (positive), yellow = 0-1.5 std (borderline),
+                # cyan = >sigma_t std above bg (positive), yellow = 0-sigma_t (borderline),
                 # red = below bg
                 sigma = row['sigma_above_bg']
                 label_snr[lbl] = sigma  # reuse for display
-                if sigma > 1.5:
+                sigma_t = getattr(args, 'sigma_threshold', 2)
+                if sigma > sigma_t:
                     positive_labels.add(lbl)
                 elif sigma > 0:
                     borderline_labels.add(lbl)
@@ -693,7 +694,7 @@ def _make_results_figure(red_image, green_image, labels, measurements,
     grn_rgb = np.clip(np.stack([np.zeros_like(g), g, np.zeros_like(g)], axis=-1), 0, 1)
     p2 = _blend_boundary(grn_rgb, bnd_pos, (1, 0, 1), alpha=0.5)
     ax2.imshow(p2)
-    ax2.set_title(f"Signal ({n_pos} colocalized)", color='white', fontsize=10)
+    ax2.set_title("Signal (eYFP 488)", color='white', fontsize=10)
     ax2.axis('off')
 
     # Panel 3: Composite — per-cell white ring frames (subtle)
@@ -722,8 +723,9 @@ def _make_results_figure(red_image, green_image, labels, measurements,
         ax4.add_patch(rect)
         ax4.text(x0 + 2, y0 - 2, str(i + 1), color='yellow', fontsize=8,
                  va='bottom', fontweight='bold')
+    _st = getattr(args, 'sigma_threshold', 2)
     ax4.set_title(
-        f"{len(positive_labels)} >1.5σ / {n_bord_panel} 0-1.5σ / "
+        f"{len(positive_labels)} >{_st}σ / {n_bord_panel} 0-{_st}σ / "
         f"{len(negative_labels)} <bg",
         color='white', fontsize=10,
     )
@@ -755,14 +757,14 @@ def _make_results_figure(red_image, green_image, labels, measurements,
                          label=f'<bg ({len(neg_sig)})')
         if len(bord_sig) > 0:
             ax_hist.hist(bord_sig, bins=bins, color='#ffaa00', alpha=0.5,
-                         label=f'0-1.5σ ({len(bord_sig)})')
+                         label=f'0-{_st}σ ({len(bord_sig)})')
         if len(pos_sig) > 0:
             ax_hist.hist(pos_sig, bins=bins, color='cyan', alpha=0.6,
-                         label=f'>1.5σ ({len(pos_sig)})')
+                         label=f'>{_st}σ ({len(pos_sig)})')
         ax_hist.axvline(0, color='white', ls='--', lw=1, alpha=0.6,
                         label='bg mean')
-        ax_hist.axvline(1.5, color='cyan', ls=':', lw=0.8, alpha=0.5,
-                        label='1.5σ')
+        ax_hist.axvline(_st, color='cyan', ls=':', lw=0.8, alpha=0.5,
+                        label=f'{_st}σ')
         ax_hist.set_xlabel('σ above background', color='#ccc', fontsize=7)
         ax_hist.tick_params(colors='#888', labelsize=6)
         ax_hist.legend(fontsize=5, loc='upper right', facecolor='#333',
@@ -987,10 +989,10 @@ def _make_results_figure(red_image, green_image, labels, measurements,
             # Primary cell title with sigma/SNR score
             sigma_val = label_snr.get(lbl)  # sigma_above_bg or local_snr
             if is_pos:
-                primary_status = ">1.5σ"
+                primary_status = f">{_st}σ"
                 primary_color = 'cyan'
             elif lbl in borderline_labels:
-                primary_status = "0-1.5σ"
+                primary_status = f"0-{_st}σ"
                 primary_color = 'yellow'
             else:
                 primary_status = "<bg"
@@ -1837,9 +1839,9 @@ Examples:
     coloc.add_argument('--coloc-threshold', type=float, default=2.0,
                        help='Minimum threshold for local_snr (default: 2.0 sigma). '
                        'Otsu overrides this if it finds a higher natural break.')
-    coloc.add_argument('--sigma-threshold', type=float, default=1.5,
+    coloc.add_argument('--sigma-threshold', type=float, default=2.0,
                        help='For background_mean method: number of std deviations above '
-                       'background mean for a cell to be positive (default: 1.5). '
+                       'background mean for a cell to be positive (default: 2.0). '
                        '0 = any signal above mean, 1.5 = moderate, 2.0 = strict.')
     coloc.add_argument('--local-snr-radius', type=int, default=100,
                        help='Radius for local SNR background estimation '

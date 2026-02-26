@@ -297,7 +297,7 @@ class BrainSliceWidget(QWidget):
         backend_row = QHBoxLayout()
         backend_row.addWidget(QLabel("Backend:"))
         self.backend_combo = QComboBox()
-        self.backend_combo.addItems(['Threshold', 'StarDist', 'Cellpose'])
+        self.backend_combo.addItems(['Threshold', 'Threshold+LoG', 'StarDist', 'Cellpose'])
         self.backend_combo.currentTextChanged.connect(self._on_backend_changed)
         backend_row.addWidget(self.backend_combo)
         backend_layout.addLayout(backend_row)
@@ -583,6 +583,81 @@ class BrainSliceWidget(QWidget):
         self.threshold_params_widget.setLayout(thresh_det_layout)
         param_layout.addWidget(self.threshold_params_widget)
 
+        # Threshold+LoG parameters (hidden by default)
+        self.log_params_widget = QWidget()
+        log_layout = QVBoxLayout()
+        log_layout.setContentsMargins(0, 0, 0, 0)
+
+        log_info = QLabel(
+            "Production detection: artifact masking + threshold\n"
+            "+ LoG blob union + sparse signal handling."
+        )
+        log_info.setStyleSheet("color: #888888; font-size: 10px; font-style: italic;")
+        log_info.setWordWrap(True)
+        log_layout.addWidget(log_info)
+
+        from qtpy.QtWidgets import QFormLayout
+        log_form = QFormLayout()
+
+        self.log_pixel_um_spin = QDoubleSpinBox()
+        self.log_pixel_um_spin.setRange(0.01, 100.0)
+        self.log_pixel_um_spin.setSingleStep(0.01)
+        self.log_pixel_um_spin.setDecimals(3)
+        self.log_pixel_um_spin.setValue(self._pixel_size_um if self._pixel_size_um else 1.0)
+        self.log_pixel_um_spin.setToolTip(
+            "Physical pixel size in microns.\n"
+            "Auto-populated from ND2 metadata on load."
+        )
+        log_form.addRow("Pixel size (um):", self.log_pixel_um_spin)
+
+        self.log_min_diam_spin = QDoubleSpinBox()
+        self.log_min_diam_spin.setRange(1.0, 100.0)
+        self.log_min_diam_spin.setSingleStep(1.0)
+        self.log_min_diam_spin.setValue(10.0)
+        self.log_min_diam_spin.setToolTip(
+            "Minimum expected nucleus diameter in microns.\n"
+            "Objects smaller than this are filtered out."
+        )
+        log_form.addRow("Min diameter (um):", self.log_min_diam_spin)
+
+        self.log_max_diam_spin = QDoubleSpinBox()
+        self.log_max_diam_spin.setRange(1.0, 200.0)
+        self.log_max_diam_spin.setSingleStep(1.0)
+        self.log_max_diam_spin.setValue(25.0)
+        self.log_max_diam_spin.setToolTip(
+            "Maximum expected nucleus diameter in microns.\n"
+            "Objects larger than this are filtered out."
+        )
+        log_form.addRow("Max diameter (um):", self.log_max_diam_spin)
+
+        self.log_thresh_fraction_spin = QDoubleSpinBox()
+        self.log_thresh_fraction_spin.setRange(0.01, 1.0)
+        self.log_thresh_fraction_spin.setSingleStep(0.01)
+        self.log_thresh_fraction_spin.setDecimals(2)
+        self.log_thresh_fraction_spin.setValue(0.20)
+        self.log_thresh_fraction_spin.setToolTip(
+            "Fraction of Otsu threshold for initial segmentation.\n"
+            "0.20 = 20% of Otsu (good for sparse fluorescent nuclei)."
+        )
+        log_form.addRow("Threshold fraction:", self.log_thresh_fraction_spin)
+
+        self.log_sensitivity_spin = QDoubleSpinBox()
+        self.log_sensitivity_spin.setRange(0.0001, 0.1)
+        self.log_sensitivity_spin.setSingleStep(0.001)
+        self.log_sensitivity_spin.setDecimals(4)
+        self.log_sensitivity_spin.setValue(0.005)
+        self.log_sensitivity_spin.setToolTip(
+            "LoG blob detection sensitivity.\n"
+            "Lower = more sensitive (more blobs detected).\n"
+            "0.005 = good default for fluorescent nuclei."
+        )
+        log_form.addRow("LoG sensitivity:", self.log_sensitivity_spin)
+
+        log_layout.addLayout(log_form)
+        self.log_params_widget.setLayout(log_layout)
+        self.log_params_widget.setVisible(False)
+        param_layout.addWidget(self.log_params_widget)
+
         # StarDist parameters (hidden by default)
         self.stardist_params_widget = QWidget()
         stardist_layout = QVBoxLayout()
@@ -710,15 +785,19 @@ class BrainSliceWidget(QWidget):
     def _on_backend_changed(self, backend_text: str):
         """Toggle visibility of backend-specific parameters."""
         is_threshold = backend_text == 'Threshold'
+        is_log = backend_text == 'Threshold+LoG'
         is_stardist = backend_text == 'StarDist'
         is_cellpose = backend_text == 'Cellpose'
 
-        # Threshold params
+        # Threshold params (basic threshold only)
         self.threshold_params_widget.setVisible(is_threshold)
 
+        # Threshold+LoG params
+        self.log_params_widget.setVisible(is_log)
+
         # StarDist/Cellpose need model, preprocessing
-        self.model_row_widget.setVisible(not is_threshold)
-        self.preproc_group.setVisible(not is_threshold)
+        self.model_row_widget.setVisible(not is_threshold and not is_log)
+        self.preproc_group.setVisible(not is_threshold and not is_log)
         self.stardist_params_widget.setVisible(is_stardist)
         self.cellpose_params_widget.setVisible(is_cellpose)
 
@@ -1246,6 +1325,9 @@ class BrainSliceWidget(QWidget):
                 self._pixel_size_um = voxel['x']
                 self._size_manually_set = False
                 self._calibrate_from_pixel_size()
+                # Auto-populate LoG pixel_um spinner
+                if hasattr(self, 'log_pixel_um_spin'):
+                    self.log_pixel_um_spin.setValue(voxel['x'])
             else:
                 self._pixel_size_um = None
 
@@ -1581,6 +1663,9 @@ class BrainSliceWidget(QWidget):
                     if not self._size_manually_set:
                         self._calibrate_from_pixel_size()
                     self._update_area_label()
+                    # Auto-populate LoG pixel_um spinner
+                    if hasattr(self, 'log_pixel_um_spin'):
+                        self.log_pixel_um_spin.setValue(voxel['x'])
 
                 # Update channel name labels
                 channels = metadata.get('channels', [])
@@ -1660,6 +1745,16 @@ class BrainSliceWidget(QWidget):
                 params['hysteresis_low_fraction'] = self.thresh_hysteresis_low_spin.value()
                 params['min_solidity'] = self.thresh_solidity_spin.value()
                 params['min_circularity'] = self.thresh_circularity_spin.value()
+            elif backend == 'threshold+log':
+                # Threshold+LoG production pipeline params
+                params['pixel_um'] = self.log_pixel_um_spin.value()
+                params['min_diameter_um'] = self.log_min_diam_spin.value()
+                params['max_diameter_um'] = self.log_max_diam_spin.value()
+                params['threshold_fraction'] = self.log_thresh_fraction_spin.value()
+                params['log_threshold'] = self.log_sensitivity_spin.value()
+                params['gaussian_sigma'] = self.thresh_gauss_spin.value()
+                params['use_hysteresis'] = self.thresh_hysteresis_check.isChecked()
+                params['hysteresis_low_fraction'] = self.thresh_hysteresis_low_spin.value()
             else:
                 # StarDist / Cellpose params
                 params['model'] = self.model_combo.currentText()
@@ -1963,6 +2058,21 @@ class BrainSliceWidget(QWidget):
             n_splits = metrics.get('n_watershed_splits', 0)
             if n_splits > 0:
                 lines.append(f"Watershed splits: +{n_splits} nuclei")
+
+        # Threshold+LoG-specific info
+        elif backend == 'threshold+log':
+            decision = metrics.get('decision', '?')
+            n_thresh = metrics.get('n_threshold', 0)
+            n_log = metrics.get('n_log_new', 0)
+            thresh_val = metrics.get('threshold_value', 0)
+            n_artifact = metrics.get('n_artifact_pixels', 0)
+            lines.append(f"Decision: {decision}")
+            lines.append(
+                f"Threshold: {n_thresh} nuclei | LoG added: +{n_log} | "
+                f"Threshold value: {thresh_val:.1f}"
+            )
+            if n_artifact > 0:
+                lines.append(f"Artifact pixels masked: {n_artifact:,}")
 
         self.detect_metrics_label.setText("\n".join(lines))
 

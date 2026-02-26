@@ -167,6 +167,36 @@ class DetectionWorker(QThread):
                 metrics['use_hysteresis'] = details.get('use_hysteresis', False)
 
             # ══════════════════════════════════════════════════════════
+            # THRESHOLD+LOG BACKEND (production pipeline — artifact
+            # masking, threshold+LoG blob union, sparse signal handling)
+            # ══════════════════════════════════════════════════════════
+            elif backend == 'threshold+log':
+                from ..core.detection import detect_with_log_augmentation
+
+                self.progress.emit("Detecting nuclei (Threshold+LoG)...")
+                labels, details = detect_with_log_augmentation(
+                    image,
+                    pixel_um=self.params.get('pixel_um', 1.0),
+                    min_diameter_um=self.params.get('min_diameter_um', 10.0),
+                    max_diameter_um=self.params.get('max_diameter_um', 25.0),
+                    threshold_fraction=self.params.get('threshold_fraction', 0.20),
+                    log_threshold=self.params.get('log_threshold', 0.005),
+                    gaussian_sigma=self.params.get('gaussian_sigma', 1.0),
+                    use_hysteresis=self.params.get('use_hysteresis', True),
+                    hysteresis_low_fraction=self.params.get('hysteresis_low_fraction', 0.5),
+                )
+
+                metrics['raw_count'] = details.get('raw_count', 0)
+                metrics['filtered_count'] = details.get('filtered_count', 0)
+                metrics['removed_by_size'] = details.get('removed_by_size', 0)
+                metrics['removed_by_morphology'] = details.get('removed_by_morphology', 0)
+                metrics['n_threshold'] = details.get('n_threshold', 0)
+                metrics['n_log_new'] = details.get('n_log_new', 0)
+                metrics['decision'] = details.get('decision', '?')
+                metrics['threshold_value'] = details.get('threshold', 0)
+                metrics['n_artifact_pixels'] = details.get('n_artifact_pixels', 0)
+
+            # ══════════════════════════════════════════════════════════
             # STARDIST / CELLPOSE BACKENDS (for dense nuclei fields)
             # ══════════════════════════════════════════════════════════
             else:

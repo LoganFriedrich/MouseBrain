@@ -751,6 +751,165 @@ class ColocalizationAnalyzer:
 
         return pd.DataFrame(rows)
 
+    def measure_green_overlap(
+        self,
+        signal_image: np.ndarray,
+        nuclei_labels: np.ndarray,
+        background: float,
+        bg_std: float = None,
+        circle_radius_px: int = 8,
+        max_shift_px: int = 4,
+        shift_step: int = 2,
+    ):
+        """
+        Measure green signal with a sliding circular ROI per nucleus,
+        masked by Voronoi territory to reject neighbor signal.
+
+        Places a circular measurement window centered on each nucleus,
+        then slides it slightly to find the position that maximizes
+        above-background green intensity. Pixels belonging to other
+        cells' Voronoi territories are excluded so the measurement
+        circle cannot claim a neighbor's green signal.
+
+        Within the best-positioned circle, only pixels above background
+        are averaged -- truly dark pixels do not dilute a thin bright
+        signal strip flanked by dark pixels. This should produce a more
+        bimodal distribution than Voronoi p75 (which dilutes bright
+        signal with dark territory pixels).
+
+        Args:
+            signal_image: Green channel image.
+            nuclei_labels: Label image from red channel detection.
+            background: Global green background intensity.
+            bg_std: Background standard deviation. If None, estimated as
+                background * 0.1.
+            circle_radius_px: Radius of measurement circle in pixels.
+                Default 8 (~20 um at 2.5 um/px, covers typical soma).
+            max_shift_px: Maximum shift from nucleus center in any direction.
+                Must be < circle_radius_px so centroid stays in circle.
+            shift_step: Step size for shift grid search (pixels).
+
+        Returns:
+            DataFrame with columns compatible with classify_positive_negative:
+            - label, centroid_y, centroid_x, nucleus_area
+            - soma_mean_intensity: mean of ALL valid pixels in best circle
+            - soma_p75_intensity: mean of above-background pixels in best
+              circle (the key metric -- dark pixels excluded)
+            - soma_area: number of valid pixels in circle
+            - green_bright_mean: mean of above-bg pixels (same as p75 col)
+            - green_bright_count: number of above-bg pixels
+            - green_coverage: fraction of valid circle that is above bg
+            - circle_offset_y, circle_offset_x: shift applied to circle
+        """
+        pd = _get_pandas()
+        from skimage.measure import regionprops
+        from skimage.segmentation import expand_labels
+
+        if bg_std is None:
+            bg_std = max(background * 0.1, 1.0)
+
+        max_shift_px = min(max_shift_px, circle_radius_px - 1)
+
+        # Voronoi territories: each pixel assigned to nearest nucleus
+        voronoi = expand_labels(nuclei_labels,
+                                distance=circle_radius_px + max_shift_px)
+
+        nuc_props = regionprops(nuclei_labels)
+        h, w = signal_image.shape
+
+        # Circle mask template
+        yy, xx = np.mgrid[-circle_radius_px:circle_radius_px + 1,
+                          -circle_radius_px:circle_radius_px + 1]
+        circle_template = (yy**2 + xx**2) <= circle_radius_px**2
+        cr = circle_radius_px
+
+        # Shift grid
+        shifts = []
+        for dy in range(-max_shift_px, max_shift_px + 1, shift_step):
+            for dx in range(-max_shift_px, max_shift_px + 1, shift_step):
+                if dy**2 + dx**2 <= circle_radius_px**2:
+                    shifts.append((dy, dx))
+
+        rows = []
+        for prop in nuc_props:
+            cy, cx = prop.centroid[0], prop.centroid[1]
+            icy, icx = int(round(cy)), int(round(cx))
+
+            best_score = -1
+            best_dy, best_dx = 0, 0
+            best_bright_mean = 0.0
+            best_bright_count = 0
+            best_all_mean = 0.0
+            best_n_total = 0
+
+            for dy, dx in shifts:
+                ccy = icy + dy
+                ccx = icx + dx
+
+                y0 = ccy - cr
+                y1 = ccy + cr + 1
+                x0 = ccx - cr
+                x1 = ccx + cr + 1
+
+                py0 = max(0, -y0)
+                px0 = max(0, -x0)
+                py1 = circle_template.shape[0] - max(0, y1 - h)
+                px1 = circle_template.shape[1] - max(0, x1 - w)
+                iy0 = max(0, y0)
+                ix0 = max(0, x0)
+                iy1 = min(h, y1)
+                ix1 = min(w, x1)
+
+                if iy1 <= iy0 or ix1 <= ix0:
+                    continue
+
+                cmask = circle_template[py0:py1, px0:px1]
+                territory_mask = (voronoi[iy0:iy1, ix0:ix1] == prop.label)
+                valid_mask = cmask & territory_mask
+
+                green_patch = signal_image[iy0:iy1, ix0:ix1]
+                circle_pixels = green_patch[valid_mask]
+
+                if len(circle_pixels) == 0:
+                    continue
+
+                bright_mask = circle_pixels > background
+                bright_pixels = circle_pixels[bright_mask]
+
+                if len(bright_pixels) == 0:
+                    score = 0
+                else:
+                    coverage = len(bright_pixels) / len(circle_pixels)
+                    bright_mean = float(np.mean(bright_pixels))
+                    score = bright_mean * coverage
+
+                if score > best_score:
+                    best_score = score
+                    best_dy, best_dx = dy, dx
+                    best_bright_mean = float(np.mean(bright_pixels)) if len(bright_pixels) > 0 else 0.0
+                    best_bright_count = len(bright_pixels) if len(bright_pixels) > 0 else 0
+                    best_all_mean = float(np.mean(circle_pixels))
+                    best_n_total = len(circle_pixels)
+
+            coverage = best_bright_count / max(best_n_total, 1)
+
+            rows.append({
+                'label': prop.label,
+                'centroid_y': prop.centroid[0],
+                'centroid_x': prop.centroid[1],
+                'nucleus_area': prop.area,
+                'soma_mean_intensity': best_all_mean,
+                'soma_p75_intensity': best_bright_mean,
+                'soma_area': best_n_total,
+                'green_bright_mean': best_bright_mean,
+                'green_bright_count': best_bright_count,
+                'green_coverage': coverage,
+                'circle_offset_y': best_dy,
+                'circle_offset_x': best_dx,
+            })
+
+        return pd.DataFrame(rows)
+
     def measure_validated_intensities(
         self,
         signal_image: np.ndarray,

@@ -535,7 +535,7 @@ def detect_with_log_augmentation(
     """
     from skimage.feature import blob_log
     from skimage.filters import threshold_otsu
-    from skimage.measure import regionprops
+    from skimage.measure import regionprops, label as sk_label
     from scipy.ndimage import gaussian_filter
     import math
 
@@ -546,22 +546,62 @@ def detect_with_log_augmentation(
     min_area = int(math.pi * (min_diameter_um / 2 / pixel_um) ** 2)
     max_area = int(math.pi * (max_diameter_um / 2 / pixel_um) ** 2)
 
-    # --- Step 1: Image quality assessment ---
-    img_f = gaussian_filter(image.astype(np.float32), sigma=gaussian_sigma)
-    otsu_val = float(threshold_otsu(img_f))
-    img_median = float(np.median(img_f))
-    img_mean = float(np.mean(img_f))
+    # --- Step 0: Artifact masking and percentile clipping ---
+    # Bright artifacts (ventricles, tissue folds, saturated blobs) corrupt
+    # Otsu thresholding by inflating the intensity distribution.  Two fixes:
+    #
+    # A) Percentile clipping: cap pixel values at p99.5 so extreme outliers
+    #    don't dominate the Otsu calculation.
+    # B) Large-blob artifact mask: find contiguous regions of very bright
+    #    pixels (top 0.5%) that are larger than max_area (too big to be a
+    #    nucleus).  Zero them out before threshold detection so they don't
+    #    generate false detections or skew the threshold.
+    img_raw = image.astype(np.float32)
+    p995 = float(np.percentile(img_raw, 99.5))
+    img_clipped = np.clip(img_raw, 0, p995)
+
+    # Build artifact mask: bright pixels in the ORIGINAL (unclipped) image
+    # that form blobs larger than max_area are artifacts.
+    artifact_thresh = float(np.percentile(img_raw, 99.5))
+    artifact_binary = img_raw > artifact_thresh
+    artifact_labels = sk_label(artifact_binary)
+    artifact_mask = np.zeros(image.shape, dtype=bool)
+    n_artifact_px = 0
+    if artifact_labels.max() > 0:
+        for ap in regionprops(artifact_labels):
+            if ap.area > max_area:
+                artifact_mask[artifact_labels == ap.label] = True
+                n_artifact_px += ap.area
+
+    # Prepare image for detection: zero out artifact regions
+    img_for_detect = image.copy()
+    if n_artifact_px > 0:
+        img_for_detect[artifact_mask] = 0
+
+    # --- Step 1: Image quality assessment (on clipped, artifact-free image) ---
+    img_f = gaussian_filter(img_clipped, sigma=gaussian_sigma)
+    if n_artifact_px > 0:
+        # Compute Otsu only on non-artifact pixels
+        clean_pixels = img_f[~artifact_mask]
+        if len(clean_pixels) > 100:
+            otsu_val = float(threshold_otsu(clean_pixels))
+        else:
+            otsu_val = float(threshold_otsu(img_f))
+    else:
+        otsu_val = float(threshold_otsu(img_f))
+    img_median = float(np.median(img_f[~artifact_mask])) if n_artifact_px > 0 else float(np.median(img_f))
+    img_mean = float(np.mean(img_f[~artifact_mask])) if n_artifact_px > 0 else float(np.mean(img_f))
 
     # Dynamic range: how far above background does signal extend?
     # Flat images have otsu close to median (no bimodal separation)
     otsu_to_median = otsu_val / max(img_median, 1.0)
     is_flat = otsu_to_median < 3.0
 
-    # --- Step 2: Threshold detection (always runs) ---
+    # --- Step 2: Threshold detection (on artifact-masked image) ---
     manual_thresh = otsu_val * threshold_fraction
 
     labels_thresh, det_thresh = detect_by_threshold(
-        image,
+        img_for_detect,
         method='manual',
         manual_threshold=manual_thresh,
         min_area=min_area,
@@ -584,6 +624,14 @@ def detect_with_log_augmentation(
     GOOD_SIGNAL_MIN = 5
     MARGINAL_SIGNAL_MIN = 1
 
+    # Check for high dynamic range even in "flat" images.  Sparse bright
+    # nuclei in a large dark field produce an otsu/median ratio < 3 (flat)
+    # because the nuclei don't form a histogram peak.  But the dynamic range
+    # (max >> median) proves bright objects exist.  In this case, fall through
+    # to LoG detection with a conservative intensity floor.
+    img_max_clean = float(img_for_detect.max())
+    has_dynamic_range = img_max_clean > img_median * 10
+
     if n_threshold >= GOOD_SIGNAL_MIN:
         decision = 'good_signal'
         # LoG blobs must have peak intensity >= 50% of dimmest Otsu detection
@@ -592,6 +640,20 @@ def detect_with_log_augmentation(
         decision = 'marginal_signal'
         # Stricter: blobs must be >= median of Otsu detection intensities
         intensity_floor = float(np.median(thresh_peak_intensities))
+    elif n_threshold >= MARGINAL_SIGNAL_MIN and is_flat:
+        # Flat image but threshold found something -- trust it
+        decision = 'marginal_signal'
+        intensity_floor = float(np.median(thresh_peak_intensities))
+    elif is_flat and has_dynamic_range:
+        # SPARSE SIGNAL: image looks flat to Otsu (nuclei too sparse to form
+        # a histogram peak) but bright objects clearly exist (max >> median).
+        # Run LoG with a conservative intensity floor: median + 5 * robust_std.
+        # This catches real nuclei while rejecting background fluctuations.
+        decision = 'sparse_signal'
+        from scipy.stats import median_abs_deviation
+        mad = float(median_abs_deviation(img_f[~artifact_mask].ravel() if n_artifact_px > 0 else img_f.ravel()))
+        robust_std = mad * 1.4826  # MAD -> std for Gaussian
+        intensity_floor = img_median + 5 * robust_std
     else:
         decision = 'no_signal'
         intensity_floor = float('inf')  # blocks all LoG blobs
@@ -603,8 +665,8 @@ def detect_with_log_augmentation(
     new_blobs = []
 
     if decision != 'no_signal':
-        # Normalize for LoG (standard [0,1] range)
-        img_norm = image.astype(np.float64)
+        # Normalize for LoG (standard [0,1] range) using artifact-masked image
+        img_norm = img_for_detect.astype(np.float64)
         img_range = img_norm.max() - img_norm.min()
         if img_range > 0:
             img_norm = (img_norm - img_norm.min()) / img_range
@@ -782,6 +844,9 @@ def detect_with_log_augmentation(
         'fill_holes': det_thresh.get('fill_holes', True),
         'closing_radius': det_thresh.get('closing_radius', 0),
         'split_touching': det_thresh.get('split_touching', False),
+        'n_artifact_pixels': int(n_artifact_px),
+        'artifact_clip_p995': float(p995),
+        'artifact_mask': artifact_mask if n_artifact_px > 0 else None,
     }
 
     return labels_combined, details
