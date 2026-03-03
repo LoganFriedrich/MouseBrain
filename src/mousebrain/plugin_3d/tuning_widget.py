@@ -3379,6 +3379,7 @@ class TuningWidget(QWidget):
                 size=14,
                 opacity=0.2,
                 border_width=0.1,
+                n_dimensional=True,
             )
 
         # Suspicious regions (red) — removed by filter
@@ -3393,6 +3394,7 @@ class TuningWidget(QWidget):
                 size=14,
                 opacity=0.2,
                 border_width=0.1,
+                n_dimensional=True,
             )
 
     def _save_prefilter_results(self):
