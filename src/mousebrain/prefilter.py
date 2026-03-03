@@ -66,33 +66,32 @@ def timestamp():
 
 def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
                           surface_depth_vox, ann_shape):
-    """Detect tissue surfaces using background intensity + atlas confirmation.
+    """Detect tissue surfaces using local minimum of background channel.
 
-    Two signals must BOTH agree for a region to be classified as surface:
+    For each voxel, asks: "within surface_depth_vox, is there any actual
+    non-tissue (near-zero background)?" Uses minimum_filter on the
+    background (autofluorescence) channel.
 
-    1. BACKGROUND: the autofluorescence channel (downsampled.tiff) is dark
-       there — meaning non-tissue (exterior, ventricle, damage).
-    2. ATLAS: the region is near an atlas structural boundary (edge of
-       brain_mask, including internal holes like ventricle annotation gaps).
+    - Deep interior: local min = dimmest nearby tissue = still bright -> keep
+    - Near outer surface: local min includes exterior (near 0) -> remove
+    - Near ventricle: local min includes lumen (near 0) -> remove
+    - Near dim tissue spot: local min = dim but still tissue-level -> keep
 
-    A dark spot deep inside registered cortex is just local dimness — the
-    atlas says "real tissue here," so we keep candidates there. A dark
-    region that lines up with the atlas boundary is a confirmed surface.
+    No atlas boundary check needed: the background intensity IS the ground
+    truth of where tissue exists. A dim spot in cortex is still tissue
+    (min stays well above zero). Only actual non-tissue drives min to zero.
 
     Returns a boolean mask where True = surface exclusion zone, or None
     if downsampled.tiff is not available.
     """
     from scipy import ndimage
 
-    # downsampled.tiff = background/autofluorescence channel (ch0).
-    # Registration channel in brainreg: uniform tissue brightness,
-    # no labeled cell puncta.
     background_path = registration_path / "downsampled.tiff"
     if not background_path.exists():
         print(f"  [!] downsampled.tiff not found -- falling back to atlas erosion")
         return None
 
-    print(f"[{timestamp()}] Loading background channel for surface detection...")
+    print(f"[{timestamp()}] Loading background channel (autofluorescence)...")
     background = tifffile.imread(str(background_path))
     if background.shape != tuple(ann_shape):
         print(f"  [!] Background shape {background.shape} != atlas shape {tuple(ann_shape)}")
@@ -100,72 +99,33 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
         del background
         return None
 
-    # --- Signal 1: Background darkness ---
-    # Tissue is bright in the background channel. Dark = non-tissue.
+    # Dark threshold: what counts as "non-tissue"?
+    # Use 5th percentile of nonzero brain background. Actual non-tissue
+    # (exterior, ventricle lumen) is near zero. Even the dimmest tissue
+    # is well above this. Only true non-tissue drives the local min below.
     brain_bg = background[brain_mask].ravel()
     nonzero = brain_bg[brain_bg > 0]
     if len(nonzero) == 0:
         del background
         return None
 
-    dark_threshold = np.percentile(nonzero, 10)
+    dark_threshold = np.percentile(nonzero, 5)
     del brain_bg, nonzero
+    print(f"  Non-tissue threshold: {dark_threshold:.0f} (5th pct of brain background)")
 
-    # Dark regions in and near the brain (thin outer shell for context)
-    search_region = ndimage.binary_dilation(brain_mask, iterations=3)
-    dark_mask = (background < dark_threshold) & search_region
-    del background, search_region
+    # Local minimum filter: for each voxel, what's the darkest background
+    # value within surface_depth_vox? If it's near-zero, there's actual
+    # non-tissue that close -> this is a surface location.
+    filter_size = 2 * surface_depth_vox + 1
+    print(f"[{timestamp()}] Computing local minimum "
+          f"({filter_size}x{filter_size}x{filter_size} window = "
+          f"{filter_size * atlas_resolution:.0f}um)...")
+    min_bg = ndimage.minimum_filter(background, size=filter_size)
+    del background
 
-    dark_count = int(dark_mask.sum())
-    print(f"  Dark background (< {dark_threshold:.0f}): {dark_count:,} voxels")
-
-    if dark_count == 0:
-        print(f"  [!] No dark regions found -- falling back to atlas erosion")
-        del dark_mask
-        return None
-
-    # --- Signal 2: Atlas structural boundary ---
-    # Inner edge of brain_mask: captures outer brain boundary AND
-    # edges of internal holes (ventricle spaces, atlas gaps).
-    atlas_inner_edge = brain_mask & ~ndimage.binary_erosion(brain_mask)
-
-    # Wide tolerance: real tissue edges can be sharp or gradually fade
-    # over many voxels, and registration is never pixel-perfect.
-    # 3x surface_depth (e.g. 300um at default 100um depth) is generous
-    # enough to catch gradual fades while still protecting deep interior
-    # from false positives due to local dimness.
-    boundary_tolerance = surface_depth_vox * 3
-    atlas_boundary_zone = ndimage.binary_dilation(
-        atlas_inner_edge, iterations=boundary_tolerance
-    )
-    del atlas_inner_edge
-
-    boundary_count = int(atlas_boundary_zone.sum())
-    print(f"  Atlas boundary zone ({boundary_tolerance} vox = "
-          f"{boundary_tolerance * atlas_resolution:.0f}um tolerance): "
-          f"{boundary_count:,} voxels")
-
-    # --- Confirmed surface: dark background AND near atlas boundary ---
-    # Both signals must agree. This prevents:
-    # - Dark interior spots from being called surface (atlas says real tissue)
-    # - Atlas boundary with bright background from being removed (tissue ok)
-    confirmed_surface = dark_mask & atlas_boundary_zone
-    del dark_mask, atlas_boundary_zone
-
-    confirmed_count = int(confirmed_surface.sum())
-    print(f"  Confirmed surface (dark AND boundary): {confirmed_count:,} voxels")
-
-    if confirmed_count == 0:
-        print(f"  [!] No confirmed surfaces -- falling back to atlas erosion")
-        del confirmed_surface
-        return None
-
-    # Dilate confirmed surfaces to create exclusion zone
-    print(f"[{timestamp()}] Building exclusion zone (dilating by {surface_depth_vox} voxels)...")
-    exclusion_zone = ndimage.binary_dilation(
-        confirmed_surface, iterations=surface_depth_vox
-    )
-    del confirmed_surface
+    # Exclusion: anywhere the local minimum is below tissue threshold
+    exclusion_zone = min_bg < dark_threshold
+    del min_bg
 
     exclusion_count = int(exclusion_zone.sum())
     print(f"  Exclusion zone voxels: {exclusion_count:,}")
