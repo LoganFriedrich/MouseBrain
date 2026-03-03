@@ -23,7 +23,8 @@ from qtpy.QtWidgets import (
     QTextEdit, QTabWidget, QFormLayout, QMessageBox, QSlider,
     QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QFileDialog, QScrollArea, QProgressDialog, QSplitter, QApplication,
-    QRadioButton, QButtonGroup, QListWidget, QListWidgetItem, QDialog
+    QRadioButton, QButtonGroup, QListWidget, QListWidgetItem, QDialog,
+    QStackedWidget,
 )
 import napari
 from qtpy.QtCore import Qt, QThread, Signal
@@ -2980,22 +2981,126 @@ class TuningWidget(QWidget):
         content_layout.addWidget(source_group)
 
         # =================================================================
-        # SECTION 2: FILTER OPTIONS
+        # SECTION 2: FILTER METHOD
         # =================================================================
-        options_group = QGroupBox("2. Filter Options")
+        options_group = QGroupBox("2. Filter Method")
         options_layout = QVBoxLayout()
         options_group.setLayout(options_layout)
 
-        suspicious_label = QLabel(
-            "Removes candidates in biologically suspicious regions\n"
-            "(cerebellar cortex, white matter, olfactory, cortical L1-3, etc.)\n"
-            "OOB and unmapped candidates are kept."
+        # Method selector
+        method_row = QHBoxLayout()
+        method_row.addWidget(QLabel("Method:"))
+        self.prefilter_method_combo = QComboBox()
+        self.prefilter_method_combo.addItems([
+            "Atlas Erosion",
+            "Peripheral Withdrawal",
+            "Background Intensity",
+            "Combined (Peripheral + Background)",
+        ])
+        self.prefilter_method_combo.setToolTip(
+            "Atlas Erosion: blanket erosion of brain mask. Simple, aggressive.\n"
+            "Peripheral Withdrawal: only erode structures touching the brain surface.\n"
+            "Background Intensity: use autofluorescence channel to detect non-tissue.\n"
+            "Combined: both peripheral + background (most conservative)."
         )
-        suspicious_label.setWordWrap(True)
-        options_layout.addWidget(suspicious_label)
+        method_row.addWidget(self.prefilter_method_combo)
+        options_layout.addLayout(method_row)
 
-        tracing_row = QHBoxLayout()
-        tracing_row.addWidget(QLabel("Tracing type:"))
+        # Map combo text -> prefilter method key
+        self._prefilter_method_keys = [
+            "atlas_erosion", "peripheral", "background", "combined",
+        ]
+
+        # QStackedWidget for method-specific settings
+        self.prefilter_settings_stack = QStackedWidget()
+
+        # --- Page 0: Atlas Erosion ---
+        page_erosion = QWidget()
+        erosion_layout = QFormLayout()
+        page_erosion.setLayout(erosion_layout)
+        self.prefilter_surface_depth = QSpinBox()
+        self.prefilter_surface_depth.setRange(20, 500)
+        self.prefilter_surface_depth.setValue(100)
+        self.prefilter_surface_depth.setSuffix(" um")
+        self.prefilter_surface_depth.setToolTip("Depth of surface shell to remove (in microns)")
+        erosion_layout.addRow("Surface depth:", self.prefilter_surface_depth)
+        self.prefilter_settings_stack.addWidget(page_erosion)
+
+        # --- Page 1: Peripheral Withdrawal ---
+        page_peripheral = QWidget()
+        periph_layout = QFormLayout()
+        page_peripheral.setLayout(periph_layout)
+        self.prefilter_withdrawal_depth = QSpinBox()
+        self.prefilter_withdrawal_depth.setRange(20, 500)
+        self.prefilter_withdrawal_depth.setValue(100)
+        self.prefilter_withdrawal_depth.setSuffix(" um")
+        self.prefilter_withdrawal_depth.setToolTip("Withdrawal depth for peripheral structures (in microns)")
+        periph_layout.addRow("Withdrawal depth:", self.prefilter_withdrawal_depth)
+        self.prefilter_ventricle_walls_cb = QCheckBox("Include ventricle walls")
+        self.prefilter_ventricle_walls_cb.setChecked(True)
+        self.prefilter_ventricle_walls_cb.setToolTip("Also withdraw from inner ventricle boundaries")
+        periph_layout.addRow(self.prefilter_ventricle_walls_cb)
+        self.prefilter_fiber_tracts_cb = QCheckBox("Include surface fiber tracts")
+        self.prefilter_fiber_tracts_cb.setChecked(True)
+        self.prefilter_fiber_tracts_cb.setToolTip("Remove candidates in surface fiber tracts (lot, onl, etc.)")
+        periph_layout.addRow(self.prefilter_fiber_tracts_cb)
+        self.prefilter_settings_stack.addWidget(page_peripheral)
+
+        # --- Page 2: Background Intensity ---
+        page_background = QWidget()
+        bg_layout = QFormLayout()
+        page_background.setLayout(bg_layout)
+        self.prefilter_filter_depth = QSpinBox()
+        self.prefilter_filter_depth.setRange(20, 500)
+        self.prefilter_filter_depth.setValue(100)
+        self.prefilter_filter_depth.setSuffix(" um")
+        self.prefilter_filter_depth.setToolTip("Radius of the minimum_filter window (in microns)")
+        bg_layout.addRow("Filter depth:", self.prefilter_filter_depth)
+        self.prefilter_dark_pct = QSpinBox()
+        self.prefilter_dark_pct.setRange(1, 25)
+        self.prefilter_dark_pct.setValue(5)
+        self.prefilter_dark_pct.setSuffix(" %")
+        self.prefilter_dark_pct.setToolTip("Percentile of brain background that counts as non-tissue")
+        bg_layout.addRow("Dark percentile:", self.prefilter_dark_pct)
+        self.prefilter_settings_stack.addWidget(page_background)
+
+        # --- Page 3: Combined ---
+        page_combined = QWidget()
+        combined_layout = QFormLayout()
+        page_combined.setLayout(combined_layout)
+        self.prefilter_combined_withdrawal = QSpinBox()
+        self.prefilter_combined_withdrawal.setRange(20, 500)
+        self.prefilter_combined_withdrawal.setValue(100)
+        self.prefilter_combined_withdrawal.setSuffix(" um")
+        combined_layout.addRow("Withdrawal depth:", self.prefilter_combined_withdrawal)
+        self.prefilter_combined_dark_pct = QSpinBox()
+        self.prefilter_combined_dark_pct.setRange(1, 25)
+        self.prefilter_combined_dark_pct.setValue(5)
+        self.prefilter_combined_dark_pct.setSuffix(" %")
+        combined_layout.addRow("Dark percentile:", self.prefilter_combined_dark_pct)
+        self.prefilter_combined_ventricle_cb = QCheckBox("Include ventricle walls")
+        self.prefilter_combined_ventricle_cb.setChecked(True)
+        combined_layout.addRow(self.prefilter_combined_ventricle_cb)
+        self.prefilter_settings_stack.addWidget(page_combined)
+
+        # Wire combo to stack
+        self.prefilter_method_combo.currentIndexChanged.connect(
+            self.prefilter_settings_stack.setCurrentIndex
+        )
+        options_layout.addWidget(self.prefilter_settings_stack)
+
+        # --- Always visible settings ---
+        always_layout = QFormLayout()
+        self.prefilter_extreme_oob = QSpinBox()
+        self.prefilter_extreme_oob.setRange(100, 2000)
+        self.prefilter_extreme_oob.setValue(500)
+        self.prefilter_extreme_oob.setSuffix(" um")
+        self.prefilter_extreme_oob.setToolTip(
+            "Candidates beyond this distance from the atlas boundary are removed.\n"
+            "Nearby OOB candidates (spinal cord, ventral brainstem) are kept."
+        )
+        always_layout.addRow("Extreme OOB:", self.prefilter_extreme_oob)
+
         self.prefilter_tracing_combo = QComboBox()
         self.prefilter_tracing_combo.addItems(["descending", "ascending", "unknown"])
         self.prefilter_tracing_combo.setToolTip(
@@ -3003,19 +3108,8 @@ class TuningWidget(QWidget):
             "Ascending = ATLAS tracing (afferent pathways)\n"
             "Unknown = no region-based filtering"
         )
-        tracing_row.addWidget(self.prefilter_tracing_combo)
-        options_layout.addLayout(tracing_row)
-
-        # Image edge detection checkbox
-        self.prefilter_image_edges_cb = QCheckBox("Use image edge detection")
-        self.prefilter_image_edges_cb.setToolTip(
-            "Use CV edge detection on the signal channel to find the brain surface.\n"
-            "More accurate than atlas erosion alone -- detects actual tissue edges\n"
-            "and confirms them against the atlas outline.\n"
-            "Requires downsampled.tiff in 3_Registered_Atlas/."
-        )
-        self.prefilter_image_edges_cb.setChecked(False)
-        options_layout.addWidget(self.prefilter_image_edges_cb)
+        always_layout.addRow("Tracing type:", self.prefilter_tracing_combo)
+        options_layout.addLayout(always_layout)
 
         content_layout.addWidget(options_group)
 
@@ -3026,7 +3120,7 @@ class TuningWidget(QWidget):
         run_layout = QVBoxLayout()
         run_group.setLayout(run_layout)
 
-        self.prefilter_run_btn = QPushButton("Run Atlas Pre-Filter")
+        self.prefilter_run_btn = QPushButton("Run Pre-Filter")
         self.prefilter_run_btn.setStyleSheet(
             "QPushButton { padding: 10px; font-weight: bold; "
             "background-color: #FF9800; color: white; }"
@@ -3297,16 +3391,53 @@ class TuningWidget(QWidget):
 
         try:
             # Import and run the pre-filter
-            from mousebrain.prefilter import prefilter_candidates
+            from mousebrain.prefilter import prefilter_candidates, PREFILTER_METHODS
 
             tracing_type = self.prefilter_tracing_combo.currentText()
-            use_image_edges = self.prefilter_image_edges_cb.isChecked()
+            method_idx = self.prefilter_method_combo.currentIndex()
+            method = self._prefilter_method_keys[method_idx]
+
+            # Gather method-specific parameters
+            surface_depth_um = float(self.prefilter_surface_depth.value())
+            extreme_oob_um = float(self.prefilter_extreme_oob.value())
+
+            if method == "peripheral":
+                withdrawal_depth_um = float(self.prefilter_withdrawal_depth.value())
+                include_ventricle_walls = self.prefilter_ventricle_walls_cb.isChecked()
+                include_fiber_tracts = self.prefilter_fiber_tracts_cb.isChecked()
+                filter_depth_um = 100.0
+                dark_percentile = 5.0
+            elif method == "background":
+                withdrawal_depth_um = 100.0
+                include_ventricle_walls = True
+                include_fiber_tracts = True
+                filter_depth_um = float(self.prefilter_filter_depth.value())
+                dark_percentile = float(self.prefilter_dark_pct.value())
+            elif method == "combined":
+                withdrawal_depth_um = float(self.prefilter_combined_withdrawal.value())
+                include_ventricle_walls = self.prefilter_combined_ventricle_cb.isChecked()
+                include_fiber_tracts = True
+                filter_depth_um = withdrawal_depth_um  # same depth for both
+                dark_percentile = float(self.prefilter_combined_dark_pct.value())
+            else:  # atlas_erosion
+                withdrawal_depth_um = 100.0
+                include_ventricle_walls = True
+                include_fiber_tracts = True
+                filter_depth_um = 100.0
+                dark_percentile = 5.0
 
             result = prefilter_candidates(
                 candidates_xml=candidates_xml,
                 registration_path=registration_path,
+                method=method,
+                surface_depth_um=surface_depth_um,
+                withdrawal_depth_um=withdrawal_depth_um,
+                include_ventricle_walls=include_ventricle_walls,
+                include_fiber_tracts=include_fiber_tracts,
+                filter_depth_um=filter_depth_um,
+                dark_percentile=dark_percentile,
+                extreme_oob_um=extreme_oob_um,
                 tracing_type=tracing_type,
-                use_image_edges=use_image_edges,
             )
 
             self._prefilter_result = result
@@ -3323,17 +3454,18 @@ class TuningWidget(QWidget):
             unmapped = stats.get('unmapped', 0)
             surface = stats.get('surface_removed', 0)
             extreme_oob = stats.get('extreme_oob_removed', 0)
-            method = stats.get('surface_method', 'atlas_erosion')
+            method_key = stats.get('method_requested', 'atlas_erosion')
+            method_label = PREFILTER_METHODS.get(method_key, method_key)
 
             text = (
+                f"Method: {method_label}\n"
                 f"Total candidates:     {total:>8,}\n"
                 f"Interior (keep):      {interior:>8,}  ({interior/total*100:.1f}%)\n"
                 f"  OOB (kept):         {oob:>8,}\n"
                 f"  Unmapped (kept):    {unmapped:>8,}\n"
                 f"Removed:              {suspicious:>8,}  ({suspicious/total*100:.1f}%)\n"
                 f"  Surface edge:       {surface:>8,}\n"
-                f"  Extreme OOB:        {extreme_oob:>8,}\n"
-                f"Surface method: {method}"
+                f"  Extreme OOB:        {extreme_oob:>8,}"
             )
 
             self.prefilter_results_label.setText(text)
@@ -3382,9 +3514,30 @@ class TuningWidget(QWidget):
         for layer in layers_to_remove:
             self.viewer.layers.remove(layer)
 
-        # Interior candidates (green) — kept for classification
+        # Transform brain-space coords to atlas-space for napari display
+        stats = result['stats']
+        brain_scales = stats.get('brain_scales', [0.4, 0.4, 0.4])
+        axis_perm = stats.get('axis_perm', [0, 1, 2])
+
+        def to_atlas_coords(coord_list):
+            """Scale brain coords and permute to atlas space."""
+            arr = np.array(coord_list, dtype=np.float32)
+            if len(arr) == 0:
+                return np.empty((0, 3), dtype=np.float32)
+            scaled = np.column_stack([
+                arr[:, 0] * brain_scales[0],
+                arr[:, 1] * brain_scales[1],
+                arr[:, 2] * brain_scales[2],
+            ])
+            return np.column_stack([
+                scaled[:, axis_perm[0]],
+                scaled[:, axis_perm[1]],
+                scaled[:, axis_perm[2]],
+            ])
+
+        # Interior candidates (green) -- kept for classification
         if result['interior_coords']:
-            coords = np.array(result['interior_coords'])
+            coords = to_atlas_coords(result['interior_coords'])
             self.viewer.add_points(
                 coords,
                 name=f"Interior Candidates ({len(coords):,})",
@@ -3397,9 +3550,9 @@ class TuningWidget(QWidget):
                 n_dimensional=True,
             )
 
-        # Surface removed (red) — candidates near brain edge
+        # Surface removed (red) -- candidates near brain edge
         if result['suspicious_coords']:
-            coords = np.array(result['suspicious_coords'])
+            coords = to_atlas_coords(result['suspicious_coords'])
             self.viewer.add_points(
                 coords,
                 name=f"Surface Removed ({len(coords):,})",
