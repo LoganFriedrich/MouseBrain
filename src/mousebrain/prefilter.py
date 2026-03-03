@@ -66,20 +66,17 @@ def timestamp():
 
 def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
                           surface_depth_vox, ann_shape):
-    """Detect brain surfaces using CV edge detection on the signal channel.
+    """Detect brain surface using CV edge detection on the signal channel.
 
-    Finds BOTH external (brain boundary) AND internal (ventricle walls,
-    white matter tracts, tissue-fluid interfaces) surfaces by:
+    Loads downsampled.tiff (signal at atlas resolution), runs Sobel edge
+    detection on each Z-slice, then cross-references with atlas annotation
+    boundaries. Edges that align with atlas outlines are confirmed tissue
+    surfaces. This catches both the outer brain boundary AND internal
+    boundaries (atlas gaps, ventricle spaces annotated as 0).
 
-    1. Sobel edge detection on each Z-slice of downsampled.tiff
-    2. Connected-component size filtering: large continuous edges are
-       surfaces, small isolated edge rings are individual cells
-    3. Dilate confirmed surface edges to create exclusion zone
-
-    At atlas resolution (10um), individual cell bodies are 1-2 voxels
-    across. Their Sobel edge rings are ~4-8 pixels per slice. Surface
-    edges (ventricle walls, tissue boundaries, tract interfaces) are
-    continuous structures spanning tens to hundreds of pixels.
+    The atlas boundary includes edges of ALL holes in brain_mask (annotation
+    > 0), so internal regions where annotation = 0 (e.g. ventricle spaces)
+    also generate boundaries that can be confirmed by image edges.
 
     Returns a boolean mask where True = surface exclusion zone, or None
     if downsampled.tiff is not available.
@@ -99,13 +96,22 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
         del signal
         return None
 
-    # Minimum connected component size (pixels) to qualify as a surface edge.
-    # At 10um resolution: cell edge rings ~4-8px, surface features 50-500+px.
-    # 25px cleanly separates even small clusters of cells from real surfaces.
-    min_surface_pixels = 25
+    # Atlas boundary: inner edge of brain mask (1 voxel thick).
+    # Captures outer brain boundary AND edges of internal holes (atlas gaps,
+    # ventricle spaces where annotation = 0).
+    atlas_inner_edge = brain_mask & ~ndimage.binary_erosion(brain_mask)
+
+    # Generous alignment tolerance to handle atlas-image misalignment.
+    # The registered atlas rarely aligns perfectly with the actual tissue
+    # boundary, so allow extra slack (half the surface depth).
+    alignment_tolerance = max(3, surface_depth_vox // 2)
+    atlas_boundary_zone = ndimage.binary_dilation(
+        atlas_inner_edge, iterations=alignment_tolerance
+    )
+    del atlas_inner_edge
 
     print(f"[{timestamp()}] Detecting surface edges ({signal.shape[0]} slices, "
-          f"min_surface_pixels={min_surface_pixels})...")
+          f"alignment tolerance={alignment_tolerance} voxels)...")
     confirmed_surface = np.zeros(ann_shape, dtype=bool)
 
     for z in range(signal.shape[0]):
@@ -123,29 +129,12 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
         if len(brain_edges) == 0 or brain_edges.max() == 0:
             continue
         threshold = np.percentile(brain_edges[brain_edges > 0], 85)
-        strong_edges = (edge_mag > threshold) & brain_mask[z]
+        strong_edges = edge_mag > threshold
 
-        # Size filter: label connected components, keep large ones (surfaces)
-        # Small components = individual cell edge rings -> discard
-        # Large components = tissue surfaces, ventricle walls, tracts -> keep
-        labeled, n_components = ndimage.label(strong_edges)
-        if n_components == 0:
-            continue
+        # Keep only edges that align with atlas boundaries
+        confirmed_surface[z] = strong_edges & atlas_boundary_zone[z]
 
-        component_sizes = ndimage.sum(
-            strong_edges, labeled, range(1, n_components + 1)
-        )
-        # Build mask of surface-sized components
-        keep_labels = set()
-        for i, size in enumerate(component_sizes):
-            if size >= min_surface_pixels:
-                keep_labels.add(i + 1)
-
-        if keep_labels:
-            surface_mask = np.isin(labeled, list(keep_labels))
-            confirmed_surface[z] = surface_mask
-
-    del signal
+    del signal, atlas_boundary_zone
 
     # Count confirmed surface voxels before dilation
     confirmed_count = int(confirmed_surface.sum())
@@ -299,6 +288,16 @@ def prefilter_candidates(
         del eroded_mask
         surface_method = "atlas_erosion"
 
+    # Extend exclusion zone OUTSIDE brain_mask to catch unmapped candidates
+    # at the tissue surface. Candidates at annotation=0 are outside brain_mask
+    # but many are at the tissue edge where autofluorescence is strongest.
+    # Dilate brain_mask outward and add the outer shell to exclusion.
+    print(f"[{timestamp()}] Extending exclusion to cover unmapped surface region...")
+    outer_envelope = ndimage.binary_dilation(brain_mask, iterations=surface_depth_vox)
+    outer_shell = outer_envelope & ~brain_mask
+    exclusion_mask = exclusion_mask | outer_shell
+    del outer_envelope, outer_shell
+
     del brain_mask  # free memory
 
     # Parse candidates XML
@@ -360,24 +359,28 @@ def prefilter_candidates(
                 interior_coords.append((z_brain, y_brain, x_brain))
             continue
 
+        # Surface filter FIRST: remove ANY candidate in the exclusion zone.
+        # This catches both mapped AND unmapped candidates near the surface.
+        # The exclusion zone extends outside brain_mask to cover annotation=0
+        # voxels at the tissue edge where autofluorescence is strongest.
+        if exclusion_mask[idx]:
+            surface_removed += 1
+            suspicious_coords.append((z_brain, y_brain, x_brain))
+            region_id = int(registered_annotation[idx])
+            if region_id > 0 and region_id in atlas.structures:
+                acronym = atlas.structures[region_id]['acronym']
+            else:
+                acronym = 'unmapped' if region_id == 0 else str(region_id)
+            suspicious_details[(z_brain, y_brain, x_brain)] = (region_id, acronym, 'surface')
+            category_counts['surface'] = category_counts.get('surface', 0) + 1
+            continue
+
         region_id = int(registered_annotation[idx])
 
-        # Unmapped (region_id=0) — atlas boundary gaps, keep
+        # Unmapped (region_id=0) NOT near surface — atlas boundary gaps, keep
         if region_id == 0:
             unmapped += 1
             interior_coords.append((z_brain, y_brain, x_brain))
-            continue
-
-        # Surface filter: remove ANY candidate near the brain edge.
-        # There should never be real labeled cells at the tissue surface —
-        # surface fluorescence is autofluorescence/damage/clearing artifacts.
-        if exclusion_mask[idx]:
-            # In the surface exclusion zone — remove
-            surface_removed += 1
-            suspicious_coords.append((z_brain, y_brain, x_brain))
-            acronym = atlas.structures[region_id]['acronym'] if region_id in atlas.structures else ''
-            suspicious_details[(z_brain, y_brain, x_brain)] = (region_id, acronym, 'surface')
-            category_counts['surface'] = category_counts.get('surface', 0) + 1
             continue
 
         # Deep interior — keep
