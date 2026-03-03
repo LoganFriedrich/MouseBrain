@@ -14,9 +14,9 @@ Two filtering criteria:
    labeled neurons are never at the tissue edge; surface fluorescence is
    autofluorescence, tissue damage, or incomplete clearing. Uses either:
    - Atlas mask erosion (default): binary erosion on annotation > 0
-   - Image edge detection (optional): Sobel edges on the signal channel,
-     size-filtered to keep continuous surfaces (both external brain
-     boundary AND internal ventricle/tract interfaces)
+   - Image surface detection (optional): Sobel edges confirmed by
+     adjacency to dark regions (non-tissue). Real tissue edges border
+     dark areas; cell edges border bright tissue on both sides.
 
 2. EXTREME OOB — candidates far beyond the atlas boundary. Nearby OOB
    candidates are KEPT (spinal cord, ventral brainstem). Only candidates
@@ -66,17 +66,22 @@ def timestamp():
 
 def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
                           surface_depth_vox, ann_shape):
-    """Detect brain surface using CV edge detection on the signal channel.
+    """Detect tissue surfaces using intensity contrast in the signal channel.
 
-    Loads downsampled.tiff (signal at atlas resolution), runs Sobel edge
-    detection on each Z-slice, then cross-references with atlas annotation
-    boundaries. Edges that align with atlas outlines are confirmed tissue
-    surfaces. This catches both the outer brain boundary AND internal
-    boundaries (atlas gaps, ventricle spaces annotated as 0).
+    Real tissue edges border DARK regions (non-tissue: outside brain,
+    ventricle lumen, tissue damage). Cell edges border bright tissue on
+    both sides. This distinction is what separates surface artifacts from
+    real cells.
 
-    The atlas boundary includes edges of ALL holes in brain_mask (annotation
-    > 0), so internal regions where annotation = 0 (e.g. ventricle spaces)
-    also generate boundaries that can be confirmed by image edges.
+    Approach:
+    1. Identify dark regions: signal well below tissue intensity
+    2. Sobel edge detection to find strong edges
+    3. Confirm: only edges adjacent to dark regions are real surfaces
+    4. Dilate confirmed surfaces to create exclusion zone
+
+    This catches both external (brain boundary) and internal (ventricles,
+    tissue tears, tract interfaces) surfaces — anywhere bright tissue
+    meets dark non-tissue.
 
     Returns a boolean mask where True = surface exclusion zone, or None
     if downsampled.tiff is not available.
@@ -88,7 +93,7 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
         print(f"  [!] downsampled.tiff not found -- falling back to atlas erosion")
         return None
 
-    print(f"[{timestamp()}] Loading signal channel for edge detection...")
+    print(f"[{timestamp()}] Loading signal channel for surface detection...")
     signal = tifffile.imread(str(downsampled_path))
     if signal.shape != tuple(ann_shape):
         print(f"  [!] Signal shape {signal.shape} != atlas shape {tuple(ann_shape)}")
@@ -96,56 +101,66 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
         del signal
         return None
 
-    # Atlas boundary: inner edge of brain mask (1 voxel thick).
-    # Captures outer brain boundary AND edges of internal holes (atlas gaps,
-    # ventricle spaces where annotation = 0).
-    atlas_inner_edge = brain_mask & ~ndimage.binary_erosion(brain_mask)
+    # Step 1: Identify dark regions (non-tissue).
+    # Tissue is bright. Surfaces, ventricles, exterior, damage = dark.
+    # Use a low percentile of the brain signal as the dark threshold.
+    search_region = ndimage.binary_dilation(brain_mask, iterations=3)
+    brain_signal = signal[brain_mask].ravel()
+    nonzero = brain_signal[brain_signal > 0]
+    if len(nonzero) == 0:
+        del signal, search_region
+        return None
 
-    # Generous alignment tolerance to handle atlas-image misalignment.
-    # The registered atlas rarely aligns perfectly with the actual tissue
-    # boundary, so allow extra slack (half the surface depth).
-    alignment_tolerance = max(3, surface_depth_vox // 2)
-    atlas_boundary_zone = ndimage.binary_dilation(
-        atlas_inner_edge, iterations=alignment_tolerance
-    )
-    del atlas_inner_edge
+    dark_threshold = np.percentile(nonzero, 10)
+    del brain_signal, nonzero
 
-    print(f"[{timestamp()}] Detecting surface edges ({signal.shape[0]} slices, "
-          f"alignment tolerance={alignment_tolerance} voxels)...")
+    # Dark mask: dark regions in and near the brain
+    dark_mask = (signal < dark_threshold) & search_region
+    del search_region
+
+    # Dilate dark regions slightly so "adjacent to dark" is generous
+    dark_zone = ndimage.binary_dilation(dark_mask, iterations=2)
+    del dark_mask
+
+    dark_count = int(dark_zone.sum())
+    print(f"  Dark region (signal < {dark_threshold:.0f}): {dark_count:,} voxels")
+
+    # Step 2: Sobel edge detection + dark-adjacency confirmation.
+    # Strong edges that border dark regions = real tissue surfaces.
+    # Strong edges surrounded by bright tissue = cell edges, ignored.
+    print(f"[{timestamp()}] Detecting tissue surface edges ({signal.shape[0]} slices)...")
     confirmed_surface = np.zeros(ann_shape, dtype=bool)
 
     for z in range(signal.shape[0]):
         if not brain_mask[z].any():
             continue
 
-        # Sobel edge detection on this slice
         slice_f = signal[z].astype(np.float32)
         gx = ndimage.sobel(slice_f, axis=0)
         gy = ndimage.sobel(slice_f, axis=1)
         edge_mag = np.sqrt(gx * gx + gy * gy)
 
-        # Adaptive threshold: strong edges only (top 15% within the brain)
+        # Adaptive threshold: strong edges within the brain
         brain_edges = edge_mag[brain_mask[z]]
         if len(brain_edges) == 0 or brain_edges.max() == 0:
             continue
         threshold = np.percentile(brain_edges[brain_edges > 0], 85)
         strong_edges = edge_mag > threshold
 
-        # Keep only edges that align with atlas boundaries
-        confirmed_surface[z] = strong_edges & atlas_boundary_zone[z]
+        # Confirm: only edges adjacent to dark regions are tissue surfaces
+        confirmed_surface[z] = strong_edges & dark_zone[z]
 
-    del signal, atlas_boundary_zone
+    del signal, dark_zone
 
-    # Count confirmed surface voxels before dilation
     confirmed_count = int(confirmed_surface.sum())
-    print(f"  Confirmed surface edge voxels: {confirmed_count:,}")
+    print(f"  Confirmed tissue surface voxels: {confirmed_count:,}")
 
     if confirmed_count == 0:
-        print(f"  [!] No surface edges detected -- falling back to atlas erosion")
+        print(f"  [!] No tissue surfaces detected -- falling back to atlas erosion")
         del confirmed_surface
         return None
 
-    # Dilate confirmed surface to create exclusion zone
+    # Step 3: Dilate confirmed surfaces to create exclusion zone
     print(f"[{timestamp()}] Building exclusion zone (dilating by {surface_depth_vox} voxels)...")
     exclusion_zone = ndimage.binary_dilation(
         confirmed_surface, iterations=surface_depth_vox
