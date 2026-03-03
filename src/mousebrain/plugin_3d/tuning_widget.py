@@ -3006,6 +3006,17 @@ class TuningWidget(QWidget):
         tracing_row.addWidget(self.prefilter_tracing_combo)
         options_layout.addLayout(tracing_row)
 
+        # Image edge detection checkbox
+        self.prefilter_image_edges_cb = QCheckBox("Use image edge detection")
+        self.prefilter_image_edges_cb.setToolTip(
+            "Use CV edge detection on the signal channel to find the brain surface.\n"
+            "More accurate than atlas erosion alone -- detects actual tissue edges\n"
+            "and confirms them against the atlas outline.\n"
+            "Requires downsampled.tiff in 3_Registered_Atlas/."
+        )
+        self.prefilter_image_edges_cb.setChecked(False)
+        options_layout.addWidget(self.prefilter_image_edges_cb)
+
         content_layout.addWidget(options_group)
 
         # =================================================================
@@ -3289,11 +3300,13 @@ class TuningWidget(QWidget):
             from mousebrain.prefilter import prefilter_candidates
 
             tracing_type = self.prefilter_tracing_combo.currentText()
+            use_image_edges = self.prefilter_image_edges_cb.isChecked()
 
             result = prefilter_candidates(
                 candidates_xml=candidates_xml,
                 registration_path=registration_path,
                 tracing_type=tracing_type,
+                use_image_edges=use_image_edges,
             )
 
             self._prefilter_result = result
@@ -3306,21 +3319,19 @@ class TuningWidget(QWidget):
             total = stats['total']
             interior = stats['interior']
             suspicious = stats['suspicious']
-            oob = stats.get('out_of_bounds', 0)
+            oob = stats.get('out_of_bounds_kept', 0)
             unmapped = stats.get('unmapped', 0)
+            surface = stats.get('surface_removed', 0)
+            method = stats.get('surface_method', 'atlas_erosion')
 
             text = (
                 f"Total candidates:     {total:>8,}\n"
                 f"Interior (keep):      {interior:>8,}  ({interior/total*100:.1f}%)\n"
                 f"  OOB (kept):         {oob:>8,}\n"
                 f"  Unmapped (kept):    {unmapped:>8,}\n"
-                f"Suspicious (remove):  {suspicious:>8,}  ({suspicious/total*100:.1f}%)"
+                f"Surface (remove):     {surface:>8,}  ({surface/total*100:.1f}%)\n"
+                f"  Method: {method}"
             )
-            # Show category breakdown if available
-            cat_counts = result.get('category_counts', {})
-            if cat_counts:
-                for cat, cnt in sorted(cat_counts.items(), key=lambda x: -x[1]):
-                    text += f"\n  {cat}: {cnt:,}"
 
             self.prefilter_results_label.setText(text)
             self.prefilter_save_btn.setEnabled(True)
@@ -3362,7 +3373,8 @@ class TuningWidget(QWidget):
         for layer in self.viewer.layers:
             if hasattr(layer, 'name') and ('Interior Candidates' in layer.name or
                                             'Outside/Meningeal' in layer.name or
-                                            'Suspicious Region' in layer.name):
+                                            'Suspicious Region' in layer.name or
+                                            'Surface Removed' in layer.name):
                 layers_to_remove.append(layer)
         for layer in layers_to_remove:
             self.viewer.layers.remove(layer)
@@ -3372,7 +3384,7 @@ class TuningWidget(QWidget):
             coords = np.array(result['interior_coords'])
             self.viewer.add_points(
                 coords,
-                name=f"Interior Candidates ({len(coords)})",
+                name=f"Interior Candidates ({len(coords):,})",
                 face_color='transparent',
                 border_color='#00FF00',
                 symbol='o',
@@ -3382,12 +3394,12 @@ class TuningWidget(QWidget):
                 n_dimensional=True,
             )
 
-        # Suspicious regions (red) — removed by filter
+        # Surface removed (red) — candidates near brain edge
         if result['suspicious_coords']:
             coords = np.array(result['suspicious_coords'])
             self.viewer.add_points(
                 coords,
-                name=f"Suspicious Region ({len(coords)})",
+                name=f"Surface Removed ({len(coords):,})",
                 face_color='transparent',
                 border_color='#FF0000',
                 symbol='x',

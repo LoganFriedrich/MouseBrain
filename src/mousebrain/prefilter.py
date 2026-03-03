@@ -2,19 +2,20 @@
 """
 prefilter.py - Canonical location for atlas pre-filter logic.
 
-Pre-filter cell candidates using registered atlas and biologically suspicious
-region mapping. Separates detection candidates into:
-  - Interior: kept for classification (legitimate regions, unmapped, nearby OOB)
-  - Suspicious surface: removed (surface shell of biologically suspicious regions)
+Pre-filter cell candidates using brain surface edge detection. Separates
+detection candidates into:
+  - Interior: kept for classification (deep inside brain)
+  - Surface: removed (within surface_depth_um of the brain edge)
   - Extreme OOB: removed (candidates far beyond atlas bounds)
 
 Two filtering criteria:
 
-1. SUSPICIOUS SURFACE — candidates in biologically unlikely regions (cerebellar
-   cortex, white matter, olfactory, cortical L1-3, etc.) that are near the
-   brain surface. Uses binary erosion to distinguish surface shell from deep
-   interior. Candidates deep inside suspicious regions are KEPT (could be real
-   labeled neurons). Only the outer shell is removed (surface artifacts).
+1. SURFACE EDGE — ANY candidate near the brain surface is removed. Real
+   labeled neurons are never at the tissue edge; surface fluorescence is
+   autofluorescence, tissue damage, or incomplete clearing. Uses either:
+   - Atlas mask erosion (default): binary erosion on annotation > 0
+   - Image edge detection (optional): Sobel edges on the signal channel,
+     cross-referenced with atlas boundary for confirmation
 
 2. EXTREME OOB — candidates far beyond the atlas boundary. Nearby OOB
    candidates are KEPT (spinal cord, ventral brainstem). Only candidates
@@ -27,7 +28,7 @@ surface junk before it enters the training pipeline.
 Usage (CLI):
     python -m mousebrain.prefilter --brain 357_CNT_02_08_1p625x_z4
     python -m mousebrain.prefilter --brain 357_CNT_02_08_1p625x_z4 --surface-depth 150
-    python -m mousebrain.prefilter --brain 357_CNT_02_08_1p625x_z4 --tracing-type ascending
+    python -m mousebrain.prefilter --brain 357_CNT_02_08_1p625x_z4 --image-edges
 """
 
 import argparse
@@ -48,7 +49,7 @@ from mousebrain.config import BRAINS_ROOT, MODELS_DIR
 # CONFIGURATION
 # =============================================================================
 
-SCRIPT_VERSION = "2.2.0"
+SCRIPT_VERSION = "3.0.0"
 
 FOLDER_REGISTRATION = "3_Registered_Atlas"
 FOLDER_DETECTION = "4_Cell_Candidates"
@@ -56,6 +57,89 @@ FOLDER_DETECTION = "4_Cell_Candidates"
 
 def timestamp():
     return datetime.now().strftime("%H:%M:%S")
+
+
+# =============================================================================
+# IMAGE EDGE DETECTION
+# =============================================================================
+
+def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
+                          surface_depth_vox, ann_shape):
+    """Detect brain surface using CV edge detection on the signal channel.
+
+    Loads downsampled.tiff (signal at atlas resolution), runs Sobel edge
+    detection on each Z-slice, then cross-references with the atlas annotation
+    boundary. Edges that align with the atlas outline are confirmed tissue
+    surface. Returns a boolean mask where True = surface exclusion zone.
+
+    Returns None if downsampled.tiff is not available.
+    """
+    from scipy import ndimage
+
+    downsampled_path = registration_path / "downsampled.tiff"
+    if not downsampled_path.exists():
+        print(f"  [!] downsampled.tiff not found -- falling back to atlas erosion")
+        return None
+
+    print(f"[{timestamp()}] Loading signal channel for edge detection...")
+    signal = tifffile.imread(str(downsampled_path))
+    if signal.shape != tuple(ann_shape):
+        print(f"  [!] Signal shape {signal.shape} != atlas shape {tuple(ann_shape)}")
+        print(f"  [!] Falling back to atlas erosion")
+        del signal
+        return None
+
+    # Atlas boundary: inner edge of brain mask (1 voxel thick)
+    atlas_inner_edge = brain_mask & ~ndimage.binary_erosion(brain_mask)
+
+    # Dilate atlas boundary to define "near atlas outline" zone (tolerance)
+    alignment_tolerance = max(2, surface_depth_vox // 3)
+    atlas_boundary_zone = ndimage.binary_dilation(
+        atlas_inner_edge, iterations=alignment_tolerance
+    )
+    del atlas_inner_edge
+
+    print(f"[{timestamp()}] Detecting surface edges ({signal.shape[0]} slices, "
+          f"alignment tolerance={alignment_tolerance} voxels)...")
+    confirmed_surface = np.zeros(ann_shape, dtype=bool)
+
+    for z in range(signal.shape[0]):
+        if not brain_mask[z].any():
+            continue
+
+        # Sobel edge detection on this slice
+        slice_f = signal[z].astype(np.float32)
+        gx = ndimage.sobel(slice_f, axis=0)
+        gy = ndimage.sobel(slice_f, axis=1)
+        edge_mag = np.sqrt(gx * gx + gy * gy)
+
+        # Adaptive threshold: strong edges only (top 10% within the brain)
+        brain_edges = edge_mag[brain_mask[z]]
+        if len(brain_edges) == 0 or brain_edges.max() == 0:
+            continue
+        threshold = np.percentile(brain_edges[brain_edges > 0], 85)
+        strong_edges = edge_mag > threshold
+
+        # Keep only edges that align with atlas boundary
+        confirmed_surface[z] = strong_edges & atlas_boundary_zone[z]
+
+    del signal, atlas_boundary_zone
+
+    # Count confirmed surface voxels before dilation
+    confirmed_count = int(confirmed_surface.sum())
+    print(f"  Confirmed surface edge voxels: {confirmed_count:,}")
+
+    # Dilate confirmed surface to create exclusion zone
+    print(f"[{timestamp()}] Building exclusion zone (dilating by {surface_depth_vox} voxels)...")
+    exclusion_zone = ndimage.binary_dilation(
+        confirmed_surface, iterations=surface_depth_vox
+    )
+    del confirmed_surface
+
+    exclusion_count = int(exclusion_zone.sum())
+    print(f"  Exclusion zone voxels: {exclusion_count:,}")
+
+    return exclusion_zone
 
 
 # =============================================================================
@@ -69,16 +153,19 @@ def prefilter_candidates(
     tracing_type: str = "descending",
     surface_depth_um: float = 100.0,
     extreme_oob_um: float = 500.0,
+    use_image_edges: bool = False,
 ) -> dict:
     """
-    Pre-filter cell candidates by suspicious-surface + extreme-OOB criteria.
+    Pre-filter cell candidates by surface edge + extreme-OOB criteria.
 
-    Two filters:
-    1. Suspicious surface — candidates in biologically suspicious regions that
-       are within surface_depth_um of the brain edge. Deep candidates in the
-       same regions are KEPT.
-    2. Extreme OOB — candidates more than extreme_oob_um beyond the atlas
-       boundary. Nearby OOB candidates (spinal cord) are KEPT.
+    Removes ALL candidates near the brain surface — real labeled neurons
+    are never at the tissue edge. Surface fluorescence is autofluorescence,
+    tissue damage, or incomplete clearing artifacts.
+
+    Two surface detection modes:
+    - Atlas erosion (default): binary erosion on annotation mask
+    - Image edges (use_image_edges=True): Sobel edge detection on the
+      signal channel, confirmed against atlas outline
 
     Unmapped candidates (region_id=0) are always KEPT.
 
@@ -86,29 +173,21 @@ def prefilter_candidates(
         candidates_xml: Path to detection candidates XML
         registration_path: Path to 3_Registered_Atlas folder
         atlas_name: BrainGlobe atlas name (default: allen_mouse_10um)
-        tracing_type: 'descending', 'ascending', or 'unknown'
+        tracing_type: 'descending', 'ascending', or 'unknown' (logged, not used for filtering)
         surface_depth_um: Depth in microns defining the surface shell (default: 100)
         extreme_oob_um: Distance in microns beyond atlas to consider extreme OOB (default: 500)
+        use_image_edges: If True, use CV edge detection on signal channel (default: False)
 
     Returns:
         dict with keys:
             interior_coords: list of (z, y, x) tuples to keep
-            suspicious_coords: list of (z, y, x) tuples removed (surface suspicious + extreme OOB)
+            suspicious_coords: list of (z, y, x) tuples removed (surface + extreme OOB)
             suspicious_details: dict mapping (z,y,x) -> (region_id, acronym, category)
             category_counts: dict mapping category -> count
             stats: summary statistics dict
     """
     from brainglobe_atlasapi import BrainGlobeAtlas
     from scipy import ndimage
-
-    from mousebrain.region_mapping import TracingType, is_suspicious_region
-
-    tracing_map = {
-        'descending': TracingType.DESCENDING,
-        'ascending': TracingType.ASCENDING,
-        'unknown': TracingType.UNKNOWN,
-    }
-    tracing_type_enum = tracing_map.get(tracing_type, TracingType.DESCENDING)
 
     print(f"[{timestamp()}] Loading atlas: {atlas_name}")
     atlas = BrainGlobeAtlas(atlas_name)
@@ -157,23 +236,42 @@ def prefilter_candidates(
     surface_depth_vox = max(1, int(round(surface_depth_um / atlas_resolution)))
     extreme_oob_vox = max(1, int(round(extreme_oob_um / atlas_resolution)))
 
+    surface_method = "image_edges" if use_image_edges else "atlas_erosion"
     print(f"  Brain voxel: Z={brain_voxel_z}um, XY={brain_voxel_xy}um")
     print(f"  Atlas resolution: {atlas_resolution}um")
     print(f"  Scale factors: Z={scale_z:.3f}, XY={scale_xy:.3f}")
-    print(f"  Tracing type: {tracing_type}")
+    print(f"  Surface method: {surface_method}")
     print(f"  Surface depth: {surface_depth_um}um ({surface_depth_vox} atlas voxels)")
     print(f"  Extreme OOB: {extreme_oob_um}um ({extreme_oob_vox} atlas voxels)")
 
-    # Compute eroded brain interior mask.
-    # Voxels in eroded_mask=True are "deep interior" (more than surface_depth
-    # from any brain edge). Voxels where eroded_mask=False but brain_mask=True
-    # are in the surface shell.
-    print(f"[{timestamp()}] Computing surface mask (eroding brain mask by {surface_depth_vox} voxels)...")
-    eroded_mask = ndimage.binary_erosion(brain_mask, iterations=surface_depth_vox)
-    deep_count = int(eroded_mask.sum())
-    brain_count = int(brain_mask.sum())
-    surface_count = brain_count - deep_count
-    print(f"  Brain voxels: {brain_count:,}  Deep interior: {deep_count:,}  Surface shell: {surface_count:,}")
+    ann_shape = registered_annotation.shape
+    print(f"  Atlas shape: {ann_shape} (indexed as [Z, Y, X])")
+
+    # Build surface exclusion mask.
+    # Two modes:
+    #   1. Image edge detection: Sobel edges on signal, confirmed by atlas boundary
+    #   2. Atlas erosion (fallback): binary erosion on annotation mask
+    exclusion_mask = None
+    if use_image_edges:
+        exclusion_mask = _detect_image_surface(
+            registration_path, brain_mask, atlas_resolution,
+            surface_depth_vox, ann_shape
+        )
+
+    if exclusion_mask is None:
+        # Atlas erosion mode (default or fallback)
+        print(f"[{timestamp()}] Computing surface mask (eroding brain mask by {surface_depth_vox} voxels)...")
+        eroded_mask = ndimage.binary_erosion(brain_mask, iterations=surface_depth_vox)
+        deep_count = int(eroded_mask.sum())
+        brain_count = int(brain_mask.sum())
+        surface_count = brain_count - deep_count
+        print(f"  Brain voxels: {brain_count:,}  Deep interior: {deep_count:,}  Surface shell: {surface_count:,}")
+        # In erosion mode, surface = brain_mask & ~eroded_mask
+        # We check eroded_mask[idx] to decide keep/remove
+        exclusion_mask = brain_mask & ~eroded_mask
+        del eroded_mask
+        surface_method = "atlas_erosion"
+
     del brain_mask  # free memory
 
     # Parse candidates XML
@@ -198,18 +296,8 @@ def prefilter_candidates(
     out_of_bounds_kept = 0
     extreme_oob_removed = 0
     unmapped = 0
-    suspicious_surface = 0
-    suspicious_deep_kept = 0
+    surface_removed = 0
     category_counts = {}  # category -> count
-
-    ann_shape = registered_annotation.shape
-
-    # Determine axis order: brainreg stores as [Y, Z, X] at atlas resolution
-    atlas_is_yzx = ann_shape[0] > ann_shape[1]
-    if atlas_is_yzx:
-        print(f"  Atlas axis order: [Y, Z, X] (dim0={ann_shape[0]}~Y, dim1={ann_shape[1]}~Z)")
-    else:
-        print(f"  Atlas axis order: [Z, Y, X] (dim0={ann_shape[0]}~Z, dim1={ann_shape[1]}~Y)")
 
     print(f"[{timestamp()}] Classifying candidates...")
     for z_brain, y_brain, x_brain in all_coords:
@@ -218,32 +306,20 @@ def prefilter_candidates(
         y_atlas = int(y_brain * scale_xy)
         x_atlas = int(x_brain * scale_xy)
 
-        # Index into registered atlas with correct axis order
-        if atlas_is_yzx:
-            idx = (y_atlas, z_atlas, x_atlas)
-            in_bounds = (0 <= y_atlas < ann_shape[0] and
-                         0 <= z_atlas < ann_shape[1] and
-                         0 <= x_atlas < ann_shape[2])
-        else:
-            idx = (z_atlas, y_atlas, x_atlas)
-            in_bounds = (0 <= z_atlas < ann_shape[0] and
-                         0 <= y_atlas < ann_shape[1] and
-                         0 <= x_atlas < ann_shape[2])
+        # Registered atlas is in brain image space (pages, rows, columns).
+        # Always index as (z, y, x) — no axis swapping.
+        idx = (z_atlas, y_atlas, x_atlas)
+        in_bounds = (0 <= z_atlas < ann_shape[0] and
+                     0 <= y_atlas < ann_shape[1] and
+                     0 <= x_atlas < ann_shape[2])
 
         if not in_bounds:
             # How far beyond the atlas boundary?
-            if atlas_is_yzx:
-                oob_dist = max(
-                    max(0, y_atlas - ann_shape[0] + 1), max(0, -y_atlas),
-                    max(0, z_atlas - ann_shape[1] + 1), max(0, -z_atlas),
-                    max(0, x_atlas - ann_shape[2] + 1), max(0, -x_atlas),
-                )
-            else:
-                oob_dist = max(
-                    max(0, z_atlas - ann_shape[0] + 1), max(0, -z_atlas),
-                    max(0, y_atlas - ann_shape[1] + 1), max(0, -y_atlas),
-                    max(0, x_atlas - ann_shape[2] + 1), max(0, -x_atlas),
-                )
+            oob_dist = max(
+                max(0, z_atlas - ann_shape[0] + 1), max(0, -z_atlas),
+                max(0, y_atlas - ann_shape[1] + 1), max(0, -y_atlas),
+                max(0, x_atlas - ann_shape[2] + 1), max(0, -x_atlas),
+            )
 
             if oob_dist > extreme_oob_vox:
                 # Extreme OOB — way too far from the atlas to be real
@@ -265,29 +341,22 @@ def prefilter_candidates(
             interior_coords.append((z_brain, y_brain, x_brain))
             continue
 
-        # Check suspicious region
-        if region_id in atlas.structures:
-            acronym = atlas.structures[region_id]['acronym']
-            category = is_suspicious_region(acronym, tracing_type_enum)
-            if category:
-                # Is this candidate in the surface shell or deep interior?
-                is_deep = bool(eroded_mask[idx])
-                if is_deep:
-                    # Deep inside suspicious region — could be real, keep
-                    suspicious_deep_kept += 1
-                    interior_coords.append((z_brain, y_brain, x_brain))
-                else:
-                    # Surface shell of suspicious region — likely junk, remove
-                    suspicious_surface += 1
-                    suspicious_coords.append((z_brain, y_brain, x_brain))
-                    suspicious_details[(z_brain, y_brain, x_brain)] = (region_id, acronym, category)
-                    category_counts[category] = category_counts.get(category, 0) + 1
-                continue
+        # Surface filter: remove ANY candidate near the brain edge.
+        # There should never be real labeled cells at the tissue surface —
+        # surface fluorescence is autofluorescence/damage/clearing artifacts.
+        if exclusion_mask[idx]:
+            # In the surface exclusion zone — remove
+            surface_removed += 1
+            suspicious_coords.append((z_brain, y_brain, x_brain))
+            acronym = atlas.structures[region_id]['acronym'] if region_id in atlas.structures else ''
+            suspicious_details[(z_brain, y_brain, x_brain)] = (region_id, acronym, 'surface')
+            category_counts['surface'] = category_counts.get('surface', 0) + 1
+            continue
 
-        # Legitimate region — keep
+        # Deep interior — keep
         interior_coords.append((z_brain, y_brain, x_brain))
 
-    del eroded_mask, registered_annotation  # free memory
+    del exclusion_mask, registered_annotation  # free memory
 
     # Build stats
     stats = {
@@ -297,8 +366,8 @@ def prefilter_candidates(
         'out_of_bounds_kept': out_of_bounds_kept,
         'extreme_oob_removed': extreme_oob_removed,
         'unmapped': unmapped,
-        'suspicious_surface': suspicious_surface,
-        'suspicious_deep_kept': suspicious_deep_kept,
+        'surface_removed': surface_removed,
+        'surface_method': surface_method,
         'tracing_type': tracing_type,
         'surface_depth_um': surface_depth_um,
         'extreme_oob_um': extreme_oob_um,
@@ -312,20 +381,15 @@ def prefilter_candidates(
     pct_i = len(interior_coords) / total * 100 if total else 0
     pct_s = len(suspicious_coords) / total * 100 if total else 0
     print(f"\n{'='*60}")
-    print(f"PRE-FILTER RESULTS  (tracing: {tracing_type})")
+    print(f"PRE-FILTER RESULTS  (method: {surface_method})")
     print(f"{'='*60}")
     print(f"  Total candidates:         {total:>8,}")
     print(f"  Interior (keep):          {len(interior_coords):>8,}  ({pct_i:.1f}%)")
     print(f"    nearby OOB (kept):      {out_of_bounds_kept:>8,}")
     print(f"    unmapped (kept):        {unmapped:>8,}")
-    print(f"    deep suspicious (kept): {suspicious_deep_kept:>8,}")
     print(f"  Removed:                  {len(suspicious_coords):>8,}  ({pct_s:.1f}%)")
-    print(f"    suspicious surface:     {suspicious_surface:>8,}")
+    print(f"    surface edge:           {surface_removed:>8,}")
     print(f"    extreme OOB:            {extreme_oob_removed:>8,}")
-    if category_counts:
-        print(f"  By category:")
-        for cat, cnt in sorted(category_counts.items(), key=lambda x: -x[1]):
-            print(f"    {cat:30s} {cnt:>6,}")
     print(f"{'='*60}")
 
     return {
@@ -518,6 +582,8 @@ Examples:
                         help='Output directory (default: 4_Cell_Candidates/prefiltered_{timestamp})')
     parser.add_argument('--atlas', default='allen_mouse_10um',
                         help='BrainGlobe atlas name (default: allen_mouse_10um)')
+    parser.add_argument('--image-edges', action='store_true',
+                        help='Use CV edge detection on signal channel (default: atlas erosion)')
     parser.add_argument('--view', action='store_true',
                         help='Open napari to visualize results after filtering')
 
@@ -573,6 +639,7 @@ Examples:
         tracing_type=args.tracing_type,
         surface_depth_um=args.surface_depth,
         extreme_oob_um=args.extreme_oob,
+        use_image_edges=args.image_edges,
     )
     duration = time.time() - start_time
 
@@ -624,20 +691,14 @@ def _view_in_napari(result: dict, registration_path: Path, brain_name: str):
         annotation_path = registration_path / "annotation.tiff"
     registered_annotation = tifffile.imread(str(annotation_path))
 
-    # Atlas is [Y, Z, X]. Points are (z_brain, y_brain, x_brain).
-    # Convert to atlas display coords: (y*scale_xy, z*scale_z, x*scale_xy)
-    ann_shape = registered_annotation.shape
-    atlas_is_yzx = ann_shape[0] > ann_shape[1]
-
+    # Registered atlas is in brain image space — index as (z, y, x).
+    # Scale brain coords to atlas coords for display overlay.
     def to_display(coords):
         arr = np.array(coords, dtype=np.float32)
         if len(arr) == 0:
             return np.empty((0, 3), dtype=np.float32)
         z, y, x = arr[:, 0], arr[:, 1], arr[:, 2]
-        if atlas_is_yzx:
-            return np.column_stack([y * scale_xy, z * scale_z, x * scale_xy])
-        else:
-            return np.column_stack([z * scale_z, y * scale_xy, x * scale_xy])
+        return np.column_stack([z * scale_z, y * scale_xy, x * scale_xy])
 
     interior_pts = to_display(result['interior_coords'])
     suspicious_pts = to_display(result['suspicious_coords'])
