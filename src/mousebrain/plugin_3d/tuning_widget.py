@@ -1627,6 +1627,96 @@ class TuningWidget(QWidget):
         linked.sort(key=lambda r: r.get('created_at', ''), reverse=True)
         return linked[0]
 
+    def _find_prefilter_for_classification(self, class_run: dict) -> 'Path | None':
+        """
+        Find the pre-filter output folder associated with a classification run.
+
+        Traces classification -> prefilter by examining:
+        1. The classification's candidates_path (if it points to a prefiltered folder)
+        2. Tracker prefilter runs for this brain
+        3. Filesystem fallback (most recent prefiltered_*/ subfolder)
+
+        Args:
+            class_run: Classification run dict from tracker (or None for filesystem mode)
+
+        Returns:
+            Path to prefilter output folder, or None if no prefilter found
+        """
+        from pathlib import Path
+
+        # Strategy 1: Check if classification input came from a prefilter folder
+        if class_run:
+            candidates_path = class_run.get('candidates_path', '') or class_run.get('input_path', '')
+            if candidates_path and 'prefiltered' in str(candidates_path).lower():
+                prefilter_folder = Path(candidates_path).parent
+                if prefilter_folder.exists():
+                    return prefilter_folder
+
+        # Strategy 2: Search tracker for prefilter runs on this brain
+        if self.tracker and self.current_brain:
+            brain_name = self.current_brain.name
+            prefilter_runs = self.tracker.search(brain=brain_name, exp_type="prefilter", status="completed")
+            if prefilter_runs:
+                # Sort by creation time (most recent first)
+                prefilter_runs.sort(key=lambda r: r.get('created_at', ''), reverse=True)
+                for pf_run in prefilter_runs:
+                    output_path = pf_run.get('output_path', '')
+                    if output_path:
+                        pf_folder = Path(output_path)
+                        # Check if this is the specific timestamped subfolder
+                        if pf_folder.exists() and (pf_folder / 'interior_candidates.xml').exists():
+                            return pf_folder
+                        # Check if it's the parent dir — find the most recent subfolder
+                        if pf_folder.exists():
+                            sub = sorted(pf_folder.glob('prefiltered_*/'), key=lambda p: p.name, reverse=True)
+                            if sub and (sub[0] / 'interior_candidates.xml').exists():
+                                return sub[0]
+
+        # Strategy 3: Filesystem fallback — most recent prefiltered_*/ in 4_Cell_Candidates
+        if self.current_brain:
+            candidates_dir = self.current_brain / "4_Cell_Candidates"
+            if candidates_dir.exists():
+                prefiltered_dirs = sorted(
+                    candidates_dir.glob('prefiltered_*/'),
+                    key=lambda p: p.name, reverse=True
+                )
+                for pf_dir in prefiltered_dirs:
+                    if (pf_dir / 'interior_candidates.xml').exists():
+                        return pf_dir
+
+        return None
+
+    def _load_prefiltered_out(self, prefilter_folder, label_suffix: str = ""):
+        """
+        Load the pre-filtered-out candidates from a prefilter output folder.
+
+        Looks for suspicious_candidates.xml or outside_candidates.xml and adds
+        them as a napari layer showing what was excluded before classification.
+
+        Args:
+            prefilter_folder: Path to the prefiltered_*/ output folder
+            label_suffix: Label suffix like "(best)" or "(recent)"
+
+        Returns:
+            True if loaded successfully, False otherwise
+        """
+        from pathlib import Path
+        prefilter_folder = Path(prefilter_folder)
+
+        # Try different filenames used by prefilter save
+        for xml_name in ['suspicious_candidates.xml', 'outside_candidates.xml']:
+            xml_path = prefilter_folder / xml_name
+            if xml_path.exists():
+                layer_name = f"Pre-filtered Out {label_suffix}".strip()
+                loaded = self._load_points_from_xml(
+                    xml_path, layer_name, cell_type='prefilter_removed'
+                )
+                if loaded:
+                    print(f"[Connectome] Loaded pre-filtered-out candidates from {xml_path.name}")
+                    return True
+
+        return False
+
     def _load_classification_for_detection(self, detection_exp_id: str, class_run: dict, cell_type=None):
         """
         Load classification results (cells.xml + rejected.xml) for a detection run.
@@ -1693,24 +1783,27 @@ class TuningWidget(QWidget):
 
         print(f"[Connectome] Loaded classification: {cells_count} cells, {rejected_count} rejected")
 
+        # Load pre-filtered-out candidates if a prefilter was run
+        prefilter_folder = self._find_prefilter_for_classification(class_run)
+        if prefilter_folder:
+            self._load_prefiltered_out(prefilter_folder)
+
         # Update status if available
         if hasattr(self, 'classification_load_status'):
             self.classification_load_status.setText(
                 f"Loaded: {cells_count} cells, {rejected_count} rejected"
             )
 
-    def _load_historical_run(self, exp_id, cell_type=None, prefer_classification=True):
+    def _load_historical_run(self, exp_id, cell_type=None):
         """
         Load a specific calibration run by its ID.
 
-        Smart Loading: If this is a detection run and classification exists for it,
-        loads the classified results (cells.xml + rejected.xml) instead of raw detection.
-        This provides the split layers that are more useful for analysis.
+        Loads exactly what the run produced — detection loads detection candidates,
+        classification loads classified layers. No silent stage upgrades.
 
         Args:
             exp_id: The experiment ID to load
             cell_type: Optional styling override ('det_best', 'det_recent', etc.)
-            prefer_classification: If True, load classification results when available
         """
         if not self.tracker:
             return
@@ -1720,27 +1813,6 @@ class TuningWidget(QWidget):
         if not run:
             QMessageBox.warning(self, "Not Found", f"Run {exp_id} not found in tracker.")
             return
-
-        # Smart Loading: Check if classification exists for this detection
-        exp_type = run.get('exp_type', 'detection')
-        if prefer_classification and exp_type == 'detection':
-            # First check tracker for linked classification
-            class_run = self._find_classification_for_detection(exp_id)
-
-            if class_run:
-                # Classification exists in tracker - load it instead
-                print(f"[Connectome] Found classification for detection {exp_id}")
-                self._load_classification_for_detection(exp_id, class_run, cell_type)
-                return
-
-            # Fallback: Check filesystem even if not in tracker
-            if self.current_brain:
-                classified_folder = self.current_brain / "5_Classified_Cells"
-                cells_xml = classified_folder / "cells.xml"
-                if cells_xml.exists():
-                    print(f"[Connectome] Found classification on filesystem (not tracked)")
-                    self._load_classified_cells()  # Use existing method
-                    return
 
         output_path = run.get('output_path')
         if not output_path or not Path(output_path).exists():
@@ -3208,10 +3280,11 @@ class TuningWidget(QWidget):
             self.prefilter_to_training_btn.setEnabled(True)
             self.prefilter_status.setText("Pre-filter complete!")
 
-            # Log to tracker
+            # Log to tracker (output_path updated after save with actual subfolder)
+            self._last_prefilter_exp_id = None
             if self.tracker:
                 try:
-                    self.tracker.log_prefilter(
+                    pf_exp_id = self.tracker.log_prefilter(
                         brain=brain_name,
                         total=total,
                         interior=interior,
@@ -3222,6 +3295,7 @@ class TuningWidget(QWidget):
                         output_path=str(brain_path / "4_Cell_Candidates"),
                         status="completed",
                     )
+                    self._last_prefilter_exp_id = pf_exp_id
                 except Exception as e:
                     print(f"[Connectome] Could not log prefilter to tracker: {e}")
 
@@ -3292,6 +3366,16 @@ class TuningWidget(QWidget):
             from mousebrain.prefilter import save_prefilter_results
 
             saved = save_prefilter_results(self._prefilter_result, output_dir, brain_name)
+
+            # Update tracker with actual output subfolder path
+            if self.tracker and hasattr(self, '_last_prefilter_exp_id') and self._last_prefilter_exp_id:
+                try:
+                    self.tracker.update_status(
+                        self._last_prefilter_exp_id,
+                        output_path=str(output_dir)
+                    )
+                except Exception:
+                    pass  # Non-critical — tracker already has the parent dir
 
             QMessageBox.information(self, "Saved",
                 f"Pre-filter results saved to:\n{output_dir}\n\n"
@@ -6749,9 +6833,26 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Error", f"Failed to load candidates: {e}")
             return
 
-        # Log to tracker
+        # Log to tracker — determine parent experiment from candidates source
         exp_id = None
         if self.tracker:
+            parent_exp = None
+            candidates_str = str(candidates_xml)
+            # If candidates came from a prefilter, link to the prefilter run
+            if 'prefiltered' in candidates_str.lower() or 'interior_candidates' in candidates_str.lower():
+                # Search for prefilter run whose output matches this path
+                pf_runs = self.tracker.search(
+                    brain=self.current_brain.name, exp_type="prefilter", status="completed"
+                )
+                for pf in pf_runs:
+                    pf_output = pf.get('output_path', '')
+                    if pf_output and pf_output in candidates_str:
+                        parent_exp = pf.get('exp_id')
+                        break
+            # If no prefilter parent found, link to the detection source
+            if not parent_exp and hasattr(self, '_prefilter_source_exp_id') and self._prefilter_source_exp_id:
+                parent_exp = self._prefilter_source_exp_id
+
             exp_id = self.tracker.log_classification(
                 brain=self.current_brain.name,
                 model_path=model_path if not use_default else "default",
@@ -6759,6 +6860,7 @@ class TuningWidget(QWidget):
                 cube_size=self.classify_cube_size.value(),
                 batch_size=self.classify_batch_size.value(),
                 output_path=str(output_path),
+                parent_experiment=parent_exp,
                 notes="Run from napari tuning widget (Python API)",
             )
 
@@ -7007,6 +7109,11 @@ class TuningWidget(QWidget):
                 "Rejected",
                 cell_type='rejected'
             )
+
+        # Load pre-filtered-out candidates if a prefilter was run
+        prefilter_folder = self._find_prefilter_for_classification(None)
+        if prefilter_folder:
+            self._load_prefiltered_out(prefilter_folder)
 
         # Update status label if it exists - count from layers
         if hasattr(self, 'classification_load_status'):
@@ -8142,17 +8249,7 @@ class TuningWidget(QWidget):
                             label_suffix = "(only result)"
                         cell_type = 'recent'
 
-                    # Smart Loading: Check if classification exists for this detection
-                    detection_exp_id = target_run.get('exp_id')
-                    class_run = self._find_classification_for_detection(detection_exp_id)
-
-                    if class_run:
-                        # Classification exists - load cells.xml + rejected.xml instead
-                        print(f"[Connectome] Smart loading: found classification for detection")
-                        self._load_classification_for_detection(detection_exp_id, class_run, cell_type)
-                        return True
-
-                    # No classification - try to load detection from output path
+                    # Load raw detection from output path
                     output_path = target_run.get('output_path')
                     if output_path:
                         points_loaded = self._load_points_from_xml(
@@ -8162,15 +8259,6 @@ class TuningWidget(QWidget):
                         )
                         if points_loaded:
                             return True
-
-        # Fallback: Check filesystem for classification first, then detection
-        if self.current_brain:
-            classified_folder = self.current_brain / "5_Classified_Cells"
-            cells_xml = classified_folder / "cells.xml"
-            if cells_xml.exists():
-                print(f"[Connectome] Smart loading: found classification on filesystem")
-                self._load_classified_cells()
-                return True
 
         # Fallback: Load directly from 4_Cell_Candidates folder
         candidates_folder = self.current_brain / "4_Cell_Candidates"
@@ -8283,6 +8371,12 @@ class TuningWidget(QWidget):
                             n_cells = target_run.get('class_cells_kept', '?')
                             n_rejected = target_run.get('class_cells_rejected', '?')
                             print(f"[Connectome] Loaded classification {label_suffix}: {n_cells} cells, {n_rejected} rejected")
+
+                            # Load pre-filtered-out candidates if a prefilter was run
+                            prefilter_folder = self._find_prefilter_for_classification(target_run)
+                            if prefilter_folder:
+                                self._load_prefiltered_out(prefilter_folder, label_suffix)
+
                             return True
 
         # Fallback: Load directly from 5_Classified_Cells folder
@@ -8310,6 +8404,12 @@ class TuningWidget(QWidget):
 
             if cells_loaded or rejected_loaded:
                 print(f"[Connectome] Loaded classification from filesystem {label_suffix}")
+
+                # Load pre-filtered-out candidates if a prefilter was run
+                prefilter_folder = self._find_prefilter_for_classification(None)
+                if prefilter_folder:
+                    self._load_prefiltered_out(prefilter_folder, label_suffix)
+
                 return True
 
         print(f"  No classification results found for {self.current_brain.name}")
@@ -8465,6 +8565,15 @@ class TuningWidget(QWidget):
             'opacity': 0.2,
             'border_width': 0.1,
             'description': 'Suspicious region (removed by pre-filter)'
+        },
+        'prefilter_removed': {
+            'face': 'transparent',
+            'edge': '#FF6600',        # Orange-red, distinct from rejected
+            'symbol': 'x',
+            'size': 12,
+            'opacity': 0.15,
+            'border_width': 0.1,
+            'description': 'Pre-filtered out (excluded before classification)'
         },
 
         # ----------------------------------------------------------------------
@@ -9978,11 +10087,9 @@ class TuningWidget(QWidget):
         """
         Load results from a previous run into napari.
 
-        Uses smart loading: if classification exists for this detection,
-        loads the classified results (cells.xml + rejected.xml) instead.
+        Loads exactly what the run produced (detection or classification).
         """
-        # Use the unified loading method which handles smart loading
-        self._load_historical_run(exp_id, cell_type='det_recent', prefer_classification=True)
+        self._load_historical_run(exp_id, cell_type='det_recent')
 
     def generate_comparison_report(self):
         """
