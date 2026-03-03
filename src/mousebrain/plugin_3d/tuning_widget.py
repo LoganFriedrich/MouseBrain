@@ -1671,7 +1671,7 @@ class TuningWidget(QWidget):
             print(f"[Connectome] Error loading cells.xml: {e}")
             return
 
-        # Load rejected
+        # Load rejected (only if rejected.xml exists and has content)
         rejected_count = 0
         try:
             if rejected_xml.exists():
@@ -1680,14 +1680,9 @@ class TuningWidget(QWidget):
                 if rejected:
                     points = np.array([[c.z, c.y, c.x] for c in rejected])
                     self._add_points_layer(points, f"Rejected ({rejected_count})", cell_type='rejected')
-                else:
-                    self._add_points_layer(np.empty((0, 3)), "Rejected (0)", cell_type='rejected')
-            else:
-                self._add_points_layer(np.empty((0, 3)), "Rejected (0)", cell_type='rejected')
 
         except Exception as e:
             print(f"[Connectome] Error loading rejected.xml: {e}")
-            self._add_points_layer(np.empty((0, 3)), "Rejected (0)", cell_type='rejected')
 
         # Store metadata linking to detection
         for layer in self.viewer.layers:
@@ -3258,11 +3253,11 @@ class TuningWidget(QWidget):
                 coords,
                 name=f"Interior Candidates ({len(coords)})",
                 face_color='transparent',
-                edge_color='#00FF00',
+                border_color='#00FF00',
                 symbol='o',
                 size=14,
                 opacity=0.2,
-                edge_width=0.1,
+                border_width=0.1,
             )
 
         # Suspicious regions (red) — removed by filter
@@ -3272,11 +3267,11 @@ class TuningWidget(QWidget):
                 coords,
                 name=f"Suspicious Region ({len(coords)})",
                 face_color='transparent',
-                edge_color='#FF0000',
+                border_color='#FF0000',
                 symbol='x',
                 size=14,
                 opacity=0.2,
-                edge_width=0.1,
+                border_width=0.1,
             )
 
     def _save_prefilter_results(self):
@@ -7012,14 +7007,6 @@ class TuningWidget(QWidget):
                 "Rejected",
                 cell_type='rejected'
             )
-        else:
-            # Create empty rejected layer so comparison features work
-            self._add_points_layer(
-                np.empty((0, 3)),
-                "Rejected (0)",
-                cell_type='rejected'
-            )
-            print("[Connectome] No rejected.xml found - created empty Rejected layer")
 
         # Update status label if it exists - count from layers
         if hasattr(self, 'classification_load_status'):

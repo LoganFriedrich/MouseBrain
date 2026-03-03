@@ -1211,7 +1211,7 @@ class SliceAnnotatorWidget(QWidget):
             name=layer_name,
             size=self.font_size_spin.value(),
             face_color=text_color,
-            edge_color=text_color,
+            border_color=text_color,
             symbol='disc',  # Small marker at text position
             ndim=ndim,
             features={'text': []},  # Will store text for each point

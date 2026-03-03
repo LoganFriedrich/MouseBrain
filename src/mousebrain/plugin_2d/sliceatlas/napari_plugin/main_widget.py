@@ -1891,8 +1891,8 @@ class BrainSliceWidget(QWidget):
                         name=f"Inset Detections ({len(inset_cells)})",
                         size=8,
                         face_color='transparent',
-                        edge_color='cyan',
-                        edge_width=0.5,
+                        border_color='cyan',
+                        border_width=0.5,
                     )
 
                 # Base detections
@@ -1904,8 +1904,8 @@ class BrainSliceWidget(QWidget):
                         name=f"Base Detections ({len(base_cells)})",
                         size=8,
                         face_color='transparent',
-                        edge_color='yellow',
-                        edge_width=0.5,
+                        border_color='yellow',
+                        border_width=0.5,
                     )
 
             # Update UI
@@ -2422,8 +2422,8 @@ class BrainSliceWidget(QWidget):
                 name=f"Positive ({len(positive)})",
                 size=10,
                 face_color='transparent',
-                edge_color='lime',
-                edge_width=0.5,
+                border_color='lime',
+                border_width=0.5,
             )
 
         # Add negative cells (red)
@@ -2434,8 +2434,8 @@ class BrainSliceWidget(QWidget):
                 name=f"Negative ({len(negative)})",
                 size=10,
                 face_color='transparent',
-                edge_color='red',
-                edge_width=0.5,
+                border_color='red',
+                border_width=0.5,
             )
 
     def _visualize_dual_colocalization(self, measurements):
@@ -2470,8 +2470,8 @@ class BrainSliceWidget(QWidget):
                     name=f"{name_prefix} ({len(subset)})",
                     size=10,
                     face_color='transparent',
-                    edge_color=color,
-                    edge_width=0.5,
+                    border_color=color,
+                    border_width=0.5,
                 )
 
     def _update_diagnostic_plot(self):

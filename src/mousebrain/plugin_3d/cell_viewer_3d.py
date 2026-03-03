@@ -459,7 +459,7 @@ class Cell3DViewer(QWidget):
             face_color=display_colors,
             size=point_size,
             name="[3D] Detected Cells",
-            edge_width=0,
+            border_width=0,
             shading='spherical',
             out_of_slice_display=True,
         )
