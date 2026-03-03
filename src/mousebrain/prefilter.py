@@ -66,16 +66,18 @@ def timestamp():
 
 def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
                           surface_depth_vox, ann_shape):
-    """Detect tissue surfaces using the background (autofluorescence) channel.
+    """Detect tissue surfaces using background intensity + atlas confirmation.
 
-    The background channel (downsampled.tiff = registration channel) shows
-    tissue structure without cell labeling. Where background is bright =
-    tissue exists. Where background is dark = non-tissue (exterior, ventricle
-    lumen, tissue damage, clearing artifact).
+    Two signals must BOTH agree for a region to be classified as surface:
 
-    Candidates in or near dark background regions are surface artifacts —
-    the brightness that triggered detection is autofluorescence, not a
-    labeled cell. No edge detection needed: just threshold the background.
+    1. BACKGROUND: the autofluorescence channel (downsampled.tiff) is dark
+       there — meaning non-tissue (exterior, ventricle, damage).
+    2. ATLAS: the region is near an atlas structural boundary (edge of
+       brain_mask, including internal holes like ventricle annotation gaps).
+
+    A dark spot deep inside registered cortex is just local dimness — the
+    atlas says "real tissue here," so we keep candidates there. A dark
+    region that lines up with the atlas boundary is a confirmed surface.
 
     Returns a boolean mask where True = surface exclusion zone, or None
     if downsampled.tiff is not available.
@@ -83,8 +85,8 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
     from scipy import ndimage
 
     # downsampled.tiff = background/autofluorescence channel (ch0).
-    # This is the registration channel in brainreg — uniform tissue
-    # brightness, no labeled cell puncta.
+    # Registration channel in brainreg: uniform tissue brightness,
+    # no labeled cell puncta.
     background_path = registration_path / "downsampled.tiff"
     if not background_path.exists():
         print(f"  [!] downsampled.tiff not found -- falling back to atlas erosion")
@@ -98,10 +100,8 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
         del background
         return None
 
-    # Dark threshold: background intensity below this = non-tissue.
-    # Use the 10th percentile of nonzero brain background as cutoff.
-    # Tissue is bright and uniform in the background channel; dark
-    # regions are surfaces, ventricles, exterior, or damage.
+    # --- Signal 1: Background darkness ---
+    # Tissue is bright in the background channel. Dark = non-tissue.
     brain_bg = background[brain_mask].ravel()
     nonzero = brain_bg[brain_bg > 0]
     if len(nonzero) == 0:
@@ -111,9 +111,7 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
     dark_threshold = np.percentile(nonzero, 10)
     del brain_bg, nonzero
 
-    # Find dark regions in and near the brain.
-    # Include a thin shell outside brain_mask (3 vox = 30um) to catch
-    # the immediate exterior where candidates may land.
+    # Dark regions in and near the brain (thin outer shell for context)
     search_region = ndimage.binary_dilation(brain_mask, iterations=3)
     dark_mask = (background < dark_threshold) & search_region
     del background, search_region
@@ -126,14 +124,43 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
         del dark_mask
         return None
 
-    # Exclusion zone: within surface_depth_vox of any dark region.
-    # Dark regions ARE the non-tissue. The exclusion extends from the
-    # dark/bright boundary into the bright tissue.
+    # --- Signal 2: Atlas structural boundary ---
+    # Inner edge of brain_mask: captures outer brain boundary AND
+    # edges of internal holes (ventricle spaces, atlas gaps).
+    atlas_inner_edge = brain_mask & ~ndimage.binary_erosion(brain_mask)
+
+    # Generous tolerance: half of surface_depth for atlas-image misalignment
+    boundary_tolerance = max(3, surface_depth_vox // 2)
+    atlas_boundary_zone = ndimage.binary_dilation(
+        atlas_inner_edge, iterations=boundary_tolerance
+    )
+    del atlas_inner_edge
+
+    boundary_count = int(atlas_boundary_zone.sum())
+    print(f"  Atlas boundary zone ({boundary_tolerance} vox tolerance): "
+          f"{boundary_count:,} voxels")
+
+    # --- Confirmed surface: dark background AND near atlas boundary ---
+    # Both signals must agree. This prevents:
+    # - Dark interior spots from being called surface (atlas says real tissue)
+    # - Atlas boundary with bright background from being removed (tissue ok)
+    confirmed_surface = dark_mask & atlas_boundary_zone
+    del dark_mask, atlas_boundary_zone
+
+    confirmed_count = int(confirmed_surface.sum())
+    print(f"  Confirmed surface (dark AND boundary): {confirmed_count:,} voxels")
+
+    if confirmed_count == 0:
+        print(f"  [!] No confirmed surfaces -- falling back to atlas erosion")
+        del confirmed_surface
+        return None
+
+    # Dilate confirmed surfaces to create exclusion zone
     print(f"[{timestamp()}] Building exclusion zone (dilating by {surface_depth_vox} voxels)...")
     exclusion_zone = ndimage.binary_dilation(
-        dark_mask, iterations=surface_depth_vox
+        confirmed_surface, iterations=surface_depth_vox
     )
-    del dark_mask
+    del confirmed_surface
 
     exclusion_count = int(exclusion_zone.sum())
     print(f"  Exclusion zone voxels: {exclusion_count:,}")
