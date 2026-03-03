@@ -15,7 +15,8 @@ Two filtering criteria:
    autofluorescence, tissue damage, or incomplete clearing. Uses either:
    - Atlas mask erosion (default): binary erosion on annotation > 0
    - Image edge detection (optional): Sobel edges on the signal channel,
-     cross-referenced with atlas boundary for confirmation
+     size-filtered to keep continuous surfaces (both external brain
+     boundary AND internal ventricle/tract interfaces)
 
 2. EXTREME OOB — candidates far beyond the atlas boundary. Nearby OOB
    candidates are KEPT (spinal cord, ventral brainstem). Only candidates
@@ -65,14 +66,23 @@ def timestamp():
 
 def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
                           surface_depth_vox, ann_shape):
-    """Detect brain surface using CV edge detection on the signal channel.
+    """Detect brain surfaces using CV edge detection on the signal channel.
 
-    Loads downsampled.tiff (signal at atlas resolution), runs Sobel edge
-    detection on each Z-slice, then cross-references with the atlas annotation
-    boundary. Edges that align with the atlas outline are confirmed tissue
-    surface. Returns a boolean mask where True = surface exclusion zone.
+    Finds BOTH external (brain boundary) AND internal (ventricle walls,
+    white matter tracts, tissue-fluid interfaces) surfaces by:
 
-    Returns None if downsampled.tiff is not available.
+    1. Sobel edge detection on each Z-slice of downsampled.tiff
+    2. Connected-component size filtering: large continuous edges are
+       surfaces, small isolated edge rings are individual cells
+    3. Dilate confirmed surface edges to create exclusion zone
+
+    At atlas resolution (10um), individual cell bodies are 1-2 voxels
+    across. Their Sobel edge rings are ~4-8 pixels per slice. Surface
+    edges (ventricle walls, tissue boundaries, tract interfaces) are
+    continuous structures spanning tens to hundreds of pixels.
+
+    Returns a boolean mask where True = surface exclusion zone, or None
+    if downsampled.tiff is not available.
     """
     from scipy import ndimage
 
@@ -89,18 +99,13 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
         del signal
         return None
 
-    # Atlas boundary: inner edge of brain mask (1 voxel thick)
-    atlas_inner_edge = brain_mask & ~ndimage.binary_erosion(brain_mask)
-
-    # Dilate atlas boundary to define "near atlas outline" zone (tolerance)
-    alignment_tolerance = max(2, surface_depth_vox // 3)
-    atlas_boundary_zone = ndimage.binary_dilation(
-        atlas_inner_edge, iterations=alignment_tolerance
-    )
-    del atlas_inner_edge
+    # Minimum connected component size (pixels) to qualify as a surface edge.
+    # At 10um resolution: cell edge rings ~4-8px, surface features 50-500+px.
+    # 25px cleanly separates even small clusters of cells from real surfaces.
+    min_surface_pixels = 25
 
     print(f"[{timestamp()}] Detecting surface edges ({signal.shape[0]} slices, "
-          f"alignment tolerance={alignment_tolerance} voxels)...")
+          f"min_surface_pixels={min_surface_pixels})...")
     confirmed_surface = np.zeros(ann_shape, dtype=bool)
 
     for z in range(signal.shape[0]):
@@ -113,21 +118,43 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
         gy = ndimage.sobel(slice_f, axis=1)
         edge_mag = np.sqrt(gx * gx + gy * gy)
 
-        # Adaptive threshold: strong edges only (top 10% within the brain)
+        # Adaptive threshold: strong edges only (top 15% within the brain)
         brain_edges = edge_mag[brain_mask[z]]
         if len(brain_edges) == 0 or brain_edges.max() == 0:
             continue
         threshold = np.percentile(brain_edges[brain_edges > 0], 85)
-        strong_edges = edge_mag > threshold
+        strong_edges = (edge_mag > threshold) & brain_mask[z]
 
-        # Keep only edges that align with atlas boundary
-        confirmed_surface[z] = strong_edges & atlas_boundary_zone[z]
+        # Size filter: label connected components, keep large ones (surfaces)
+        # Small components = individual cell edge rings -> discard
+        # Large components = tissue surfaces, ventricle walls, tracts -> keep
+        labeled, n_components = ndimage.label(strong_edges)
+        if n_components == 0:
+            continue
 
-    del signal, atlas_boundary_zone
+        component_sizes = ndimage.sum(
+            strong_edges, labeled, range(1, n_components + 1)
+        )
+        # Build mask of surface-sized components
+        keep_labels = set()
+        for i, size in enumerate(component_sizes):
+            if size >= min_surface_pixels:
+                keep_labels.add(i + 1)
+
+        if keep_labels:
+            surface_mask = np.isin(labeled, list(keep_labels))
+            confirmed_surface[z] = surface_mask
+
+    del signal
 
     # Count confirmed surface voxels before dilation
     confirmed_count = int(confirmed_surface.sum())
     print(f"  Confirmed surface edge voxels: {confirmed_count:,}")
+
+    if confirmed_count == 0:
+        print(f"  [!] No surface edges detected -- falling back to atlas erosion")
+        del confirmed_surface
+        return None
 
     # Dilate confirmed surface to create exclusion zone
     print(f"[{timestamp()}] Building exclusion zone (dilating by {surface_depth_vox} voxels)...")

@@ -3322,6 +3322,7 @@ class TuningWidget(QWidget):
             oob = stats.get('out_of_bounds_kept', 0)
             unmapped = stats.get('unmapped', 0)
             surface = stats.get('surface_removed', 0)
+            extreme_oob = stats.get('extreme_oob_removed', 0)
             method = stats.get('surface_method', 'atlas_erosion')
 
             text = (
@@ -3329,8 +3330,10 @@ class TuningWidget(QWidget):
                 f"Interior (keep):      {interior:>8,}  ({interior/total*100:.1f}%)\n"
                 f"  OOB (kept):         {oob:>8,}\n"
                 f"  Unmapped (kept):    {unmapped:>8,}\n"
-                f"Surface (remove):     {surface:>8,}  ({surface/total*100:.1f}%)\n"
-                f"  Method: {method}"
+                f"Removed:              {suspicious:>8,}  ({suspicious/total*100:.1f}%)\n"
+                f"  Surface edge:       {surface:>8,}\n"
+                f"  Extreme OOB:        {extreme_oob:>8,}\n"
+                f"Surface method: {method}"
             )
 
             self.prefilter_results_label.setText(text)
