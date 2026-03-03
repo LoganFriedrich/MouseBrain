@@ -1361,9 +1361,9 @@ class TuningWidget(QWidget):
         layout.addWidget(test_group)
 
         # =================================================================
-        # CONTEXT PANEL - Calibration Runs for Current Brain
+        # CONTEXT PANEL - Detection Runs for Current Brain
         # =================================================================
-        context_group = QGroupBox("Calibration Runs for This Brain")
+        context_group = QGroupBox("Detection Runs for This Brain")
         context_layout = QVBoxLayout()
         context_group.setLayout(context_layout)
 
@@ -2396,6 +2396,7 @@ class TuningWidget(QWidget):
 
             # Refresh the calibration runs table to show new run
             self._refresh_context_runs()
+            self._refresh_prefilter_runs()
 
             # Log to session documenter
             if self.session_doc and self.last_run_id:
@@ -2710,7 +2711,7 @@ class TuningWidget(QWidget):
         # =================================================================
         # RUNS LIST (for selecting runs to compare)
         # =================================================================
-        runs_group = QGroupBox("Calibration Runs (select to compare)")
+        runs_group = QGroupBox("Detection Runs (select to compare)")
         runs_layout = QVBoxLayout()
         runs_group.setLayout(runs_layout)
 
@@ -2930,7 +2931,7 @@ class TuningWidget(QWidget):
         # =================================================================
         # SECTION 1: SELECT DETECTION RUN
         # =================================================================
-        source_group = QGroupBox("1. Select Detection Run")
+        source_group = QGroupBox("1. Detection Runs")
         source_layout = QVBoxLayout()
         source_group.setLayout(source_layout)
 
@@ -2938,6 +2939,21 @@ class TuningWidget(QWidget):
         self.prefilter_runs_list.setMinimumHeight(100)
         self.prefilter_runs_list.setMaximumHeight(160)
         self.prefilter_runs_list.setSelectionMode(QListWidget.SingleSelection)
+        self.prefilter_runs_list.setToolTip("* = Best marked | o = This session\nSelect a detection run to pre-filter")
+        self.prefilter_runs_list.setStyleSheet("""
+            QListWidget {
+                background-color: #363636;
+                color: #ffffff;
+                border: 1px solid #555555;
+            }
+            QListWidget::item {
+                padding: 4px;
+                border-bottom: 1px solid #444444;
+            }
+            QListWidget::item:selected {
+                background-color: #0078d4;
+            }
+        """)
         source_layout.addWidget(self.prefilter_runs_list)
 
         load_btns = QHBoxLayout()
@@ -3072,7 +3088,7 @@ class TuningWidget(QWidget):
     # ==========================================================================
 
     def _refresh_prefilter_runs(self):
-        """Populate the detection runs list for pre-filtering."""
+        """Populate the detection runs list for pre-filtering (same format as Det Compare)."""
         self.prefilter_runs_list.clear()
 
         if not self.current_brain or not self.tracker:
@@ -3082,19 +3098,50 @@ class TuningWidget(QWidget):
 
         try:
             runs = self.tracker.search(brain=brain_name, exp_type="detection")
-            for run in reversed(runs):  # newest first
-                status = run.get('status', '')
-                cells = run.get('det_cells_found', '?')
+            # Filter to completed runs only
+            completed = [r for r in runs if r.get('status') == 'completed']
+            # Sort: best first, then newest
+            def priority_key(run):
+                is_best = 2 if run.get('marked_best', False) else 0
+                is_session = 1 if run.get('exp_id') in self.session_run_ids else 0
+                created = run.get('created_at', '')
+                return (is_best, is_session, created)
+            completed.sort(key=priority_key, reverse=True)
+
+            for run in completed:
                 exp_id = run.get('exp_id', '')
                 created = run.get('created_at', '')[:16]
-                is_best = run.get('marked_best', '') == 'True'
+                cells = run.get('det_cells_found', '?')
+                preset = run.get('det_preset', 'custom') or 'custom'
+                is_best = run.get('marked_best', False)
 
-                prefix = "* " if is_best else "  "
-                label = f"{prefix}{created}  {cells} candidates  [{status}]  {exp_id}"
+                icons = ""
+                if is_best:
+                    icons += "* "
+                if exp_id in self.session_run_ids:
+                    icons += "o "
+
+                scope = run.get('det_scope', '')
+                if scope == 'partial':
+                    z_start = run.get('det_z_start', '?')
+                    z_end = run.get('det_z_end', '?')
+                    scope_text = f"Z{z_start}-{z_end}"
+                elif scope == 'full':
+                    scope_text = "[FULL]"
+                else:
+                    scope_text = ""
+
+                if scope_text:
+                    label = f"{icons}{created}  |  {cells} cells  |  {scope_text}  |  {preset}"
+                else:
+                    label = f"{icons}{created}  |  {cells} cells  |  {preset}"
+
                 item = QListWidgetItem(label)
                 item.setData(Qt.UserRole, exp_id)
                 if is_best:
                     item.setForeground(QColor('#00FF00'))
+                elif exp_id in self.session_run_ids:
+                    item.setForeground(QColor('#00BFFF'))
                 self.prefilter_runs_list.addItem(item)
 
             # Also refresh pre-filter history
@@ -7566,6 +7613,7 @@ class TuningWidget(QWidget):
 
             # Refresh the calibration runs table for this brain
             self._refresh_context_runs()
+            self._refresh_prefilter_runs()
 
             # Update registration approval status
             self._update_registration_status()
