@@ -129,15 +129,20 @@ def _detect_image_surface(registration_path, brain_mask, atlas_resolution,
     # edges of internal holes (ventricle spaces, atlas gaps).
     atlas_inner_edge = brain_mask & ~ndimage.binary_erosion(brain_mask)
 
-    # Generous tolerance: half of surface_depth for atlas-image misalignment
-    boundary_tolerance = max(3, surface_depth_vox // 2)
+    # Wide tolerance: real tissue edges can be sharp or gradually fade
+    # over many voxels, and registration is never pixel-perfect.
+    # 3x surface_depth (e.g. 300um at default 100um depth) is generous
+    # enough to catch gradual fades while still protecting deep interior
+    # from false positives due to local dimness.
+    boundary_tolerance = surface_depth_vox * 3
     atlas_boundary_zone = ndimage.binary_dilation(
         atlas_inner_edge, iterations=boundary_tolerance
     )
     del atlas_inner_edge
 
     boundary_count = int(atlas_boundary_zone.sum())
-    print(f"  Atlas boundary zone ({boundary_tolerance} vox tolerance): "
+    print(f"  Atlas boundary zone ({boundary_tolerance} vox = "
+          f"{boundary_tolerance * atlas_resolution:.0f}um tolerance): "
           f"{boundary_count:,} voxels")
 
     # --- Confirmed surface: dark background AND near atlas boundary ---
