@@ -18,10 +18,10 @@ import numpy as np
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QLabel, QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
-    QGroupBox, QFileDialog, QTableWidget, QTableWidgetItem,
+    QGroupBox, QFileDialog, QTableWidget, QTableWidgetItem, QSlider,
     QMessageBox, QProgressBar, QCheckBox, QLineEdit, QScrollArea,
 )
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, QTimer
 
 import napari
 
@@ -40,6 +40,8 @@ class BrainSliceWidget(QWidget):
         self.stack_data: Optional[np.ndarray] = None  # For folder stacks
         self.red_channel: Optional[np.ndarray] = None
         self.green_channel: Optional[np.ndarray] = None
+        self.channels: list = []  # All channels as list of 2D arrays
+        self.channel_names: list = []  # Channel names from metadata
         self.metadata: Optional[Dict[str, Any]] = None
         self.nuclei_labels: Optional[np.ndarray] = None
         self.atlas_labels: Optional[np.ndarray] = None
@@ -76,6 +78,12 @@ class BrainSliceWidget(QWidget):
         self.detection_worker = None
         self.coloc_worker = None
         self.quant_worker = None
+        self.particle_worker = None
+
+        # Particle analysis state
+        self._pa_labels = None  # Particle labels array
+        self._pa_results = None  # Results DataFrame
+        self._pa_summary = None  # Summary dict
 
         self._init_ui()
 
@@ -108,12 +116,13 @@ class BrainSliceWidget(QWidget):
 
         self.tabs.addTab(self._scrollable(self._create_detect_tab()), "4. Detect")
         self.tabs.addTab(self._scrollable(self._create_coloc_tab()), "5. Colocalize")
-        self.tabs.addTab(self._scrollable(self._create_quantify_tab()), "6. Quantify")
+        self.tabs.addTab(self._scrollable(self._create_particle_tab()), "6. Particles")
+        self.tabs.addTab(self._scrollable(self._create_quantify_tab()), "7. Quantify")
 
         # Annotator widget (ND2 annotation & export)
         from .annotator_widget import SliceAnnotatorWidget
         self.annotator_widget = SliceAnnotatorWidget(self.viewer)
-        self.tabs.addTab(self.annotator_widget, "7. Annotate")
+        self.tabs.addTab(self.annotator_widget, "8. Annotate")
 
         # Status bar
         self.status_label = QLabel("Ready - Load an image to begin")
@@ -1189,6 +1198,1069 @@ class BrainSliceWidget(QWidget):
         layout.addStretch()
         return widget
 
+
+    # =========================================================================
+    # PARTICLE ANALYSIS TAB
+    # =========================================================================
+
+    @staticmethod
+    def _pa_make_slider_spinbox(parent_layout, label_text, min_val, max_val, default,
+                                on_change=None, is_float=False, step=1):
+        """Create a linked slider+spinbox pair. Returns (slider, spinbox)."""
+        row = QHBoxLayout()
+        row.addWidget(QLabel(label_text))
+
+        slider = QSlider(Qt.Horizontal)
+        if is_float:
+            slider.setMinimum(int(min_val * 100))
+            slider.setMaximum(int(max_val * 100))
+            slider.setValue(int(default * 100))
+        else:
+            slider.setMinimum(min_val)
+            slider.setMaximum(max_val)
+            slider.setValue(default)
+        row.addWidget(slider)
+
+        if is_float:
+            spinbox = QDoubleSpinBox()
+            spinbox.setRange(min_val, max_val)
+            spinbox.setDecimals(2)
+            spinbox.setSingleStep(step)
+            spinbox.setValue(default)
+            spinbox.setMaximumWidth(70)
+        else:
+            spinbox = QSpinBox()
+            spinbox.setRange(min_val, max_val)
+            spinbox.setSingleStep(step)
+            spinbox.setValue(default)
+            spinbox.setMaximumWidth(70)
+        row.addWidget(spinbox)
+
+        def _slider_to_spin(val):
+            spinbox.blockSignals(True)
+            spinbox.setValue(val / 100.0 if is_float else val)
+            spinbox.blockSignals(False)
+            if on_change:
+                on_change(spinbox.value() if is_float else val)
+
+        def _spin_to_slider(val):
+            slider.blockSignals(True)
+            slider.setValue(int(val * 100) if is_float else int(val))
+            slider.blockSignals(False)
+            if on_change:
+                on_change(val)
+
+        slider.valueChanged.connect(_slider_to_spin)
+        spinbox.valueChanged.connect(_spin_to_slider)
+
+        parent_layout.addLayout(row)
+        return slider, spinbox
+
+    def _create_particle_tab(self) -> QWidget:
+        """Create the Particles tab for ImageJ-style particle analysis."""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(4)
+        widget.setLayout(layout)
+
+        # Debounce timers
+        self._pa_thresh_timer = QTimer()
+        self._pa_thresh_timer.setSingleShot(True)
+        self._pa_thresh_timer.setInterval(80)
+        self._pa_thresh_timer.timeout.connect(self._pa_update_threshold_view)
+
+        self._pa_bg_mask_timer = QTimer()
+        self._pa_bg_mask_timer.setSingleShot(True)
+        self._pa_bg_mask_timer.setInterval(80)
+        self._pa_bg_mask_timer.timeout.connect(self._pa_update_signal_previews)
+
+        # Extra state
+        self._pa_binary_view = False
+        self._pa_original_visibility = {}
+        self._pa_bg_shapes_layer = None
+
+        # --- Channels & Display ---
+        chan_group = QGroupBox("Channels & Display")
+        chan_layout = QVBoxLayout(chan_group)
+
+        ch_row = QHBoxLayout()
+        ch_row.addWidget(QLabel("Detect:"))
+        self.pa_det_combo = QComboBox()
+        self.pa_det_combo.setToolTip("Channel to binarize (find objects in)")
+        self.pa_det_combo.currentIndexChanged.connect(self._pa_on_det_channel_changed)
+        ch_row.addWidget(self.pa_det_combo)
+        ch_row.addWidget(QLabel("Measure:"))
+        self.pa_meas_combo = QComboBox()
+        self.pa_meas_combo.setToolTip("Channel to measure intensity in")
+        ch_row.addWidget(self.pa_meas_combo)
+        chan_layout.addLayout(ch_row)
+
+        # Contrast min/max/gamma sliders
+        self._pa_contrast_min_slider, self._pa_contrast_min_spin = \
+            self._pa_make_slider_spinbox(chan_layout, "Min:", 0, 65535, 0,
+                                         self._pa_on_contrast_changed)
+        self._pa_contrast_max_slider, self._pa_contrast_max_spin = \
+            self._pa_make_slider_spinbox(chan_layout, "Max:", 0, 65535, 65535,
+                                         self._pa_on_contrast_changed)
+        self._pa_gamma_slider, self._pa_gamma_spin = \
+            self._pa_make_slider_spinbox(chan_layout, "Gamma:", 0.1, 5.0, 1.0,
+                                         self._pa_on_gamma_changed,
+                                         is_float=True, step=0.05)
+
+        auto_btn = QPushButton("Auto Contrast")
+        auto_btn.clicked.connect(self._pa_auto_contrast)
+        chan_layout.addWidget(auto_btn)
+
+        layout.addWidget(chan_group)
+
+        # --- Detection Threshold ---
+        thresh_group = QGroupBox("Detection Threshold")
+        thresh_layout = QVBoxLayout(thresh_group)
+
+        self._pa_thresh_slider, self._pa_thresh_spin = \
+            self._pa_make_slider_spinbox(thresh_layout, "Threshold:", 0, 65535, 500,
+                                         self._pa_on_thresh_changed)
+
+        self.pa_mask_info = QLabel("")
+        thresh_layout.addWidget(self.pa_mask_info)
+
+        btn_row = QHBoxLayout()
+        auto_thresh_btn = QPushButton("Auto (Otsu)")
+        auto_thresh_btn.clicked.connect(self._pa_auto_threshold)
+        btn_row.addWidget(auto_thresh_btn)
+        self.pa_binary_toggle = QCheckBox("Show Binary")
+        self.pa_binary_toggle.setToolTip("ImageJ-style: white objects, black background")
+        self.pa_binary_toggle.toggled.connect(self._pa_toggle_binary_view)
+        btn_row.addWidget(self.pa_binary_toggle)
+        thresh_layout.addLayout(btn_row)
+
+        layout.addWidget(thresh_group)
+
+        # --- Background (manual ROI) ---
+        bg_group = QGroupBox("Background (draw rectangles on 'Background ROIs' layer)")
+        bg_layout = QVBoxLayout(bg_group)
+
+        draw_bg_btn = QPushButton("Draw Background ROIs")
+        draw_bg_btn.setToolTip("Activates the Background ROIs layer so you can draw rectangles")
+        draw_bg_btn.clicked.connect(self._pa_activate_bg_drawing)
+        bg_layout.addWidget(draw_bg_btn)
+
+        self.pa_bg_value_label = QLabel("Background: -- (draw rectangles to measure)")
+        bg_layout.addWidget(self.pa_bg_value_label)
+
+        bg_row = QHBoxLayout()
+        bg_row.addWidget(QLabel("BG value:"))
+        self.pa_bg_manual_spin = QDoubleSpinBox()
+        self.pa_bg_manual_spin.setRange(0, 999999)
+        self.pa_bg_manual_spin.setDecimals(1)
+        self.pa_bg_manual_spin.setValue(0)
+        self.pa_bg_manual_spin.setToolTip("Background intensity - set from ROIs or type manually")
+        self.pa_bg_manual_spin.valueChanged.connect(self._pa_on_bg_value_changed)
+        bg_row.addWidget(self.pa_bg_manual_spin)
+        clear_bg_btn = QPushButton("Clear ROIs")
+        clear_bg_btn.setMaximumWidth(80)
+        clear_bg_btn.clicked.connect(self._pa_clear_bg_rois)
+        bg_row.addWidget(clear_bg_btn)
+        bg_layout.addLayout(bg_row)
+
+        signal_row = QHBoxLayout()
+        self.pa_show_signal_mask = QCheckBox("Show signal fill")
+        self.pa_show_signal_mask.setToolTip(
+            "Highlight measurement channel pixels above the BG value")
+        self.pa_show_signal_mask.toggled.connect(self._pa_on_signal_mask_toggled)
+        signal_row.addWidget(self.pa_show_signal_mask)
+        self.pa_show_signal_outlines = QCheckBox("Show signal outlines")
+        self.pa_show_signal_outlines.setToolTip(
+            "Show outlines around regions above BG in measurement channel")
+        self.pa_show_signal_outlines.toggled.connect(self._pa_on_signal_outlines_toggled)
+        signal_row.addWidget(self.pa_show_signal_outlines)
+        bg_layout.addLayout(signal_row)
+
+        layout.addWidget(bg_group)
+
+        # --- Particle Filters ---
+        filter_group = QGroupBox("Particle Filters")
+        filter_layout = QHBoxLayout(filter_group)
+
+        filter_layout.addWidget(QLabel("Area min:"))
+        self.pa_min_area = QSpinBox()
+        self.pa_min_area.setMinimum(1)
+        self.pa_min_area.setMaximum(1000000)
+        self.pa_min_area.setValue(10)
+        filter_layout.addWidget(self.pa_min_area)
+
+        filter_layout.addWidget(QLabel("max:"))
+        self.pa_max_area = QSpinBox()
+        self.pa_max_area.setMinimum(1)
+        self.pa_max_area.setMaximum(1000000)
+        self.pa_max_area.setValue(50000)
+        filter_layout.addWidget(self.pa_max_area)
+
+        filter_layout.addWidget(QLabel("Circ min:"))
+        self.pa_min_circ = QDoubleSpinBox()
+        self.pa_min_circ.setRange(0.0, 1.0)
+        self.pa_min_circ.setSingleStep(0.05)
+        self.pa_min_circ.setValue(0.0)
+        filter_layout.addWidget(self.pa_min_circ)
+
+        layout.addWidget(filter_group)
+
+        # --- Positive Classification ---
+        pos_group = QGroupBox("Positive Classification")
+        pos_layout = QHBoxLayout(pos_group)
+        pos_layout.addWidget(QLabel("Min % above BG:"))
+        self.pa_pos_pct_spin = QDoubleSpinBox()
+        self.pa_pos_pct_spin.setRange(0, 100)
+        self.pa_pos_pct_spin.setSingleStep(5)
+        self.pa_pos_pct_spin.setValue(50.0)
+        self.pa_pos_pct_spin.setSuffix("%")
+        self.pa_pos_pct_spin.valueChanged.connect(self._pa_reclassify_live)
+        self.pa_pos_pct_spin.setToolTip(
+            "% of pixels within the particle that must exceed background to count as positive")
+        pos_layout.addWidget(self.pa_pos_pct_spin)
+        layout.addWidget(pos_group)
+
+        # --- Watershed ---
+        ws_group = QGroupBox("Split Touching Particles")
+        ws_layout = QHBoxLayout(ws_group)
+        self.pa_watershed_check = QCheckBox("Watershed split")
+        self.pa_watershed_check.setToolTip(
+            "Automatically split touching/merged nuclei using watershed")
+        self.pa_watershed_check.setChecked(True)
+        ws_layout.addWidget(self.pa_watershed_check)
+        layout.addWidget(ws_group)
+
+        # --- Run button ---
+        self.pa_run_btn = QPushButton("Run Particle Analysis")
+        self.pa_run_btn.setEnabled(False)
+        self.pa_run_btn.clicked.connect(self._pa_run_analysis)
+        self.pa_run_btn.setStyleSheet("font-weight: bold; padding: 8px;")
+        layout.addWidget(self.pa_run_btn)
+
+        # --- Results ---
+        self.pa_summary_label = QLabel("")
+        self.pa_summary_label.setWordWrap(True)
+        layout.addWidget(self.pa_summary_label)
+
+        self.pa_results_table = QTableWidget()
+        self.pa_results_table.setMaximumHeight(200)
+        layout.addWidget(self.pa_results_table)
+
+        export_row = QHBoxLayout()
+        self.pa_export_btn = QPushButton("Export CSV")
+        self.pa_export_btn.setEnabled(False)
+        self.pa_export_btn.clicked.connect(self._pa_export_csv)
+        export_row.addWidget(self.pa_export_btn)
+        self.pa_export_fig_btn = QPushButton("Export Figure")
+        self.pa_export_fig_btn.setEnabled(False)
+        self.pa_export_fig_btn.clicked.connect(self._pa_export_figure)
+        export_row.addWidget(self.pa_export_fig_btn)
+        layout.addLayout(export_row)
+
+        layout.addStretch()
+        return widget
+
+    # -- helpers ---------------------------------------------------------------
+
+    def _pa_find_layer(self, name):
+        for layer in self.viewer.layers:
+            if layer.name == name:
+                return layer
+        return None
+
+    def _pa_remove_layer(self, name):
+        for layer in list(self.viewer.layers):
+            if layer.name == name:
+                self.viewer.layers.remove(layer)
+
+    def _pa_get_scale(self):
+        """Return [pixel_um, pixel_um] scale if available, else [1, 1]."""
+        px = self._pixel_size_um
+        return [px, px] if px and px > 0 else [1, 1]
+
+    def _pa_get_bg(self):
+        val = self.pa_bg_manual_spin.value()
+        return val if val > 0 else 0.0
+
+    # -- channel combos --------------------------------------------------------
+
+    def _update_particle_channel_combos(self):
+        """Update particle analysis channel combos when image is loaded."""
+        if not hasattr(self, 'pa_det_combo'):
+            return
+
+        self.pa_det_combo.blockSignals(True)
+        self.pa_meas_combo.blockSignals(True)
+        self.pa_det_combo.clear()
+        self.pa_meas_combo.clear()
+
+        for i, name in enumerate(self.channel_names):
+            self.pa_det_combo.addItem(f"{i}: {name}")
+            self.pa_meas_combo.addItem(f"{i}: {name}")
+
+        if len(self.channel_names) >= 2:
+            self.pa_det_combo.setCurrentIndex(1)
+            self.pa_meas_combo.setCurrentIndex(0)
+
+        self.pa_det_combo.blockSignals(False)
+        self.pa_meas_combo.blockSignals(False)
+
+        # Update threshold range based on detection channel dtype
+        if self.channels:
+            det_idx = max(0, self.pa_det_combo.currentIndex())
+            if det_idx < len(self.channels):
+                img = self.channels[det_idx]
+                if img.dtype == np.uint8:
+                    img_max = 255
+                elif img.dtype == np.uint16:
+                    img_max = 65535
+                else:
+                    img_max = max(int(np.max(img)) + 1, 1)
+                self._pa_thresh_slider.setMaximum(img_max)
+                self._pa_thresh_spin.setMaximum(img_max)
+                self._pa_contrast_min_slider.setMaximum(img_max)
+                self._pa_contrast_min_spin.setMaximum(img_max)
+                self._pa_contrast_max_slider.setMaximum(img_max)
+                self._pa_contrast_max_spin.setMaximum(img_max)
+                self._pa_thresh_slider.setValue(int(img_max * 0.3))
+
+        # Enable run button
+        self.pa_run_btn.setEnabled(len(self.channels) >= 2)
+
+        # Setup background ROI shapes layer
+        self._pa_setup_bg_shapes_layer()
+
+    # -- contrast / gamma ------------------------------------------------------
+
+    def _pa_on_det_channel_changed(self, idx):
+        if 0 <= idx < len(self.channels):
+            det_img = self.channels[idx]
+            img_max = int(det_img.max())
+            for w in (self._pa_thresh_slider, self._pa_contrast_min_slider,
+                      self._pa_contrast_max_slider):
+                w.setMaximum(img_max)
+            for w in (self._pa_thresh_spin, self._pa_contrast_min_spin,
+                      self._pa_contrast_max_spin):
+                w.setMaximum(img_max)
+            self._pa_sync_contrast_to_layer()
+
+    def _pa_sync_contrast_to_layer(self):
+        det_idx = self.pa_det_combo.currentIndex()
+        if det_idx < 0 or det_idx >= len(self.channel_names):
+            return
+        name = self.channel_names[det_idx]
+        for layer in self.viewer.layers:
+            if layer.name == name:
+                cmin, cmax = layer.contrast_limits
+                for w in (self._pa_contrast_min_slider, self._pa_contrast_min_spin,
+                          self._pa_contrast_max_slider, self._pa_contrast_max_spin):
+                    w.blockSignals(True)
+                self._pa_contrast_min_slider.setValue(int(cmin))
+                self._pa_contrast_min_spin.setValue(int(cmin))
+                self._pa_contrast_max_slider.setValue(int(cmax))
+                self._pa_contrast_max_spin.setValue(int(cmax))
+                for w in (self._pa_contrast_min_slider, self._pa_contrast_min_spin,
+                          self._pa_contrast_max_slider, self._pa_contrast_max_spin):
+                    w.blockSignals(False)
+                break
+
+    def _pa_on_contrast_changed(self, _val=None):
+        det_idx = self.pa_det_combo.currentIndex()
+        if det_idx < 0 or det_idx >= len(self.channel_names):
+            return
+        cmin = self._pa_contrast_min_spin.value()
+        cmax = max(self._pa_contrast_max_spin.value(), cmin + 1)
+        for layer in self.viewer.layers:
+            if layer.name == self.channel_names[det_idx]:
+                layer.contrast_limits = (cmin, cmax)
+                break
+
+    def _pa_on_gamma_changed(self, val):
+        det_idx = self.pa_det_combo.currentIndex()
+        if det_idx < 0 or det_idx >= len(self.channel_names):
+            return
+        for layer in self.viewer.layers:
+            if layer.name == self.channel_names[det_idx]:
+                layer.gamma = val
+                break
+
+    def _pa_auto_contrast(self):
+        det_idx = self.pa_det_combo.currentIndex()
+        if det_idx < 0 or det_idx >= len(self.channels):
+            return
+        ch = self.channels[det_idx]
+        for layer in self.viewer.layers:
+            if layer.name == self.channel_names[det_idx]:
+                layer.contrast_limits = (float(ch.min()), float(ch.max()))
+                layer.gamma = 1.0
+                break
+        self._pa_sync_contrast_to_layer()
+        self._pa_gamma_slider.blockSignals(True)
+        self._pa_gamma_spin.blockSignals(True)
+        self._pa_gamma_slider.setValue(100)
+        self._pa_gamma_spin.setValue(1.0)
+        self._pa_gamma_slider.blockSignals(False)
+        self._pa_gamma_spin.blockSignals(False)
+
+    # -- threshold / binary view -----------------------------------------------
+
+    def _pa_on_thresh_changed(self, _value=None):
+        self._pa_thresh_timer.start()
+
+    def _pa_update_threshold_view(self):
+        if not self.channels:
+            return
+        det_idx = self.pa_det_combo.currentIndex()
+        if det_idx < 0 or det_idx >= len(self.channels):
+            return
+
+        det_img = self._get_current_slice(self.channels[det_idx])
+        if det_img is None:
+            return
+        threshold = self._pa_thresh_spin.value()
+        mask = det_img.astype(np.float64) > threshold
+
+        px_count = int(mask.sum())
+        pct = px_count / mask.size * 100
+        self.pa_mask_info.setText(f"Mask: {px_count} px ({pct:.1f}%)")
+
+        scale = self._pa_get_scale()
+        if self._pa_binary_view:
+            binary_img = mask.astype(np.float32) * 255
+            existing = self._pa_find_layer('Binary')
+            if existing is not None:
+                existing.data = binary_img
+            else:
+                self.viewer.add_image(
+                    binary_img, name='Binary',
+                    colormap='gray', blending='opaque',
+                    contrast_limits=(0, 255), scale=scale,
+                )
+            self._pa_remove_layer('Threshold Mask')
+        else:
+            mask_uint8 = mask.astype(np.uint8)
+            existing = self._pa_find_layer('Threshold Mask')
+            if existing is not None:
+                existing.data = mask_uint8
+            else:
+                from napari.utils.colormaps import DirectLabelColormap
+                yellow_cmap = DirectLabelColormap(
+                    color_dict={1: (1.0, 1.0, 0.0, 1.0), None: (0, 0, 0, 0)}
+                )
+                self.viewer.add_labels(
+                    mask_uint8, name='Threshold Mask',
+                    opacity=0.4, colormap=yellow_cmap, scale=scale,
+                )
+            self._pa_remove_layer('Binary')
+
+    def _pa_toggle_binary_view(self, checked):
+        self._pa_binary_view = checked
+        for name in self.channel_names:
+            for layer in self.viewer.layers:
+                if layer.name == name:
+                    if checked:
+                        self._pa_original_visibility[name] = layer.visible
+                        layer.visible = False
+                    else:
+                        layer.visible = self._pa_original_visibility.get(name, True)
+        self._pa_update_threshold_view()
+
+    def _pa_auto_threshold(self):
+        if not self.channels:
+            return
+        det_idx = self.pa_det_combo.currentIndex()
+        if det_idx < 0 or det_idx >= len(self.channels):
+            return
+        det_img = self._get_current_slice(self.channels[det_idx])
+        if det_img is None:
+            return
+        from skimage.filters import threshold_otsu
+        val = int(threshold_otsu(det_img))
+        self._pa_thresh_slider.blockSignals(True)
+        self._pa_thresh_spin.blockSignals(True)
+        self._pa_thresh_slider.setValue(val)
+        self._pa_thresh_spin.setValue(val)
+        self._pa_thresh_slider.blockSignals(False)
+        self._pa_thresh_spin.blockSignals(False)
+        self._pa_thresh_timer.start()
+
+    # -- background ROI --------------------------------------------------------
+
+    def _pa_setup_bg_shapes_layer(self):
+        """Create (or recreate) the Background ROIs shapes layer."""
+        self._pa_remove_layer('Background ROIs')
+        scale = self._pa_get_scale()
+        self._pa_bg_shapes_layer = self.viewer.add_shapes(
+            name="Background ROIs",
+            edge_color="cyan",
+            edge_width=2,
+            face_color="transparent",
+            scale=scale,
+        )
+        self._pa_bg_shapes_layer.mode = 'add_rectangle'
+        self._pa_bg_shapes_layer.events.data.connect(self._pa_on_bg_rois_changed)
+
+    def _pa_activate_bg_drawing(self):
+        if self._pa_bg_shapes_layer is not None:
+            self.viewer.layers.selection.active = self._pa_bg_shapes_layer
+            self._pa_bg_shapes_layer.mode = 'add_rectangle'
+
+    def _pa_on_bg_rois_changed(self, event=None):
+        if self._pa_bg_shapes_layer is None or len(self._pa_bg_shapes_layer.data) == 0:
+            self.pa_bg_value_label.setText(
+                "Background: -- (draw rectangles to measure)")
+            return
+
+        meas_idx = self.pa_meas_combo.currentIndex()
+        if meas_idx < 0 or meas_idx >= len(self.channels):
+            return
+
+        meas_img = self._get_current_slice(self.channels[meas_idx])
+        if meas_img is None:
+            return
+        meas_img = meas_img.astype(np.float64)
+        roi_means = []
+        px = self._pixel_size_um if (self._pixel_size_um and self._pixel_size_um > 0) else None
+
+        for shape_data in self._pa_bg_shapes_layer.data:
+            rows = shape_data[:, 0]
+            cols = shape_data[:, 1]
+            if px:
+                rows = rows / px
+                cols = cols / px
+            r_min = int(max(0, rows.min()))
+            r_max = int(min(meas_img.shape[0], rows.max()))
+            c_min = int(max(0, cols.min()))
+            c_max = int(min(meas_img.shape[1], cols.max()))
+            if r_max > r_min and c_max > c_min:
+                roi_means.append(float(meas_img[r_min:r_max, c_min:c_max].mean()))
+
+        if roi_means:
+            avg = np.mean(roi_means)
+            self.pa_bg_value_label.setText(
+                f"Background: {avg:.1f}  ({len(roi_means)} ROI(s), "
+                f"range: {min(roi_means):.0f}-{max(roi_means):.0f})"
+            )
+            self.pa_bg_manual_spin.blockSignals(True)
+            self.pa_bg_manual_spin.setValue(avg)
+            self.pa_bg_manual_spin.blockSignals(False)
+            if self.pa_show_signal_mask.isChecked() or self.pa_show_signal_outlines.isChecked():
+                self._pa_bg_mask_timer.start()
+
+    def _pa_on_bg_value_changed(self, _val=None):
+        if self.pa_show_signal_mask.isChecked() or self.pa_show_signal_outlines.isChecked():
+            self._pa_bg_mask_timer.start()
+        # Live reclassify if we have results
+        self._pa_reclassify_live()
+
+    def _pa_update_signal_previews(self):
+        if self.pa_show_signal_mask.isChecked():
+            self._pa_update_bg_mask_preview()
+        if self.pa_show_signal_outlines.isChecked():
+            self._pa_update_signal_outlines()
+
+    def _pa_on_signal_mask_toggled(self, checked):
+        if checked:
+            self._pa_update_bg_mask_preview()
+        else:
+            self._pa_remove_layer('Signal Mask')
+
+    def _pa_on_signal_outlines_toggled(self, checked):
+        if checked:
+            self._pa_update_signal_outlines()
+        else:
+            self._pa_remove_layer('Signal Outlines')
+
+    def _pa_update_bg_mask_preview(self):
+        if not self.channels:
+            return
+        meas_idx = self.pa_meas_combo.currentIndex()
+        if meas_idx < 0 or meas_idx >= len(self.channels):
+            return
+        bg_val = self.pa_bg_manual_spin.value()
+        if bg_val <= 0:
+            return
+        meas_img = self._get_current_slice(self.channels[meas_idx])
+        if meas_img is None:
+            return
+        signal_mask = (meas_img.astype(np.float64) > bg_val).astype(np.uint8)
+        scale = self._pa_get_scale()
+        existing = self._pa_find_layer('Signal Mask')
+        if existing is not None:
+            existing.data = signal_mask
+        else:
+            from napari.utils.colormaps import DirectLabelColormap
+            green_cmap = DirectLabelColormap(
+                color_dict={1: (0.0, 1.0, 0.0, 1.0), None: (0, 0, 0, 0)}
+            )
+            self.viewer.add_labels(
+                signal_mask, name='Signal Mask',
+                opacity=0.3, colormap=green_cmap, scale=scale,
+            )
+
+    def _pa_update_signal_outlines(self):
+        if not self.channels:
+            return
+        meas_idx = self.pa_meas_combo.currentIndex()
+        if meas_idx < 0 or meas_idx >= len(self.channels):
+            return
+        bg_val = self.pa_bg_manual_spin.value()
+        if bg_val <= 0:
+            return
+        meas_img = self._get_current_slice(self.channels[meas_idx])
+        if meas_img is None:
+            return
+        from scipy import ndimage as ndi
+        signal_mask = meas_img.astype(np.float64) > bg_val
+        dilated = ndi.binary_dilation(signal_mask, iterations=1)
+        outline = (dilated & ~signal_mask).astype(np.uint8)
+        scale = self._pa_get_scale()
+        existing = self._pa_find_layer('Signal Outlines')
+        if existing is not None:
+            existing.data = outline
+        else:
+            from napari.utils.colormaps import DirectLabelColormap
+            green_cmap = DirectLabelColormap(
+                color_dict={1: (0.0, 1.0, 0.0, 1.0), None: (0, 0, 0, 0)}
+            )
+            self.viewer.add_labels(
+                outline, name='Signal Outlines',
+                opacity=0.8, colormap=green_cmap, scale=scale,
+            )
+
+    def _pa_clear_bg_rois(self):
+        if self._pa_bg_shapes_layer is not None:
+            self._pa_bg_shapes_layer.data = []
+        self.pa_bg_value_label.setText("Background: -- (draw rectangles to measure)")
+        self.pa_bg_manual_spin.setValue(0)
+        self._pa_remove_layer('Signal Mask')
+
+    # -- run analysis ----------------------------------------------------------
+
+    def _pa_run_analysis(self):
+        """Run the full particle analysis pipeline with all new features."""
+        if not self.channels or len(self.channels) < 2:
+            QMessageBox.warning(self, "Error", "Load an image with at least 2 channels first")
+            return
+
+        det_idx = self.pa_det_combo.currentIndex()
+        meas_idx = self.pa_meas_combo.currentIndex()
+        if det_idx < 0 or meas_idx < 0:
+            return
+
+        det_img = self._get_current_slice(self.channels[det_idx])
+        meas_img = self._get_current_slice(self.channels[meas_idx])
+        if det_img is None or meas_img is None:
+            return
+
+        det_img = det_img.astype(np.float64)
+        meas_img = meas_img.astype(np.float64)
+
+        self.pa_run_btn.setEnabled(False)
+        self.status_label.setText("Running particle analysis...")
+
+        # Tracker logging
+        import time as _time_mod
+        start_time = _time_mod.time()
+        pa_run_id = None
+        if self.tracker:
+            sample_id = self.current_file.stem if self.current_file else ""
+            try:
+                pa_run_id = self.tracker.log_particle_analysis(
+                    sample_id=sample_id,
+                    detection_channel=self.pa_det_combo.currentText(),
+                    threshold_value=float(self._pa_thresh_spin.value()),
+                    measurement_channel=self.pa_meas_combo.currentText(),
+                    min_area=self.pa_min_area.value(),
+                    max_area=self.pa_max_area.value(),
+                    min_circularity=self.pa_min_circ.value(),
+                    max_circularity=1.0,
+                    bg_method='manual_roi',
+                    input_path=str(self.current_file) if self.current_file else None,
+                )
+                self.last_run_id = pa_run_id
+                self.session_run_ids.append(pa_run_id)
+            except Exception:
+                pa_run_id = None
+
+        try:
+            from ..core.particle_analysis import ParticleAnalyzer
+            analyzer = ParticleAnalyzer()
+
+            # Binarize
+            mask = analyzer.binarize(det_img, float(self._pa_thresh_spin.value()))
+
+            # Optional watershed
+            if self.pa_watershed_check.isChecked():
+                from scipy import ndimage as ndi
+                from skimage.segmentation import watershed, find_boundaries
+                from skimage.feature import peak_local_max
+                distance = ndi.distance_transform_edt(mask)
+                min_dist = max(3, int(np.sqrt(self.pa_min_area.value() / np.pi)))
+                coords = peak_local_max(distance, min_distance=min_dist,
+                                        labels=mask.astype(int))
+                local_max = np.zeros(mask.shape, dtype=bool)
+                if len(coords) > 0:
+                    local_max[tuple(coords.T)] = True
+                markers, _ = ndi.label(local_max)
+                ws_labels = watershed(-distance, markers, mask=mask)
+                boundaries = find_boundaries(ws_labels, mode='inner')
+                mask[boundaries] = False
+
+            labels, particle_props = analyzer.find_particles(
+                mask,
+                min_area=self.pa_min_area.value(),
+                max_area=self.pa_max_area.value(),
+                min_circularity=self.pa_min_circ.value(),
+                max_circularity=1.0,
+            )
+            n = int(labels.max())
+
+            bg_value = self._pa_get_bg()
+
+            import pandas as pd
+            measurements = pd.DataFrame()
+            if n > 0:
+                if bg_value > 0:
+                    from skimage.measure import regionprops_table
+                    table = regionprops_table(
+                        labels, intensity_image=meas_img,
+                        properties=['label', 'mean_intensity', 'max_intensity', 'area'],
+                    )
+                    measurements = pd.DataFrame(table)
+                    median_vals, integrated_vals = [], []
+                    for lbl in measurements['label'].values:
+                        px_vals = meas_img[labels == lbl].astype(np.float64)
+                        median_vals.append(float(np.median(px_vals)))
+                        integrated_vals.append(float(np.sum(px_vals)))
+                    measurements['median_intensity'] = median_vals
+                    measurements['integrated_intensity'] = integrated_vals
+                    measurements['background'] = bg_value
+                    measurements['mean_above_background'] = (
+                        measurements['mean_intensity'] - bg_value)
+                    measurements['snr'] = (
+                        measurements['mean_above_background'] / max(bg_value, 1e-10))
+                    measurements = measurements[[
+                        'label', 'area', 'mean_intensity', 'median_intensity',
+                        'max_intensity', 'integrated_intensity',
+                        'background', 'mean_above_background', 'snr',
+                    ]]
+                else:
+                    measurements = analyzer.measure_intensity(
+                        labels, meas_img,
+                        background_method='percentile',
+                        background_percentile=50.0,
+                    )
+                    bg_value = float(measurements['background'].iloc[0]) \
+                        if len(measurements) > 0 else 0.0
+
+                results = pd.merge(particle_props, measurements, on='label',
+                                   suffixes=('', '_meas'))
+                if 'area_meas' in results.columns:
+                    results = results.drop(columns=['area_meas'])
+
+                # Per-pixel positivity
+                pct_above = []
+                for lbl in results['label'].values:
+                    px_vals = meas_img[labels == int(lbl)]
+                    n_above = int((px_vals > bg_value).sum())
+                    pct_above.append(100.0 * n_above / max(len(px_vals), 1))
+                results['pct_above_bg'] = pct_above
+                results['is_positive'] = (
+                    results['pct_above_bg'] >= self.pa_pos_pct_spin.value())
+                results['fold_change'] = (
+                    results['mean_intensity'] / max(bg_value, 1e-10))
+
+                # Centroids
+                from skimage.measure import regionprops
+                rp = {r.label: r for r in regionprops(labels)}
+                results['centroid_y'] = results['label'].map(
+                    lambda l: rp[l].centroid[0] if l in rp else np.nan)
+                results['centroid_x'] = results['label'].map(
+                    lambda l: rp[l].centroid[1] if l in rp else np.nan)
+            else:
+                results = particle_props
+                if 'pct_above_bg' not in results.columns:
+                    results = results.copy()
+                    results['pct_above_bg'] = 0.0
+                    results['is_positive'] = False
+
+            self._pa_labels = labels
+            self._pa_results = results
+            self._pa_summary = {
+                'n_particles': n,
+                'background': bg_value,
+            }
+
+            # Remove preview layers and show results
+            for lname in ('Particles', 'Positive/Negative',
+                           'Threshold Mask', 'Binary', 'Signal Mask', 'Signal Outlines'):
+                self._pa_remove_layer(lname)
+            if self._pa_binary_view:
+                self.pa_binary_toggle.setChecked(False)
+            self.pa_show_signal_mask.setChecked(False)
+
+            scale = self._pa_get_scale()
+            if n > 0:
+                self.viewer.add_labels(labels, name='Particles', opacity=0.5, scale=scale)
+
+                if bg_value > 0 and len(measurements) > 0:
+                    self._pa_draw_classification_overlay()
+
+            # Summary text
+            parts = [f"Particles: {n}"]
+            if n > 0 and len(measurements) > 0:
+                parts.append(f"BG: {bg_value:.0f}")
+                if 'mean_intensity' in measurements.columns:
+                    parts.append(
+                        f"Mean int: {measurements['mean_intensity'].mean():.0f}")
+                if 'mean_above_background' in measurements.columns:
+                    parts.append(
+                        f"Above BG: {measurements['mean_above_background'].mean():.0f}")
+                if 'area' in particle_props.columns:
+                    parts.append(f"Mean area: {particle_props['area'].mean():.0f} px")
+                if 'is_positive' in results.columns:
+                    n_pos = int(results['is_positive'].sum())
+                    parts.append(f"Positive: {n_pos}/{n}")
+            self.pa_summary_label.setText(" | ".join(parts))
+            self.status_label.setText(f"Done - {n} particles found")
+
+            self._pa_populate_table(results)
+            self.pa_export_btn.setEnabled(n > 0)
+            self.pa_export_fig_btn.setEnabled(n > 0)
+
+            # Update tracker
+            if self.tracker and pa_run_id:
+                try:
+                    duration = _time_mod.time() - start_time
+                    self.tracker.update_status(
+                        pa_run_id,
+                        status='completed',
+                        duration_seconds=duration,
+                        pa_particles_found=n,
+                        pa_bg_value=bg_value,
+                    )
+                except Exception:
+                    pass
+
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self.status_label.setText(f"Particle analysis error: {exc}")
+            if self.tracker and pa_run_id:
+                try:
+                    self.tracker.update_status(pa_run_id, status='failed')
+                except Exception:
+                    pass
+        finally:
+            self.pa_run_btn.setEnabled(True)
+
+    # -- results table ---------------------------------------------------------
+
+    def _pa_draw_classification_overlay(self):
+        """Draw green/red ring outlines around positive/negative particles."""
+        if self._pa_labels is None or self._pa_results is None:
+            return
+        labels = self._pa_labels
+        results = self._pa_results
+        if labels.max() == 0 or len(results) == 0:
+            return
+        if 'is_positive' not in results.columns:
+            return
+
+        from scipy import ndimage as ndi
+        from napari.utils.colormaps import DirectLabelColormap
+
+        self._pa_remove_layer('Positive/Negative')
+        scale = self._pa_get_scale()
+
+        pos_outline = np.zeros(labels.shape, dtype=np.uint8)
+        neg_outline = np.zeros(labels.shape, dtype=np.uint8)
+        for _, row in results.iterrows():
+            lbl = int(row['label'])
+            single = (labels == lbl)
+            outer = ndi.binary_dilation(single, iterations=6)
+            inner = ndi.binary_dilation(single, iterations=4)
+            ring = outer & ~inner
+            if row['is_positive']:
+                pos_outline[ring] = 1
+            else:
+                neg_outline[ring] = 1
+        class_overlay = np.zeros(labels.shape, dtype=np.uint8)
+        class_overlay[pos_outline > 0] = 1
+        class_overlay[neg_outline > 0] = 2
+        class_cmap = DirectLabelColormap(color_dict={
+            1: (0.0, 1.0, 0.0, 1.0),
+            2: (1.0, 0.0, 0.0, 1.0),
+            None: (0, 0, 0, 0),
+        })
+        self.viewer.add_labels(
+            class_overlay, name='Positive/Negative',
+            opacity=0.9, colormap=class_cmap, scale=scale,
+        )
+
+    def _pa_reclassify_live(self, _val=None):
+        """Re-classify particles and redraw outlines when % or BG threshold changes."""
+        if self._pa_results is None or self._pa_labels is None:
+            return
+        if len(self._pa_results) == 0:
+            return
+
+        labels = self._pa_labels
+        bg_value = self.pa_bg_manual_spin.value()
+        if bg_value <= 0:
+            return
+
+        # Recompute pct_above_bg with current BG value
+        meas_idx = self.pa_meas_combo.currentIndex()
+        if meas_idx < 0 or meas_idx >= len(self.channels):
+            return
+        meas_img = self.channels[meas_idx].astype(np.float64)
+
+        pct_above = []
+        for lbl in self._pa_results['label'].values:
+            px = meas_img[labels == int(lbl)]
+            n_above = int((px > bg_value).sum())
+            n_total = len(px)
+            pct_above.append(100.0 * n_above / max(n_total, 1))
+        self._pa_results['pct_above_bg'] = pct_above
+        self._pa_results['background'] = bg_value
+        self._pa_results['mean_above_background'] = self._pa_results['mean_intensity'] - bg_value
+
+        # Reclassify
+        min_pct = self.pa_pos_pct_spin.value()
+        self._pa_results['is_positive'] = self._pa_results['pct_above_bg'] >= min_pct
+
+        # Update summary
+        n = len(self._pa_results)
+        n_pos = int(self._pa_results['is_positive'].sum())
+        self.pa_summary_label.setText(
+            self.pa_summary_label.text().rsplit('Positive:', 1)[0]
+            + f"Positive: {n_pos}/{n}"
+        )
+        # Redraw outlines and table
+        self._pa_draw_classification_overlay()
+        self._pa_populate_table(self._pa_results)
+
+    def _pa_populate_table(self, df):
+        """Populate the results table with particle analysis results."""
+        if df is None or len(df) == 0:
+            self.pa_results_table.setRowCount(0)
+            self.pa_results_table.setColumnCount(0)
+            return
+
+        show_cols = [c for c in [
+            'label', 'area', 'mean_intensity', 'background',
+            'pct_above_bg', 'is_positive', 'snr', 'circularity',
+        ] if c in df.columns]
+
+        self.pa_results_table.setColumnCount(len(show_cols))
+        self.pa_results_table.setHorizontalHeaderLabels(show_cols)
+        self.pa_results_table.setRowCount(min(len(df), 200))
+
+        for row_idx, (_, row) in enumerate(df.head(200).iterrows()):
+            for col_idx, col in enumerate(show_cols):
+                val = row[col]
+                text = f"{val:.2f}" if isinstance(val, float) else str(val)
+                self.pa_results_table.setItem(row_idx, col_idx, QTableWidgetItem(text))
+
+        self.pa_results_table.resizeColumnsToContents()
+
+    # -- export ----------------------------------------------------------------
+
+    def _pa_export_csv(self):
+        """Export particle analysis results to CSV."""
+        if self._pa_results is None or len(self._pa_results) == 0:
+            return
+
+        default_name = "particle_analysis.csv"
+        if self.current_file:
+            default_name = f"{self.current_file.stem}_particles.csv"
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Particle Results", default_name,
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        if path:
+            self._pa_results.to_csv(path, index=False)
+            self.status_label.setText(f"Exported to {Path(path).name}")
+
+    def _pa_export_figure(self):
+        """Export a QC figure (detection / measurement / intensity histogram)."""
+        if self._pa_labels is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Figure", "particle_qc.png", "PNG (*.png)"
+        )
+        if not path:
+            return
+
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        det_idx = self.pa_det_combo.currentIndex()
+        meas_idx = self.pa_meas_combo.currentIndex()
+        det_img = self._get_current_slice(self.channels[det_idx])
+        meas_img = self._get_current_slice(self.channels[meas_idx])
+        if det_img is None or meas_img is None:
+            return
+
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+        def _scalebar(ax, pixel_um):
+            if not pixel_um:
+                return
+            img_width_um = ax.get_xlim()[1] * pixel_um
+            target = img_width_um * 0.15
+            nice_lengths = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000]
+            bar_um = min(nice_lengths, key=lambda x: abs(x - target))
+            bar_px = bar_um / pixel_um
+            y_max = ax.get_ylim()[0]
+            x_max = ax.get_xlim()[1]
+            margin = x_max * 0.03
+            y_pos = y_max - margin
+            x_end = x_max - margin
+            x_start = x_end - bar_px
+            ax.plot([x_start, x_end], [y_pos, y_pos], color='white', linewidth=3)
+            label = f"{bar_um} um" if bar_um >= 1 else f"{bar_um*1000:.0f} nm"
+            ax.text((x_start + x_end) / 2, y_pos - margin * 0.8, label,
+                    color='white', ha='center', va='bottom', fontsize=8,
+                    fontweight='bold')
+
+        axes[0].imshow(det_img, cmap='gray',
+                       vmax=np.percentile(det_img, 99.5))
+        axes[0].set_title(f"Detection (ch{det_idx})")
+        axes[0].axis('off')
+        _scalebar(axes[0], self._pixel_size_um)
+
+        axes[1].imshow(meas_img, cmap='gray',
+                       vmax=np.percentile(meas_img, 99.5))
+        if self._pa_labels is not None and self._pa_labels.max() > 0:
+            from scipy import ndimage
+            for lbl in range(1, int(self._pa_labels.max()) + 1):
+                single = (self._pa_labels == lbl).astype(np.uint8)
+                contour = ndimage.binary_dilation(single) & ~single.astype(bool)
+                axes[1].contour(contour, colors=['cyan'], linewidths=0.5)
+        axes[1].set_title(f"Particles on ch{meas_idx}")
+        axes[1].axis('off')
+        _scalebar(axes[1], self._pixel_size_um)
+
+        if (self._pa_results is not None
+                and 'mean_intensity' in self._pa_results.columns):
+            bg = (self._pa_results['background'].iloc[0]
+                  if 'background' in self._pa_results.columns else 0)
+            self._pa_results['mean_intensity'].hist(
+                ax=axes[2], bins=20, color='steelblue', edgecolor='white')
+            axes[2].axvline(bg, color='red', linestyle='--', label=f'BG={bg:.0f}')
+            axes[2].legend()
+        axes[2].set_title("Intensity Distribution")
+
+        plt.tight_layout()
+        plt.savefig(path, dpi=150, bbox_inches='tight')
+        plt.close()
+        self.status_label.setText(f"Figure saved: {Path(path).name}")
+
     def _create_quantify_tab(self) -> QWidget:
         """Create the Quantify tab for regional counting."""
         widget = QWidget()
@@ -1620,7 +2692,7 @@ class BrainSliceWidget(QWidget):
             return data[current_slice_idx]
         return data
 
-    def _on_load_finished(self, success: bool, message: str, red, green, metadata):
+    def _on_load_finished(self, success: bool, message: str, red, green, metadata, full_data=None):
         """Handle load completion."""
         self.load_btn.setEnabled(True)
 
@@ -1633,7 +2705,24 @@ class BrainSliceWidget(QWidget):
                 self.red_channel = red
                 self.green_channel = green
                 self.metadata = metadata
-                print(f"[BrainSlice] Load finished: red={red.shape}, green={green.shape}")
+
+                # Store all channels for particle analysis
+                if full_data is not None and full_data.ndim == 3:
+                    self.channels = [full_data[i] for i in range(full_data.shape[0])]
+                else:
+                    self.channels = [red, green]
+
+                # Get channel names from metadata
+                ch_names = metadata.get('channels', [])
+                if ch_names:
+                    self.channel_names = [str(n) for n in ch_names]
+                else:
+                    self.channel_names = [f"Channel {i}" for i in range(len(self.channels))]
+
+                # Update particle analysis channel combos
+                self._update_particle_channel_combos()
+
+                print(f"[BrainSlice] Load finished: red={red.shape}, green={green.shape}, total_channels={len(self.channels)}")
 
                 # Calculate contrast limits (Auto = None lets napari decide)
                 red_limits = self._get_contrast_limits(red)

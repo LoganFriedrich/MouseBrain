@@ -48,7 +48,7 @@ import json
 from mousebrain.config import CALIBRATION_RUNS_CSV as DEFAULT_TRACKER_PATH, parse_brain_name
 
 # Experiment types
-EXP_TYPES = ["detection", "training", "classification", "registration", "counts", "prefilter"]
+EXP_TYPES = ["detection", "training", "classification", "selective_classification", "registration", "counts", "prefilter"]
 
 # CSV columns (order matters for readability)
 CSV_COLUMNS = [
@@ -477,6 +477,53 @@ class ExperimentTracker:
             "input_path": input_path,
             "output_path": output_path,
             "notes": notes,
+            "script_version": script_version,
+            "hostname": self._get_hostname(),
+        }
+
+        row = self._add_hierarchy_fields(row, brain)
+        self._write_row(row)
+        return exp_id
+
+    def log_selective_classification(
+        self,
+        brain: str,
+        model_path: str,
+        total_candidates: int = 0,
+        trust_count: int = 0,
+        classify_count: int = 0,
+        classified_cells: int = 0,
+        classified_rejected: int = 0,
+        final_cells: int = 0,
+        tracing_type: str = "descending",
+        candidates_path: Optional[str] = None,
+        output_path: Optional[str] = None,
+        parent_experiment: Optional[str] = None,
+        notes: Optional[str] = None,
+        status: str = "started",
+        script_version: str = "1.0.0",
+    ) -> str:
+        """Log a selective classification run. Hierarchy fields auto-populated from brain name."""
+        exp_id = self._generate_exp_id("selective_classification", brain)
+
+        row = {
+            "exp_id": exp_id,
+            "exp_type": "selective_classification",
+            "brain": brain,
+            "created_at": datetime.now().isoformat(),
+            "status": status,
+            "class_model_path": model_path,
+            "class_cells_found": final_cells,
+            "class_rejected": classified_rejected,
+            "prefilter_total": total_candidates,
+            "prefilter_interior": trust_count,
+            "prefilter_suspicious": classify_count,
+            "prefilter_tracing_type": tracing_type,
+            "input_path": candidates_path,
+            "output_path": output_path,
+            "model_path": model_path,
+            "parent_experiment": parent_experiment,
+            "notes": notes or f"trust={trust_count} classify={classify_count} approved={classified_cells} final={final_cells}",
             "script_version": script_version,
             "hostname": self._get_hostname(),
         }

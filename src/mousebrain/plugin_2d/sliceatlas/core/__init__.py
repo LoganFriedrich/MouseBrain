@@ -34,6 +34,10 @@ from .colocalization import (
     analyze_colocalization,
 )
 
+from .particle_analysis import (
+    ParticleAnalyzer,
+)
+
 from .quantification import (
     RegionQuantifier,
     quantify_sample,
@@ -104,6 +108,8 @@ __all__ = [
     'NucleiDetector', 'detect_nuclei', 'list_available_models',
     # Colocalization
     'ColocalizationAnalyzer', 'analyze_colocalization',
+    # Particle Analysis
+    'ParticleAnalyzer',
     # Quantification
     'RegionQuantifier', 'quantify_sample',
     # Atlas

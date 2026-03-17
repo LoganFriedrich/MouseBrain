@@ -9,7 +9,7 @@ Defines the structure for tracking:
 """
 
 # Run types
-RUN_TYPES = ["registration", "detection", "colocalization", "quantification"]
+RUN_TYPES = ["registration", "detection", "colocalization", "quantification", "particle_analysis"]
 
 # CSV columns (order matters for readability)
 CSV_COLUMNS = [
@@ -73,6 +73,20 @@ CSV_COLUMNS = [
     "quant_top_region",  # Region with most cells
     "quant_top_region_count",
 
+    # Particle analysis parameters
+    "pa_detection_channel",   # Which channel was binarized
+    "pa_threshold_value",     # Hard threshold used for binarization
+    "pa_measurement_channel", # Which channel intensities were measured in
+    "pa_min_area",
+    "pa_max_area",
+    "pa_min_circularity",
+    "pa_max_circularity",
+    "pa_particles_found",     # Count after filtering
+    "pa_particles_raw",       # Count before filtering (from binary mask)
+    "pa_bg_method",           # Background estimation method
+    "pa_bg_value",            # Estimated background value
+    "pa_mean_intensity",      # Mean of all particle mean intensities
+
     # Paths
     "input_path",
     "output_path",
@@ -115,4 +129,11 @@ COLOCALIZATION_COLUMNS = [
 
 QUANTIFICATION_COLUMNS = [
     "quant_total_regions", "quant_top_region", "quant_top_region_count"
+]
+
+PARTICLE_ANALYSIS_COLUMNS = [
+    "pa_detection_channel", "pa_threshold_value", "pa_measurement_channel",
+    "pa_min_area", "pa_max_area", "pa_min_circularity", "pa_max_circularity",
+    "pa_particles_found", "pa_particles_raw", "pa_bg_method", "pa_bg_value",
+    "pa_mean_intensity"
 ]

@@ -439,6 +439,11 @@ Examples:
                         help='Routine processing mode: auto-use paradigm-best model if available')
     parser.add_argument('--no-prefilter', action='store_true',
                         help='Skip atlas pre-filter (not recommended - includes surface artifacts)')
+    parser.add_argument('--selective', action='store_true',
+                        help='Region-selective classification: trust cells in eLife regions, classify only uncertain regions')
+    parser.add_argument('--tracing-type', default='descending',
+                        choices=['descending', 'ascending', 'unknown'],
+                        help='Tracing type for selective classification (default: descending)')
 
     args = parser.parse_args()
 
@@ -624,7 +629,62 @@ Examples:
         print(f"Candidates: {candidates}")
         print(f"Model: {model_path}")
         print(f"Output: {output_path}")
+        print(f"Selective: {args.selective}")
         return
+
+    # =========================================================================
+    # SELECTIVE CLASSIFICATION MODE
+    # =========================================================================
+    if args.selective:
+        from mousebrain.selective_classifier import run_selective_classification
+
+        registration_path = pipeline_folder / "3_Registered_Atlas"
+        if not registration_path.exists():
+            print("ERROR: No registration folder found -- required for selective classification")
+            sys.exit(1)
+
+        # Log to tracker
+        sel_exp_id = tracker.log_selective_classification(
+            brain=brain_name,
+            model_path=str(model_path),
+            tracing_type=args.tracing_type,
+            candidates_path=str(candidates),
+            output_path=str(output_path),
+            status="started",
+            script_version=SCRIPT_VERSION,
+        )
+
+        print(f"\nSelective Classification Run: {sel_exp_id}")
+
+        result = run_selective_classification(
+            brain_path=pipeline_folder,
+            candidates_xml=candidates,
+            model_path=model_path,
+            registration_path=registration_path,
+            tracing_type=args.tracing_type,
+            signal_path=signal_path,
+            background_path=background_path,
+            voxel_sizes=voxel_sizes,
+            cube_size=args.cube_size,
+            batch_size=args.batch_size,
+            n_free_cpus=args.n_free_cpus,
+        )
+
+        # Update tracker
+        tracker.update_status(
+            sel_exp_id,
+            status="completed" if result.final_cells > 0 else "failed",
+            duration_seconds=round(result.duration_seconds, 1),
+            class_cells_found=result.final_cells,
+            class_rejected=result.classified_rejected,
+        )
+
+        print(f"\nExperiment ID: {sel_exp_id}")
+        return
+
+    # =========================================================================
+    # STANDARD CLASSIFICATION MODE (unchanged)
+    # =========================================================================
 
     # Log classification run (tracker already initialized for paradigm check)
     exp_id = tracker.log_classification(

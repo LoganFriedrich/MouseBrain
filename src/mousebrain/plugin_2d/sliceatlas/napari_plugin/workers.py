@@ -5,6 +5,7 @@ Provides QThread workers for long-running operations:
 - Image loading
 - Nuclei detection
 - Colocalization analysis
+- Particle analysis
 """
 
 from pathlib import Path
@@ -18,7 +19,7 @@ class ImageLoaderWorker(QThread):
     """Load ND2/TIFF images in background thread."""
 
     progress = Signal(str)
-    finished = Signal(bool, str, object, object, object)  # success, msg, red, green, metadata
+    finished = Signal(bool, str, object, object, object, object)  # success, msg, red, green, metadata, full_data
 
     def __init__(
         self,
@@ -43,12 +44,12 @@ class ImageLoaderWorker(QThread):
             self.progress.emit("Extracting channels...")
             red, green = extract_channels(data, self.red_idx, self.green_idx)
 
-            self.finished.emit(True, "Load complete", red, green, metadata)
+            self.finished.emit(True, "Load complete", red, green, metadata, data)
 
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.finished.emit(False, str(e), None, None, None)
+            self.finished.emit(False, str(e), None, None, None, None)
 
 
 class FolderLoaderWorker(QThread):
@@ -620,6 +621,102 @@ class QuantificationWorker(QThread):
                    f"in {summary['regions_with_cells']} regions")
 
             self.finished.emit(True, msg, cell_data, region_counts, summary)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.finished.emit(False, str(e), None, None, None)
+
+
+class ParticleAnalysisWorker(QThread):
+    """Run particle analysis (binarize + find particles + measure) in background thread."""
+
+    progress = Signal(str)
+    # success, msg, labels, results_df, summary_dict
+    finished = Signal(bool, str, object, object, object)
+
+    def __init__(
+        self,
+        detection_image: np.ndarray,
+        measurement_image: np.ndarray,
+        params: Dict[str, Any],
+    ):
+        super().__init__()
+        self.detection_image = detection_image
+        self.measurement_image = measurement_image
+        self.params = params
+
+    def run(self):
+        try:
+            from ..core.particle_analysis import ParticleAnalyzer
+
+            analyzer = ParticleAnalyzer()
+
+            threshold = self.params.get('threshold', 0.0)
+            min_area = self.params.get('min_area', 10)
+            max_area = self.params.get('max_area', 50000)
+            min_circ = self.params.get('min_circularity', 0.0)
+            max_circ = self.params.get('max_circularity', 1.0)
+            bg_method = self.params.get('background_method', 'percentile')
+            bg_percentile = self.params.get('background_percentile', 50.0)
+
+            self.progress.emit("Binarizing detection channel...")
+            mask = analyzer.binarize(self.detection_image, threshold)
+            mask_pixels = int(mask.sum())
+            self.progress.emit(f"Mask: {mask_pixels} pixels above threshold")
+
+            self.progress.emit("Finding particles...")
+            labels, particle_props = analyzer.find_particles(
+                mask,
+                min_area=min_area,
+                max_area=max_area,
+                min_circularity=min_circ,
+                max_circularity=max_circ,
+            )
+
+            n_particles = int(labels.max())
+            self.progress.emit(f"Found {n_particles} particles after filtering")
+
+            if n_particles > 0:
+                self.progress.emit("Measuring intensities...")
+                measurements = analyzer.measure_intensity(
+                    labels, self.measurement_image,
+                    background_method=bg_method,
+                    background_percentile=bg_percentile,
+                )
+
+                # Merge props and measurements
+                import pandas as pd
+                results = pd.merge(
+                    particle_props, measurements,
+                    on='label', suffixes=('', '_meas'),
+                )
+                if 'area_meas' in results.columns:
+                    results = results.drop(columns=['area_meas'])
+
+                bg = float(measurements['background'].iloc[0])
+                summary = {
+                    'n_particles': n_particles,
+                    'threshold': float(threshold),
+                    'mask_pixels': mask_pixels,
+                    'background': bg,
+                    'mean_particle_intensity': float(measurements['mean_intensity'].mean()),
+                    'mean_above_background': float(measurements['mean_above_background'].mean()),
+                    'mean_snr': float(measurements['snr'].mean()),
+                    'mean_area': float(particle_props['area'].mean()),
+                }
+            else:
+                import pandas as pd
+                results = particle_props
+                summary = {
+                    'n_particles': 0,
+                    'threshold': float(threshold),
+                    'mask_pixels': mask_pixels,
+                }
+
+            msg = f"Particle analysis complete: {n_particles} particles"
+            self.progress.emit(msg)
+            self.finished.emit(True, msg, labels, results, summary)
 
         except Exception as e:
             import traceback

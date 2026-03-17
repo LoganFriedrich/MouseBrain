@@ -22,9 +22,6 @@ contributions:
     - id: mousebrain.sliceatlas
       python_name: mousebrain.plugin_2d.sliceatlas.napari_plugin.main_widget:BrainSliceWidget
       title: BrainSlice - Slice Analysis
-    - id: mousebrain.annotator
-      python_name: mousebrain.plugin_2d.annotator.widgets.main_widget:SliceAnnotatorWidget
-      title: Slice Annotator
   widgets:
     # === 3D Cleared Brain Pipeline ===
     - command: mousebrain.dashboard
@@ -40,5 +37,4 @@ contributions:
     # === 2D Slice Pipeline ===
     - command: mousebrain.sliceatlas
       display_name: "2D: 1. BrainSlice"
-    - command: mousebrain.annotator
-      display_name: "2D: 2. Slice Annotator"
+

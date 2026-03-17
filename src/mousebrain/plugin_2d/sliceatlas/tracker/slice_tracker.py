@@ -247,6 +247,51 @@ class SliceTracker:
         self._write_row(row)
         return run_id
 
+    def log_particle_analysis(
+        self,
+        sample_id: str,
+        detection_channel: str = '0',
+        threshold_value: float = 0.0,
+        measurement_channel: str = '1',
+        min_area: int = 10,
+        max_area: int = 50000,
+        min_circularity: float = 0.0,
+        max_circularity: float = 1.0,
+        bg_method: str = 'percentile',
+        input_path: Optional[str] = None,
+        output_path: Optional[str] = None,
+        notes: Optional[str] = None,
+        status: str = 'started',
+        script_version: str = '1.0.0',
+    ) -> str:
+        """Log a particle analysis run."""
+        run_id = self._generate_run_id('particle_analysis', sample_id)
+
+        row = {
+            'run_id': run_id,
+            'run_type': 'particle_analysis',
+            'sample_id': sample_id,
+            'created_at': datetime.now().isoformat(),
+            'status': status,
+            'pa_detection_channel': detection_channel,
+            'pa_threshold_value': threshold_value,
+            'pa_measurement_channel': measurement_channel,
+            'pa_min_area': min_area,
+            'pa_max_area': max_area,
+            'pa_min_circularity': min_circularity,
+            'pa_max_circularity': max_circularity,
+            'pa_bg_method': bg_method,
+            'input_path': input_path,
+            'output_path': output_path,
+            'notes': notes,
+            'script_version': script_version,
+            'hostname': self._get_hostname(),
+        }
+
+        row = self._add_hierarchy_fields(row, sample_id)
+        self._write_row(row)
+        return run_id
+
     def log_quantification(
         self,
         sample_id: str,
@@ -312,6 +357,7 @@ class SliceTracker:
             'coloc_positive_cells', 'coloc_negative_cells', 'coloc_positive_fraction',
             'coloc_background_value',
             'quant_total_regions', 'quant_top_region', 'quant_top_region_count',
+            'pa_particles_found', 'pa_particles_raw', 'pa_bg_value', 'pa_mean_intensity',
             'output_path', 'labels_path', 'measurements_path', 'region_counts_path',
             'reg_transform_path', 'reg_quality_score',
         ]
