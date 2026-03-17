@@ -1474,12 +1474,9 @@ class BrainSliceWidget(QWidget):
                 self.viewer.layers.remove(layer)
 
     def _pa_get_scale(self):
-        """Return scale matching the image layers.
-
-        The main widget loads images without physical scale (pixel coords),
-        so overlays must also use [1, 1] to align correctly.
-        """
-        return [1, 1]
+        """Return [pixel_um, pixel_um] scale if available, else [1, 1]."""
+        px = self._pixel_size_um
+        return [px, px] if px and px > 0 else [1, 1]
 
     def _pa_get_bg(self):
         val = self.pa_bg_manual_spin.value()
@@ -1724,10 +1721,14 @@ class BrainSliceWidget(QWidget):
         meas_img = meas_img.astype(np.float64)
         roi_means = []
 
+        px = self._pixel_size_um if (self._pixel_size_um and self._pixel_size_um > 0) else None
         for shape_data in self._pa_bg_shapes_layer.data:
-            # Coordinates are in pixel space (no physical scaling on layers)
             rows = shape_data[:, 0]
             cols = shape_data[:, 1]
+            # Convert from physical coords back to pixels if scaled
+            if px:
+                rows = rows / px
+                cols = cols / px
             r_min = int(max(0, rows.min()))
             r_max = int(min(meas_img.shape[0], rows.max()))
             c_min = int(max(0, cols.min()))
@@ -2733,7 +2734,8 @@ class BrainSliceWidget(QWidget):
                 red_limits = self._get_contrast_limits(red)
                 green_limits = self._get_contrast_limits(green)
 
-                # Add to napari with proper contrast
+                # Add to napari with proper contrast and physical scale
+                scale = self._pa_get_scale()
                 self.viewer.layers.clear()
                 self.viewer.add_image(
                     red,
@@ -2741,6 +2743,7 @@ class BrainSliceWidget(QWidget):
                     colormap='red',
                     blending='additive',
                     contrast_limits=red_limits,
+                    scale=scale,
                 )
                 self.viewer.add_image(
                     green,
@@ -2748,7 +2751,15 @@ class BrainSliceWidget(QWidget):
                     colormap='green',
                     blending='additive',
                     contrast_limits=green_limits,
+                    scale=scale,
                 )
+
+                # Enable scale bar
+                if self._pixel_size_um and self._pixel_size_um > 0:
+                    self.viewer.scale_bar.visible = True
+                    self.viewer.scale_bar.unit = 'um'
+                    self.viewer.scale_bar.colored = True
+                    self.viewer.scale_bar.font_size = 12
 
                 # Update pixel size from full load metadata (in case peek missed it)
                 voxel = metadata.get('voxel_size_um')
