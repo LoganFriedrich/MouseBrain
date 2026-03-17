@@ -1474,9 +1474,12 @@ class BrainSliceWidget(QWidget):
                 self.viewer.layers.remove(layer)
 
     def _pa_get_scale(self):
-        """Return [pixel_um, pixel_um] scale if available, else [1, 1]."""
-        px = self._pixel_size_um
-        return [px, px] if px and px > 0 else [1, 1]
+        """Return scale matching the image layers.
+
+        The main widget loads images without physical scale (pixel coords),
+        so overlays must also use [1, 1] to align correctly.
+        """
+        return [1, 1]
 
     def _pa_get_bg(self):
         val = self.pa_bg_manual_spin.value()
@@ -1499,8 +1502,8 @@ class BrainSliceWidget(QWidget):
             self.pa_meas_combo.addItem(f"{i}: {name}")
 
         if len(self.channel_names) >= 2:
-            self.pa_det_combo.setCurrentIndex(1)
-            self.pa_meas_combo.setCurrentIndex(0)
+            self.pa_det_combo.setCurrentIndex(0)   # red = detect
+            self.pa_meas_combo.setCurrentIndex(1)  # green = measure
 
         self.pa_det_combo.blockSignals(False)
         self.pa_meas_combo.blockSignals(False)
@@ -1720,14 +1723,11 @@ class BrainSliceWidget(QWidget):
             return
         meas_img = meas_img.astype(np.float64)
         roi_means = []
-        px = self._pixel_size_um if (self._pixel_size_um and self._pixel_size_um > 0) else None
 
         for shape_data in self._pa_bg_shapes_layer.data:
+            # Coordinates are in pixel space (no physical scaling on layers)
             rows = shape_data[:, 0]
             cols = shape_data[:, 1]
-            if px:
-                rows = rows / px
-                cols = cols / px
             r_min = int(max(0, rows.min()))
             r_max = int(min(meas_img.shape[0], rows.max()))
             c_min = int(max(0, cols.min()))
@@ -2712,12 +2712,17 @@ class BrainSliceWidget(QWidget):
                 else:
                     self.channels = [red, green]
 
-                # Get channel names from metadata
-                ch_names = metadata.get('channels', [])
-                if ch_names:
-                    self.channel_names = [str(n) for n in ch_names]
+                # Channel names must match the napari layer names used below
+                # channels[0]=red, channels[1]=green; layers added in same order
+                if len(self.channels) == 2:
+                    self.channel_names = ["Nuclear (red)", "Signal (green)"]
                 else:
-                    self.channel_names = [f"Channel {i}" for i in range(len(self.channels))]
+                    # For >2 channels, use metadata or fallback
+                    ch_names = metadata.get('channels', [])
+                    if ch_names:
+                        self.channel_names = [str(n) for n in ch_names]
+                    else:
+                        self.channel_names = [f"Channel {i}" for i in range(len(self.channels))]
 
                 # Update particle analysis channel combos
                 self._update_particle_channel_combos()
