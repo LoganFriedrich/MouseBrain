@@ -28,6 +28,15 @@ from qtpy.QtCore import Qt, QTimer
 import napari
 
 
+class _NumericTableItem(QTableWidgetItem):
+    """QTableWidgetItem that sorts numerically instead of alphabetically."""
+    def __lt__(self, other):
+        try:
+            return float(self.text()) < float(other.text())
+        except (ValueError, TypeError):
+            return self.text() < other.text()
+
+
 class BrainSliceWidget(QWidget):
     """Main BrainSlice widget for napari."""
 
@@ -87,6 +96,13 @@ class BrainSliceWidget(QWidget):
         self._pa_results = None  # Results DataFrame
         self._pa_summary = None  # Summary dict
 
+        # ROI naming
+        self._roi_names = []  # List of names matching ROI draw order
+
+        # Image queue state (folder of individual images)
+        self._queue_files = []
+        self._queue_idx = -1
+
         # Batch processing state
         self._batch_folder = None
         self._batch_files = []
@@ -124,7 +140,7 @@ class BrainSliceWidget(QWidget):
         self.inset_widget = InsetWidget(self)
         self.tabs.addTab(self.inset_widget, "3. Insets")
 
-        self.tabs.addTab(self._scrollable(self._create_coloc_tab()), "4. Signal")
+        self.tabs.addTab(self._scrollable(self._create_coloc_tab()), "4. Detect && Classify")
         self.tabs.addTab(self._scrollable(self._create_roi_tab()), "5. ROI Count")
         self.tabs.addTab(self._scrollable(self._create_quantify_tab()), "6. Quantify")
 
@@ -292,6 +308,45 @@ class BrainSliceWidget(QWidget):
         self.load_btn.clicked.connect(self._load_image)
         self.load_btn.setEnabled(False)
         layout.addWidget(self.load_btn)
+
+        # --- Image Queue (browse folder of individual images) ---
+        queue_group = QGroupBox("Image Queue")
+        queue_layout = QVBoxLayout()
+
+        queue_info = QLabel(
+            "Load a folder of images and step through them one at a time.")
+        queue_info.setWordWrap(True)
+        queue_info.setStyleSheet("color: #888888; font-size: 11px;")
+        queue_layout.addWidget(queue_info)
+
+        queue_btn_row = QHBoxLayout()
+        self._queue_browse_btn = QPushButton("Browse Image Folder...")
+        self._queue_browse_btn.clicked.connect(self._queue_browse_folder)
+        queue_btn_row.addWidget(self._queue_browse_btn)
+        queue_layout.addLayout(queue_btn_row)
+
+        self._queue_status_label = QLabel("")
+        self._queue_status_label.setWordWrap(True)
+        queue_layout.addWidget(self._queue_status_label)
+
+        nav_row = QHBoxLayout()
+        self._queue_prev_btn = QPushButton("Previous")
+        self._queue_prev_btn.setEnabled(False)
+        self._queue_prev_btn.clicked.connect(self._queue_prev)
+        nav_row.addWidget(self._queue_prev_btn)
+
+        self._queue_nav_label = QLabel("")
+        self._queue_nav_label.setAlignment(Qt.AlignCenter)
+        nav_row.addWidget(self._queue_nav_label)
+
+        self._queue_next_btn = QPushButton("Next")
+        self._queue_next_btn.setEnabled(False)
+        self._queue_next_btn.clicked.connect(self._queue_next)
+        nav_row.addWidget(self._queue_next_btn)
+        queue_layout.addLayout(nav_row)
+
+        queue_group.setLayout(queue_layout)
+        layout.addWidget(queue_group)
 
         # Metadata display
         self.metadata_label = QLabel("")
@@ -654,6 +709,7 @@ class BrainSliceWidget(QWidget):
         self.pa_results_table.setMaximumHeight(200)
         self.pa_results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.pa_results_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.pa_results_table.setSortingEnabled(True)
         self.pa_results_table.cellClicked.connect(self._pa_on_table_row_clicked)
         pa_layout.addWidget(self.pa_results_table)
 
@@ -1519,7 +1575,7 @@ class BrainSliceWidget(QWidget):
         widget.setLayout(layout)
 
         # Data source info
-        self._roi_source_label = QLabel("Data source: (run Signal Analysis first)")
+        self._roi_source_label = QLabel("Data source: (run Detect & Classify first)")
         self._roi_source_label.setWordWrap(True)
         layout.addWidget(self._roi_source_label)
 
@@ -1527,11 +1583,32 @@ class BrainSliceWidget(QWidget):
         roi_draw_group = QGroupBox("ROI Drawing")
         roi_draw_layout = QVBoxLayout()
 
-        roi_btn_layout = QHBoxLayout()
-        self.draw_roi_btn = QPushButton("Draw ROI")
-        self.draw_roi_btn.clicked.connect(self._add_roi_layer)
-        roi_btn_layout.addWidget(self.draw_roi_btn)
-        roi_draw_layout.addLayout(roi_btn_layout)
+        roi_btn_row = QHBoxLayout()
+        self._roi_add_left_btn = QPushButton("Add Left ROI")
+        self._roi_add_left_btn.clicked.connect(lambda: self._add_named_roi("Left"))
+        roi_btn_row.addWidget(self._roi_add_left_btn)
+
+        self._roi_add_right_btn = QPushButton("Add Right ROI")
+        self._roi_add_right_btn.clicked.connect(lambda: self._add_named_roi("Right"))
+        roi_btn_row.addWidget(self._roi_add_right_btn)
+        roi_draw_layout.addLayout(roi_btn_row)
+
+        custom_row = QHBoxLayout()
+        self._roi_custom_name = QLineEdit()
+        self._roi_custom_name.setPlaceholderText("Custom name...")
+        custom_row.addWidget(self._roi_custom_name)
+        self._roi_add_custom_btn = QPushButton("Add ROI")
+        self._roi_add_custom_btn.clicked.connect(
+            lambda: self._add_named_roi(
+                self._roi_custom_name.text().strip() or None))
+        custom_row.addWidget(self._roi_add_custom_btn)
+        roi_draw_layout.addLayout(custom_row)
+
+        # ROI name list (shows current ROIs and their names)
+        self._roi_names_label = QLabel("ROIs: (none)")
+        self._roi_names_label.setWordWrap(True)
+        self._roi_names_label.setStyleSheet("color: #888888; font-size: 11px;")
+        roi_draw_layout.addWidget(self._roi_names_label)
 
         roi_draw_group.setLayout(roi_draw_layout)
         layout.addWidget(roi_draw_group)
@@ -1632,13 +1709,77 @@ class BrainSliceWidget(QWidget):
         return widget
 
     # =========================================================================
+    # =========================================================================
+    # IMAGE QUEUE (folder navigation)
+    # =========================================================================
+
+    def _queue_browse_folder(self):
+        """Select a folder and discover all images for sequential loading."""
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Image Folder")
+        if not folder:
+            return
+        folder = Path(folder)
+        files = sorted(
+            list(folder.glob('*.nd2')) +
+            list(folder.glob('*.tif')) +
+            list(folder.glob('*.tiff'))
+        )
+        if not files:
+            QMessageBox.warning(self, "No Images",
+                "No ND2 or TIFF files found in the selected folder.")
+            return
+
+        self._queue_files = files
+        self._queue_idx = 0
+        self._queue_status_label.setText(
+            f"{len(files)} images in {folder.name}")
+        self._queue_prev_btn.setEnabled(False)
+        self._queue_next_btn.setEnabled(len(files) > 1)
+        self._queue_load_current()
+
+    def _queue_load_current(self):
+        """Load the current queue image using the normal Load tab pipeline."""
+        if self._queue_idx < 0 or self._queue_idx >= len(self._queue_files):
+            return
+        fpath = self._queue_files[self._queue_idx]
+        total = len(self._queue_files)
+
+        self._queue_nav_label.setText(
+            f"{self._queue_idx + 1}/{total}: {fpath.name}")
+        self._queue_prev_btn.setEnabled(self._queue_idx > 0)
+        self._queue_next_btn.setEnabled(self._queue_idx < total - 1)
+
+        # Set the file path and trigger normal load
+        self.current_file = fpath
+        self.is_folder_load = False
+        self.file_label.setText(str(fpath))
+        self.load_btn.setEnabled(True)
+
+        # Auto-load the image
+        self._load_image()
+
+    def _queue_prev(self):
+        """Load previous image in queue."""
+        if self._queue_idx > 0:
+            self._queue_idx -= 1
+            self._queue_load_current()
+
+    def _queue_next(self):
+        """Load next image in queue."""
+        if self._queue_idx < len(self._queue_files) - 1:
+            self._queue_idx += 1
+            self._queue_load_current()
+
+    # =========================================================================
     # BATCH PROCESSING
     # =========================================================================
 
     def _pa_get_settings(self):
-        """Capture current particle analysis settings as a dict."""
+        """Capture current particle + load settings as a dict."""
         settings = {
-            'version': 1,
+            'version': 2,
+            # Particle analysis params
             'threshold': float(self._pa_thresh_spin.value()),
             'min_area': self.pa_min_area.value(),
             'max_area': self.pa_max_area.value(),
@@ -1646,8 +1787,13 @@ class BrainSliceWidget(QWidget):
             'watershed': self.pa_watershed_check.isChecked(),
             'bg_value': self.pa_bg_manual_spin.value(),
             'min_pct_above_bg': self.pa_pos_pct_spin.value(),
+            # Load params
+            'rotation': self.rotation_combo.currentText(),
+            'z_projection': self.z_projection_combo.currentText(),
+            'red_channel_idx': self.red_channel_spin.value(),
+            'green_channel_idx': self.green_channel_spin.value(),
         }
-        # Channel indices
+        # Particle channel indices (relative to loaded channels)
         if self.pa_det_combo.currentIndex() >= 0:
             settings['detect_channel_idx'] = self.pa_det_combo.currentIndex()
         if self.pa_meas_combo.currentIndex() >= 0:
@@ -1661,7 +1807,8 @@ class BrainSliceWidget(QWidget):
         return settings
 
     def _pa_apply_settings(self, settings):
-        """Apply saved particle settings to the UI controls."""
+        """Apply saved particle + load settings to the UI controls."""
+        # Particle params
         if 'threshold' in settings:
             self._pa_thresh_spin.setValue(int(settings['threshold']))
             self._pa_thresh_slider.setValue(int(settings['threshold']))
@@ -1677,6 +1824,19 @@ class BrainSliceWidget(QWidget):
             self.pa_bg_manual_spin.setValue(settings['bg_value'])
         if 'min_pct_above_bg' in settings:
             self.pa_pos_pct_spin.setValue(settings['min_pct_above_bg'])
+        # Load params
+        if 'rotation' in settings:
+            idx = self.rotation_combo.findText(settings['rotation'])
+            if idx >= 0:
+                self.rotation_combo.setCurrentIndex(idx)
+        if 'z_projection' in settings:
+            idx = self.z_projection_combo.findText(settings['z_projection'])
+            if idx >= 0:
+                self.z_projection_combo.setCurrentIndex(idx)
+        if 'red_channel_idx' in settings:
+            self.red_channel_spin.setValue(settings['red_channel_idx'])
+        if 'green_channel_idx' in settings:
+            self.green_channel_spin.setValue(settings['green_channel_idx'])
 
     def _pa_save_settings(self):
         """Save current particle settings to a JSON file."""
@@ -1833,28 +1993,78 @@ class BrainSliceWidget(QWidget):
         bg_value = settings['bg_value']
         min_pct = settings['min_pct_above_bg']
 
+        # Load params
+        rotation_text = settings.get('rotation', 'None')
+        z_proj_text = settings.get('z_projection', 'Max Intensity')
+        red_ch_idx = settings.get('red_channel_idx', 1)
+        green_ch_idx = settings.get('green_channel_idx', 0)
+
+        # Determine rotation k value
+        if '90' in rotation_text and 'CCW' in rotation_text:
+            rot_k = 1
+        elif '90' in rotation_text and 'CW' in rotation_text:
+            rot_k = 3
+        elif '180' in rotation_text:
+            rot_k = 2
+        else:
+            rot_k = 0
+
+        from qtpy.QtWidgets import QApplication
+
         errors = []
         for i, fpath in enumerate(self._batch_files):
             self._batch_progress.setValue(i)
             self._batch_status_label.setText(
                 f"Processing {i+1}/{len(self._batch_files)}: {fpath.name}")
-            QApplication = __import__('qtpy.QtWidgets', fromlist=['QApplication']).QApplication
             QApplication.processEvents()
 
             try:
                 channels, meta = load_image(str(fpath))
-                if channels is None or len(channels) <= max(det_ch, meas_ch):
-                    errors.append(f"{fpath.name}: not enough channels")
+                if channels is None:
+                    errors.append(f"{fpath.name}: failed to load")
                     continue
 
-                det_img = channels[det_ch].astype(np.float64)
-                meas_img = channels[meas_ch].astype(np.float64)
+                # Apply z-projection to each channel
+                processed = []
+                for ch in channels:
+                    if ch.ndim == 3:
+                        if 'Max' in z_proj_text:
+                            ch = ch.max(axis=0)
+                        elif 'Mean' in z_proj_text:
+                            ch = ch.mean(axis=0)
+                        else:  # First Z
+                            ch = ch[0]
+                    # Apply rotation
+                    if rot_k > 0:
+                        ch = np.rot90(ch, k=rot_k)
+                    processed.append(ch)
+                channels = processed
 
-                # Handle 3D stacks -- max project
-                if det_img.ndim == 3:
-                    det_img = det_img.max(axis=0)
-                if meas_img.ndim == 3:
-                    meas_img = meas_img.max(axis=0)
+                # Map channels like the Load tab does:
+                # red_ch_idx and green_ch_idx are the raw channel indices
+                # det_ch and meas_ch are relative to [green, red] = [0, 1]
+                if max(red_ch_idx, green_ch_idx) >= len(channels):
+                    errors.append(f"{fpath.name}: not enough channels "
+                                  f"(need idx {max(red_ch_idx, green_ch_idx)}, "
+                                  f"have {len(channels)})")
+                    continue
+
+                # Build the 2-channel list as the Load tab would:
+                # channels[0] = green (signal), channels[1] = red (nuclear)
+                mapped_channels = [
+                    channels[green_ch_idx],  # index 0 = green/signal
+                    channels[red_ch_idx],    # index 1 = red/nuclear
+                ]
+                # If there are extra channels, append them
+                for ci, ch in enumerate(channels):
+                    if ci not in (green_ch_idx, red_ch_idx):
+                        mapped_channels.append(ch)
+
+                det_img = mapped_channels[det_ch].astype(np.float64)
+                meas_img = mapped_channels[meas_ch].astype(np.float64)
+
+                # Store mapped channels for ROI annotation display later
+                channels = mapped_channels
 
                 # Binarize
                 mask = analyzer.binarize(det_img, threshold)
@@ -2057,7 +2267,7 @@ class BrainSliceWidget(QWidget):
                 filtered = filter_measurements_by_roi(
                     measurements, vertices, image_shape)
 
-                roi_name = f"ROI {i+1}"
+                roi_name = self._get_roi_name(i)
                 for idx in filtered.index:
                     if roi_assignment[idx] == 'Outside':
                         roi_assignment[idx] = roi_name
@@ -2470,6 +2680,8 @@ class BrainSliceWidget(QWidget):
             return
         meas_img = meas_img.astype(np.float64)
         roi_means = []
+        all_px_min = float('inf')
+        all_px_max = float('-inf')
 
         px = self._pixel_size_um if (self._pixel_size_um and self._pixel_size_um > 0) else None
         for shape_data in self._pa_bg_shapes_layer.data:
@@ -2484,13 +2696,17 @@ class BrainSliceWidget(QWidget):
             c_min = int(max(0, cols.min()))
             c_max = int(min(meas_img.shape[1], cols.max()))
             if r_max > r_min and c_max > c_min:
-                roi_means.append(float(meas_img[r_min:r_max, c_min:c_max].mean()))
+                roi_patch = meas_img[r_min:r_max, c_min:c_max]
+                roi_means.append(float(roi_patch.mean()))
+                all_px_min = min(all_px_min, float(roi_patch.min()))
+                all_px_max = max(all_px_max, float(roi_patch.max()))
 
         if roi_means:
             avg = np.mean(roi_means)
             self.pa_bg_value_label.setText(
                 f"Background: {avg:.1f}  ({len(roi_means)} ROI(s), "
-                f"range: {min(roi_means):.0f}-{max(roi_means):.0f})"
+                f"pixel range: {all_px_min:.0f}-{all_px_max:.0f}, "
+                f"mean range: {min(roi_means):.0f}-{max(roi_means):.0f})"
             )
             self.pa_bg_manual_spin.blockSignals(True)
             self.pa_bg_manual_spin.setValue(avg)
@@ -2534,7 +2750,12 @@ class BrainSliceWidget(QWidget):
         meas_img = self._get_current_slice(self.channels[meas_idx])
         if meas_img is None:
             return
-        signal_mask = (meas_img.astype(np.float64) > bg_val).astype(np.uint8)
+        meas_f64 = meas_img.astype(np.float64)
+        signal_mask = (meas_f64 > bg_val).astype(np.uint8)
+        n_above = int(signal_mask.sum())
+        print(f"[Signal Mask] meas_ch={meas_idx}, bg={bg_val:.1f}, "
+              f"img range={float(meas_f64.min()):.0f}-{float(meas_f64.max()):.0f}, "
+              f"pixels above bg={n_above}")
         scale = self._pa_get_scale()
         existing = self._pa_find_layer('Signal Mask')
         if existing is not None:
@@ -2852,7 +3073,7 @@ class BrainSliceWidget(QWidget):
         })
         self.viewer.add_labels(
             class_overlay, name='Positive/Negative',
-            opacity=0.9, colormap=class_cmap, scale=scale,
+            opacity=0.3, colormap=class_cmap, scale=scale,
         )
 
     def _pa_reclassify_live(self, _val=None):
@@ -2903,6 +3124,9 @@ class BrainSliceWidget(QWidget):
 
     def _pa_populate_table(self, df):
         """Populate the results table with particle analysis results."""
+        # Disable sorting while populating to avoid interference
+        self.pa_results_table.setSortingEnabled(False)
+
         if df is None or len(df) == 0:
             self.pa_results_table.setRowCount(0)
             self.pa_results_table.setColumnCount(0)
@@ -2921,9 +3145,11 @@ class BrainSliceWidget(QWidget):
             for col_idx, col in enumerate(show_cols):
                 val = row[col]
                 text = f"{val:.2f}" if isinstance(val, float) else str(val)
-                self.pa_results_table.setItem(row_idx, col_idx, QTableWidgetItem(text))
+                item = _NumericTableItem(text)
+                self.pa_results_table.setItem(row_idx, col_idx, item)
 
         self.pa_results_table.resizeColumnsToContents()
+        self.pa_results_table.setSortingEnabled(True)
 
     # -- click interaction -----------------------------------------------------
 
@@ -3025,7 +3251,7 @@ class BrainSliceWidget(QWidget):
     # -- export ----------------------------------------------------------------
 
     def _pa_export_csv(self):
-        """Export particle analysis results to CSV."""
+        """Export particle analysis results to CSV with settings metadata."""
         if self._pa_results is None or len(self._pa_results) == 0:
             return
 
@@ -3038,7 +3264,17 @@ class BrainSliceWidget(QWidget):
             "CSV Files (*.csv);;All Files (*)"
         )
         if path:
-            self._pa_results.to_csv(path, index=False)
+            import json
+            settings = self._pa_get_settings()
+            settings['export_time'] = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+            # Write settings as comment header, then CSV data
+            with open(path, 'w', newline='') as f:
+                f.write(f"# Settings: {json.dumps(settings)}\n")
+                self._pa_results.to_csv(f, index=False)
+            # Also save settings JSON alongside
+            settings_path = path.replace('.csv', '_settings.json')
+            with open(settings_path, 'w') as f:
+                json.dump(settings, f, indent=2)
             self.status_label.setText(f"Exported to {Path(path).name}")
 
     def _pa_export_figure(self):
@@ -3192,6 +3428,9 @@ class BrainSliceWidget(QWidget):
 
             # Peek at metadata for channel auto-detection and size calibration
             self._peek_and_configure(self.current_file)
+
+            # Auto-load the image
+            self._load_image()
 
     def _browse_folder(self):
         """Open folder browser to select folder of images as stack."""
@@ -4725,7 +4964,6 @@ class BrainSliceWidget(QWidget):
 
     def _add_roi_layer(self):
         """Add or activate a Shapes layer for drawing ROIs."""
-        # Check if our layer still exists in the viewer
         if self.roi_shapes_layer is not None:
             if self.roi_shapes_layer not in self.viewer.layers:
                 self.roi_shapes_layer = None
@@ -4741,6 +4979,30 @@ class BrainSliceWidget(QWidget):
         self.viewer.layers.selection.active = self.roi_shapes_layer
         self.roi_shapes_layer.mode = 'add_polygon'
         self.status_label.setText("Draw ROI polygon. Press Escape when done.")
+
+    def _add_named_roi(self, name=None):
+        """Start drawing a new ROI with a given name."""
+        if name is None:
+            name = f"ROI {len(self._roi_names) + 1}"
+        self._roi_names.append(name)
+        self._update_roi_names_label()
+        self._add_roi_layer()
+        self.status_label.setText(f"Draw '{name}' ROI polygon. Press Escape when done.")
+
+    def _get_roi_name(self, index):
+        """Get the name for an ROI by index, falling back to numbered."""
+        if index < len(self._roi_names):
+            return self._roi_names[index]
+        return f"ROI {index + 1}"
+
+    def _update_roi_names_label(self):
+        """Update the ROI names display label."""
+        if hasattr(self, '_roi_names_label'):
+            if self._roi_names:
+                names_str = ", ".join(self._roi_names)
+                self._roi_names_label.setText(f"ROIs: {names_str}")
+            else:
+                self._roi_names_label.setText("ROIs: (none)")
 
     def _get_roi_data_source(self):
         """Get the measurements DataFrame for ROI counting.
@@ -4813,7 +5075,7 @@ class BrainSliceWidget(QWidget):
             )
 
             # Assign ROI name to particles (first match wins)
-            roi_name = f"ROI {i+1}"
+            roi_name = self._get_roi_name(i)
             for idx in filtered.index:
                 if roi_assignment[idx] == 'Outside':
                     roi_assignment[idx] = roi_name
@@ -4827,7 +5089,7 @@ class BrainSliceWidget(QWidget):
                 n_green = int((filtered['classification'] == 'green_only').sum())
                 n_neither = int((filtered['classification'] == 'neither').sum())
                 results.append({
-                    'roi': f"ROI {i+1}",
+                    'roi': self._get_roi_name(i),
                     'total': total,
                     'dual': n_dual,
                     'red_only': n_red,
@@ -4841,7 +5103,7 @@ class BrainSliceWidget(QWidget):
                 negative = total - positive
                 fraction = positive / total if total > 0 else 0.0
                 results.append({
-                    'roi': f"ROI {i+1}",
+                    'roi': self._get_roi_name(i),
                     'total': total,
                     'positive': positive,
                     'negative': negative,
@@ -4934,32 +5196,53 @@ class BrainSliceWidget(QWidget):
 
         import csv
 
-        # Write summary CSV
-        is_dual = (self._roi_counts_data
-                   and self._roi_counts_data[0].get('_dual_mode', False))
-        if is_dual:
-            fieldnames = ['roi', 'total', 'dual', 'red_only',
-                          'green_only', 'neither', 'frac_dual']
-        else:
-            fieldnames = ['roi', 'total', 'positive', 'negative', 'fraction']
-        clean_data = [{k: v for k, v in r.items() if not k.startswith('_')}
-                      for r in self._roi_counts_data]
-        with open(path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames,
-                                    extrasaction='ignore')
-            writer.writeheader()
-            writer.writerows(clean_data)
+        import json
+        settings = self._pa_get_settings()
+        settings['export_time'] = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+        settings['roi_names'] = self._roi_names
 
-        # Write per-particle detail CSV alongside summary
+        # Primary output: per-particle detail with roi column
         if hasattr(self, '_roi_detail_data') and self._roi_detail_data is not None:
-            detail_path = path.replace('.csv', '_detail.csv')
-            if detail_path == path:
-                detail_path = path + '_detail.csv'
-            self._roi_detail_data.to_csv(detail_path, index=False)
-            self.status_label.setText(
-                f"Exported to {Path(path).name} + {Path(detail_path).name}")
+            with open(path, 'w', newline='') as f:
+                f.write(f"# Settings: {json.dumps(settings)}\n")
+                self._roi_detail_data.to_csv(f, index=False)
         else:
-            self.status_label.setText(f"Exported to {Path(path).name}")
+            # Fallback: summary only if no detail available
+            is_dual = (self._roi_counts_data
+                       and self._roi_counts_data[0].get('_dual_mode', False))
+            if is_dual:
+                fieldnames = ['roi', 'total', 'dual', 'red_only',
+                              'green_only', 'neither', 'frac_dual']
+            else:
+                fieldnames = ['roi', 'total', 'positive', 'negative', 'fraction']
+            clean_data = [{k: v for k, v in r.items() if not k.startswith('_')}
+                          for r in self._roi_counts_data]
+            with open(path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames,
+                                        extrasaction='ignore')
+                writer.writeheader()
+                writer.writerows(clean_data)
+
+        # Also write summary alongside
+        summary_path = path.replace('.csv', '_summary.csv')
+        if summary_path != path:
+            is_dual = (self._roi_counts_data
+                       and self._roi_counts_data[0].get('_dual_mode', False))
+            if is_dual:
+                fieldnames = ['roi', 'total', 'dual', 'red_only',
+                              'green_only', 'neither', 'frac_dual']
+            else:
+                fieldnames = ['roi', 'total', 'positive', 'negative', 'fraction']
+            clean_data = [{k: v for k, v in r.items() if not k.startswith('_')}
+                          for r in self._roi_counts_data]
+            with open(summary_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames,
+                                        extrasaction='ignore')
+                writer.writeheader()
+                writer.writerows(clean_data)
+
+        self.status_label.setText(
+            f"Exported to {Path(path).name} + {Path(summary_path).name}")
 
     def _run_quantification(self):
         """Run regional quantification."""
