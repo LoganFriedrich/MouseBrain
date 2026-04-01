@@ -353,6 +353,25 @@ def launch_napari():
         return 1
 
 
+def launch_brainslice():
+    """Launch napari with the BrainSlice widget already open."""
+    try:
+        import napari
+        print("Launching napari with BrainSlice...")
+        viewer = napari.Viewer()
+        # Open the BrainSlice widget automatically
+        from mousebrain.plugin_2d.sliceatlas.napari_plugin.main_widget import BrainSliceWidget
+        widget = BrainSliceWidget(viewer)
+        viewer.window.add_dock_widget(widget, name="BrainSlice", area="right")
+        napari.run()
+        return 0
+    except Exception as e:
+        print(f"Error launching BrainSlice: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
 def launch_manual_crop(brain_name):
     """Launch napari with manual crop widget for a specific brain."""
     import time
