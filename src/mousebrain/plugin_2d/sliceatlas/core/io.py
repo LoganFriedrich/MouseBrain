@@ -146,6 +146,16 @@ def _load_nd2(
         except Exception:
             metadata['voxel_size_um'] = {'x': 1.0, 'y': 1.0}
 
+        # Get bit depth
+        try:
+            attrs = f.attributes
+            if hasattr(attrs, 'bitsPerComponentSignificant'):
+                metadata['bits_per_component'] = attrs.bitsPerComponentSignificant
+            elif hasattr(attrs, 'bitsPerComponentInMemory'):
+                metadata['bits_per_component'] = attrs.bitsPerComponentInMemory
+        except Exception:
+            pass
+
         # Try to get channel names
         try:
             if hasattr(f, 'metadata') and f.metadata:

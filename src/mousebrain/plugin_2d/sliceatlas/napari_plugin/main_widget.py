@@ -96,6 +96,9 @@ class BrainSliceWidget(QWidget):
         self._pa_results = None  # Results DataFrame
         self._pa_summary = None  # Summary dict
 
+        # Ignore regions
+        self._pa_ignore_shapes_layer = None
+
         # ROI naming
         self._roi_names = []  # List of names matching ROI draw order
 
@@ -479,6 +482,26 @@ class BrainSliceWidget(QWidget):
         layout = QVBoxLayout()
         widget.setLayout(layout)
 
+        # ---- Image Navigation (auto-discovers folder siblings) ----
+        nav_group = QGroupBox("Image Navigation")
+        nav_layout = QHBoxLayout()
+        self._img_prev_btn = QPushButton("< Previous")
+        self._img_prev_btn.clicked.connect(self._nav_prev_image)
+        nav_layout.addWidget(self._img_prev_btn)
+        self._img_nav_label = QLabel("(load an image first)")
+        self._img_nav_label.setAlignment(Qt.AlignCenter)
+        nav_layout.addWidget(self._img_nav_label)
+        self._img_next_btn = QPushButton("Next >")
+        self._img_next_btn.clicked.connect(self._nav_next_image)
+        nav_layout.addWidget(self._img_next_btn)
+        self._img_export_tiff_btn = QPushButton("Export Analyzed TIFF")
+        self._img_export_tiff_btn.setToolTip(
+            "Flatten all visible layers as currently displayed to a TIFF file")
+        self._img_export_tiff_btn.clicked.connect(self._export_analyzed_tiff)
+        nav_layout.addWidget(self._img_export_tiff_btn)
+        nav_group.setLayout(nav_layout)
+        layout.addWidget(nav_group)
+
         # ---- Top-level mode selector: Particle (primary) or Nuclei (secondary) ----
         sig_mode_layout = QHBoxLayout()
         sig_mode_layout.addWidget(QLabel("Mode:"))
@@ -683,6 +706,21 @@ class BrainSliceWidget(QWidget):
         pos_layout.addWidget(self._pa_apply_pct_btn)
         pa_layout.addWidget(pos_group)
 
+        # --- Ignore Regions ---
+        ignore_group = QGroupBox("Ignore Regions")
+        ignore_layout = QHBoxLayout(ignore_group)
+        self._pa_draw_ignore_btn = QPushButton("Draw Ignore Region")
+        self._pa_draw_ignore_btn.setToolTip(
+            "Draw polygons around areas to exclude from analysis.\n"
+            "Particles inside these regions will be removed from results.")
+        self._pa_draw_ignore_btn.clicked.connect(self._pa_activate_ignore_drawing)
+        ignore_layout.addWidget(self._pa_draw_ignore_btn)
+        self._pa_clear_ignore_btn = QPushButton("Clear")
+        self._pa_clear_ignore_btn.setMaximumWidth(60)
+        self._pa_clear_ignore_btn.clicked.connect(self._pa_clear_ignore_regions)
+        ignore_layout.addWidget(self._pa_clear_ignore_btn)
+        pa_layout.addWidget(ignore_group)
+
         # --- Watershed ---
         ws_group = QGroupBox("Split Touching Particles")
         ws_layout = QHBoxLayout(ws_group)
@@ -723,6 +761,14 @@ class BrainSliceWidget(QWidget):
         self.pa_export_fig_btn.clicked.connect(self._pa_export_figure)
         export_row.addWidget(self.pa_export_fig_btn)
         pa_layout.addLayout(export_row)
+
+        self._pa_append_folder_btn = QPushButton("Append to Folder CSV")
+        self._pa_append_folder_btn.setEnabled(False)
+        self._pa_append_folder_btn.setToolTip(
+            "Append this image's particle results to a master CSV\n"
+            "in the image folder (no ROIs needed).")
+        self._pa_append_folder_btn.clicked.connect(self._pa_append_to_folder_csv)
+        pa_layout.addWidget(self._pa_append_folder_btn)
 
         # --- Batch Settings ---
         batch_settings_row = QHBoxLayout()
@@ -1604,6 +1650,23 @@ class BrainSliceWidget(QWidget):
         custom_row.addWidget(self._roi_add_custom_btn)
         roi_draw_layout.addLayout(custom_row)
 
+        # Save/Load ROIs
+        roi_io_row = QHBoxLayout()
+        self._roi_save_btn = QPushButton("Save ROIs")
+        self._roi_save_btn.setToolTip("Save ROI polygons + names to a JSON file for reuse")
+        self._roi_save_btn.clicked.connect(self._save_rois)
+        roi_io_row.addWidget(self._roi_save_btn)
+        self._roi_load_btn = QPushButton("Load ROIs")
+        self._roi_load_btn.setToolTip(
+            "Load saved ROI polygons onto current image.\n"
+            "Use napari's transform tools to adjust position/scale.")
+        self._roi_load_btn.clicked.connect(self._load_rois)
+        roi_io_row.addWidget(self._roi_load_btn)
+        self._roi_clear_btn = QPushButton("Clear ROIs")
+        self._roi_clear_btn.clicked.connect(self._clear_rois)
+        roi_io_row.addWidget(self._roi_clear_btn)
+        roi_draw_layout.addLayout(roi_io_row)
+
         # ROI name list (shows current ROIs and their names)
         self._roi_names_label = QLabel("ROIs: (none)")
         self._roi_names_label.setWordWrap(True)
@@ -1625,6 +1688,14 @@ class BrainSliceWidget(QWidget):
         self.export_roi_btn = QPushButton("Export CSV")
         self.export_roi_btn.clicked.connect(self._export_roi_counts)
         count_btn_layout.addWidget(self.export_roi_btn)
+
+        self._append_folder_btn = QPushButton("Append to Folder CSV")
+        self._append_folder_btn.setToolTip(
+            "Append this image's ROI results to a master CSV in the image folder.\n"
+            "Creates the file if it doesn't exist. Adds a 'sample' column\n"
+            "with the image filename so all images accumulate in one file.")
+        self._append_folder_btn.clicked.connect(self._append_to_folder_csv)
+        count_btn_layout.addWidget(self._append_folder_btn)
         count_layout.addLayout(count_btn_layout)
 
         self.roi_results_table = QTableWidget()
@@ -1637,6 +1708,24 @@ class BrainSliceWidget(QWidget):
 
         count_group.setLayout(count_layout)
         layout.addWidget(count_group)
+
+        # --- Image Navigation + Export (duplicated from Detect & Classify for convenience) ---
+        roi_nav_group = QGroupBox("Image Navigation")
+        roi_nav_layout = QHBoxLayout()
+        self._roi_img_prev_btn = QPushButton("< Previous")
+        self._roi_img_prev_btn.clicked.connect(self._nav_prev_image)
+        roi_nav_layout.addWidget(self._roi_img_prev_btn)
+        self._roi_img_nav_label = QLabel("(load an image first)")
+        self._roi_img_nav_label.setAlignment(Qt.AlignCenter)
+        roi_nav_layout.addWidget(self._roi_img_nav_label)
+        self._roi_img_next_btn = QPushButton("Next >")
+        self._roi_img_next_btn.clicked.connect(self._nav_next_image)
+        roi_nav_layout.addWidget(self._roi_img_next_btn)
+        self._roi_export_tiff_btn = QPushButton("Export Analyzed TIFF")
+        self._roi_export_tiff_btn.clicked.connect(self._export_analyzed_tiff)
+        roi_nav_layout.addWidget(self._roi_export_tiff_btn)
+        roi_nav_group.setLayout(roi_nav_layout)
+        layout.addWidget(roi_nav_group)
 
         layout.addStretch()
         return widget
@@ -1710,6 +1799,338 @@ class BrainSliceWidget(QWidget):
 
     # =========================================================================
     # =========================================================================
+    # =========================================================================
+    # IMAGE NAVIGATION (from Detect & Classify tab)
+    # =========================================================================
+
+    def _clear_analysis_state(self):
+        """Clear all analysis state from the previous image."""
+        # Remove analysis layers from viewer
+        for name in ('Particles', 'Positive/Negative', 'Selected Particle',
+                     'Threshold Mask', 'Binary', 'Signal Mask', 'Signal Outlines',
+                     'ROIs', 'Background ROIs'):
+            for layer in list(self.viewer.layers):
+                if layer.name == name:
+                    self.viewer.layers.remove(layer)
+
+        # Clear particle state
+        self._pa_labels = None
+        self._pa_results = None
+        self._pa_summary = None
+        self._pa_bg_shapes_layer = None
+
+        # Clear ROI state
+        self.roi_shapes_layer = None
+        self._roi_names = []
+        self._roi_counts_data = None
+        if hasattr(self, '_roi_detail_data'):
+            self._roi_detail_data = None
+        if hasattr(self, '_roi_names_label'):
+            self._update_roi_names_label()
+
+        # Clear colocalization state
+        self.cell_measurements = None
+        self.nuclei_labels = None
+        self._coloc_background = None
+        self._coloc_threshold = None
+        self._coloc_summary = None
+
+        # Reset UI elements
+        self.pa_summary_label.setText("")
+        self.pa_results_table.setRowCount(0)
+        self.pa_results_table.setColumnCount(0)
+        self.pa_export_btn.setEnabled(False)
+        self.pa_export_fig_btn.setEnabled(False)
+        self._pa_append_folder_btn.setEnabled(False)
+        self.coloc_result_label.setText("")
+
+    def _save_analysis_state(self):
+        """Save current analysis state to disk alongside the image file."""
+        if self.current_file is None:
+            return
+        if self._pa_results is None and self.cell_measurements is None:
+            return  # Nothing to save
+
+        import json
+
+        analysis_dir = self.current_file.parent / f"{self.current_file.stem}_analysis"
+        analysis_dir.mkdir(exist_ok=True)
+
+        # Save particle results
+        if self._pa_results is not None and len(self._pa_results) > 0:
+            self._pa_results.to_csv(analysis_dir / "particles.csv", index=False)
+
+        # Save particle labels
+        if self._pa_labels is not None:
+            np.savez_compressed(analysis_dir / "labels.npz", labels=self._pa_labels)
+
+        # Save ROIs
+        if self.roi_shapes_layer is not None and self.roi_shapes_layer in self.viewer.layers:
+            if len(self.roi_shapes_layer.data) > 0:
+                rois = []
+                for i, shape_data in enumerate(self.roi_shapes_layer.data):
+                    rois.append({
+                        'name': self._get_roi_name(i),
+                        'vertices': np.array(shape_data).tolist(),
+                    })
+                roi_data = {
+                    'version': 1,
+                    'roi_names': self._roi_names,
+                    'rois': rois,
+                }
+                with open(analysis_dir / "rois.json", 'w') as f:
+                    json.dump(roi_data, f, indent=2)
+
+        # Save settings
+        settings = self._pa_get_settings()
+        with open(analysis_dir / "settings.json", 'w') as f:
+            json.dump(settings, f, indent=2)
+
+        # Save ROI counts if available
+        if hasattr(self, '_roi_detail_data') and self._roi_detail_data is not None:
+            self._roi_detail_data.to_csv(analysis_dir / "roi_detail.csv", index=False)
+
+        print(f"[BrainSlice] Analysis saved to {analysis_dir.name}/")
+
+    def _restore_analysis_state(self):
+        """Restore analysis state from disk if available for current image."""
+        if self.current_file is None:
+            return False
+
+        analysis_dir = self.current_file.parent / f"{self.current_file.stem}_analysis"
+        if not analysis_dir.exists():
+            return False
+
+        import pandas as pd
+        import json
+        restored = []
+
+        try:
+            # Restore settings first
+            settings_path = analysis_dir / "settings.json"
+            if settings_path.exists():
+                with open(settings_path) as f:
+                    settings = json.load(f)
+                self._pa_apply_settings(settings)
+                restored.append("settings")
+
+            # Restore particle labels
+            labels_path = analysis_dir / "labels.npz"
+            if labels_path.exists():
+                data = np.load(labels_path)
+                self._pa_labels = data['labels']
+                restored.append("labels")
+
+                # Add labels layer to viewer
+                scale = self._pa_get_scale()
+                self.viewer.add_labels(
+                    self._pa_labels, name='Particles',
+                    opacity=0.5, scale=scale)
+
+            # Restore particle results
+            results_path = analysis_dir / "particles.csv"
+            if results_path.exists():
+                self._pa_results = pd.read_csv(results_path)
+                restored.append(f"particles ({len(self._pa_results)})")
+
+                # Populate table
+                self._pa_populate_table(self._pa_results)
+                self.pa_export_btn.setEnabled(True)
+                self.pa_export_fig_btn.setEnabled(True)
+                self._pa_append_folder_btn.setEnabled(True)
+
+                # Draw classification overlay
+                if self._pa_labels is not None and 'is_positive' in self._pa_results.columns:
+                    self._pa_draw_classification_overlay()
+
+                # Register click callback
+                particles_layer = self._pa_find_layer('Particles')
+                if particles_layer is not None:
+                    self._pa_register_click_callback(particles_layer)
+
+            # Restore ROIs
+            rois_path = analysis_dir / "rois.json"
+            if rois_path.exists():
+                with open(rois_path) as f:
+                    roi_data = json.load(f)
+                self._roi_names = roi_data.get('roi_names', [])
+                rois = roi_data.get('rois', [])
+                if rois:
+                    self._add_roi_layer()
+                    self.roi_shapes_layer.data = []
+                    for roi in rois:
+                        verts = np.array(roi['vertices'])
+                        self.roi_shapes_layer.add_polygons([verts])
+                    self.roi_shapes_layer.mode = 'pan_zoom'
+                    self._update_roi_names_label()
+                    restored.append(f"ROIs ({len(rois)})")
+
+            if restored:
+                self.status_label.setText(
+                    f"Restored: {', '.join(restored)}")
+                print(f"[BrainSlice] Restored analysis from {analysis_dir.name}/: "
+                      f"{', '.join(restored)}")
+                return True
+
+        except Exception as e:
+            print(f"[BrainSlice] Failed to restore analysis: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return False
+
+    def _nav_get_siblings(self):
+        """Get sorted list of same-type image files in the current file's folder."""
+        if not self.current_file or not self.current_file.exists():
+            return [], -1
+        folder = self.current_file.parent
+        ext = self.current_file.suffix.lower()
+        siblings = sorted(f for f in folder.iterdir()
+                          if f.suffix.lower() == ext and f.is_file())
+        try:
+            idx = siblings.index(self.current_file)
+        except ValueError:
+            idx = -1
+        return siblings, idx
+
+    def _nav_update_label(self):
+        """Update navigation labels on both Detect & Classify and ROI tabs."""
+        siblings, idx = self._nav_get_siblings()
+        if not siblings or idx < 0:
+            self._img_nav_label.setText("(load an image first)")
+            if hasattr(self, '_roi_img_nav_label'):
+                self._roi_img_nav_label.setText("(load an image first)")
+            return
+        text = f"{idx + 1}/{len(siblings)}: {self.current_file.name}"
+        can_prev = idx > 0
+        can_next = idx < len(siblings) - 1
+        self._img_nav_label.setText(text)
+        self._img_prev_btn.setEnabled(can_prev)
+        self._img_next_btn.setEnabled(can_next)
+        if hasattr(self, '_roi_img_nav_label'):
+            self._roi_img_nav_label.setText(text)
+            self._roi_img_prev_btn.setEnabled(can_prev)
+            self._roi_img_next_btn.setEnabled(can_next)
+
+    def _nav_load_file(self, fpath):
+        """Load a file through the normal Load tab pipeline."""
+        self._save_analysis_state()
+        self._clear_analysis_state()
+        self.current_file = fpath
+        self.is_folder_load = False
+        self.file_label.setText(str(fpath.name))
+        self.load_btn.setEnabled(True)
+        self._peek_and_configure(fpath)
+        self._load_image()
+        self._nav_update_label()
+
+    def _nav_prev_image(self):
+        """Load previous image in the folder."""
+        siblings, idx = self._nav_get_siblings()
+        if idx > 0:
+            self._nav_load_file(siblings[idx - 1])
+
+    def _nav_next_image(self):
+        """Load next image in the folder."""
+        siblings, idx = self._nav_get_siblings()
+        if idx >= 0 and idx < len(siblings) - 1:
+            self._nav_load_file(siblings[idx + 1])
+
+    def _export_analyzed_tiff(self):
+        """Export all visible layers composited at full base image resolution as TIFF."""
+        if not self.current_file:
+            QMessageBox.warning(self, "Error", "No image loaded")
+            return
+
+        default_name = f"{self.current_file.stem}_Analyzed.tiff"
+        default_dir = self.current_file.parent
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Analyzed TIFF",
+            str(default_dir / default_name),
+            "TIFF Files (*.tiff *.tif)"
+        )
+        if not path:
+            return
+
+        try:
+            # Get base image shape
+            if self.red_channel is not None:
+                base = self._get_current_slice(self.red_channel)
+            elif self.channels:
+                base = self._get_current_slice(self.channels[0])
+            else:
+                QMessageBox.warning(self, "Error", "No base image")
+                return
+            h, w = base.shape[:2]
+
+            # Build RGB composite from visible image layers
+            canvas = np.zeros((h, w, 3), dtype=np.float64)
+
+            for layer in self.viewer.layers:
+                if not layer.visible:
+                    continue
+
+                if hasattr(layer, 'data') and isinstance(layer, napari.layers.Image):
+                    data = layer.data
+                    if data.ndim == 3:
+                        data = data.max(axis=0)
+                    data = data.astype(np.float64)
+
+                    # Normalize to contrast limits
+                    cmin, cmax = layer.contrast_limits
+                    data = np.clip((data - cmin) / max(cmax - cmin, 1), 0, 1)
+
+                    # Apply colormap
+                    cmap_name = layer.colormap.name if hasattr(layer.colormap, 'name') else str(layer.colormap)
+                    opacity = layer.opacity
+                    if 'red' in cmap_name or 'magenta' in cmap_name:
+                        color = np.array([1.0, 0.0, 0.0])
+                    elif 'green' in cmap_name:
+                        color = np.array([0.0, 1.0, 0.0])
+                    elif 'blue' in cmap_name or 'cyan' in cmap_name:
+                        color = np.array([0.0, 0.0, 1.0])
+                    else:
+                        color = np.array([1.0, 1.0, 1.0])
+
+                    for c in range(3):
+                        canvas[:, :, c] += data * color[c] * opacity
+
+                elif hasattr(layer, 'data') and isinstance(layer, napari.layers.Labels):
+                    label_data = layer.data
+                    if label_data.shape != (h, w):
+                        continue
+                    opacity = layer.opacity
+
+                    # Get color from colormap
+                    try:
+                        cmap = layer.colormap
+                        if hasattr(cmap, 'color_dict'):
+                            for label_val, rgba in cmap.color_dict.items():
+                                if label_val is None or label_val == 0:
+                                    continue
+                                mask = label_data == label_val
+                                if not mask.any():
+                                    continue
+                                for c in range(3):
+                                    canvas[:, :, c][mask] = (
+                                        canvas[:, :, c][mask] * (1 - opacity)
+                                        + rgba[c] * opacity)
+                    except Exception:
+                        pass
+
+            # Clamp and convert to uint8
+            canvas = np.clip(canvas * 255, 0, 255).astype(np.uint8)
+
+            from tifffile import imwrite
+            imwrite(path, canvas)
+            self.status_label.setText(
+                f"Exported {h}x{w} to {Path(path).name}")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Error", f"Failed to export: {e}")
+
+    # =========================================================================
     # IMAGE QUEUE (folder navigation)
     # =========================================================================
 
@@ -1749,6 +2170,10 @@ class BrainSliceWidget(QWidget):
             f"{self._queue_idx + 1}/{total}: {fpath.name}")
         self._queue_prev_btn.setEnabled(self._queue_idx > 0)
         self._queue_next_btn.setEnabled(self._queue_idx < total - 1)
+
+        # Save and clear previous analysis before loading new file
+        self._save_analysis_state()
+        self._clear_analysis_state()
 
         # Set the file path and trigger normal load
         self.current_file = fpath
@@ -2452,12 +2877,18 @@ class BrainSliceWidget(QWidget):
         self.pa_meas_combo.blockSignals(False)
         self.pa_display_combo.blockSignals(False)
 
-        # Update threshold range based on detection channel dtype
+        # Update threshold range based on bit depth from metadata
         if self.channels:
             det_idx = max(0, self.pa_det_combo.currentIndex())
             if det_idx < len(self.channels):
                 img = self.channels[det_idx]
-                if img.dtype == np.uint8:
+                # Use significant bit depth from metadata if available
+                bits = None
+                if self.metadata and isinstance(self.metadata, dict):
+                    bits = self.metadata.get('bits_per_component')
+                if bits:
+                    img_max = (2 ** bits) - 1
+                elif img.dtype == np.uint8:
                     img_max = 255
                 elif img.dtype == np.uint16:
                     img_max = 65535
@@ -2862,6 +3293,11 @@ class BrainSliceWidget(QWidget):
             # Binarize
             mask = analyzer.binarize(det_img, float(self._pa_thresh_spin.value()))
 
+            # Apply ignore regions
+            ignore_mask = self._pa_get_ignore_mask(mask.shape)
+            if ignore_mask is not None:
+                mask[ignore_mask] = False
+
             # Optional watershed
             if self.pa_watershed_check.isChecked():
                 from scipy import ndimage as ndi
@@ -3002,6 +3438,7 @@ class BrainSliceWidget(QWidget):
             self._pa_populate_table(results)
             self.pa_export_btn.setEnabled(n > 0)
             self.pa_export_fig_btn.setEnabled(n > 0)
+            self._pa_append_folder_btn.setEnabled(n > 0)
 
             # Auto-scroll to show results table
             self._pa_scroll_to_results()
@@ -3150,6 +3587,100 @@ class BrainSliceWidget(QWidget):
 
         self.pa_results_table.resizeColumnsToContents()
         self.pa_results_table.setSortingEnabled(True)
+
+    def _pa_activate_ignore_drawing(self):
+        """Create or activate the Ignore Regions shapes layer."""
+        if (self._pa_ignore_shapes_layer is None
+                or self._pa_ignore_shapes_layer not in self.viewer.layers):
+            scale = self._pa_get_scale()
+            self._pa_ignore_shapes_layer = self.viewer.add_shapes(
+                name="Ignore Regions",
+                edge_color="red",
+                edge_width=2,
+                face_color=[1.0, 0.0, 0.0, 0.15],
+                scale=scale,
+            )
+        self.viewer.layers.selection.active = self._pa_ignore_shapes_layer
+        self._pa_ignore_shapes_layer.mode = 'add_polygon'
+        self.status_label.setText(
+            "Draw polygon around area to ignore. Press Escape when done.")
+
+    def _pa_clear_ignore_regions(self):
+        """Clear all ignore regions."""
+        if (self._pa_ignore_shapes_layer is not None
+                and self._pa_ignore_shapes_layer in self.viewer.layers):
+            self._pa_ignore_shapes_layer.data = []
+        self.status_label.setText("Ignore regions cleared")
+
+    def _pa_get_ignore_mask(self, shape):
+        """Build a boolean mask of pixels to ignore (True = ignore)."""
+        if (self._pa_ignore_shapes_layer is None
+                or self._pa_ignore_shapes_layer not in self.viewer.layers
+                or len(self._pa_ignore_shapes_layer.data) == 0):
+            return None
+
+        from skimage.draw import polygon as draw_polygon
+        mask = np.zeros(shape, dtype=bool)
+        scale = self._pa_get_scale()
+        sy = scale[0] if len(scale) > 0 else 1.0
+        sx = scale[1] if len(scale) > 1 else 1.0
+
+        for shape_data in self._pa_ignore_shapes_layer.data:
+            verts = np.array(shape_data)
+            # Convert from world to pixel coords if scaled
+            if sy != 1.0 or sx != 1.0:
+                verts = verts.copy()
+                verts[:, 0] /= sy
+                verts[:, 1] /= sx
+            rr, cc = draw_polygon(verts[:, 0], verts[:, 1], shape=shape)
+            mask[rr, cc] = True
+        return mask
+
+    def _pa_append_to_folder_csv(self):
+        """Append particle results (no ROIs) to a master CSV in the image folder."""
+        if self._pa_results is None or len(self._pa_results) == 0:
+            QMessageBox.warning(self, "Error", "Run particle analysis first")
+            return
+        if not self.current_file:
+            QMessageBox.warning(self, "Error", "No image loaded")
+            return
+
+        import pandas as pd
+        import json
+
+        folder = self.current_file.parent
+        sample_name = self.current_file.stem
+        master_path = folder / f"{folder.name}_particles.csv"
+
+        detail = self._pa_results.copy()
+        detail.insert(0, 'sample', sample_name)
+
+        if master_path.exists():
+            existing = pd.read_csv(master_path, comment='#')
+            if sample_name in existing.get('sample', pd.Series()).values:
+                reply = QMessageBox.question(
+                    self, "Duplicate",
+                    f"'{sample_name}' already exists in {master_path.name}.\n"
+                    "Replace its rows?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+                )
+                if reply == QMessageBox.Yes:
+                    existing = existing[existing['sample'] != sample_name]
+                else:
+                    return
+            combined = pd.concat([existing, detail], ignore_index=True)
+        else:
+            combined = detail
+
+        settings = self._pa_get_settings()
+        with open(master_path, 'w', newline='') as f:
+            f.write(f"# Settings: {json.dumps(settings)}\n")
+            combined.to_csv(f, index=False)
+
+        n_samples = combined['sample'].nunique()
+        self.status_label.setText(
+            f"Appended {sample_name} to {master_path.name} "
+            f"({n_samples} samples, {len(combined)} particles)")
 
     # -- click interaction -----------------------------------------------------
 
@@ -3923,6 +4454,12 @@ class BrainSliceWidget(QWidget):
                 self.inset_widget.on_base_loaded()
             except Exception as e:
                 print(f"[BrainSlice] Inset widget notification failed (non-fatal): {e}")
+
+            # Update image navigation labels
+            self._nav_update_label()
+
+            # Try to restore previous analysis
+            self._restore_analysis_state()
 
         else:
             self.status_label.setText(f"Error: {message}")
@@ -5004,6 +5541,97 @@ class BrainSliceWidget(QWidget):
             else:
                 self._roi_names_label.setText("ROIs: (none)")
 
+    def _save_rois(self):
+        """Save current ROI polygons and names to a JSON file."""
+        if self.roi_shapes_layer is None or len(self.roi_shapes_layer.data) == 0:
+            QMessageBox.warning(self, "Error", "No ROIs to save")
+            return
+
+        import json
+        default_name = "rois.json"
+        if self.current_file:
+            default_name = f"{self.current_file.stem}_rois.json"
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save ROIs", default_name,
+            "JSON Files (*.json);;All Files (*)")
+        if not path:
+            return
+
+        rois = []
+        for i, shape_data in enumerate(self.roi_shapes_layer.data):
+            verts = np.array(shape_data).tolist()
+            rois.append({
+                'name': self._get_roi_name(i),
+                'vertices': verts,
+            })
+
+        data = {
+            'version': 1,
+            'n_rois': len(rois),
+            'roi_names': self._roi_names,
+            'rois': rois,
+        }
+        if self.current_file:
+            data['source_image'] = str(self.current_file.name)
+        if self._pixel_size_um:
+            data['pixel_size_um'] = self._pixel_size_um
+
+        with open(path, 'w') as f:
+            json.dump(data, f, indent=2)
+        self.status_label.setText(f"Saved {len(rois)} ROIs to {Path(path).name}")
+
+    def _load_rois(self):
+        """Load ROI polygons from a JSON file onto the current viewer."""
+        import json
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load ROIs", "",
+            "JSON Files (*.json);;All Files (*)")
+        if not path:
+            return
+
+        try:
+            with open(path) as f:
+                data = json.load(f)
+
+            rois = data.get('rois', [])
+            if not rois:
+                QMessageBox.warning(self, "Error", "No ROIs found in file")
+                return
+
+            # Restore names
+            self._roi_names = data.get('roi_names', [])
+            if not self._roi_names:
+                self._roi_names = [r.get('name', f"ROI {i+1}")
+                                   for i, r in enumerate(rois)]
+
+            # Create/clear shapes layer
+            self._add_roi_layer()
+            self.roi_shapes_layer.data = []
+
+            # Add each ROI polygon
+            for roi in rois:
+                verts = np.array(roi['vertices'])
+                self.roi_shapes_layer.add_polygons([verts])
+
+            self.roi_shapes_layer.mode = 'pan_zoom'
+            self._update_roi_names_label()
+            self.status_label.setText(
+                f"Loaded {len(rois)} ROIs from {Path(path).name} "
+                f"-- use transform tools to adjust if needed")
+
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load ROIs: {e}")
+
+    def _clear_rois(self):
+        """Clear all ROIs and names."""
+        if self.roi_shapes_layer is not None:
+            if self.roi_shapes_layer in self.viewer.layers:
+                self.roi_shapes_layer.data = []
+        self._roi_names = []
+        self._update_roi_names_label()
+        self.status_label.setText("ROIs cleared")
+
     def _get_roi_data_source(self):
         """Get the measurements DataFrame for ROI counting.
 
@@ -5243,6 +5871,60 @@ class BrainSliceWidget(QWidget):
 
         self.status_label.setText(
             f"Exported to {Path(path).name} + {Path(summary_path).name}")
+
+    def _append_to_folder_csv(self):
+        """Append current image's ROI results to a master CSV in the image folder."""
+        if not hasattr(self, '_roi_detail_data') or self._roi_detail_data is None:
+            QMessageBox.warning(self, "Error", "Run ROI counting first")
+            return
+
+        # Determine output path
+        if self.current_file:
+            folder = self.current_file.parent
+            sample_name = self.current_file.stem
+        else:
+            QMessageBox.warning(self, "Error", "No image loaded")
+            return
+
+        master_path = folder / f"{folder.name}_roi_results.csv"
+
+        import pandas as pd
+
+        # Add sample column
+        detail = self._roi_detail_data.copy()
+        detail.insert(0, 'sample', sample_name)
+
+        # Append or create
+        if master_path.exists():
+            # Read existing to check for duplicate sample
+            existing = pd.read_csv(master_path, comment='#')
+            if sample_name in existing.get('sample', pd.Series()).values:
+                reply = QMessageBox.question(
+                    self, "Duplicate",
+                    f"'{sample_name}' already exists in {master_path.name}.\n"
+                    "Replace its rows?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+                )
+                if reply == QMessageBox.Yes:
+                    existing = existing[existing['sample'] != sample_name]
+                else:
+                    return
+            combined = pd.concat([existing, detail], ignore_index=True)
+        else:
+            combined = detail
+
+        # Write with settings header
+        import json
+        settings = self._pa_get_settings()
+        settings['roi_names'] = self._roi_names
+        with open(master_path, 'w', newline='') as f:
+            f.write(f"# Settings: {json.dumps(settings)}\n")
+            combined.to_csv(f, index=False)
+
+        n_samples = combined['sample'].nunique()
+        self.status_label.setText(
+            f"Appended {sample_name} to {master_path.name} "
+            f"({n_samples} samples, {len(combined)} particles)")
 
     def _run_quantification(self):
         """Run regional quantification."""
