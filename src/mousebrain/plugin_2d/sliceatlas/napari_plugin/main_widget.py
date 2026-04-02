@@ -96,6 +96,10 @@ class BrainSliceWidget(QWidget):
         self._pa_results = None  # Results DataFrame
         self._pa_summary = None  # Summary dict
 
+        # Image navigation
+        self._nav_siblings = []
+        self._nav_selected_idx = -1
+
         # Ignore regions
         self._pa_ignore_shapes_layer = None
 
@@ -484,22 +488,33 @@ class BrainSliceWidget(QWidget):
 
         # ---- Image Navigation (auto-discovers folder siblings) ----
         nav_group = QGroupBox("Image Navigation")
-        nav_layout = QHBoxLayout()
-        self._img_prev_btn = QPushButton("< Previous")
-        self._img_prev_btn.clicked.connect(self._nav_prev_image)
-        nav_layout.addWidget(self._img_prev_btn)
+        nav_outer = QVBoxLayout()
         self._img_nav_label = QLabel("(load an image first)")
         self._img_nav_label.setAlignment(Qt.AlignCenter)
-        nav_layout.addWidget(self._img_nav_label)
+        self._img_nav_label.setWordWrap(True)
+        nav_outer.addWidget(self._img_nav_label)
+        nav_btn_row = QHBoxLayout()
+        self._img_prev_btn = QPushButton("< Previous")
+        self._img_prev_btn.clicked.connect(self._nav_prev_image)
+        nav_btn_row.addWidget(self._img_prev_btn)
         self._img_next_btn = QPushButton("Next >")
         self._img_next_btn.clicked.connect(self._nav_next_image)
-        nav_layout.addWidget(self._img_next_btn)
-        self._img_export_tiff_btn = QPushButton("Export Analyzed TIFF")
+        nav_btn_row.addWidget(self._img_next_btn)
+        self._img_load_btn = QPushButton("Load")
+        self._img_load_btn.setStyleSheet("font-weight: bold;")
+        self._img_load_btn.clicked.connect(self._nav_load_selected)
+        nav_btn_row.addWidget(self._img_load_btn)
+        self._img_save_state_btn = QPushButton("Save State")
+        self._img_save_state_btn.setToolTip("Save current analysis state to disk")
+        self._img_save_state_btn.clicked.connect(self._manual_save_state)
+        nav_btn_row.addWidget(self._img_save_state_btn)
+        self._img_export_tiff_btn = QPushButton("Export TIFF")
         self._img_export_tiff_btn.setToolTip(
             "Flatten all visible layers as currently displayed to a TIFF file")
         self._img_export_tiff_btn.clicked.connect(self._export_analyzed_tiff)
-        nav_layout.addWidget(self._img_export_tiff_btn)
-        nav_group.setLayout(nav_layout)
+        nav_btn_row.addWidget(self._img_export_tiff_btn)
+        nav_outer.addLayout(nav_btn_row)
+        nav_group.setLayout(nav_outer)
         layout.addWidget(nav_group)
 
         # ---- Top-level mode selector: Particle (primary) or Nuclei (secondary) ----
@@ -1711,20 +1726,31 @@ class BrainSliceWidget(QWidget):
 
         # --- Image Navigation + Export (duplicated from Detect & Classify for convenience) ---
         roi_nav_group = QGroupBox("Image Navigation")
-        roi_nav_layout = QHBoxLayout()
-        self._roi_img_prev_btn = QPushButton("< Previous")
-        self._roi_img_prev_btn.clicked.connect(self._nav_prev_image)
-        roi_nav_layout.addWidget(self._roi_img_prev_btn)
+        roi_nav_outer = QVBoxLayout()
         self._roi_img_nav_label = QLabel("(load an image first)")
         self._roi_img_nav_label.setAlignment(Qt.AlignCenter)
-        roi_nav_layout.addWidget(self._roi_img_nav_label)
+        self._roi_img_nav_label.setWordWrap(True)
+        roi_nav_outer.addWidget(self._roi_img_nav_label)
+        roi_nav_btn_row = QHBoxLayout()
+        self._roi_img_prev_btn = QPushButton("< Previous")
+        self._roi_img_prev_btn.clicked.connect(self._nav_prev_image)
+        roi_nav_btn_row.addWidget(self._roi_img_prev_btn)
         self._roi_img_next_btn = QPushButton("Next >")
         self._roi_img_next_btn.clicked.connect(self._nav_next_image)
-        roi_nav_layout.addWidget(self._roi_img_next_btn)
-        self._roi_export_tiff_btn = QPushButton("Export Analyzed TIFF")
+        roi_nav_btn_row.addWidget(self._roi_img_next_btn)
+        self._roi_img_load_btn = QPushButton("Load")
+        self._roi_img_load_btn.setStyleSheet("font-weight: bold;")
+        self._roi_img_load_btn.clicked.connect(self._nav_load_selected)
+        roi_nav_btn_row.addWidget(self._roi_img_load_btn)
+        self._roi_save_state_btn = QPushButton("Save State")
+        self._roi_save_state_btn.setToolTip("Save current analysis state to disk")
+        self._roi_save_state_btn.clicked.connect(self._manual_save_state)
+        roi_nav_btn_row.addWidget(self._roi_save_state_btn)
+        self._roi_export_tiff_btn = QPushButton("Export TIFF")
         self._roi_export_tiff_btn.clicked.connect(self._export_analyzed_tiff)
-        roi_nav_layout.addWidget(self._roi_export_tiff_btn)
-        roi_nav_group.setLayout(roi_nav_layout)
+        roi_nav_btn_row.addWidget(self._roi_export_tiff_btn)
+        roi_nav_outer.addLayout(roi_nav_btn_row)
+        roi_nav_group.setLayout(roi_nav_outer)
         layout.addWidget(roi_nav_group)
 
         layout.addStretch()
@@ -1847,50 +1873,93 @@ class BrainSliceWidget(QWidget):
     def _save_analysis_state(self):
         """Save current analysis state to disk alongside the image file."""
         if self.current_file is None:
+            print("[BrainSlice] Save skipped: no current file")
             return
         if self._pa_results is None and self.cell_measurements is None:
-            return  # Nothing to save
+            print("[BrainSlice] Save skipped: no results to save")
+            return
 
         import json
 
-        analysis_dir = self.current_file.parent / f"{self.current_file.stem}_analysis"
-        analysis_dir.mkdir(exist_ok=True)
+        try:
+            analysis_dir = self.current_file.parent / f"{self.current_file.stem}_analysis"
+            analysis_dir.mkdir(exist_ok=True)
 
-        # Save particle results
-        if self._pa_results is not None and len(self._pa_results) > 0:
-            self._pa_results.to_csv(analysis_dir / "particles.csv", index=False)
+            # Save particle results
+            if self._pa_results is not None and len(self._pa_results) > 0:
+                self._pa_results.to_csv(analysis_dir / "particles.csv", index=False)
 
-        # Save particle labels
-        if self._pa_labels is not None:
-            np.savez_compressed(analysis_dir / "labels.npz", labels=self._pa_labels)
+            # Save particle labels
+            if self._pa_labels is not None:
+                np.savez_compressed(analysis_dir / "labels.npz", labels=self._pa_labels)
 
-        # Save ROIs
-        if self.roi_shapes_layer is not None and self.roi_shapes_layer in self.viewer.layers:
-            if len(self.roi_shapes_layer.data) > 0:
-                rois = []
-                for i, shape_data in enumerate(self.roi_shapes_layer.data):
-                    rois.append({
-                        'name': self._get_roi_name(i),
-                        'vertices': np.array(shape_data).tolist(),
-                    })
-                roi_data = {
-                    'version': 1,
-                    'roi_names': self._roi_names,
-                    'rois': rois,
+            # Save ignore regions
+            if (self._pa_ignore_shapes_layer is not None
+                    and self._pa_ignore_shapes_layer in self.viewer.layers
+                    and len(self._pa_ignore_shapes_layer.data) > 0):
+                ignore_data = []
+                for shape_data in self._pa_ignore_shapes_layer.data:
+                    ignore_data.append(np.array(shape_data).tolist())
+                with open(analysis_dir / "ignore_regions.json", 'w') as f:
+                    json.dump({'regions': ignore_data}, f, indent=2)
+
+            # Save background ROIs
+            if (self._pa_bg_shapes_layer is not None
+                    and self._pa_bg_shapes_layer in self.viewer.layers
+                    and len(self._pa_bg_shapes_layer.data) > 0):
+                bg_rois = []
+                for shape_data in self._pa_bg_shapes_layer.data:
+                    bg_rois.append(np.array(shape_data).tolist())
+                bg_data = {
+                    'regions': bg_rois,
+                    'bg_value': self.pa_bg_manual_spin.value(),
                 }
-                with open(analysis_dir / "rois.json", 'w') as f:
-                    json.dump(roi_data, f, indent=2)
+                with open(analysis_dir / "bg_rois.json", 'w') as f:
+                    json.dump(bg_data, f, indent=2)
 
-        # Save settings
-        settings = self._pa_get_settings()
-        with open(analysis_dir / "settings.json", 'w') as f:
-            json.dump(settings, f, indent=2)
+            # Save ROIs
+            if self.roi_shapes_layer is not None and self.roi_shapes_layer in self.viewer.layers:
+                if len(self.roi_shapes_layer.data) > 0:
+                    rois = []
+                    for i, shape_data in enumerate(self.roi_shapes_layer.data):
+                        rois.append({
+                            'name': self._get_roi_name(i),
+                            'vertices': np.array(shape_data).tolist(),
+                        })
+                    roi_data = {
+                        'version': 1,
+                        'roi_names': self._roi_names,
+                        'rois': rois,
+                    }
+                    with open(analysis_dir / "rois.json", 'w') as f:
+                        json.dump(roi_data, f, indent=2)
 
-        # Save ROI counts if available
-        if hasattr(self, '_roi_detail_data') and self._roi_detail_data is not None:
-            self._roi_detail_data.to_csv(analysis_dir / "roi_detail.csv", index=False)
+            # Save settings + layer visibility
+            settings = self._pa_get_settings()
+            layer_visibility = {}
+            for layer in self.viewer.layers:
+                layer_visibility[layer.name] = layer.visible
+            settings['layer_visibility'] = layer_visibility
+            with open(analysis_dir / "settings.json", 'w') as f:
+                json.dump(settings, f, indent=2)
 
-        print(f"[BrainSlice] Analysis saved to {analysis_dir.name}/")
+            # Save ROI counts if available
+            if hasattr(self, '_roi_detail_data') and self._roi_detail_data is not None:
+                self._roi_detail_data.to_csv(analysis_dir / "roi_detail.csv", index=False)
+
+            print(f"[BrainSlice] Analysis saved to {analysis_dir.name}/")
+
+        except Exception as e:
+            print(f"[BrainSlice] ERROR saving analysis: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _manual_save_state(self):
+        """Explicitly save analysis state (triggered by Save State button)."""
+        self._save_analysis_state()
+        if self.current_file:
+            self.status_label.setText(
+                f"State saved for {self.current_file.stem}")
 
     def _restore_analysis_state(self):
         """Restore analysis state from disk if available for current image."""
@@ -1965,6 +2034,48 @@ class BrainSliceWidget(QWidget):
                     self._update_roi_names_label()
                     restored.append(f"ROIs ({len(rois)})")
 
+            # Restore background ROIs
+            bg_rois_path = analysis_dir / "bg_rois.json"
+            if bg_rois_path.exists():
+                with open(bg_rois_path) as f:
+                    bg_data = json.load(f)
+                bg_regions = bg_data.get('regions', [])
+                bg_value = bg_data.get('bg_value', 0)
+                if bg_regions:
+                    self._pa_setup_bg_shapes_layer()
+                    for region in bg_regions:
+                        verts = np.array(region)
+                        self._pa_bg_shapes_layer.add_rectangles([verts])
+                    self._pa_bg_shapes_layer.mode = 'pan_zoom'
+                    if bg_value > 0:
+                        self.pa_bg_manual_spin.setValue(bg_value)
+                    restored.append(f"BG ROIs ({len(bg_regions)})")
+
+            # Restore ignore regions
+            ignore_path = analysis_dir / "ignore_regions.json"
+            if ignore_path.exists():
+                with open(ignore_path) as f:
+                    ignore_data = json.load(f)
+                regions = ignore_data.get('regions', [])
+                if regions:
+                    self._pa_activate_ignore_drawing()
+                    self._pa_ignore_shapes_layer.data = []
+                    for region in regions:
+                        verts = np.array(region)
+                        self._pa_ignore_shapes_layer.add_polygons([verts])
+                    self._pa_ignore_shapes_layer.mode = 'pan_zoom'
+                    restored.append(f"ignore regions ({len(regions)})")
+
+            # Restore layer visibility
+            if settings_path.exists():
+                with open(settings_path) as f:
+                    s = json.load(f)
+                vis = s.get('layer_visibility', {})
+                if vis:
+                    for layer in self.viewer.layers:
+                        if layer.name in vis:
+                            layer.visible = vis[layer.name]
+
             if restored:
                 self.status_label.setText(
                     f"Restored: {', '.join(restored)}")
@@ -1995,15 +2106,43 @@ class BrainSliceWidget(QWidget):
 
     def _nav_update_label(self):
         """Update navigation labels on both Detect & Classify and ROI tabs."""
-        siblings, idx = self._nav_get_siblings()
-        if not siblings or idx < 0:
+        # Rebuild siblings list if needed
+        if not self._nav_siblings and self.current_file:
+            self._nav_siblings, _ = self._nav_get_siblings()
+            if self._nav_siblings:
+                try:
+                    self._nav_selected_idx = self._nav_siblings.index(self.current_file)
+                except ValueError:
+                    self._nav_selected_idx = -1
+
+        if not self._nav_siblings or self._nav_selected_idx < 0:
             self._img_nav_label.setText("(load an image first)")
             if hasattr(self, '_roi_img_nav_label'):
                 self._roi_img_nav_label.setText("(load an image first)")
             return
-        text = f"{idx + 1}/{len(siblings)}: {self.current_file.name}"
-        can_prev = idx > 0
-        can_next = idx < len(siblings) - 1
+
+        selected = self._nav_siblings[self._nav_selected_idx]
+        total = len(self._nav_siblings)
+        # Check if this image has been analyzed before
+        analysis_dir = selected.parent / f"{selected.stem}_analysis"
+        marker = ""
+        if analysis_dir.exists():
+            # Get timestamp from settings.json or folder mtime
+            settings_file = analysis_dir / "settings.json"
+            try:
+                if settings_file.exists():
+                    mtime = settings_file.stat().st_mtime
+                else:
+                    mtime = analysis_dir.stat().st_mtime
+                from datetime import datetime as _dt
+                ts = _dt.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
+                marker = f" [analyzed {ts}]"
+            except Exception:
+                marker = " [analyzed]"
+        text = f"{self._nav_selected_idx + 1}/{total}: {selected.name}{marker}"
+        can_prev = self._nav_selected_idx > 0
+        can_next = self._nav_selected_idx < total - 1
+
         self._img_nav_label.setText(text)
         self._img_prev_btn.setEnabled(can_prev)
         self._img_next_btn.setEnabled(can_next)
@@ -2025,16 +2164,24 @@ class BrainSliceWidget(QWidget):
         self._nav_update_label()
 
     def _nav_prev_image(self):
-        """Load previous image in the folder."""
-        siblings, idx = self._nav_get_siblings()
-        if idx > 0:
-            self._nav_load_file(siblings[idx - 1])
+        """Select previous image (does not load)."""
+        if self._nav_selected_idx > 0:
+            self._nav_selected_idx -= 1
+            self._nav_update_label()
 
     def _nav_next_image(self):
-        """Load next image in the folder."""
-        siblings, idx = self._nav_get_siblings()
-        if idx >= 0 and idx < len(siblings) - 1:
-            self._nav_load_file(siblings[idx + 1])
+        """Select next image (does not load)."""
+        if self._nav_selected_idx < len(self._nav_siblings) - 1:
+            self._nav_selected_idx += 1
+            self._nav_update_label()
+
+    def _nav_load_selected(self):
+        """Load the currently selected image."""
+        if (self._nav_selected_idx < 0 or
+                self._nav_selected_idx >= len(self._nav_siblings)):
+            return
+        fpath = self._nav_siblings[self._nav_selected_idx]
+        self._nav_load_file(fpath)
 
     def _export_analyzed_tiff(self):
         """Export all visible layers composited at full base image resolution as TIFF."""
@@ -2062,61 +2209,168 @@ class BrainSliceWidget(QWidget):
                 QMessageBox.warning(self, "Error", "No base image")
                 return
             h, w = base.shape[:2]
+            scale = self._pa_get_scale()
 
-            # Build RGB composite from visible image layers
+            # Start with black canvas
             canvas = np.zeros((h, w, 3), dtype=np.float64)
 
             for layer in self.viewer.layers:
                 if not layer.visible:
                     continue
+                opacity = layer.opacity
 
-                if hasattr(layer, 'data') and isinstance(layer, napari.layers.Image):
+                # Image layers
+                if isinstance(layer, napari.layers.Image):
                     data = layer.data
                     if data.ndim == 3:
                         data = data.max(axis=0)
+                    if data.shape[:2] != (h, w):
+                        continue
                     data = data.astype(np.float64)
-
-                    # Normalize to contrast limits
                     cmin, cmax = layer.contrast_limits
                     data = np.clip((data - cmin) / max(cmax - cmin, 1), 0, 1)
-
-                    # Apply colormap
-                    cmap_name = layer.colormap.name if hasattr(layer.colormap, 'name') else str(layer.colormap)
-                    opacity = layer.opacity
+                    cmap_name = str(getattr(layer.colormap, 'name', layer.colormap))
                     if 'red' in cmap_name or 'magenta' in cmap_name:
-                        color = np.array([1.0, 0.0, 0.0])
+                        rgb = (1.0, 0.0, 0.0)
                     elif 'green' in cmap_name:
-                        color = np.array([0.0, 1.0, 0.0])
+                        rgb = (0.0, 1.0, 0.0)
                     elif 'blue' in cmap_name or 'cyan' in cmap_name:
-                        color = np.array([0.0, 0.0, 1.0])
+                        rgb = (0.0, 0.0, 1.0)
+                    elif 'gray' in cmap_name:
+                        rgb = (1.0, 1.0, 1.0)
                     else:
-                        color = np.array([1.0, 1.0, 1.0])
-
+                        rgb = (1.0, 1.0, 1.0)
                     for c in range(3):
-                        canvas[:, :, c] += data * color[c] * opacity
+                        canvas[:, :, c] += data * rgb[c] * opacity
 
-                elif hasattr(layer, 'data') and isinstance(layer, napari.layers.Labels):
+                # Labels layers (Particles, Positive/Negative, etc.)
+                elif isinstance(layer, napari.layers.Labels):
                     label_data = layer.data
-                    if label_data.shape != (h, w):
+                    if label_data.shape[:2] != (h, w):
                         continue
-                    opacity = layer.opacity
-
-                    # Get color from colormap
-                    try:
-                        cmap = layer.colormap
-                        if hasattr(cmap, 'color_dict'):
-                            for label_val, rgba in cmap.color_dict.items():
-                                if label_val is None or label_val == 0:
-                                    continue
-                                mask = label_data == label_val
-                                if not mask.any():
-                                    continue
+                    cmap = layer.colormap
+                    if hasattr(cmap, 'color_dict'):
+                        for lv, rgba in cmap.color_dict.items():
+                            if lv is None or lv == 0:
+                                continue
+                            mask = label_data == lv
+                            if not mask.any():
+                                continue
+                            for c in range(3):
+                                canvas[:, :, c][mask] = (
+                                    canvas[:, :, c][mask] * (1 - opacity)
+                                    + rgba[c] * opacity)
+                    else:
+                        # Default label colors: use napari's color for each label
+                        unique_labels = np.unique(label_data)
+                        for lv in unique_labels:
+                            if lv == 0:
+                                continue
+                            mask = label_data == lv
+                            color = layer.get_color(lv)
+                            if color is not None:
                                 for c in range(3):
                                     canvas[:, :, c][mask] = (
                                         canvas[:, :, c][mask] * (1 - opacity)
-                                        + rgba[c] * opacity)
+                                        + color[c] * opacity)
+
+                # Shapes layers (ROIs, Ignore Regions)
+                elif isinstance(layer, napari.layers.Shapes):
+                    from skimage.draw import polygon as draw_polygon, polygon_perimeter
+                    edge_color = np.array(layer.edge_color[0]
+                                          if len(layer.edge_color) > 0
+                                          else [1, 1, 1, 1])
+                    face_color = np.array(layer.face_color[0]
+                                          if len(layer.face_color) > 0
+                                          else [0, 0, 0, 0])
+                    sy = scale[0] if len(scale) > 0 else 1.0
+                    sx = scale[1] if len(scale) > 1 else 1.0
+
+                    for shape_data in layer.data:
+                        verts = np.array(shape_data)
+                        if sy != 1.0 or sx != 1.0:
+                            verts = verts.copy()
+                            verts[:, 0] /= sy
+                            verts[:, 1] /= sx
+                        rows_v = verts[:, 0].astype(int)
+                        cols_v = verts[:, 1].astype(int)
+
+                        # Fill
+                        if face_color[3] > 0.01:
+                            rr, cc = draw_polygon(rows_v, cols_v, shape=(h, w))
+                            for c in range(3):
+                                canvas[rr, cc, c] = (
+                                    canvas[rr, cc, c] * (1 - face_color[3] * opacity)
+                                    + face_color[c] * face_color[3] * opacity)
+
+                        # Edge
+                        if edge_color[3] > 0.01:
+                            rr, cc = polygon_perimeter(rows_v, cols_v,
+                                                       shape=(h, w), clip=True)
+                            # Thicken edge
+                            from scipy import ndimage as _ndi
+                            edge_mask = np.zeros((h, w), dtype=bool)
+                            edge_mask[rr, cc] = True
+                            edge_mask = _ndi.binary_dilation(edge_mask, iterations=1)
+                            for c in range(3):
+                                canvas[:, :, c][edge_mask] = edge_color[c]
+
+            # Draw scale bar in bottom-right corner
+            px_um = self._pixel_size_um
+            if px_um and px_um > 0:
+                # Pick a nice round scale bar length
+                img_width_um = w * px_um
+                for bar_um in [50, 100, 200, 500, 1000, 2000, 5000]:
+                    if bar_um >= img_width_um * 0.08 and bar_um <= img_width_um * 0.25:
+                        break
+                bar_px = int(bar_um / px_um)
+                bar_h = max(3, h // 200)
+                margin = max(10, h // 50)
+                x_start = w - margin - bar_px
+                y_start = h - margin - bar_h
+                # White bar
+                canvas[y_start:y_start+bar_h, x_start:x_start+bar_px, :] = 1.0
+                # Label text
+                if bar_um >= 1000:
+                    label = f"{bar_um/1000:.0f} mm"
+                else:
+                    label = f"{bar_um:.0f} um"
+
+                # Render text with Pillow
+                try:
+                    from PIL import Image as PILImage, ImageDraw, ImageFont
+                    # Convert canvas to uint8 for Pillow
+                    canvas_u8 = np.clip(canvas * 255, 0, 255).astype(np.uint8)
+                    pil_img = PILImage.fromarray(canvas_u8)
+                    draw = ImageDraw.Draw(pil_img)
+                    # Try to get a reasonable font size
+                    font_size = max(12, h // 40)
+                    try:
+                        font = ImageFont.truetype("arial.ttf", font_size)
                     except Exception:
-                        pass
+                        try:
+                            font = ImageFont.truetype("DejaVuSans.ttf", font_size)
+                        except Exception:
+                            font = ImageFont.load_default()
+                    # Position text centered above the bar
+                    bbox = draw.textbbox((0, 0), label, font=font)
+                    text_w = bbox[2] - bbox[0]
+                    text_h = bbox[3] - bbox[1]
+                    text_x = x_start + (bar_px - text_w) // 2
+                    text_y = y_start - text_h - 4
+                    # Draw text with dark outline for readability
+                    for dx in (-1, 0, 1):
+                        for dy in (-1, 0, 1):
+                            if dx != 0 or dy != 0:
+                                draw.text((text_x+dx, text_y+dy), label,
+                                          fill=(0, 0, 0), font=font)
+                    draw.text((text_x, text_y), label,
+                              fill=(255, 255, 255), font=font)
+                    canvas = np.array(pil_img).astype(np.float64) / 255.0
+                except Exception as text_err:
+                    print(f"[BrainSlice] Could not render scale bar text: {text_err}")
+
+                print(f"[BrainSlice] Scale bar: {label} ({bar_px} px)")
 
             # Clamp and convert to uint8
             canvas = np.clip(canvas * 255, 0, 255).astype(np.uint8)
@@ -2124,7 +2378,7 @@ class BrainSliceWidget(QWidget):
             from tifffile import imwrite
             imwrite(path, canvas)
             self.status_label.setText(
-                f"Exported {h}x{w} to {Path(path).name}")
+                f"Exported {w}x{h} to {Path(path).name}")
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -3457,6 +3711,9 @@ class BrainSliceWidget(QWidget):
                 except Exception:
                     pass
 
+            # Auto-save analysis state
+            self._save_analysis_state()
+
         except Exception as exc:
             import traceback
             traceback.print_exc()
@@ -3558,6 +3815,9 @@ class BrainSliceWidget(QWidget):
         # Redraw outlines and table
         self._pa_draw_classification_overlay()
         self._pa_populate_table(self._pa_results)
+
+        # Auto-save after reclassification
+        self._save_analysis_state()
 
     def _pa_populate_table(self, df):
         """Populate the results table with particle analysis results."""
@@ -5800,6 +6060,9 @@ class BrainSliceWidget(QWidget):
                 self.roi_results_table.setItem(row_idx, 4, QTableWidgetItem(f"{r.get('fraction', 0)*100:.1f}%"))
 
         self.status_label.setText(f"Counted cells in {len(results)-1} ROI(s)")
+
+        # Auto-save analysis state
+        self._save_analysis_state()
 
     def _export_roi_counts(self):
         """Export ROI counts to CSV."""
