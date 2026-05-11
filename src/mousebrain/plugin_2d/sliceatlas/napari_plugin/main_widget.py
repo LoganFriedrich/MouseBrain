@@ -5769,8 +5769,8 @@ class BrainSliceWidget(QWidget):
             self.roi_shapes_layer = self.viewer.add_shapes(
                 name="ROIs",
                 edge_color="white",
-                edge_width=2,
-                face_color=[1.0, 1.0, 1.0, 0.08],
+                edge_width=3,
+                face_color="transparent",
             )
 
         self.viewer.layers.selection.active = self.roi_shapes_layer
