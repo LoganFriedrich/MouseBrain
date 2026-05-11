@@ -24,3 +24,8 @@ NDH6SA~M
 
 # Sisyphus agent files
 .sisyphus/
+
+# Claude Code session state (oh-my-claudecode)
+.omc/
+*.log
+test_output.txt
