@@ -22,6 +22,15 @@ contributions:
     - id: mousebrain.sliceatlas
       python_name: mousebrain.plugin_2d.sliceatlas.napari_plugin.main_widget:BrainSliceWidget
       title: BrainSlice - Slice Analysis
+    # === Readers ===
+    - id: mousebrain.read_ims
+      python_name: mousebrain.plugin_3d.ims_reader:napari_get_reader
+      title: Open Imaris .ims
+  readers:
+    # Open any raw Imaris .ims via File > Open / drag-drop (scaled, lazy multiscale)
+    - command: mousebrain.read_ims
+      filename_patterns: ["*.ims"]
+      accepts_directories: false
   widgets:
     # === 3D Cleared Brain Pipeline ===
     - command: mousebrain.dashboard
