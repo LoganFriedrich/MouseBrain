@@ -32,3 +32,15 @@ test_output.txt
 
 # Agent/personal notes -- never published. See CLAUDE.md on notes placement.
 .notes/
+
+# Data never belongs in a tool repo (see CLAUDE.md: code and data live apart).
+# Data lives in MouseBrain_Pipeline/.
+*.csv
+*.xlsx
+*.h5
+*.tif
+*.tiff
+*.ims
+*.npy
+*.zarr/
+*_Data/
