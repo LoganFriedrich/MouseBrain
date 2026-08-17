@@ -29,3 +29,6 @@ NDH6SA~M
 .omc/
 *.log
 test_output.txt
+
+# Agent/personal notes -- never published. See CLAUDE.md on notes placement.
+.notes/
