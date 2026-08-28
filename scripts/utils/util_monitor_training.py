@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 try:
     from mousebrain.config import BRAINS_ROOT
 except ImportError:
-    BRAINS_ROOT = Path(r"Y:\LAB_ROOT\Tissue\MouseBrain_Pipeline\3D_Cleared\1_Brains")
+    raise SystemExit("mousebrain package is required (pip install -e . in the MouseBrain repo)")
 
 SCRIPT_DIR = Path(__file__).parent
 

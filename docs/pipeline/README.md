@@ -52,12 +52,12 @@ util_approve_registration.py   → Approve registration after QC review
 
 Copy all `.py` files to your scripts folder:
 ```
-Y:\LAB_ROOT\Tissue\MouseBrain_Pipeline\3D_Cleared\util_Scripts\
+<CONNECTOME_ROOT>\Tissue\MouseBrain_Pipeline\3D_Cleared\util_Scripts\
 ```
 
 The experiment tracker creates its CSV at:
 ```
-Y:\LAB_ROOT\Tissue\MouseBrain_Pipeline\3D_Cleared\2_Data_Summary\calibration_runs.csv
+<CONNECTOME_ROOT>\Tissue\MouseBrain_Pipeline\3D_Cleared\2_Data_Summary\calibration_runs.csv
 ```
 
 ## Usage Examples
@@ -184,7 +184,7 @@ This eliminates the months-long manual optimization cycles by keeping a complete
 ## Requirements
 
 ```bash
-conda activate Y:\LAB_ROOT\envs\MouseBrain
+conda activate MouseBrain    # or the full path of the environment if it was created with --prefix
 pip install cellfinder brainreg brainglobe-segmentation brainglobe-atlasapi
 pip install imaris-ims-file-reader tifffile numpy scipy matplotlib h5py
 ```

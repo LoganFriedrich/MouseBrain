@@ -61,7 +61,7 @@ class SessionDocumenter:
                 from mousebrain.config import DATA_SUMMARY_DIR
                 project_sessions = DATA_SUMMARY_DIR / "sessions"
             except ImportError:
-                project_sessions = Path("Y:/LAB_ROOT/Tissue/3D_Cleared/2_Data_Summary/sessions")
+                project_sessions = Path.home() / ".sci_connectome" / "sessions"
             if project_sessions.parent.exists():
                 self.output_dir = project_sessions
             else:
@@ -641,7 +641,7 @@ class SessionDocumenter:
                 from mousebrain.config import DATA_SUMMARY_DIR
                 project_sessions = DATA_SUMMARY_DIR / "sessions"
             except ImportError:
-                project_sessions = Path("Y:/LAB_ROOT/Tissue/3D_Cleared/2_Data_Summary/sessions")
+                project_sessions = Path.home() / ".sci_connectome" / "sessions"
             if project_sessions.exists():
                 output_dir = project_sessions
             else:

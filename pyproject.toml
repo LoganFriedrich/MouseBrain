@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
-    {name = "Logan Friedrich", email = "logan.friedrich@INSTITUTION.edu"}
+    {name = "Logan Friedrich"}
 ]
 keywords = ["brainglobe", "napari", "neuroscience", "cell-detection", "histology"]
 

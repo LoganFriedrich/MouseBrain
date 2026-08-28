@@ -54,7 +54,7 @@ def _find_repo_root() -> Optional[Path]:
 
     Each of these should contain util_Scripts/, 1_Brains/, 2_Data_Summary/.
 
-    Returns the root (LAB_ROOT equivalent).
+    Returns the root (the folder that contains Tissue/).
     """
     # Start from this file's location
     current = Path(__file__).resolve().parent
@@ -110,10 +110,16 @@ def _get_root_path() -> Path:
     Get the root path for the Connectome installation.
 
     Resolution order:
-    1. CONNECTOME_ROOT environment variable (preferred)
+    1. CONNECTOME_ROOT environment variable (preferred; the lab sets it in the
+       conda environment's activation script so every tool agrees on the root)
     2. SCI_CONNECTOME_ROOT environment variable (legacy, still supported)
-    3. Lab's Y: drive (preferred - avoids UNC path issues)
-    4. Auto-detect from script location
+    3. Auto-detect from this file's location (pipeline layout above it)
+
+    There is deliberately NO built-in drive-letter default: this is a public
+    tool and a lab's share letter is not part of it. When nothing resolves,
+    the returned root is a clearly named non-existent path, so every derived
+    location fails `exists()` and the tools report "not found -- set
+    CONNECTOME_ROOT" instead of quietly reading the wrong place.
     """
     # 1. Check environment variable first (new name, then legacy)
     env_root = os.environ.get("CONNECTOME_ROOT") or os.environ.get("SCI_CONNECTOME_ROOT")
@@ -127,28 +133,25 @@ def _get_root_path() -> Path:
                 f"Falling back to auto-detection."
             )
 
-    # 2. Prefer Y: drive to avoid UNC path issues with zarr/dask
-    y_drive = Path(r"Y:\LAB_ROOT")
-    if y_drive.exists():
-        # Check new restructured path first, then current path
-        if ((y_drive / "Tissue" / "MouseBrain_Pipeline" / "3D_Cleared").exists()
-                or (y_drive / "Tissue" / "3D_Cleared").exists()):
-            return y_drive
-
-    # 3. Try auto-detection (may return UNC path on network drives)
+    # 2. Try auto-detection (may return UNC path on network drives)
     detected = _find_repo_root()
     if detected and detected.exists():
         return detected
 
-    # If nothing works, return Y: drive for error messages
-    return y_drive
+    # 3. Nothing resolves: an obviously invalid root, and say so once.
+    warnings.warn(
+        "mousebrain: CONNECTOME_ROOT is not set and no pipeline layout was found "
+        "above the package. Set CONNECTOME_ROOT to the folder that contains "
+        "Tissue/MouseBrain_Pipeline (see docs/pipeline/README.md)."
+    )
+    return Path("CONNECTOME_ROOT_NOT_CONFIGURED")
 
 
 # =============================================================================
 # EXPORTED PATHS
 # =============================================================================
 
-# Root of the installation (e.g., Y:\LAB_ROOT or wherever user installed)
+# Root of the installation (CONNECTOME_ROOT, or auto-detected; see _get_root_path)
 ROOT_PATH = _get_root_path()
 
 # Tissue processing root

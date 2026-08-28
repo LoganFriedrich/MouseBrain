@@ -159,7 +159,24 @@ def _base_region(region: str) -> str:
 # DATABASE PATH COMPUTATION
 # =============================================================================
 
-_DEFAULT_DB_ROOT = Path(r"Y:\LAB_ROOT\Databases")
+def _default_db_root():
+    """The Databases folder this lab pushes analysis outputs to: MOUSEBRAIN_DB_ROOT,
+    else <CONNECTOME_ROOT>/Databases. None when neither is configured (the
+    registry then refuses with a message rather than inventing a location)."""
+    import os
+    env = os.environ.get("MOUSEBRAIN_DB_ROOT")
+    if env:
+        return Path(env)
+    try:
+        from mousebrain.config import ROOT_PATH
+        if ROOT_PATH and (Path(ROOT_PATH) / "Databases").exists():
+            return Path(ROOT_PATH) / "Databases"
+    except Exception:
+        pass
+    return None
+
+
+_DEFAULT_DB_ROOT = None  # resolved lazily by _default_db_root()
 
 
 def get_database_path(
@@ -232,7 +249,8 @@ class AnalysisRegistry:
     when multiple processes register outputs concurrently.
 
     Args:
-        db_root: Path to the Databases directory. Defaults to Y:/LAB_ROOT/Databases.
+        db_root: Path to the Databases directory. Defaults to MOUSEBRAIN_DB_ROOT or
+                 <CONNECTOME_ROOT>/Databases; raises if neither is configured.
         analysis_name: Name of the analysis (e.g. "ENCR_Detection").
     """
 
@@ -245,7 +263,12 @@ class AnalysisRegistry:
         db_root: Optional[Path] = None,
     ):
         self.analysis_name = analysis_name
-        self.db_root = Path(db_root) if db_root else _DEFAULT_DB_ROOT
+        resolved = Path(db_root) if db_root else _default_db_root()
+        if resolved is None:
+            raise RuntimeError(
+                "AnalysisRegistry: no Databases folder configured. Set MOUSEBRAIN_DB_ROOT "
+                "(or CONNECTOME_ROOT so that <root>/Databases exists), or pass db_root=.")
+        self.db_root = resolved
         self.exports_dir = self.db_root / "exports" / analysis_name
         self.figures_dir = self.db_root / "figures" / analysis_name
         self.logs_dir = self.db_root / "logs"

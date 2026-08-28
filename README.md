@@ -6,10 +6,10 @@ Unified package for Connectome tissue analysis tools.
 
 ```powershell
 # 1. Open PowerShell and activate the environment
-conda activate Y:\LAB_ROOT\envs\MouseBrain
+conda activate MouseBrain    # or the full path of the environment if it was created with --prefix
 
 # 2. Go to this folder and run the installer
-cd Y:\LAB_ROOT\Tissue\MouseBrain
+cd <path to this repository>
 .\install.ps1
 ```
 

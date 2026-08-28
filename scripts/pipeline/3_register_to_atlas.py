@@ -140,7 +140,6 @@ def find_brainreg_executable():
 
     # Check common conda locations
     for conda_base in [
-        Path("G:/Program_Files/Conda"),
         Path("C:/Users") / os.environ.get("USERNAME", "") / "anaconda3",
         Path("C:/Users") / os.environ.get("USERNAME", "") / "miniconda3",
         Path(os.environ.get("CONDA_PREFIX", "")) if os.environ.get("CONDA_PREFIX") else None,

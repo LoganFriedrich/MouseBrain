@@ -1051,7 +1051,7 @@ def update_elife_counts_csv(
 # Reference: Fouad et al. (2021) "The neuroanatomical-functional paradox in SCI"
 # Nature Reviews Neurology. DOI: 10.1038/s41582-020-00436-x
 #
-# For 60kd midline contusion:
+# For a dorsal midline contusion (the common rodent model):
 # - Dorsal CST is typically most damaged (runs dorsally in rodent cord)
 # - Lateral tracts (rubrospinal) may have variable sparing
 # - Reticulospinal (ventral) often more preserved
@@ -1103,15 +1103,26 @@ REACHING_REGIONS = {
     },
 }
 
-# Tract vulnerability ranking for 60kd midline contusion (most to least damaged)
-TRACT_VULNERABILITY_60KD_MIDLINE = [
-    ("Corticospinal (CST)", "HIGH", "Dorsal position - directly impacted"),
-    ("Rubrospinal", "MODERATE", "Lateral position - partial sparing expected"),
-    ("Vestibulospinal", "MODERATE", "Variable cord position"),
-    ("Reticulospinal (pontine)", "LOW", "Ventral position - often preserved"),
-    ("Reticulospinal (medial)", "LOW", "Ventral position - often preserved"),
-    ("Cerebellospinal", "LOW", "Lateral/ventral"),
-]
+# Tract vulnerability ranking for the lab's injury model (most to least damaged).
+# This is a property of the EXPERIMENT, not of the tool, so it is configuration:
+# a JSON file named by MOUSEBRAIN_TRACT_VULNERABILITY holding a list of
+# [tract, "HIGH"|"MODERATE"|"LOW", reason] rows. With no file the vulnerability
+# section is skipped and the graphs carry no damage annotations.
+def _load_tract_vulnerability():
+    import os
+    src = os.environ.get("MOUSEBRAIN_TRACT_VULNERABILITY")
+    if not src or not Path(src).is_file():
+        return []
+    try:
+        rows = json.loads(Path(src).read_text(encoding="utf-8"))
+        return [tuple(r[:3]) for r in rows]
+    except Exception as e:  # a bad file must not stop region counting
+        print(f"[!] could not read MOUSEBRAIN_TRACT_VULNERABILITY ({src}): {e}")
+        return []
+
+
+TRACT_VULNERABILITY = _load_tract_vulnerability()
+INJURY_MODEL_LABEL = __import__("os").environ.get("MOUSEBRAIN_INJURY_MODEL", "configured injury model")
 
 
 def generate_cross_brain_graphs(
@@ -1124,7 +1135,7 @@ def generate_cross_brain_graphs(
     1. Bar chart of key reaching regions across all brains
     2. Heatmap of all eLife groups by brain
     3. Statistical summary with z-scores
-    4. Tract vulnerability analysis for 60kd midline contusion
+    4. Tract vulnerability analysis for the configured injury model (optional)
 
     Called automatically after updating region_counts.csv.
 
@@ -1277,7 +1288,7 @@ def generate_cross_brain_graphs(
                 # Find vulnerability
                 tract = info['tract']
                 vuln = "?"
-                for t, v, _ in TRACT_VULNERABILITY_60KD_MIDLINE:
+                for t, v, _ in TRACT_VULNERABILITY:
                     if t in tract or tract in t:
                         vuln = v
                         break
@@ -1369,13 +1380,15 @@ def generate_cross_brain_graphs(
 
     # Tract vulnerability analysis
     stats_lines.append("\n" + "=" * 80)
-    stats_lines.append("TRACT VULNERABILITY ANALYSIS (60kd Midline Contusion)")
+    stats_lines.append(f"TRACT VULNERABILITY ANALYSIS ({INJURY_MODEL_LABEL})")
     stats_lines.append("Based on anatomical position in spinal cord")
     stats_lines.append("=" * 80)
-    stats_lines.append("\nExpected damage pattern for 60kd midline contusion:")
+    stats_lines.append(f"\nExpected damage pattern for {INJURY_MODEL_LABEL}:"
+                       if TRACT_VULNERABILITY else
+                       "\n(no tract vulnerability table configured -- set MOUSEBRAIN_TRACT_VULNERABILITY)")
     stats_lines.append("")
 
-    for tract, vulnerability, reason in TRACT_VULNERABILITY_60KD_MIDLINE:
+    for tract, vulnerability, reason in TRACT_VULNERABILITY:
         marker = "⚠️" if vulnerability == "HIGH" else ("⚡" if vulnerability == "MODERATE" else "✓")
         stats_lines.append(f"  {marker} {tract:<30} {vulnerability:<10} - {reason}")
 

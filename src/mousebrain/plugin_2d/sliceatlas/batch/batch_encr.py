@@ -1,40 +1,39 @@
 """
-batch_encr.py - Batch colocalization analysis for ENCR HD region ND2 files.
+batch_encr.py - Batch colocalization analysis for a project's HD-region ND2 files.
 
-Loads each ND2 file, runs threshold/Otsu nuclei detection on the red channel,
-measures green signal colocalization, saves CSV results + QC overlay images.
+Loads each ND2 file, runs threshold/Otsu nuclei detection on the nuclear
+channel, measures signal colocalization in the other channel, saves CSV
+results + QC overlay images, and records the run in the tracker.
 
 Usage:
-    python -m brainslice.batch.batch_encr
-    python -m brainslice.batch.batch_encr --threshold 1.5 --dilation 50
-    python -m brainslice.batch.batch_encr --output Y:/custom/output
+    python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project ENCR
+    python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project ENCR --threshold 1.5 --dilation 50
+    python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project ENCR --output <folder>
 
-------------------------------------------------------------------------
-APPROVED METHOD FOR ENCR ANALYSIS (as of 2026-02-17, PI-approved)
-------------------------------------------------------------------------
-DETECTION:       threshold, method=otsu, physical size 8-25 um diameter
-                 (auto-converted to pixel area per ND2 metadata)
-COLOCALIZATION:  background_mean, sigma_threshold=0 (bg mean IS the threshold)
-BACKGROUND:      gmm, percentile=10
-SOMA DILATION:   6 px (measure cytoplasmic signal, not just nuclear)
-SOMA EXCLUSION:  dilation >= 50 iterations for background estimation
+Where the files are: <2D data dir>/<PROJECT>/<PROJECT>_XX_XX/0_Raw_HD and 0_Raw
+(the 2D data dir comes from mousebrain.plugin_2d.sliceatlas.core.config.DATA_DIR,
+i.e. from CONNECTOME_ROOT). The project code can also be given as the
+MOUSEBRAIN_2D_PROJECT environment variable.
+
+METHOD
+  DETECTION:       threshold, method=otsu, physical size 8-25 um diameter
+                   (auto-converted to pixel area per ND2 metadata)
+  COLOCALIZATION:  background_mean, sigma_threshold=0 (bg mean IS the threshold)
+  BACKGROUND:      gmm, percentile=10
+  SOMA DILATION:   6 px (measure cytoplasmic signal, not just nuclear)
+  SOMA EXCLUSION:  dilation >= 50 iterations for background estimation
 
 How background_mean works:
-  1. Detect nuclei in red channel (Otsu threshold, 8-25 um diameter).
-  2. Dilate each nucleus by 6px to measure cytoplasmic green signal (soma_dilation).
+  1. Detect nuclei in the nuclear channel (Otsu threshold, 8-25 um diameter).
+  2. Dilate each nucleus by 6px to measure cytoplasmic signal (soma_dilation).
   3. Dilate all nuclei generously (50 iter) to create background exclusion zones.
-  4. Background = mean of green channel in tissue OUTSIDE exclusion zones.
-  5. Cell is GFP-positive if: soma green > background_mean (sigma_threshold=0).
+  4. Background = mean of the signal channel in tissue OUTSIDE exclusion zones.
+  5. Cell is positive if: soma signal > background_mean (sigma_threshold=0).
 
-DO NOT change the colocalization method without:
-  - Updating METHOD_LOG.md at:
-    Y:\\LAB_ROOT\\Tissue\\MouseBrain_Pipeline\\2D_Slices\\ENCR\\METHOD_LOG.md
-  - Getting PI sign-off
-
-History: METHOD_LOG.md above shows all methods tried and which were rejected.
-  fold_change was an earlier method -- it is NOT approved for ENCR.
-  local_snr was also tried and superseded by background_mean.
-------------------------------------------------------------------------
+The parameters a lab has approved for a project are recorded with the analysis
+registry (mousebrain.analysis_registry.get_approved_method) and by marking a
+tracker run as best; this script reads those unless --ignore-tracker is given.
+Keep the reasoning for a method change in the lab's own method log, not here.
 """
 
 import argparse
@@ -50,10 +49,12 @@ import numpy as np
 from ..core.config import DATA_DIR, get_sample_dir, SampleDirs, parse_sample_name
 
 
-# Default paths - resolve ENCR root from config
-# DATA_DIR is now 1_Subjects/, so ENCR is a subdirectory
-ENCR_ROOT = DATA_DIR / "ENCR" if DATA_DIR else Path(r"Y:\LAB_ROOT\Tissue\MouseBrain_Pipeline\2D_Slices\1_Subjects\ENCR")
-DEFAULT_OUTPUT = ENCR_ROOT.parent.parent / "2_Data_Summary" / "batch_results"
+# Project code: --project on the command line, else MOUSEBRAIN_2D_PROJECT.
+# The data root is <DATA_DIR>/<PROJECT>; there is no built-in lab path.
+import os as _os
+PROJECT = _os.environ.get("MOUSEBRAIN_2D_PROJECT")
+ENCR_ROOT = (Path(DATA_DIR) / PROJECT) if (DATA_DIR and PROJECT) else None
+DEFAULT_OUTPUT = (Path(DATA_DIR).parent / "2_Data_Summary" / "batch_results") if DATA_DIR else None
 
 # Default channel indices for ENCR ND2 files
 # Channel 0 = 488nm (green/eYFP signal)
@@ -131,12 +132,13 @@ def get_tuned_parameters() -> dict:
     return params
 
 
-def find_nd2_files(root: Path) -> list:
-    """Find all ND2 files in ENCR subject folders."""
+def find_nd2_files(root: Path, project: str = None) -> list:
+    """Find all ND2 files in the project's subject folders."""
     nd2_files = []
+    project = project or PROJECT or root.name
 
-    # New structure: 1_Subjects/ENCR/ENCR_XX_XX/0_Raw_HD/ and 0_Raw/
-    for subject_dir in sorted(root.glob("ENCR_*")):
+    # New structure: 1_Subjects/<PROJECT>/<PROJECT>_XX_XX/0_Raw_HD/ and 0_Raw/
+    for subject_dir in sorted(root.glob("%s_*" % project)):
         if not subject_dir.is_dir():
             continue
         # HD region files
@@ -148,9 +150,9 @@ def find_nd2_files(root: Path) -> list:
         if raw_dir.exists():
             nd2_files.extend(sorted(raw_dir.glob("*.nd2")))
 
-    # Fallback: old structure (ENCR_02_XX_HD_Regions/)
+    # Fallback: old structure (<PROJECT>_XX_XX_HD_Regions/)
     if not nd2_files:
-        for hd_dir in sorted(root.glob("ENCR_02_*_HD_Regions")):
+        for hd_dir in sorted(root.glob("%s_*_HD_Regions" % project)):
             # Check Corrected subfolder first (preferred)
             corrected = hd_dir / "Corrected"
             if corrected.exists():
@@ -388,8 +390,10 @@ def main():
         description='Batch colocalization analysis for ENCR ND2 files',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument('--input', type=Path, default=ENCR_ROOT,
-                        help=f'ENCR root directory (default: {ENCR_ROOT})')
+    parser.add_argument('--project', default=PROJECT,
+                        help='Project code, e.g. ENCR (default: MOUSEBRAIN_2D_PROJECT)')
+    parser.add_argument('--input', type=Path, default=None,
+                        help='Project root directory (default: <2D data dir>/<project>)')
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT,
                         help=f'Output directory (default: {DEFAULT_OUTPUT})')
     parser.add_argument('--threshold', type=float, default=0,
@@ -442,7 +446,14 @@ def main():
     print("=" * 60)
 
     # Find ND2 files
-    nd2_files = find_nd2_files(args.input)
+    if args.input is None:
+        if not (DATA_DIR and args.project):
+            parser.error("give --project (or MOUSEBRAIN_2D_PROJECT) and set CONNECTOME_ROOT, "
+                         "or pass --input explicitly")
+        args.input = Path(DATA_DIR) / args.project
+    if args.output is None:
+        parser.error("output folder unknown: set CONNECTOME_ROOT or pass --output")
+    nd2_files = find_nd2_files(args.input, args.project)
     print(f"\nFound {len(nd2_files)} ND2 files")
 
     if args.dry_run:

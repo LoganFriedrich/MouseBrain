@@ -97,7 +97,6 @@ def main():
         print(f"  Manual threshold: {threshold:.1f}")
 
     # Run analysis
-    sys.path.insert(0, "C:/LAB_ROOT/Tissue/MouseBrain/src")
     from mousebrain.plugin_2d.sliceatlas.core.particle_analysis import ParticleAnalyzer
 
     analyzer = ParticleAnalyzer()

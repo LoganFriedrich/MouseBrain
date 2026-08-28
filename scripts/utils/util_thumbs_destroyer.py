@@ -23,7 +23,7 @@ Double-click usage:
 
 Command-line usage:
     python util_thumbs_destroyer.py                    # Script's folder (recursive)
-    python util_thumbs_destroyer.py Y:\path\to\folder  # Specific path
+    python util_thumbs_destroyer.py <folder>            # Specific path
     python util_thumbs_destroyer.py --prevent          # Also create decoys
     python util_thumbs_destroyer.py --dry-run          # Preview only (no Explorer kill)
 

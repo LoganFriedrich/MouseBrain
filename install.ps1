@@ -13,7 +13,7 @@ Write-Host ""
 $envPath = $env:CONDA_PREFIX
 if ($envPath -notlike "*braintool*") {
     Write-Host "[!] Please activate the braintool environment first:" -ForegroundColor Yellow
-    Write-Host '    conda activate "Y:\LAB_ROOT\envs\braintool"' -ForegroundColor White
+    Write-Host '    conda activate braintool   (or the full path of the environment)' -ForegroundColor White
     Write-Host ""
     exit 1
 }
