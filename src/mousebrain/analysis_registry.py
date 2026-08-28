@@ -2,24 +2,41 @@
 """
 analysis_registry.py - Registry for analysis outputs with provenance tracking.
 
-Manages analysis outputs (figures, CSVs, counts) with:
-  - Automatic file copying to canonical database locations
-  - Full provenance metadata (method params, source files, timestamps)
-  - Deterministic method hashing for staleness detection
-  - Atomic JSON writes for thread safety
-  - Per-region summary CSV maintenance
+Records the outputs of an analysis (figures, CSVs, counts) together with the
+method parameters, source files and timestamp that produced them, so that a
+result can always be traced back to how it was made and flagged as stale when
+the method changes.
 
-The database location follows existing conventions:
-    Databases/
-    +-- exports/{analysis_name}/     Per-sample detection exports
-    |   +-- {sample}/               Measurements, figures per sample
-    |   +-- summary.csv             Batch summary
-    +-- exports/{analysis_name}/     Per-sample ROI analysis
-    |   +-- {animal}/               Per-animal grouping
-    |   +-- roi_summary_{region}.csv
-    +-- figures/{analysis_name}/     Figures organized by animal/region
-    |   +-- {animal}/{region}/
-    +-- logs/                        Audit trail
+Why the registry lives inside the pipeline
+------------------------------------------
+This tool stands alone. It records its own outputs, with provenance, in a
+folder it owns; it never writes into another tool's database. An integrator
+(for example a lab database) may PULL from that folder whenever it likes --
+the registry.json manifest and the audit log tell it what is there, how it was
+produced, and whether it is still current. The registry knows nothing about
+any consumer, so nothing here depends on one being installed.
+
+Layout (rooted at the registry root, by default <pipeline root>/Registry/)
+--------------------------------------------------------------------------
+    Registry/
+    +-- exports/{analysis_name}/       Data outputs for one analysis
+    |   +-- registry.json              Manifest: one entry per registered output
+    |   +-- {sample}/                  Detection outputs, per sample
+    |   +-- {animal}/{region}/         ROI outputs, grouped by animal and region
+    |   +-- roi_summary_{region}.csv   Per-region summary (ROI analyses)
+    +-- figures/{analysis_name}/       Figures, organised by animal/region
+    |   +-- {animal}/{region}/         (created on the first figure write)
+    +-- logs/{analysis_name}.log       Audit trail, one line per event
+    +-- approved_method.json           Optional: a lab's approved parameters
+
+    Invalidated outputs are moved to <their folder>/_archived/<timestamp>/.
+    Paths recorded in registry.json are RELATIVE to the registry root, so the
+    whole folder can be moved or pulled elsewhere and still resolve.
+
+Root resolution (see default_registry_root):
+    1. MOUSEBRAIN_REGISTRY_ROOT environment variable
+    2. <PIPELINE_ROOT>/Registry when mousebrain.config resolved a pipeline root
+    3. nothing -- the registry refuses with a message rather than guessing
 
 Usage:
     from mousebrain.analysis_registry import AnalysisRegistry, get_approved_method
@@ -27,7 +44,7 @@ Usage:
     registry = AnalysisRegistry(analysis_name="ENCR_ROI_Analysis")
 
     # Register a processed sample
-    db_paths = registry.register_output(
+    out_paths = registry.register_output(
         sample="E02_01_S13_DCN",
         category="roi_analysis",
         files={"figure": "/path/to/fig.png", "roi_counts": "/path/to/counts.csv"},
@@ -38,6 +55,9 @@ Usage:
 
     # Check which samples are stale after a method change
     stale = registry.get_stale_samples(new_method_params)
+
+Inspect a registry from the command line:
+    mousebrain-registry --name ENCR_ROI_Analysis --stale --summary
 """
 
 import csv
@@ -47,49 +67,105 @@ import os
 import shutil
 import socket
 import tempfile
-import time
+import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 __all__ = [
     "AnalysisRegistry",
-    "parse_sample_id",
+    "DEFAULT_METHOD",
+    "APPROVED_METHOD_FILENAME",
+    "default_registry_root",
     "get_approved_method",
     "get_database_path",
+    "parse_sample_id",
+    "roi_results_from_rows",
+    "main",
 ]
 
 
 # =============================================================================
-# APPROVED METHOD DEFINITION
+# METHOD DEFINITION
 # =============================================================================
 
-# This is the PI-approved analysis method for ENCR (as of 2026-02-23).
-# Do NOT change without updating METHOD_LOG.md and getting PI sign-off.
-_APPROVED_METHOD = {
-    "detection": "threshold+log",
-    "threshold_fraction": 0.20,
-    "log_threshold": 0.005,
-    "log_decision_tree": True,
-    "size_filter_um": [8, 25],
-    "colocalization": "background_mean",
-    "sigma_threshold": 0,
-    "soma_dilation": 6,
-    "background": "gmm",
-    "background_percentile": 10,
-    "bg_exclusion_dilation": 50,
+# Built-in method parameters used when a lab has not recorded its own (see
+# get_approved_method). Each key is a parameter of the 2D slice analysis:
+DEFAULT_METHOD = {
+    "detection": "threshold+log",       # nucleus detection: intensity threshold + Laplacian-of-Gaussian
+    "threshold_fraction": 0.20,         # threshold as a fraction of the channel's intensity range
+    "log_threshold": 0.005,             # LoG response cut-off for a blob to count as a nucleus
+    "log_decision_tree": True,          # resolve threshold/LoG disagreements with the decision tree
+    "size_filter_um": [8, 25],          # accepted nucleus diameter range, micrometres
+    "colocalization": "background_mean",  # positive if soma signal exceeds the background mean
+    "sigma_threshold": 0,               # extra margin above background, in background std devs
+    "soma_dilation": 6,                 # pixels to dilate each nucleus to sample its soma
+    "background": "gmm",                # background model: gaussian mixture on tissue pixels
+    "background_percentile": 10,        # percentile used when the GMM is not applicable
+    "bg_exclusion_dilation": 50,        # dilation (iterations) around nuclei excluded from background
 }
 
+# Name of the optional per-installation override, looked up under the registry root.
+APPROVED_METHOD_FILENAME = "approved_method.json"
 
-def get_approved_method() -> Dict[str, Any]:
-    """Return the current PI-approved analysis method parameters.
 
-    These match the APPROVED METHOD block in batch_encr.py and METHOD_LOG.md.
+def _load_method_file(path: Path, origin: str) -> Dict[str, Any]:
+    """Read a method-parameter JSON file (a flat object of name -> value).
+
+    WHY this raises instead of falling back to DEFAULT_METHOD: an override that
+    is configured but unreadable would otherwise be ignored silently, every
+    output would be hashed against the wrong method, and the staleness check
+    would report "current" for results produced with parameters nobody chose.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        raise RuntimeError(
+            f"Approved-method file ({origin}) could not be read: {path}: {e}"
+        ) from e
+    if not isinstance(data, dict) or not data:
+        raise RuntimeError(
+            f"Approved-method file ({origin}) must hold a non-empty JSON object "
+            f"of parameter name -> value: {path}"
+        )
+    return data
+
+
+def get_approved_method(registry_root: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
+    """Return the method parameters this installation treats as approved.
+
+    A lab records the parameters it has signed off on OUTSIDE the code, so the
+    tool carries no project history. Resolution order:
+
+      1. MOUSEBRAIN_APPROVED_METHOD -- path to a JSON file holding the dict.
+      2. ``<registry root>/approved_method.json`` when that file exists
+         (*registry_root* if given, else default_registry_root()).
+      3. DEFAULT_METHOD (the built-in parameters above).
+
+    The JSON file is a flat object with the same keys as DEFAULT_METHOD, e.g.
+    ``{"detection": "threshold+log", "threshold_fraction": 0.2, ...}``.
+    Whatever the source, the returned dict has the same flat shape, so method
+    hashes computed from it compare with hashes already stored in a registry.
+
+    Args:
+        registry_root: Registry root to look under for approved_method.json.
+            Defaults to the resolved default root.
 
     Returns:
-        Dict of method parameter name -> value.
+        A fresh dict of parameter name -> value (safe to modify).
     """
-    return dict(_APPROVED_METHOD)
+    env_path = os.environ.get("MOUSEBRAIN_APPROVED_METHOD")
+    if env_path:
+        return _load_method_file(Path(env_path), "MOUSEBRAIN_APPROVED_METHOD")
+
+    root = Path(registry_root) if registry_root else default_registry_root()
+    if root is not None:
+        candidate = root / APPROVED_METHOD_FILENAME
+        if candidate.is_file():
+            return _load_method_file(candidate, APPROVED_METHOD_FILENAME)
+
+    return dict(DEFAULT_METHOD)
 
 
 # =============================================================================
@@ -156,45 +232,55 @@ def _base_region(region: str) -> str:
 
 
 # =============================================================================
-# DATABASE PATH COMPUTATION
+# REGISTRY ROOT AND PATH COMPUTATION
 # =============================================================================
 
-def _default_db_root():
-    """The Databases folder this lab pushes analysis outputs to: MOUSEBRAIN_DB_ROOT,
-    else <CONNECTOME_ROOT>/Databases. None when neither is configured (the
-    registry then refuses with a message rather than inventing a location)."""
-    import os
-    env = os.environ.get("MOUSEBRAIN_DB_ROOT")
+def default_registry_root() -> Optional[Path]:
+    """Where this tool records its analysis outputs when no root is passed.
+
+    Resolution order:
+      1. MOUSEBRAIN_REGISTRY_ROOT (explicit override; any folder).
+      2. ``<PIPELINE_ROOT>/Registry`` when mousebrain.config resolved a
+         pipeline root (mousebrain.config is imported lazily because it
+         resolves the installation root on import and may warn or fail in a
+         bare environment; the registry must stay usable with an explicit
+         root regardless).
+      3. None -- nothing is configured. Callers must fail loudly rather than
+         invent a location.
+
+    Returns:
+        Path of the registry root, or None.
+    """
+    env = os.environ.get("MOUSEBRAIN_REGISTRY_ROOT")
     if env:
         return Path(env)
+
     try:
-        from mousebrain.config import ROOT_PATH
-        if ROOT_PATH and (Path(ROOT_PATH) / "Databases").exists():
-            return Path(ROOT_PATH) / "Databases"
+        from mousebrain.config import PIPELINE_ROOT
+        if PIPELINE_ROOT:
+            return Path(PIPELINE_ROOT) / "Registry"
     except Exception:
         pass
+
     return None
 
 
-_DEFAULT_DB_ROOT = None  # resolved lazily by _default_db_root()
-
-
 def get_database_path(
-    db_root: Path,
+    registry_root: Path,
     category: str,
     sample: str,
     animal: str,
     region: str,
     analysis_name: str = "",
 ) -> Dict[str, Path]:
-    """Compute canonical database paths for a given output.
+    """Compute the canonical output directories for a given output.
 
-    Follows the existing directory conventions:
+    Pure path computation -- nothing is created here. Layout under the root:
         exports/{analysis_name}/{animal}/{base_region}/   -- data files
         figures/{analysis_name}/{animal}/{base_region}/   -- figure files
 
     Args:
-        db_root: Root of the Databases directory.
+        registry_root: Root of the registry folder.
         category: "detection" or "roi_analysis".
         sample: Full sample ID (e.g. "E02_01_S13_DCN").
         animal: Animal ID (e.g. "E02_01").
@@ -204,26 +290,78 @@ def get_database_path(
     Returns:
         Dict with keys 'export_dir' and 'figure_dir' mapping to Path objects.
     """
+    registry_root = Path(registry_root)
     base_reg = _base_region(region) if region else ""
 
     if category == "detection":
-        export_dir = db_root / "exports" / analysis_name / sample
+        export_dir = registry_root / "exports" / analysis_name / sample
         figure_dir = export_dir  # detection figures live alongside data
     elif category == "roi_analysis":
         if animal and base_reg:
-            export_dir = db_root / "exports" / analysis_name / animal / base_reg
-            figure_dir = db_root / "figures" / analysis_name / animal / base_reg
+            export_dir = registry_root / "exports" / analysis_name / animal / base_reg
+            figure_dir = registry_root / "figures" / analysis_name / animal / base_reg
         elif animal:
-            export_dir = db_root / "exports" / analysis_name / animal
-            figure_dir = db_root / "figures" / analysis_name / animal
+            export_dir = registry_root / "exports" / analysis_name / animal
+            figure_dir = registry_root / "figures" / analysis_name / animal
         else:
-            export_dir = db_root / "exports" / analysis_name / sample
-            figure_dir = db_root / "figures" / analysis_name / sample
+            export_dir = registry_root / "exports" / analysis_name / sample
+            figure_dir = registry_root / "figures" / analysis_name / sample
     else:
-        export_dir = db_root / "exports" / analysis_name / sample
-        figure_dir = db_root / "figures" / analysis_name / sample
+        export_dir = registry_root / "exports" / analysis_name / sample
+        figure_dir = registry_root / "figures" / analysis_name / sample
 
     return {"export_dir": export_dir, "figure_dir": figure_dir}
+
+
+# Output types that are routed to the figures/ tree instead of exports/.
+_FIGURE_OUTPUT_TYPES = ("figure", "roi_figure", "qc_figure", "overlay")
+
+
+def roi_results_from_rows(rows: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Convert a list of per-ROI count rows into the mapping register_roi_counts takes.
+
+    ``count_cells_in_rois`` (plugin_2d.sliceatlas.core.roi) returns a LIST of
+    row dicts, each carrying the ROI under a ``"name"`` key plus its counts,
+    ending with an ``"Outside"`` row and a ``"TOTAL"`` row. The registry keys
+    ROIs by name, so this turns
+
+        [{"name": "Left", "total": 12, "positive": 11, ...}, ...]
+
+    into
+
+        {"Left": {"total": 12, "positive": 11, ...}, ...}
+
+    Keys starting with "_" (private scratch values) are dropped. Dual-channel
+    rows carry ``dual``/``red_only``/``green_only``/``neither`` instead of
+    ``positive``/``negative``/``fraction``; for those, ``positive`` is filled
+    from ``dual`` (the cells positive in both channels), ``negative`` with the
+    rest and ``fraction`` with dual/total, because the per-region summary CSV
+    has fixed columns and would otherwise record every dual-channel sample as
+    zero positives. The original dual keys are kept alongside.
+
+    Args:
+        rows: Iterable of row dicts with a "name" key.
+
+    Returns:
+        Dict mapping ROI name -> count dict.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or "name" not in row:
+            continue
+        name = str(row["name"])
+        counts = {
+            k: v for k, v in row.items()
+            if k != "name" and not str(k).startswith("_")
+        }
+        if "positive" not in counts and "dual" in counts:
+            total = int(counts.get("total", 0) or 0)
+            pos = int(counts.get("dual", 0) or 0)
+            counts["positive"] = pos
+            counts["negative"] = total - pos
+            counts["fraction"] = round(pos / total, 4) if total else 0.0
+        out[name] = counts
+    return out
 
 
 # =============================================================================
@@ -231,7 +369,7 @@ def get_database_path(
 # =============================================================================
 
 class AnalysisRegistry:
-    """Manages analysis outputs with provenance, auto-push, and staleness detection.
+    """Manages analysis outputs with provenance, file placement, and staleness detection.
 
     Each registry instance is tied to a single analysis_name (e.g.
     "ENCR_Detection" or "ENCR_ROI_Analysis") and maintains a registry.json
@@ -241,7 +379,7 @@ class AnalysisRegistry:
       - Full method parameters and their deterministic hash
       - Source file paths (ND2, ROI JSON, etc.)
       - Key results (counts, fractions)
-      - Output file locations (relative to db_root)
+      - Output file locations (relative to the registry root)
       - Registration timestamp
       - Staleness flag (is_current)
 
@@ -249,9 +387,11 @@ class AnalysisRegistry:
     when multiple processes register outputs concurrently.
 
     Args:
-        db_root: Path to the Databases directory. Defaults to MOUSEBRAIN_DB_ROOT or
-                 <CONNECTOME_ROOT>/Databases; raises if neither is configured.
         analysis_name: Name of the analysis (e.g. "ENCR_Detection").
+        registry_root: Root folder of the registry. Defaults to
+            default_registry_root(); raises RuntimeError when nothing resolves.
+        db_root: Deprecated alias of *registry_root*, kept so older callers
+            keep working. Ignored when *registry_root* is given.
     """
 
     # Current schema version for the registry JSON
@@ -260,24 +400,40 @@ class AnalysisRegistry:
     def __init__(
         self,
         analysis_name: str,
-        db_root: Optional[Path] = None,
+        registry_root: Optional[Union[str, Path]] = None,
+        db_root: Optional[Union[str, Path]] = None,
     ):
         self.analysis_name = analysis_name
-        resolved = Path(db_root) if db_root else _default_db_root()
+        if registry_root is None and db_root is not None:
+            registry_root = db_root
+        resolved = Path(registry_root) if registry_root else default_registry_root()
         if resolved is None:
             raise RuntimeError(
-                "AnalysisRegistry: no Databases folder configured. Set MOUSEBRAIN_DB_ROOT "
-                "(or CONNECTOME_ROOT so that <root>/Databases exists), or pass db_root=.")
-        self.db_root = resolved
-        self.exports_dir = self.db_root / "exports" / analysis_name
-        self.figures_dir = self.db_root / "figures" / analysis_name
-        self.logs_dir = self.db_root / "logs"
+                "AnalysisRegistry: no registry root configured. Set "
+                "MOUSEBRAIN_REGISTRY_ROOT to the folder that should hold "
+                "exports/, figures/ and logs/; or set CONNECTOME_ROOT so the "
+                "pipeline root resolves (the registry then lives at "
+                "<pipeline root>/Registry); or pass registry_root=."
+            )
+        self.registry_root = resolved
+        self.exports_dir = self.registry_root / "exports" / analysis_name
+        self.figures_dir = self.registry_root / "figures" / analysis_name
+        self.logs_dir = self.registry_root / "logs"
         self.registry_path = self.exports_dir / "registry.json"
 
-        # Ensure base directories exist
+        # exports/ and logs/ are needed by every registry (manifest + audit
+        # log). figures/<analysis>/ is NOT created here: it is made on the
+        # first figure write in register_output. WHY: analyses that never
+        # produce figures (plain detection runs) used to leave empty
+        # figures/<analysis>/ trees behind, and whoever pulls this folder
+        # then sees phantom analyses with nothing in them.
         self.exports_dir.mkdir(parents=True, exist_ok=True)
-        self.figures_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def db_root(self) -> Path:
+        """Deprecated alias of registry_root (older callers read this name)."""
+        return self.registry_root
 
     # -----------------------------------------------------------------
     # Registry I/O (atomic read/write)
@@ -330,7 +486,7 @@ class AnalysisRegistry:
 
     def _empty_registry(self) -> Dict[str, Any]:
         """Return an empty registry skeleton."""
-        approved = get_approved_method()
+        approved = get_approved_method(self.registry_root)
         return {
             "analysis_name": self.analysis_name,
             "version": self.SCHEMA_VERSION,
@@ -374,11 +530,11 @@ class AnalysisRegistry:
         method_params: Dict[str, Any],
         source_files: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Path]:
-        """Register an analysis output and copy files to the database.
+        """Register an analysis output and copy its files into the registry.
 
-        Copies each file in *files* to the canonical database location, records
-        full provenance in the registry manifest, and returns the destination
-        paths.
+        Copies each file in *files* to its canonical location under the
+        registry root, records full provenance in the manifest, and returns
+        the destination paths.
 
         Args:
             sample: Sample identifier (e.g. "E02_01_S13_DCN").
@@ -396,20 +552,21 @@ class AnalysisRegistry:
 
         Returns:
             Dict mapping output type -> destination Path where the file was
-            placed in the database.
+            placed under the registry root.
         """
         animal, region = parse_sample_id(sample)
 
         # Compute destination directories
         paths = get_database_path(
-            self.db_root, category, sample, animal, region, self.analysis_name
+            self.registry_root, category, sample, animal, region, self.analysis_name
         )
         export_dir = paths["export_dir"]
         figure_dir = paths["figure_dir"]
         export_dir.mkdir(parents=True, exist_ok=True)
-        figure_dir.mkdir(parents=True, exist_ok=True)
+        # figure_dir is created below, only when a figure is actually copied
+        # (see the constructor for why figure folders are made lazily).
 
-        # Copy files to database and build relative output map
+        # Copy files into the registry and build the relative output map
         output_map = {}
         dest_paths = {}
         for output_type, src_path_str in files.items():
@@ -419,7 +576,8 @@ class AnalysisRegistry:
                 continue
 
             # Route figures to figure_dir, everything else to export_dir
-            if output_type in ("figure", "roi_figure", "qc_figure", "overlay"):
+            if output_type in _FIGURE_OUTPUT_TYPES:
+                figure_dir.mkdir(parents=True, exist_ok=True)
                 dest = figure_dir / src_path.name
             else:
                 dest = export_dir / src_path.name
@@ -427,9 +585,9 @@ class AnalysisRegistry:
             shutil.copy2(str(src_path), str(dest))
             dest_paths[output_type] = dest
 
-            # Store path relative to db_root for portability
+            # Store path relative to the registry root for portability
             try:
-                rel = dest.relative_to(self.db_root)
+                rel = dest.relative_to(self.registry_root)
                 output_map[output_type] = str(rel)
             except ValueError:
                 output_map[output_type] = str(dest)
@@ -465,7 +623,7 @@ class AnalysisRegistry:
         self,
         sample: str,
         region: str,
-        roi_results: Dict[str, Dict[str, Any]],
+        roi_results: Union[Dict[str, Dict[str, Any]], Iterable[Dict[str, Any]]],
         method_params: Dict[str, Any],
         source_files: Optional[Dict[str, str]] = None,
     ) -> Path:
@@ -481,12 +639,18 @@ class AnalysisRegistry:
                                           "negative": 0, "fraction": 1.0},
                                "TOTAL": {"total": 13, "positive": 12,
                                           "negative": 1, "fraction": 0.923}}
+                         A list of row dicts as returned by
+                         count_cells_in_rois is accepted too and converted
+                         with roi_results_from_rows.
             method_params: Dict of method parameters.
             source_files: Optional dict of source file paths.
 
         Returns:
-            Path to the per-sample roi_counts CSV in the database.
+            Path to the per-sample roi_counts CSV under the registry root.
         """
+        if not isinstance(roi_results, dict):
+            roi_results = roi_results_from_rows(roi_results)
+
         animal, _ = parse_sample_id(sample)
         base_reg = _base_region(region) if region else region
 
@@ -495,18 +659,29 @@ class AnalysisRegistry:
         export_dir.mkdir(parents=True, exist_ok=True)
         counts_path = export_dir / f"{sample}_roi_counts.csv"
 
-        fieldnames = ["roi", "total", "positive", "negative", "fraction"]
+        # Fixed columns first; any further count keys (e.g. the dual-channel
+        # dual/red_only/green_only/neither) are appended so no count is lost.
+        base_fields = ["roi", "total", "positive", "negative", "fraction"]
+        extra_fields = sorted({
+            str(k) for counts in roi_results.values() for k in counts
+            if str(k) not in base_fields
+        })
+        fieldnames = base_fields + extra_fields
         with open(counts_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=fieldnames, restval="")
             writer.writeheader()
             for roi_name, counts in roi_results.items():
-                writer.writerow({
+                row = {
                     "roi": roi_name,
                     "total": counts.get("total", 0),
                     "positive": counts.get("positive", 0),
                     "negative": counts.get("negative", 0),
                     "fraction": counts.get("fraction", 0.0),
-                })
+                }
+                for k in extra_fields:
+                    if k in counts:
+                        row[k] = counts[k]
+                writer.writerow(row)
 
         # Update the per-region summary CSV (roi_summary_{region}.csv)
         self._update_region_summary(sample, base_reg, roi_results)
@@ -524,7 +699,7 @@ class AnalysisRegistry:
             "method_hash": method_hash,
             "source_files": {k: str(v) for k, v in (source_files or {}).items()},
             "outputs": {
-                "roi_counts": str(counts_path.relative_to(self.db_root)),
+                "roi_counts": str(counts_path.relative_to(self.registry_root)),
             },
             "registered_at": datetime.now().isoformat(),
             "hostname": _get_hostname(),
@@ -550,7 +725,7 @@ class AnalysisRegistry:
         from every sample in that region. If the sample already has a row, it
         is replaced; otherwise a new row is appended.
 
-        Format matches existing convention:
+        Format:
             sample,roi,total,positive,negative,fraction
         """
         summary_path = self.exports_dir / f"roi_summary_{base_region}.csv"
@@ -582,7 +757,10 @@ class AnalysisRegistry:
         # Write back
         fieldnames = ["sample", "roi", "total", "positive", "negative", "fraction"]
         with open(summary_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            # extrasaction="ignore": per-sample rows may carry extra count columns
+            # (dual-channel results); the summary keeps the fixed schema so every
+            # region summary stays comparable, and the per-sample CSV keeps the rest.
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(existing_rows)
 
@@ -706,10 +884,11 @@ class AnalysisRegistry:
         return df
 
     def get_entry(self, sample: str) -> Optional[Dict[str, Any]]:
-        """Get a single registry entry by sample name.
+        """Get a single registry entry by its key (the sample name for
+        register_output entries; ``{sample}__roi_counts`` for ROI counts).
 
         Args:
-            sample: Sample identifier.
+            sample: Entry key.
 
         Returns:
             The entry dict, or None if not found.
@@ -737,7 +916,8 @@ class AnalysisRegistry:
         If None, ALL entries are invalidated.
 
         Archived files are moved to an ``_archived/{timestamp}/`` subdirectory
-        so they are preserved but no longer in the active output path.
+        beside where they were, so they are preserved but no longer in the
+        active output path.
 
         Args:
             sample: Optional sample name to invalidate. None = invalidate all.
@@ -757,7 +937,7 @@ class AnalysisRegistry:
 
             # Archive output files
             for output_type, rel_path in entry.get("outputs", {}).items():
-                src = self.db_root / rel_path
+                src = self.registry_root / rel_path
                 if src.exists():
                     archive_dir = src.parent / "_archived" / timestamp
                     archive_dir.mkdir(parents=True, exist_ok=True)
@@ -789,7 +969,7 @@ class AnalysisRegistry:
     def _log_event(self, action: str, sample: str, detail: str, extra: str = "") -> None:
         """Append a line to the audit log.
 
-        The log file is ``logs/{analysis_name}.log`` under db_root.
+        The log file is ``logs/{analysis_name}.log`` under the registry root.
         One line per event, tab-separated for easy parsing.
         """
         log_path = self.logs_dir / f"{self.analysis_name}.log"
@@ -839,25 +1019,32 @@ def _find_diff_keys(
 # CLI INTERFACE
 # =============================================================================
 
-def _cli_main():
-    """Minimal CLI for inspecting registry state."""
+def main(argv: Optional[List[str]] = None) -> int:
+    """Minimal CLI for inspecting registry state (console script: mousebrain-registry)."""
     import argparse
 
     parser = argparse.ArgumentParser(
+        prog="mousebrain-registry",
         description="Analysis Registry inspector",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python -m mousebrain.analysis_registry --name ENCR_ROI_Analysis\n"
-            "  python -m mousebrain.analysis_registry --name ENCR_Detection --stale\n"
-            "  python -m mousebrain.analysis_registry --name ENCR_Detection --summary\n"
+            "  mousebrain-registry --name ENCR_ROI_Analysis\n"
+            "  mousebrain-registry --name ENCR_Detection --stale\n"
+            "  mousebrain-registry --name ENCR_Detection --summary\n"
+            "  mousebrain-registry --name ENCR_Detection --root /path/to/Registry\n"
         ),
     )
     parser.add_argument(
         "--name", required=True, help="Analysis name (e.g. ENCR_Detection)"
     )
     parser.add_argument(
-        "--db-root", type=Path, default=None, help="Database root (default: auto-detect)"
+        "--root", type=Path, default=None,
+        help="Registry root (default: MOUSEBRAIN_REGISTRY_ROOT, else <pipeline root>/Registry)",
+    )
+    # Deprecated spelling of --root, kept working but hidden from --help.
+    parser.add_argument(
+        "--db-root", dest="root", type=Path, help=argparse.SUPPRESS
     )
     parser.add_argument(
         "--stale", action="store_true",
@@ -867,13 +1054,17 @@ def _cli_main():
         "--summary", action="store_true", help="Print summary table"
     )
 
-    args = parser.parse_args()
-    registry = AnalysisRegistry(analysis_name=args.name, db_root=args.db_root)
+    args = parser.parse_args(argv)
+    try:
+        registry = AnalysisRegistry(analysis_name=args.name, registry_root=args.root)
+    except RuntimeError as e:  # unconfigured root: one line, exit code, no traceback
+        print("[FAIL] %s" % e)
+        return 1
 
     print("=" * 70)
     print(f"Analysis Registry: {args.name}")
-    print(f"  DB root:  {registry.db_root}")
-    print(f"  Manifest: {registry.registry_path}")
+    print(f"  Registry root: {registry.registry_root}")
+    print(f"  Manifest:      {registry.registry_path}")
     print("=" * 70)
 
     data = registry._read_registry()
@@ -888,7 +1079,7 @@ def _cli_main():
 
     if args.stale:
         print("\n--- Staleness check (vs approved method) ---")
-        approved = get_approved_method()
+        approved = get_approved_method(registry.registry_root)
         stale_list = registry.check_staleness(approved)
         if stale_list:
             print(f"  {len(stale_list)} stale entries:")
@@ -919,7 +1110,12 @@ def _cli_main():
                 print(f"    {entry.get('sample', key)}: {status}")
 
     print()
+    return 0
+
+
+# Older name of the entry point, kept as an alias.
+_cli_main = main
 
 
 if __name__ == "__main__":
-    _cli_main()
+    raise SystemExit(main())

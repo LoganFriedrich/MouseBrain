@@ -39,6 +39,29 @@ We do NOT track "experiments" - that term refers to scientific studies, which is
 
 ---
 
+## Pipeline Root Layout
+
+```
+MouseBrain_Pipeline/                      # data only: <CONNECTOME_ROOT>/Tissue/MouseBrain_Pipeline
+├── 3D_Cleared/
+│   ├── 1_Brains/                         # per-brain folders (next section)
+│   └── 2_Data_Summary/                   # calibration_runs.csv, region counts, sessions
+├── 2D_Slices/                            # slice datasets (ND2, ROI JSON)
+└── Registry/                             # analysis registry (mousebrain.analysis_registry)
+    ├── exports/{analysis}/registry.json  # manifest with provenance, one entry per output
+    ├── exports/{analysis}/...            # data outputs (CSV); invalidated files -> _archived/<ts>/
+    ├── figures/{analysis}/...            # figures by animal/region
+    ├── logs/{analysis}.log               # audit trail
+    └── approved_method.json              # optional lab-approved method parameters
+```
+
+`Registry/` is where this tool records what it produced and how (method
+parameters, source files, timestamp, staleness). Its location can be overridden
+with `MOUSEBRAIN_REGISTRY_ROOT`. The tool never pushes results out; an
+integrator may pull from `Registry/`.
+
+---
+
 ## Folder Structure (per brain)
 
 ```

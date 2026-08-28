@@ -2109,23 +2109,11 @@ Examples:
                     if graphs_dir:
                         print(f"    Cross-brain graphs: {graphs_dir}")
 
-                    # Push to connectome.db (non-blocking, never fails pipeline)
-                    try:
-                        from mousedb.importers import sync_brain_to_db
-                        sync_brain_to_db(
-                            brain_name=brain['name'],
-                            per_brain_csv=summary_csv,
-                            region_counts_dict=region_counts,
-                            hemisphere_counts=hemisphere_counts if hemisphere_counts else None,
-                            detection_params=detection_params,
-                            is_final=True,
-                            exp_id=exp_id,
-                        )
-                        print(f"    [DB] Synced to connectome.db")
-                    except ImportError:
-                        print(f"    [DB] mousedb not installed, skipping database sync")
-                    except Exception as e:
-                        print(f"    [DB] Warning: database sync failed: {e}")
+                    # No database push here. This tool stands alone: the region
+                    # counts are complete once the CSVs above are written. An
+                    # integrator pulls them from those CSVs on its own schedule
+                    # (e.g. "mousedb import-brains"); this code knows nothing
+                    # about it and must never import it.
                 else:
                     print(f"    Warning: Could not parse region counts from {output_csv}")
         else:

@@ -32,6 +32,32 @@ Then in napari: **Plugins → Connectome Pipeline → 2. Setup & Tuning**
 - **Cellfinder** - Cell detection and classification
 - **Experiment Tracker** - Track all calibration runs
 
+## Where outputs go
+
+Every analysis output (detection measurements, ROI counts, figures) is recorded
+by the analysis registry together with the parameters, source files and time
+that produced it. The registry lives inside the pipeline data folder:
+
+```
+<pipeline root>/Registry/
+├── exports/<analysis>/registry.json   # manifest: one entry per output, with provenance
+├── exports/<analysis>/...             # data files (CSV)
+├── figures/<analysis>/...             # figures, by animal/region
+├── logs/<analysis>.log                # audit trail
+└── approved_method.json               # optional: the parameters your lab has approved
+```
+
+- The pipeline root comes from `CONNECTOME_ROOT` (`<root>/Tissue/MouseBrain_Pipeline`),
+  or is auto-detected when the package is installed inside such a layout. Set
+  `MOUSEBRAIN_REGISTRY_ROOT` to put the registry somewhere else. If neither
+  resolves, nothing is written and the tool stops with a message naming them.
+- `MOUSEBRAIN_APPROVED_METHOD` may point to a JSON file of method parameters
+  instead of `approved_method.json` under the registry root.
+- MouseBrain never pushes results anywhere. An integrator (a lab database such
+  as mousedb, for example) may pull from this folder; the manifest tells it
+  what is there, how it was produced and whether it is still current.
+- Inspect a registry: `mousebrain-registry --name <analysis> --stale --summary`.
+
 ## Troubleshooting
 
 If something breaks, re-run the installer:
