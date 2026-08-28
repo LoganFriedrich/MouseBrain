@@ -6,7 +6,7 @@ Installs the napari plugin for the BrainGlobe cell detection pipeline.
 USAGE:
 ------
     conda activate brainglobe-env
-    cd y:\\LAB_ROOT
+    cd <CONNECTOME_ROOT>
     python setup.py
 
 Or just double-click: INSTALL_NAPARI_PLUGINS.bat

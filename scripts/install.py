@@ -108,7 +108,7 @@ def check_conda():
     result = run_command("conda --version", check=False, capture_output=True)
     if result and result.returncode == 0:
         version = result.stdout.strip()
-        print(f"✓ Found conda: {version}")
+        print(f"[OK] Found conda: {version}")
         return True
     else:
         print("❌ Conda not found!")
@@ -134,7 +134,7 @@ def create_or_update_env():
     env_exists = check_env_exists()
 
     if env_exists:
-        print(f"✓ Environment '{ENV_NAME}' already exists")
+        print(f"[OK] Environment '{ENV_NAME}' already exists")
         response = input(f"\nUpdate existing environment? [Y/n]: ").strip().lower()
         if response and response != 'y':
             print("Skipping environment creation")
@@ -150,7 +150,7 @@ def create_or_update_env():
         if result is None:
             print("❌ Failed to create environment")
             return False
-        print(f"✓ Environment created")
+        print(f"[OK] Environment created")
 
     return True
 
@@ -177,7 +177,7 @@ def install_packages():
         print("\n⚠️  Some packages may have failed to install")
         print("This is sometimes okay - we'll verify next")
     else:
-        print("\n✓ Package installation complete")
+        print("\n[OK] Package installation complete")
 
     return True
 
@@ -206,7 +206,7 @@ def install_napari_plugin():
         print("   Plugin may need to be installed manually")
         return False
 
-    print(f"✓ Plugin directory found: {plugin_dir}")
+    print(f"[OK] Plugin directory found: {plugin_dir}")
 
     # Install plugin in development mode
     if os.name == 'nt':
@@ -218,7 +218,7 @@ def install_napari_plugin():
         cmd = f'{pip_cmd} install -e {plugin_dir}'
         result = run_command(cmd, check=False)
         if result is not None:
-            print("✓ Plugin installed")
+            print("[OK] Plugin installed")
             return True
 
     print("⚠️  Plugin files not yet created - will be available after setup")
@@ -250,7 +250,7 @@ def verify_installation():
             capture_output=True
         )
         if result and result.returncode == 0:
-            print(f"  ✓ {name}")
+            print(f"  [OK] {name}")
         else:
             print(f"  ❌ {name} - import failed")
             all_passed = False
@@ -266,24 +266,28 @@ def create_config():
     config_file = config_dir / "config.json"
 
     if config_file.exists():
-        print(f"✓ Config file already exists: {config_file}")
+        print(f"[OK] Config file already exists: {config_file}")
         return
 
-    # Default configuration
-    # Uses new restructured paths with fallback to current structure
+    # Default configuration: paths hang off CONNECTOME_ROOT (the folder that
+    # contains Tissue/). There is no built-in lab location; if the variable is
+    # not set the entries are left empty for the person to fill in.
+    root = os.environ.get("CONNECTOME_ROOT", "")
+    pipe = str(Path(root) / "Tissue" / "MouseBrain_Pipeline" / "3D_Cleared") if root else ""
     config = {
-        "brainglobe_root": "Y:\\LAB_ROOT\\Tissue\\MouseBrain_Pipeline\\3D_Cleared\\1_Brains",
-        "brainglobe_root_fallback": "Y:\\LAB_ROOT\\Tissue\\3D_Cleared\\1_Brains",
-        "summary_data": "Y:\\LAB_ROOT\\Tissue\\MouseBrain_Pipeline\\3D_Cleared\\2_Data_Summary",
-        "summary_data_fallback": "Y:\\LAB_ROOT\\Tissue\\3D_Cleared\\2_Data_Summary",
+        "brainglobe_root": str(Path(pipe) / "1_Brains") if pipe else "",
+        "summary_data": str(Path(pipe) / "2_Data_Summary") if pipe else "",
         "default_orientation": "iar",
         "camera_pixel_size": 6.5,
     }
+    if not root:
+        print("[!] CONNECTOME_ROOT is not set: the config paths are empty; edit the file "
+              "or set the variable and re-run.")
 
     with open(config_file, 'w') as f:
         json.dump(config, f, indent=2)
 
-    print(f"✓ Created config file: {config_file}")
+    print(f"[OK] Created config file: {config_file}")
     print("\nYou can edit this file to change default paths and settings")
 
 
@@ -338,20 +342,20 @@ def main():
     current_step += 1
     print_step(current_step, total_steps, "Verifying installation")
     if verify_installation():
-        print("\n✓ All checks passed!")
+        print("\n[OK] All checks passed!")
     else:
         print("\n⚠️  Some packages failed verification")
         print("You may need to install them manually")
 
     # Final instructions
     print_header("Installation Complete!")
-    print("\n✓ Environment created successfully")
-    print(f"✓ To use the pipeline, first activate the environment:\n")
+    print("\n[OK] Environment created successfully")
+    print(f"[OK] To use the pipeline, first activate the environment:\n")
     print(f"    conda activate {ENV_NAME}\n")
-    print("✓ Then navigate to the scripts folder and run the pipeline:")
+    print("[OK] Then navigate to the scripts folder and run the pipeline:")
     print("    cd Tissue\\MouseBrain_Pipeline\\3D_Cleared\\util_Scripts")
     print("    python 1_organize_pipeline.py")
-    print("\n✓ To launch napari with the manual crop plugin:")
+    print("\n[OK] To launch napari with the manual crop plugin:")
     print("    napari")
     print("\nSee INSTALL.md for detailed usage instructions.")
     print("=" * 70)

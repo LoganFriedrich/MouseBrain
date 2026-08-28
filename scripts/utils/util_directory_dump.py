@@ -136,7 +136,7 @@ def main():
         epilog="""
 Examples:
     python util_directory_dump.py
-    python util_directory_dump.py Y:\\LAB_ROOT\\Brainglobe
+    python util_directory_dump.py <folder>
     python util_directory_dump.py . --depth 4
     python util_directory_dump.py C:\\Data --no-wait
         """

@@ -554,7 +554,7 @@ def cmd_view(args):
 def _find_databases_root(data_folder):
     """Walk up from a data folder to find the Databases/ directory.
 
-    Looks for LAB_ROOT (or similar) parent that contains a Databases/ dir.
+    Looks for the project root (the parent that contains a Databases/ dir).
     Falls back to CONNECTOME_ROOT env var.
     """
     import os

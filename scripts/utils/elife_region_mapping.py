@@ -32,6 +32,6 @@ try:
 except ImportError:
     raise ImportError(
         "mousebrain package is required. Install with:\n"
-        "  cd Y:\\LAB_ROOT\\Tissue\\MouseBrain\n"
+        "  cd <MouseBrain repository>\n"
         "  pip install -e ."
     )

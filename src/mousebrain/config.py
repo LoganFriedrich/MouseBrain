@@ -9,7 +9,7 @@ Path Resolution Order:
 1. Environment variable CONNECTOME_ROOT (if set)
 2. Environment variable SCI_CONNECTOME_ROOT (legacy, still supported)
 3. Auto-detect from script location (walks up to find 3_Nuclei_Detection)
-4. Fallback to Y:\\LAB_ROOT (for backwards compatibility with lab setup)
+4. No drive-letter fallback (removed 2026-08-28): unresolved = loud, invalid root
 
 Usage in other scripts:
     from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR, MODELS_DIR, DATA_SUMMARY_DIR

@@ -155,7 +155,7 @@ def parse_filename(filepath: str) -> Dict[str, Any]:
     Parse a filename (with or without path) into sample components.
 
     Args:
-        filepath: Path or filename (e.g., "y:/data/E02_01_S12.nd2")
+        filepath: Path or filename (e.g., "<folder>/E02_01_S12.nd2")
 
     Returns:
         Same dict as parse_sample_name, with additional 'extension' key

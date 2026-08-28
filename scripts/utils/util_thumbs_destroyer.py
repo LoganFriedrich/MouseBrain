@@ -275,7 +275,7 @@ def main():
         epilog="""
 Examples:
     python util_thumbs_destroyer.py
-    python util_thumbs_destroyer.py Y:\\LAB_ROOT\\Brainglobe
+    python util_thumbs_destroyer.py <folder>
     python util_thumbs_destroyer.py --prevent
     python util_thumbs_destroyer.py --dry-run
     
