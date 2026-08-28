@@ -2391,27 +2391,11 @@ class TuningWidget(QWidget):
                     det_cells_found=cell_count,
                 )
 
-            # Push calibration run to connectome.db (never break the GUI)
-            try:
-                from mousedb.importers import sync_calibration_to_db
-                brain_name = None
-                if hasattr(self, 'current_brain') and self.current_brain:
-                    brain_name = Path(self.current_brain).name if self.current_brain else None
-                if brain_name and self.last_run_id:
-                    sync_calibration_to_db(
-                        brain_name=brain_name,
-                        exp_id=self.last_run_id,
-                        params_dict={
-                            'ball_xy': self.ball_xy.value(),
-                            'ball_z': self.ball_z.value(),
-                            'soma_diameter': self.soma_diameter.value(),
-                            'threshold': self.threshold.value(),
-                            'cells_detected': cell_count,
-                            'status': 'completed',
-                        },
-                    )
-            except Exception:
-                pass  # Never break the GUI
+            # No database push here. The tracker CSV updated above is the
+            # complete record of this calibration run; an integrator pulls
+            # calibration runs from that CSV on its own schedule (e.g.
+            # "mousedb import-brains"). The GUI knows nothing about it and
+            # must never import it.
 
             # Add to session tracking - track runs made during this session
             if self.last_run_id and self.last_run_id not in self.session_run_ids:

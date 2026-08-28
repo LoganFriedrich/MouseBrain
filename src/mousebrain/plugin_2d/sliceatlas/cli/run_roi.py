@@ -551,32 +551,15 @@ def cmd_view(args):
 # Output path helpers
 # ---------------------------------------------------------------------------
 
-def _find_databases_root(data_folder):
-    """Walk up from a data folder to find the Databases/ directory.
+def _registry_root():
+    """Root of this tool's analysis registry (see mousebrain.analysis_registry).
 
-    Looks for the project root (the parent that contains a Databases/ dir).
-    Falls back to CONNECTOME_ROOT env var.
+    MOUSEBRAIN_REGISTRY_ROOT, else <pipeline root>/Registry. None when nothing
+    is configured -- the caller then falls back to a folder beside the data and
+    says so, rather than searching the disk for somewhere to write.
     """
-    import os
-
-    # Try env var first
-    connectome_root = os.environ.get('CONNECTOME_ROOT')
-    if connectome_root:
-        db = Path(connectome_root) / 'Databases'
-        if db.is_dir():
-            return db
-
-    # Walk up from data_folder looking for a sibling Databases/
-    p = Path(data_folder).resolve()
-    for _ in range(10):
-        candidate = p / 'Databases'
-        if candidate.is_dir():
-            return candidate
-        if p.parent == p:
-            break
-        p = p.parent
-
-    return None
+    from mousebrain.analysis_registry import default_registry_root
+    return default_registry_root()
 
 
 def _parse_sample_name(sample_name):
@@ -596,19 +579,22 @@ def _parse_sample_name(sample_name):
 
 
 def _get_roi_output_dirs(data_folder):
-    """Return (exports_dir, figures_dir) under Databases/.
+    """Return (exports_dir, figures_dir) for this dataset under the registry root.
 
-    Creates directories if needed. Returns (None, None) if Databases not found.
+    exports/{project}_ROI_Analysis and figures/{project}_ROI_Analysis, where
+    project is the dataset folder name (e.g. 'ENCR'). exports/ is created;
+    figures/ is returned as a path only -- nothing in this command writes
+    figures, and an empty figures tree would look like an analysis that
+    produced nothing. Returns (None, None) when no registry root is configured.
     """
-    db = _find_databases_root(data_folder)
-    if db is None:
+    root = _registry_root()
+    if root is None:
         return None, None
 
-    project = Path(data_folder).name  # e.g. 'ENCR'
-    exports = db / 'exports' / f'{project}_ROI_Analysis'
-    figures = db / 'figures' / f'{project}_ROI_Analysis'
+    analysis = f'{Path(data_folder).name}_ROI_Analysis'
+    exports = root / 'exports' / analysis
+    figures = root / 'figures' / analysis
     exports.mkdir(parents=True, exist_ok=True)
-    figures.mkdir(parents=True, exist_ok=True)
     return exports, figures
 
 
@@ -619,16 +605,17 @@ def _get_roi_output_dirs(data_folder):
 def _find_detection_dir(base_folder):
     """Find the detection results directory.
 
-    Checks Databases/exports/{project}_Detection/ first,
-    falls back to base_folder/batch_results/ for backward compat.
+    Checks <registry root>/exports/{project}_Detection/ first (where the
+    detection batch registers its outputs), falls back to
+    base_folder/batch_results/ for backward compat.
     """
     base = Path(base_folder)
     project = base.name  # e.g. 'ENCR'
 
-    # Primary: Databases/exports/{project}_Detection/
-    db = _find_databases_root(base_folder)
-    if db is not None:
-        det_dir = db / 'exports' / f'{project}_Detection'
+    # Primary: <registry root>/exports/{project}_Detection/
+    root = _registry_root()
+    if root is not None:
+        det_dir = root / 'exports' / f'{project}_Detection'
         if det_dir.exists():
             return det_dir
 
@@ -643,7 +630,7 @@ def _find_detection_dir(base_folder):
 def _discover_samples(base_folder, region=None):
     """Find all samples with measurements.csv and a matching ND2.
 
-    Looks for detection results in Databases/exports/{project}_Detection/
+    Looks for detection results in <registry root>/exports/{project}_Detection/
     (falls back to base_folder/batch_results/), then searches the data
     folder for matching ND2 files.
 
@@ -837,12 +824,22 @@ def cmd_batch(args):
         print("\nNo ROIs saved. Nothing to count.")
         return 0
 
-    # Resolve output directories (Databases/ preferred)
+    # Resolve output directories (registry root preferred)
     exports_dir, figures_dir = _get_roi_output_dirs(base_folder)
+    registry = None
     if exports_dir is None:
-        print("Warning: Databases/ not found. Saving to batch_results/ as fallback.")
+        print("[!] registry: no registry root configured (set MOUSEBRAIN_REGISTRY_ROOT "
+              "or CONNECTOME_ROOT). Saving to batch_results/ beside the data instead.")
         exports_dir = base_folder / 'batch_results'
         exports_dir.mkdir(exist_ok=True)
+    else:
+        # One registry for the whole batch. A registry failure is reported and
+        # counting continues -- the counts on disk are the primary output.
+        try:
+            from mousebrain.analysis_registry import AnalysisRegistry
+            registry = AnalysisRegistry(analysis_name=f'{base_folder.name}_ROI_Analysis')
+        except Exception as e:
+            print(f"[!] registry: {e}")
 
     print(f"\n{'='*60}")
     print(f"COUNTING -- {len(done)} samples with ROIs")
@@ -882,7 +879,7 @@ def cmd_batch(args):
             print(f"  {s_name}: {n_rois} ROI(s), {total_row['total']} cells, "
                   f"{total_row.get('positive', 0)} positive ({total_row.get('fraction', 0)*100:.1f}%)")
 
-        # Save per-sample ROI counts to Databases/exports/.../mouse/region/
+        # Save per-sample ROI counts to exports/{project}_ROI_Analysis/mouse/region/
         mouse, base_region = _parse_sample_name(s_name)
         sample_out = exports_dir / mouse / base_region
         sample_out.mkdir(parents=True, exist_ok=True)
@@ -891,22 +888,28 @@ def cmd_batch(args):
         per_sample_csv = sample_out / f'{s_name}_roi_counts.csv'
         per_sample_df.to_csv(per_sample_csv, index=False)
 
-        # Registry provenance tracking (non-blocking)
-        try:
-            from mousebrain.analysis_registry import AnalysisRegistry, get_approved_method
-            registry = AnalysisRegistry(analysis_name="ENCR_ROI_Analysis")
-            registry.register_roi_counts(
-                sample=s_name,
-                region=base_region,
-                roi_results=results,
-                method_params=get_approved_method(),
-                source_files={
-                    "nd2": str(sample['nd2_path']),
-                    "roi_json": str(rois_path),
-                },
-            )
-        except Exception as e:
-            print(f"Registry warning: {e}")
+        # Registry provenance tracking (non-blocking): records the counts with
+        # the method parameters and source files so an integrator can pull
+        # them. count_cells_in_rois returns a LIST of rows keyed by 'name';
+        # roi_results_from_rows turns that into the ROI-name -> counts mapping
+        # the registry stores.
+        if registry is not None:
+            try:
+                from mousebrain.analysis_registry import (
+                    get_approved_method, roi_results_from_rows,
+                )
+                registry.register_roi_counts(
+                    sample=s_name,
+                    region=base_region,
+                    roi_results=roi_results_from_rows(results),
+                    method_params=get_approved_method(registry.registry_root),
+                    source_files={
+                        "nd2": str(sample['nd2_path']),
+                        "roi_json": str(rois_path),
+                    },
+                )
+            except Exception as e:
+                print(f"  [!] registry: {e}")
 
     # Combined summary
     if all_rows:
