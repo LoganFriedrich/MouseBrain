@@ -44,7 +44,7 @@ def main():
     print("Done! Restart napari to see the plugin.")
     print("=" * 60)
     print("\nIn napari, go to:")
-    print("  Plugins > Connectome Pipeline > [choose widget]")
+    print("  Plugins > BrainTools > [choose widget]")
     print()
 
 if __name__ == "__main__":

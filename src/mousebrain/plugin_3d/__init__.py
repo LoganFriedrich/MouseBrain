@@ -10,10 +10,11 @@ WIDGETS:
 3. Manual Crop         - Crop brain volumes (remove spinal cord for registration)
 4. Experiments         - Browse and compare your experiment runs
 5. Curation            - Rapid review of detection candidates
+6. 3D Cell Viewer      - Detected cells as colored points over a ghost atlas
 
 HOW TO USE:
 -----------
-In napari: Plugins > Connectome Pipeline > [choose widget]
+In napari: Plugins > BrainTools > [choose widget]  (the "3D: n." entries)
 """
 
 __version__ = "0.1.0"

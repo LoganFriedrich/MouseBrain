@@ -114,7 +114,7 @@ python util_manual_crop.py --brain 349_CNT_01_02_1p625x_z4
 
 # Or use the napari GUI:
 # 1. Launch napari
-# 2. Plugins → Connectome Pipeline → Manual Crop
+# 2. Plugins → BrainTools → 3D: 3. Manual Crop
 ```
 
 ### Utility: Registration QC & Approval

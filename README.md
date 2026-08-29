@@ -23,11 +23,11 @@ mousebrain --check      # Verify everything is working
 mousebrain --paths      # Show configured paths
 ```
 
-Then in napari: **Plugins → Connectome Pipeline → 2. Setup & Tuning**
+Then in napari: **Plugins → BrainTools → 3D: 2. Setup & Tuning**
 
 ## What's Included
 
-- **Connectome Pipeline** - napari plugin for cell detection workflow
+- **BrainTools** - napari plugin (Plugins → BrainTools) for the 3D cell detection workflow and 2D slice analysis
 - **BrainGlobe** - Atlas registration (brainreg)
 - **Cellfinder** - Cell detection and classification
 - **Experiment Tracker** - Track all calibration runs

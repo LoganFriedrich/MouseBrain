@@ -1,6 +1,6 @@
 """Napari reader for raw Imaris .ims files (brains / PANO scans).
 
-Registered via plugin_3d/napari.yaml so napari's ``File -> Open File(s)...`` and
+Registered via mousebrain/napari.yaml so napari's ``File -> Open File(s)...`` and
 drag-drop open any ``.ims`` directly -- no CLI arguments, no pipeline organizing.
 Each channel is loaded lazily through the Imaris resolution pyramid (multiscale)
 and scaled to true microns, so the scale bar and 3-D aspect are physically

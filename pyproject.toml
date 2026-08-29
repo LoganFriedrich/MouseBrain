@@ -107,5 +107,3 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 mousebrain = ["napari.yaml"]
-"mousebrain.plugin_3d" = ["napari.yaml"]
-"mousebrain.plugin_2d" = ["napari.yaml"]

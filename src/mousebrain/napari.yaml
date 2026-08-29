@@ -18,6 +18,9 @@ contributions:
     - id: mousebrain.curation
       python_name: mousebrain.plugin_3d.curation_widget:CurationWidget
       title: Curation
+    - id: mousebrain.cell_viewer_3d
+      python_name: mousebrain.plugin_3d.cell_viewer_3d:Cell3DViewer
+      title: 3D Cell Viewer
     # === 2D Slice Pipeline ===
     - id: mousebrain.sliceatlas
       python_name: mousebrain.plugin_2d.sliceatlas.napari_plugin.main_widget:BrainSliceWidget
@@ -43,6 +46,8 @@ contributions:
       display_name: "3D: 4. Experiments"
     - command: mousebrain.curation
       display_name: "3D: 5. Curation"
+    - command: mousebrain.cell_viewer_3d
+      display_name: "3D: 6. Cell Viewer"
     # === 2D Slice Pipeline ===
     - command: mousebrain.sliceatlas
       display_name: "2D: 1. BrainSlice"

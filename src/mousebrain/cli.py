@@ -455,7 +455,7 @@ def launch_manual_crop(brain_name):
                         break
         except Exception as e:
             print(f"Warning: Could not auto-open crop widget: {e}")
-            print("Use Plugins > Connectome Pipeline > Manual Crop")
+            print("Use Plugins > BrainTools > 3D: 3. Manual Crop")
             import traceback
             traceback.print_exc()
 
