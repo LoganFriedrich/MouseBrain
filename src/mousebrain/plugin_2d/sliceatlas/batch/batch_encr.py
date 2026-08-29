@@ -10,10 +10,13 @@ Usage:
     python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project ENCR --threshold 1.5 --dilation 50
     python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project ENCR --output <folder>
 
-Where the files are: <2D data dir>/<PROJECT>/<PROJECT>_XX_XX/0_Raw_HD and 0_Raw
-(the 2D data dir comes from mousebrain.plugin_2d.sliceatlas.core.config.DATA_DIR,
-i.e. from CONNECTOME_ROOT). The project code can also be given as the
-MOUSEBRAIN_2D_PROJECT environment variable.
+Where the files are searched, in order (the first root holding ND2 files wins):
+  1. new layout:    <2D_Slices>/1_Subjects/<PROJECT>/<PROJECT>_XX_XX/0_Raw_HD and 0_Raw
+  2. legacy layout: <2D_Slices>/<PROJECT>/<PROJECT>_XX_XX_HD_Regions[/Corrected]
+(<2D_Slices> is mousebrain.config.SLICES_2D_DIR, i.e. from CONNECTOME_ROOT;
+--input replaces both with one explicit root). The project code can also be
+given as the MOUSEBRAIN_2D_PROJECT environment variable. When no root holds
+any ND2 file the script names the roots it searched and exits 1.
 
 METHOD
   DETECTION:       threshold, method=otsu, physical size 8-25 um diameter
@@ -47,6 +50,14 @@ from pathlib import Path
 import numpy as np
 
 from ..core.config import DATA_DIR, get_sample_dir, SampleDirs, parse_sample_name
+
+# WHY: the legacy layout lives one level ABOVE the 1_Subjects tree, so discovery
+# needs the 2D root itself, not only DATA_DIR (= <2D_Slices>/1_Subjects). Guarded
+# so a standalone sliceatlas install (no mousebrain.config) still imports.
+try:
+    from mousebrain.config import SLICES_2D_DIR
+except ImportError:
+    SLICES_2D_DIR = None
 
 
 # Project code: --project on the command line, else MOUSEBRAIN_2D_PROJECT.
@@ -132,12 +143,17 @@ def get_tuned_parameters() -> dict:
     return params
 
 
-def find_nd2_files(root: Path, project: str = None) -> list:
-    """Find all ND2 files in the project's subject folders."""
-    nd2_files = []
-    project = project or PROJECT or root.name
+# Layout labels reported in the banner and returned by discover_nd2_files().
+LAYOUT_NEW = "1_Subjects"
+LAYOUT_LEGACY = "legacy"
 
-    # New structure: 1_Subjects/<PROJECT>/<PROJECT>_XX_XX/0_Raw_HD/ and 0_Raw/
+
+def _scan_new_layout(root: Path, project: str) -> list:
+    """ND2 files in the 1_Subjects layout under ONE project root.
+
+    <root>/<PROJECT>_XX_XX/0_Raw_HD/*.nd2 and <root>/<PROJECT>_XX_XX/0_Raw/*.nd2
+    """
+    nd2_files = []
     for subject_dir in sorted(root.glob("%s_*" % project)):
         if not subject_dir.is_dir():
             continue
@@ -149,21 +165,88 @@ def find_nd2_files(root: Path, project: str = None) -> list:
         raw_dir = subject_dir / SampleDirs.RAW
         if raw_dir.exists():
             nd2_files.extend(sorted(raw_dir.glob("*.nd2")))
-
-    # Fallback: old structure (<PROJECT>_XX_XX_HD_Regions/)
-    if not nd2_files:
-        for hd_dir in sorted(root.glob("%s_*_HD_Regions" % project)):
-            # Check Corrected subfolder first (preferred)
-            corrected = hd_dir / "Corrected"
-            if corrected.exists():
-                nd2_files.extend(sorted(corrected.glob("*.nd2")))
-            # Also get files from base dir that aren't in Corrected
-            corrected_stems = {f.stem for f in (corrected.glob("*.nd2") if corrected.exists() else [])}
-            for f in sorted(hd_dir.glob("*.nd2")):
-                if f.stem not in corrected_stems:
-                    nd2_files.append(f)
-
     return nd2_files
+
+
+def _scan_legacy_layout(root: Path, project: str) -> list:
+    """ND2 files in the pre-1_Subjects layout under ONE project root.
+
+    <root>/<PROJECT>_XX_XX_HD_Regions/Corrected/*.nd2 first, then the files in
+    <root>/<PROJECT>_XX_XX_HD_Regions/ itself whose stem has no Corrected copy.
+    WHY Corrected wins: it holds the operator-corrected re-export of the same
+    slice; taking both would count that slice twice.
+    """
+    nd2_files = []
+    for hd_dir in sorted(root.glob("%s_*_HD_Regions" % project)):
+        if not hd_dir.is_dir():
+            continue
+        corrected = hd_dir / "Corrected"
+        corrected_files = sorted(corrected.glob("*.nd2")) if corrected.exists() else []
+        nd2_files.extend(corrected_files)
+        corrected_stems = {f.stem for f in corrected_files}
+        for f in sorted(hd_dir.glob("*.nd2")):
+            if f.stem not in corrected_stems:
+                nd2_files.append(f)
+    return nd2_files
+
+
+def find_nd2_files(root: Path, project: str = None) -> list:
+    """Find the ND2 files under ONE project root, whichever layout it holds.
+
+    The 1_Subjects layout is tried first; the legacy layout only when the
+    former yields nothing under this root (see the module docstring for the
+    two trees). Returns [] when the root does not exist or holds no ND2 file.
+    """
+    root = Path(root)
+    project = project or PROJECT or root.name
+    if not root.is_dir():
+        return []
+    return _scan_new_layout(root, project) or _scan_legacy_layout(root, project)
+
+
+def input_roots(project: str, explicit_input=None) -> list:
+    """Project roots to search, in priority order.
+
+    --input names exactly one root and is searched alone. Otherwise the new
+    layout root (<1_Subjects>/<project>) comes first and the legacy root
+    (<2D_Slices>/<project>) second.
+    WHY the legacy root is still searched: raw slices that were never moved
+    into 1_Subjects/ sit in the old per-project folder. Searching only the
+    new root made the documented invocation find 0 files and exit 0 as if
+    the batch had run.
+    """
+    if explicit_input is not None:
+        return [Path(explicit_input)]
+    roots = []
+    if not project:
+        return roots
+    if DATA_DIR:
+        roots.append(Path(DATA_DIR) / project)
+    if SLICES_2D_DIR:
+        roots.append(Path(SLICES_2D_DIR) / project)
+    return roots
+
+
+def discover_nd2_files(roots, project: str = None) -> tuple:
+    """Search roots in order; return (files, root_used, layout).
+
+    Within each root the 1_Subjects layout is tried before the legacy one.
+    The first (root, layout) that holds any ND2 file wins and nothing later
+    is merged in. WHY: the two layouts can hold copies of the same slices
+    while a migration is under way; merging them would process each slice
+    twice. (files, root_used, layout) is ([], None, None) when nothing was
+    found anywhere.
+    """
+    for root in roots:
+        root = Path(root)
+        if not root.is_dir():
+            continue
+        proj = project or PROJECT or root.name
+        for layout, scan in ((LAYOUT_NEW, _scan_new_layout), (LAYOUT_LEGACY, _scan_legacy_layout)):
+            files = scan(root, proj)
+            if files:
+                return files, root, layout
+    return [], None, None
 
 
 def process_single(
@@ -433,9 +516,26 @@ def main():
             print("    To tune: run brainslice-detect interactively first.")
             print()
 
+    # Resolve the input BEFORE the banner so the banner reports what will
+    # actually be read. WHY: it used to print 'Input: None' because the
+    # default root was only filled in after the banner.
+    roots = input_roots(args.project, args.input)
+    if not roots:
+        parser.error("give --project (or MOUSEBRAIN_2D_PROJECT) and set CONNECTOME_ROOT, "
+                     "or pass --input explicitly")
+    if args.output is None:
+        parser.error("output folder unknown: set CONNECTOME_ROOT or pass --output")
+    nd2_files, root_used, layout = discover_nd2_files(roots, args.project)
+    searched = "; ".join(str(r) for r in roots)
+
     print("=" * 60)
     print("ENCR Batch Colocalization Analysis")
-    print(f"Input:     {args.input}")
+    print(f"Project:   {args.project}")
+    if root_used is not None:
+        print(f"Input:     {root_used}  [{layout} layout]")
+    else:
+        print("Input:     (no ND2 files found)")
+    print(f"Searched:  {searched}")
     print(f"Output:    {args.output}")
     print(f"Params:    {param_source}")
     print(f"Detection: threshold (otsu), area {args.min_area}-{args.max_area} px")
@@ -445,24 +545,17 @@ def main():
     print(f"BG excl:   {args.dilation} dilation iterations")
     print("=" * 60)
 
-    # Find ND2 files
-    if args.input is None:
-        if not (DATA_DIR and args.project):
-            parser.error("give --project (or MOUSEBRAIN_2D_PROJECT) and set CONNECTOME_ROOT, "
-                         "or pass --input explicitly")
-        args.input = Path(DATA_DIR) / args.project
-    if args.output is None:
-        parser.error("output folder unknown: set CONNECTOME_ROOT or pass --output")
-    nd2_files = find_nd2_files(args.input, args.project)
     print(f"\nFound {len(nd2_files)} ND2 files")
+
+    if not nd2_files:
+        # WHY exit 1: a batch that found nothing did no work. Exiting 0 let a
+        # wrong or empty root pass unnoticed in scripted and scheduled runs.
+        print(f"[!] no ND2 files under {searched}")
+        sys.exit(1)
 
     if args.dry_run:
         for f in nd2_files:
-            print(f"  {f.relative_to(args.input)}")
-        return
-
-    if not nd2_files:
-        print("No ND2 files found!")
+            print(f"  {f.relative_to(root_used)}")
         return
 
     args.output.mkdir(parents=True, exist_ok=True)
