@@ -485,7 +485,7 @@ def convert_brainglobe_output(
 
     # Write ELIFE-GROUPED format with hemisphere columns
     try:
-        from elife_region_mapping import aggregate_to_elife, ELIFE_GROUPS
+        from mousebrain.region_mapping import aggregate_to_elife, ELIFE_GROUPS  # the installed package; the loose scripts/utils copy is NOT on sys.path here, which is why this import failed silently for months
 
         elife_csv = output_csv.parent / "cell_counts_elife_grouped.csv"
         aggregated = aggregate_to_elife(region_counts)
@@ -892,8 +892,9 @@ def update_elife_counts_csv(
         Path to elife_counts.csv or None if eLife mapping unavailable
     """
     try:
-        from elife_region_mapping import aggregate_to_elife, ELIFE_GROUPS
-    except ImportError:
+        from mousebrain.region_mapping import aggregate_to_elife, ELIFE_GROUPS  # the installed package; the loose scripts/utils copy is NOT on sys.path here, which is why this import failed silently for months
+    except ImportError as e:
+        print("    [!] eLife counts NOT updated: %s (pip install -e . in the MouseBrain repo)" % e)
         return None
 
     run_date = run_date or datetime.now().isoformat()
@@ -1155,7 +1156,7 @@ def generate_cross_brain_graphs(
         return None
 
     try:
-        from elife_region_mapping import aggregate_to_elife, ELIFE_GROUPS
+        from mousebrain.region_mapping import aggregate_to_elife, ELIFE_GROUPS  # the installed package; the loose scripts/utils copy is NOT on sys.path here, which is why this import failed silently for months
     except ImportError:
         print("    Warning: eLife mapping not available - skipping graph generation")
         return None
@@ -1585,7 +1586,7 @@ def generate_comparison_report(
 
     # Import eLife mapping and reference data
     try:
-        from elife_region_mapping import aggregate_to_elife, ELIFE_GROUPS
+        from mousebrain.region_mapping import aggregate_to_elife, ELIFE_GROUPS  # the installed package; the loose scripts/utils copy is NOT on sys.path here, which is why this import failed silently for months
         from util_compare_to_published import CERVICAL_REFERENCE, KEY_RECOVERY_REGIONS
     except ImportError:
         print("    Warning: Could not import eLife mapping - skipping comparison report")
