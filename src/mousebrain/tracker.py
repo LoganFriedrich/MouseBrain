@@ -183,13 +183,36 @@ class ExperimentTracker:
         self._ensure_csv_exists()
 
     def _ensure_csv_exists(self):
-        """Create CSV with headers if it doesn't exist."""
-        self.csv_path.parent.mkdir(parents=True, exist_ok=True)
+        """Create the CSV with headers if it does not exist.
 
+        REFUSES to create a new one at an unconfigured location. The tracker is the
+        record of every calibration run ever done, and a second empty copy is the
+        worst possible failure here: it looks exactly like a working tracker, later
+        runs append to it, and the real file -- 186 runs on this machine -- is
+        quietly orphaned while everything appears to work. Reading an unconfigured
+        path just finds nothing, which is obvious; writing one is not.
+
+        Found on 2026-10-07, when an unconfigured run created a fresh empty tracker
+        in the working directory (see mousebrain.config._get_root_path). The path
+        sentinel is now harmless on its own; this is the second line of defence,
+        because the tracker is the file that must never be silently forked.
+        """
         if not self.csv_path.exists():
+            from . import config as _cfg
+            using_default = self.csv_path == DEFAULT_TRACKER_PATH
+            if using_default and not _cfg.is_configured():
+                raise RuntimeError(
+                    "refusing to create a new calibration tracker at %s. "
+                    "mousebrain is not configured, so that is not where this lab's "
+                    "tracker lives, and a second empty one would look real while the "
+                    "actual record of every calibration run was orphaned. %s"
+                    % (self.csv_path, _cfg.UNCONFIGURED_MESSAGE))
+            self.csv_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
                 writer.writeheader()
+        else:
+            self.csv_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _generate_exp_id(self, exp_type: str, brain: str) -> str:
         """Generate a unique experiment ID."""

@@ -34,6 +34,7 @@ Environment Variable Override:
 """
 
 import os
+import tempfile
 import sys
 from pathlib import Path
 from typing import Optional
@@ -105,6 +106,28 @@ def _find_repo_root() -> Optional[Path]:
     return None
 
 
+# Stand-in root for an installation that has not been configured. Absolute and in
+# the temp directory on purpose -- see _get_root_path for what a relative one did.
+_UNCONFIGURED_ROOT = Path(tempfile.gettempdir()) / "mousebrain_CONNECTOME_ROOT_NOT_CONFIGURED"
+
+UNCONFIGURED_MESSAGE = (
+    "mousebrain does not know where this lab keeps its data. Set CONNECTOME_ROOT "
+    "to the folder that contains Tissue/MouseBrain_Pipeline, then open a new "
+    "terminal (or set it in the conda environment's activate script). "
+    "Check what is seen with: mousebrain --paths"
+)
+
+
+def is_configured() -> bool:
+    """True when a real root resolved. False means every derived path is a stand-in.
+
+    Code that WRITES must ask this first. Reading an unconfigured path merely fails
+    to find anything, which is harmless and self-explanatory; writing to one creates
+    a parallel set of files that looks real and is not.
+    """
+    return ROOT_PATH != _UNCONFIGURED_ROOT
+
+
 def _get_root_path() -> Path:
     """
     Get the root path for the Connectome installation.
@@ -117,9 +140,28 @@ def _get_root_path() -> Path:
 
     There is deliberately NO built-in drive-letter default: this is a public
     tool and a lab's share letter is not part of it. When nothing resolves,
-    the returned root is a clearly named non-existent path, so every derived
-    location fails `exists()` and the tools report "not found -- set
+    the returned root is a clearly named path that does not exist, so every
+    derived location fails `exists()` and the tools report "not found -- set
     CONNECTOME_ROOT" instead of quietly reading the wrong place.
+
+    WHY THE SENTINEL IS ABSOLUTE, AND UNDER THE TEMP DIRECTORY
+    ---------------------------------------------------------
+    It used to be ``Path("CONNECTOME_ROOT_NOT_CONFIGURED")`` -- RELATIVE. The
+    reasoning was sound for code that checks `exists()` before reading, but ten
+    places in this package create their directories with
+    ``mkdir(parents=True, exist_ok=True)``, which does not check anything. A
+    relative sentinel therefore resolved against whatever the working directory
+    happened to be, and the tracker created
+    ``<cwd>/CONNECTOME_ROOT_NOT_CONFIGURED/3_Nuclei_Detection/2_Data_Summary/``
+    with a brand-new empty calibration_runs.csv in it. On 2026-10-07 that landed
+    at the root of the lab's share, and the danger was never the stray folder:
+    it was a SECOND, empty tracker that later runs could have appended to,
+    silently orphaning the real record of every calibration run.
+
+    Absolute, and under the system temp directory, so an unconfigured install
+    that writes anyway writes somewhere harmless and self-cleaning instead of
+    into a share, a repository, or whatever folder the person happened to be
+    standing in. ``is_configured()`` lets code that must not guess say so.
     """
     # 1. Check environment variable first (new name, then legacy)
     env_root = os.environ.get("CONNECTOME_ROOT") or os.environ.get("SCI_CONNECTOME_ROOT")
@@ -144,7 +186,7 @@ def _get_root_path() -> Path:
         "above the package. Set CONNECTOME_ROOT to the folder that contains "
         "Tissue/MouseBrain_Pipeline (see docs/pipeline/README.md)."
     )
-    return Path("CONNECTOME_ROOT_NOT_CONFIGURED")
+    return _UNCONFIGURED_ROOT
 
 
 # =============================================================================
