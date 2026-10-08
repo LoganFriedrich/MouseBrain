@@ -42,23 +42,23 @@ FOLDER STRUCTURE CREATED
 ================================================================================
 Before running:
     1_Brains/
-    └── 349_CNT_01_02/
-        └── 349_CNT_01_02_1.625x_z4.ims     ← Sitting in mouse folder
+    \---- 349_CNT_01_02/
+        \---- 349_CNT_01_02_1.625x_z4.ims     <- Sitting in mouse folder
 
 After running:
     1_Brains/
-    └── 349_CNT_01_02/
-        └── 349_CNT_01_02_1p625x_z4/        ← Pipeline folder (. → p in name)
-            ├── 0_Raw_IMS/
-            │   └── 349_CNT_01_02_1.625x_z4.ims   ← Moved here
-            ├── 1_Extracted_Full/            ← Script 2 output (full)
-            ├── 2_Cropped_For_Registration/  ← Script 2 output (cropped)
-            ├── 3_Registered_Atlas/          ← Script 3 output
-            ├── 4_Cell_Candidates/           ← Script 4 output
-            ├── 5_Classified_Cells/          ← Script 5 output
-            └── 6_Region_Analysis/           ← Script 6 output
+    \---- 349_CNT_01_02/
+        \---- 349_CNT_01_02_1p625x_z4/        <- Pipeline folder (. -> p in name)
+            +---- 0_Raw_IMS/
+            |   \---- 349_CNT_01_02_1.625x_z4.ims   <- Moved here
+            +---- 1_Extracted_Full/            <- Script 2 output (full)
+            +---- 2_Cropped_For_Registration/  <- Script 2 output (cropped)
+            +---- 3_Registered_Atlas/          <- Script 3 output
+            +---- 4_Cell_Candidates/           <- Script 4 output
+            +---- 5_Classified_Cells/          <- Script 5 output
+            \---- 6_Region_Analysis/           <- Script 6 output
 
-Note: Decimals become 'p' in folder names (1.625x → 1p625x) because napari
+Note: Decimals become 'p' in folder names (1.625x -> 1p625x) because napari
 hates dots in folder paths.
 
 ================================================================================
@@ -266,6 +266,16 @@ def parse_filename(filename):
     }
 
 
+def is_pano(filename):
+    """True for a PANO overview scan.
+
+    PANOs are preliminary low-resolution overviews (about 8 um voxels, roughly half
+    the sampling of a production brain) and the pipeline does not use them. They are
+    stored beside the production brains for reference only.
+    """
+    return Path(filename).stem.upper().endswith("PANO")
+
+
 def validate_filename(filename):
     """
     Validate that a filename matches expected convention.
@@ -273,6 +283,17 @@ def validate_filename(filename):
     """
     parsed = parse_filename(filename)
     if parsed is None:
+        if is_pano(filename):
+            # A PANO is a preliminary low-resolution overview scan (about 8 um
+            # voxels against the 4 um the pipeline is calibrated for). It is NOT a
+            # pipeline input and is meant to be skipped.
+            #
+            # WHY THIS IS SAID SEPARATELY: the generic message tells the operator to
+            # rename the file to NUMBER_PROJECT_COHORT_ANIMAL_MAGx_zSTEP, and doing
+            # that to a PANO would pull an 8 um overview into a pipeline tuned at
+            # 4 um -- which does not fail, it just produces wrong counts. Advice
+            # that causes the harm it is meant to prevent is worse than silence.
+            return False, "PANO overview scan -- not a pipeline input, skipped (do not rename it)"
         return False, "doesn't match pattern NUMBER_PROJECT_COHORT_ANIMAL_MAGx_zSTEP.ims"
     return True, "valid"
 
@@ -413,21 +434,43 @@ def get_ims_status(ims_path):
         return "needs_organization", "not yet organized", parsed
 
 
-def get_mouse_folder_for_ims(ims_path):
+def get_mouse_folder_for_ims(ims_path, parsed=None):
     """
     Determine the mouse folder for an IMS file based on its current location.
+
+    A brain lives at <brains root>/<mouse folder>/<pipeline folder>/0_Raw_IMS/, where
+    the mouse folder is the parsed mouse_id (e.g. 403_CNT_05_03) and the pipeline
+    folder adds the imaging parameters (403_CNT_05_03_1p625x_z4).
+
+    WHY THE NAME IS PARSED INSTEAD OF ASSUMED FROM THE LOCATION
+    ----------------------------------------------------------
+    This used to end with "otherwise assume it is directly in the mouse folder" and
+    return the parent. For a newly delivered file dropped into the brains root -- the
+    normal way a brain arrives -- the parent IS the brains root, so the mouse folder
+    was skipped entirely and the brain was built flat as
+    <brains root>/403_CNT_05_03_1p625x_z4/. That shape is worse than wrong: this
+    script's own scanner looks for mouse/pipeline/0_Raw_IMS, so the brain then
+    disappeared from its listing -- neither "ready" nor "needs work" -- and a 50 GB
+    delivery sat in the pipeline invisible to every later step (2026-10-07). The
+    flat name also collides with the training_data folders, which use it already.
+
+    The file name already says which mouse it belongs to, so that is what decides.
     """
     ims_path = Path(ims_path)
     parent = ims_path.parent
-    
+
     # If in a raw folder, go up two levels
     if parent.name in [FOLDER_RAW_IMS, "0_Raw_IMS_From_Miami", "0_Original"]:
         if parent.name == "0_Original":
             return parent.parent  # 0_Original is at mouse level
         else:
             return parent.parent.parent  # 0_Raw_IMS is inside pipeline
-    
-    # Otherwise assume it's directly in mouse folder
+
+    parsed = parsed or parse_filename(ims_path.name)
+    if parsed and parent.name != parsed['mouse_id']:
+        # Loose in the brains root (or anywhere that is not its own mouse folder):
+        # the mouse folder is named by the file, not by where it happens to sit.
+        return parent / parsed['mouse_id']
     return parent
 
 
@@ -448,8 +491,8 @@ def organize_ims_file(ims_path, dry_run=False):
     
     parsed = parse_filename(ims_path.name)
     pipeline_name = parsed['pipeline_folder']
-    
-    mouse_folder = get_mouse_folder_for_ims(ims_path)
+
+    mouse_folder = get_mouse_folder_for_ims(ims_path, parsed)
     actions = []
     
     # Create pipeline structure
@@ -519,7 +562,7 @@ def migrate_old_folders(mouse_folder, pipeline_name, dry_run=False):
                     if not dry_run:
                         shutil.rmtree(str(new_folder))
                         shutil.move(str(old_folder), str(new_folder))
-                    actions.append(f"Renamed {old_name}/ → {new_name}/")
+                    actions.append(f"Renamed {old_name}/ -> {new_name}/")
                 else:
                     # Both have content - try to merge
                     if not dry_run:
@@ -538,7 +581,7 @@ def migrate_old_folders(mouse_folder, pipeline_name, dry_run=False):
             else:
                 if not dry_run:
                     shutil.move(str(old_folder), str(new_folder))
-                actions.append(f"Renamed {old_name}/ → {new_name}/")
+                actions.append(f"Renamed {old_name}/ -> {new_name}/")
     
     # Also check for old short-name pipeline folders (e.g., 1p625x_z4 instead of full name)
     mag_only = decimals_to_p(parse_filename(p_to_decimals(pipeline_name) + ".ims")['mag_str']) \
@@ -559,7 +602,7 @@ def migrate_old_folders(mouse_folder, pipeline_name, dry_run=False):
             else:
                 if not dry_run:
                     shutil.move(str(old_short), str(pipeline))
-                actions.append(f"Renamed {mag_only}/ → {pipeline_name}/")
+                actions.append(f"Renamed {mag_only}/ -> {pipeline_name}/")
     
     return actions
 
@@ -596,20 +639,30 @@ def print_scan_results(results):
     # Organized (ready)
     for ims_path, reason, details in results['organized']:
         pipeline = details.get('pipeline_folder', '?')
-        print(f"  ✓ {ims_path.parent.parent.parent.name}/{pipeline}/ - {reason}")
+        print(f"  [OK] {ims_path.parent.parent.parent.name}/{pipeline}/ - {reason}")
     
     # Needs organization
     for ims_path, reason, details in results['needs_organization']:
         rel_path = f"{ims_path.parent.name}/{ims_path.name}"
-        print(f"  ○ {rel_path} - {reason}")
+        print(f"  [ ] {rel_path} - {reason}")
     
     # Invalid
     for ims_path, reason, details in results['invalid']:
-        print(f"  ✗ {ims_path.name}")
-        print(f"      SKIP: {reason}")
+        # A PANO is skipped on purpose, so it is not marked as a failure:
+        # a line that reads [FAIL] invites someone to go and 'fix' it.
+        mark = '[skip]' if 'PANO' in reason else '[FAIL]'
+        print('  %s %s' % (mark, ims_path.name))
+        print('      %s' % reason)
     
     if results['invalid']:
-        print(f"\n  ⚠ {len(results['invalid'])} file(s) skipped - rename to: NUMBER_PROJECT_COHORT_ANIMAL_MAGx_zSTEP.ims")
+        n_pano = sum(1 for _p, r, _d in results['invalid'] if 'PANO' in r)
+        n_rename = len(results['invalid']) - n_pano
+        if n_pano:
+            print('')
+            print('  [ ] %d PANO overview scan(s) skipped -- these are not pipeline inputs.' % n_pano)
+        if n_rename:
+            print('')
+            print('  [!] %d file(s) skipped - rename to: NUMBER_PROJECT_COHORT_ANIMAL_MAGx_zSTEP.ims' % n_rename)
     
     return len(results['needs_organization'])
 
@@ -629,14 +682,14 @@ This script organizes your folder structure. Run it before Script 2.
 
 Folder Structure Created:
   MouseFolder/
-  └── 349_CNT_01_02_1p625x_z4/
-      ├── 0_Raw_IMS/
-      ├── 1_Extracted_Full/
-      ├── 2_Cropped_For_Registration/
-      ├── 3_Registered_Atlas/
-      ├── 4_Cell_Candidates/
-      ├── 5_Classified_Cells/
-      └── 6_Region_Analysis/
+  \---- 349_CNT_01_02_1p625x_z4/
+      +---- 0_Raw_IMS/
+      +---- 1_Extracted_Full/
+      +---- 2_Cropped_For_Registration/
+      +---- 3_Registered_Atlas/
+      +---- 4_Cell_Candidates/
+      +---- 5_Classified_Cells/
+      \---- 6_Region_Analysis/
 
 Examples:
   python 1_organize_pipeline.py
@@ -648,6 +701,8 @@ Examples:
                         help=f'Path to scan (default: {DEFAULT_BRAINGLOBE_ROOT})')
     parser.add_argument('--inspect', '-i', action='store_true',
                         help='Dry run - show what would happen without making changes')
+    parser.add_argument('--yes', '-y', action='store_true',
+                        help='Do not ask for confirmation (for scripted or logged runs)')
     
     args = parser.parse_args()
     
@@ -676,7 +731,7 @@ Examples:
     n_needs_work = print_scan_results(results)
     
     if n_needs_work == 0:
-        print("\n✓ All files are organized. Ready for Script 2!")
+        print("\n[OK] All files are organized. Ready for Script 2!")
         return
     
     if args.inspect:
@@ -685,7 +740,20 @@ Examples:
         return
     
     # Confirm
-    response = input(f"\nOrganize {n_needs_work} file(s)? [Enter to continue, 'q' to quit]: ").strip()
+    # WHY this is not simply input(): a bare input() makes the script impossible
+    # to run from anything but a person at a console. Piped, redirected, logged or
+    # scheduled, stdin is at end-of-file and the script dies with EOFError after it
+    # has already printed its findings -- so the only way to capture what it says
+    # was also the only way to stop it working. Confirmation is skipped when asked
+    # for (--yes) or when there is nobody there to answer.
+    if args.yes or not sys.stdin or not sys.stdin.isatty():
+        why = '--yes' if args.yes else 'no terminal to ask at'
+        print('')
+        print('Organize %d file(s)? -- proceeding (%s)' % (n_needs_work, why))
+        response = ''
+    else:
+        response = input('Organize %d file(s)? [Enter to continue, q to quit]: '
+                         % n_needs_work).strip()
     if response.lower() == 'q':
         print("Cancelled.")
         return
@@ -734,14 +802,14 @@ Examples:
             
             if ok:
                 success += 1
-                print(f"    ✓ Organized")
+                print(f"    [OK] Organized")
             else:
                 failed += 1
-                print(f"    ✗ {msg}")
+                print(f"    [FAIL] {msg}")
         
         except Exception as e:
             failed += 1
-            print(f"    ✗ Error: {e}")
+            print(f"    [FAIL] Error: {e}")
     
     # Final thumbs.db sweep
     print("\nFinal thumbs.db sweep...")
@@ -754,13 +822,16 @@ Examples:
     print("=" * 60)
     
     if success > 0 and failed == 0:
-        print("\n✓ Ready for Script 2 (extract_and_analyze.py)!")
+        print("\n[OK] Ready for Script 2 (extract_and_analyze.py)!")
 
 
 if __name__ == '__main__':
     main()
     
-    # If double-clicked, pause
-    if len(sys.argv) == 1:
+    # If double-clicked, pause so the result can be read before the window shuts
+    # -- but only when there is a console to read it in. Redirected or piped, this
+    # printed an EOFError traceback after a SUCCESSFUL run, which reads like a
+    # failure and is not one.
+    if len(sys.argv) == 1 and sys.stdin and sys.stdin.isatty():
         print()
         input("Press Enter to close...")
