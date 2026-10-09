@@ -1195,6 +1195,13 @@ After extraction, use manual crop:
     complete = []
     
     for ims_path, pipeline_folder, mouse_folder in pipelines:
+        # A PANO is a preliminary low-resolution overview scan and is not a
+        # pipeline input. Script 1 already refuses to organize one; without the
+        # same test here, extraction offers them as work and -- since there is no
+        # per-brain selection -- extracting the one brain you want also extracts
+        # every overview, which then looks ready for registration.
+        if pipeline_folder.name.upper().endswith('PANO'):
+            continue
         status, reason = check_extraction_status(pipeline_folder)
 
         if status == "needs_extraction":
