@@ -385,10 +385,38 @@ def check_extraction_status(pipeline_folder):
 # IMS FILE READING
 # =============================================================================
 
+def read_ims_attribute(attrs, name):
+    """Read one Imaris header attribute as the text it is meant to be.
+
+    Imaris stores these as an ARRAY OF SINGLE CHARACTERS, not as a string: the
+    image width 2924 is stored as [b'2', b'9', b'2', b'4']. Code that reaches
+    for element [0] of "the value" therefore gets the first DIGIT and no
+    complaint from anyone -- which is how a brain 2924 voxels wide came to be
+    recorded in its own metadata as 2 voxels wide.
+
+    Returns the joined text, or None if the attribute is absent.
+    """
+    if name not in attrs:
+        return None
+    value = attrs[name]
+
+    # A character array: join every element back into the one value it spells.
+    if hasattr(value, 'dtype') and value.dtype.kind == 'S':
+        return b''.join(bytes(c) for c in value.flatten()).decode(errors='replace').strip()
+
+    # Already a plain string, or a genuine single number.
+    if isinstance(value, bytes):
+        return value.decode(errors='replace').strip()
+    if hasattr(value, '__iter__') and not isinstance(value, str):
+        parts = list(value)
+        return str(parts[0]).strip() if len(parts) == 1 else "".join(str(p) for p in parts).strip()
+    return str(value).strip()
+
+
 def get_ims_info(filepath):
     """Extract metadata from IMS file."""
     import h5py
-    
+
     result = {
         'size_x': None,
         'size_y': None,
@@ -403,17 +431,14 @@ def get_ims_info(filepath):
                 img_info = f['DataSetInfo/Image']
                 for dim in ['X', 'Y', 'Z']:
                     for attr_name in [f'{dim}', f'Size{dim}']:
-                        if attr_name in img_info.attrs:
-                            val = img_info.attrs[attr_name]
-                            if hasattr(val, '__iter__'):
-                                val = val[0]
-                            if isinstance(val, bytes):
-                                val = val.decode()
-                            try:
-                                result[f'size_{dim.lower()}'] = int(float(val))
-                                break
-                            except:
-                                pass
+                        val = read_ims_attribute(img_info.attrs, attr_name)
+                        if val is None:
+                            continue
+                        try:
+                            result[f'size_{dim.lower()}'] = int(float(val))
+                            break
+                        except (TypeError, ValueError):
+                            pass
             
             # Get channel info
             i = 0
@@ -422,14 +447,11 @@ def get_ims_info(filepath):
                 if channel_path in f:
                     channel_info = f[channel_path]
                     name = f"Channel{i}"
-                    try:
-                        if 'Name' in channel_info.attrs:
-                            name_val = channel_info.attrs['Name'][0]
-                            if isinstance(name_val, bytes):
-                                name_val = name_val.decode()
-                            name = str(name_val)
-                    except:
-                        pass
+                    # Same character-array storage as the dimensions above, so a
+                    # channel called "488" would have been recorded as "4".
+                    stored = read_ims_attribute(channel_info.attrs, 'Name')
+                    if stored:
+                        name = stored
                     result['channels'].append({'index': i, 'name': name})
                     i += 1
                 else:
