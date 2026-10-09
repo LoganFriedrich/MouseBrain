@@ -1041,11 +1041,17 @@ class ExperimentTracker:
         if not best:
             return None
 
+        # Every number here goes through float() BEFORE int(), because the tracker
+        # is a CSV: a run logged as threshold 8 comes back as the text "8.0" once
+        # anything (pandas, a spreadsheet, an earlier run) has rewritten the file.
+        # int("8.0") raises, and it raised here -- which meant asking for the
+        # paradigm's proven settings crashed instead of returning them, so every
+        # caller silently fell back to the "balanced" preset nobody calibrated.
         return {
             'ball_xy': float(best.get('det_ball_xy') or 6),
             'ball_z': float(best.get('det_ball_z') or 15),
             'soma_diameter': float(best.get('det_soma_diameter') or 16),
-            'threshold': int(best.get('det_threshold') or 10),
+            'threshold': int(float(best.get('det_threshold') or 10)),
             'preset': best.get('det_preset') or 'custom',
             'source_exp_id': best.get('exp_id'),
             'source_brain': best.get('brain'),
