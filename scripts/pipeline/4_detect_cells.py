@@ -5,7 +5,12 @@
 Script 4 in the BrainGlobe pipeline: Cell candidate detection.
 
 Wraps cellfinder detection with presets and auto-logs to experiment tracker.
-Run this AFTER Script 3 (register_to_atlas.py).
+
+Normally run this AFTER Script 3 (register_to_atlas.py), on the cropped images
+registration was computed from -- that is the path that leads to counts per
+brain region. It can also run BEFORE registration, on the whole extracted
+stack, which is useful when registration is waiting on something; see
+WHICH IMAGES below for what that does and does not give you.
 
 This runs cellfinder's cell candidate detection with preset parameter
 combinations or custom values, and automatically logs everything.
@@ -17,12 +22,49 @@ Interactive mode (recommended for first runs):
     python 4_detect_cells.py
 
 With presets:
-    python 4_detect_cells.py --brain 349_CNT_01_02_1p625x_z4 --preset sensitive
-    python 4_detect_cells.py --brain 349_CNT_01_02_1p625x_z4 --preset balanced
-    python 4_detect_cells.py --brain 349_CNT_01_02_1p625x_z4 --preset conservative
+    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --preset sensitive
+    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --preset balanced
+    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --preset conservative
+
+With the settings already proven for this kind of imaging (from the tracker):
+    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --routine
 
 Custom parameters:
-    python 4_detect_cells.py --brain 349_CNT_01_02_1p625x_z4 --ball-xy 6 --ball-z 15
+    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --ball-xy 6 --ball-z 15
+
+Before the brain has been cropped or registered:
+    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --source full --routine
+
+================================================================================
+WHICH IMAGES  (--source)
+================================================================================
+    auto     (default) the best available, in this order:
+             2_Cropped_For_Registration_Manual, then
+             2_Cropped_For_Registration, then
+             1_Extracted_Full
+    manual   insist on the hand-made crop
+    cropped  insist on the automatic crop
+    full     insist on the whole extracted stack
+
+Detection itself never reads the atlas, so it works on any of these. What
+differs is what you can do afterwards:
+
+    A CROP (manual/cropped) is the images registration was computed on, so
+    cells found there can be classified (Script 5) and counted per brain region
+    (Script 6). This script refuses to run on a crop whose registration has not
+    been approved by a person -- that gate is the whole reason detection waits
+    for step 3 at all.
+
+    THE WHOLE STACK (full) has no registration and cannot have one: the atlas
+    is fitted to a crop. So there are no region counts, and the coordinates are
+    in whole-stack space, which does not line up with a crop made later. A run
+    here answers "do these settings find cells on this brain, and how many" --
+    a trial run, worth doing while registration waits on a better scan, a
+    manual crop, or an approval. Results go into a subfolder named after the
+    source so Scripts 5 and 6 cannot pick them up by accident.
+
+Every run of either kind is logged in the tracker, with the source recorded in
+its notes, so two runs are never silently compared across spaces.
 
 ================================================================================
 PRESETS
@@ -43,8 +85,11 @@ PRESETS
 REQUIREMENTS
 ================================================================================
     - cellfinder must be installed
-    - Registered atlas in 3_Registered_Atlas folder
-    - experiment_tracker.py in same directory or PYTHONPATH
+    - the mousebrain package must be importable (it holds the tracker)
+    - extracted images: a ch0 folder of .tif files in one of the folders listed
+      under WHICH IMAGES above, which Script 2 produces
+    - an APPROVED registration in 3_Registered_Atlas, if and only if detecting
+      on a crop (see WHICH IMAGES)
 """
 
 import argparse
@@ -101,9 +146,34 @@ SCRIPT_VERSION = "1.0.1"
 from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, parse_brain_name
 
 # Pipeline folders (must match other scripts)
+FOLDER_FULL = "1_Extracted_Full"
 FOLDER_CROPPED = "2_Cropped_For_Registration"
+FOLDER_CROPPED_MANUAL = "2_Cropped_For_Registration_Manual"
 FOLDER_REGISTRATION = "3_Registered_Atlas"
 FOLDER_DETECTION = "4_Cell_Candidates"
+
+# Where detection reads its images from, best first. This is the same order the
+# napari plugin uses, deliberately: a hand-made crop beats a machine-made one,
+# and the uncropped stack is what is left when neither crop exists.
+#
+# WHY the uncropped stack is allowed at all: cell detection does not read the
+# atlas or the registration. Cropping and registration exist to put cells into
+# ATLAS space, which is what counting per region needs -- a later step. So a
+# brain that has only been extracted can be detected on, and that is worth doing
+# when registration is waiting on something (a better stitch, a manual crop, a
+# person's approval). What it cannot do is produce region counts; see
+# describe_input_choice() for what that costs and why.
+INPUT_SOURCES = {
+    "manual": FOLDER_CROPPED_MANUAL,
+    "cropped": FOLDER_CROPPED,
+    "full": FOLDER_FULL,
+}
+INPUT_PRIORITY = ("manual", "cropped", "full")
+
+# The crop folders hold the images registration was computed on, so cells found
+# in them can be mapped into the atlas. The uncropped stack cannot -- its voxel
+# coordinates are offset from the crop's by however much was trimmed off.
+SOURCES_IN_REGISTERED_SPACE = ("manual", "cropped")
 
 # Detection presets
 PRESETS = {
@@ -148,82 +218,180 @@ def timestamp():
     return datetime.now().strftime("%H:%M:%S")
 
 
-def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT):
-    """
-    Find pipeline folder for a brain.
-    
+def resolve_input(pipeline_dir: Path, requested: str = "auto"):
+    """Decide which folder of images detection should read.
+
     Args:
-        brain_name: Either just the pipeline name (349_CNT_01_02_1p625x_z4)
-                   or mouse/pipeline format
-    
+        pipeline_dir: the brain's pipeline folder.
+        requested: "auto" to take the best available (see INPUT_PRIORITY), or
+            one of INPUT_SOURCES to insist on exactly that folder.
+
     Returns:
-        (pipeline_folder, mouse_folder, metadata) or (None, None, None)
+        (source_name, folder, metadata) -- or (None, None, None) if there are no
+        images to detect on. metadata is the folder's own metadata.json, which is
+        where the voxel sizes and the signal/background channel roles come from.
+
+    WHY this is a function and not two lines inline: three places need the same
+    answer (the named-brain path, the interactive path, and listing what can be
+    processed), and when they each decided for themselves they disagreed -- the
+    listing offered brains the run then refused.
     """
-    root = Path(root)
-    
-    for mouse_dir in root.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
+    pipeline_dir = Path(pipeline_dir)
+
+    if requested != "auto" and requested not in INPUT_SOURCES:
+        raise ValueError("unknown input source %r (expected auto or one of %s)"
+                         % (requested, ", ".join(INPUT_SOURCES)))
+
+    order = INPUT_PRIORITY if requested == "auto" else (requested,)
+    for source in order:
+        folder = pipeline_dir / INPUT_SOURCES[source]
+        # ch0 specifically, not just the folder: an empty folder is the normal
+        # state of a crop nobody has made yet, and it must not look like data.
+        if not (folder / "ch0").is_dir():
             continue
-        
-        for pipeline_dir in mouse_dir.iterdir():
-            if not pipeline_dir.is_dir():
-                continue
-            
-            # Match by pipeline name or full path
-            full_name = f"{mouse_dir.name}/{pipeline_dir.name}"
-            if brain_name in [pipeline_dir.name, full_name]:
-                # Check for registration
-                reg_folder = pipeline_dir / FOLDER_REGISTRATION
-                crop_folder = pipeline_dir / FOLDER_CROPPED
-                
-                if not (reg_folder / "brainreg.json").exists():
-                    print(f"Warning: No registration found for {brain_name}")
-                    print("Run Script 3 (register_to_atlas.py) first!")
-                    return None, None, None
-                
-                # Load metadata
-                metadata_path = crop_folder / "metadata.json"
-                if metadata_path.exists():
-                    with open(metadata_path, 'r') as f:
-                        metadata = json.load(f)
-                else:
-                    metadata = {}
-                
-                return pipeline_dir, mouse_dir, metadata
-    
+        if not any((folder / "ch0").glob("*.tif")):
+            continue
+
+        metadata_path = folder / "metadata.json"
+        metadata = {}
+        if metadata_path.exists():
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+        return source, folder, metadata
+
     return None, None, None
 
 
-def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT):
-    """List all brains that can be processed."""
+def describe_input_choice(source: str) -> str:
+    """What detecting on this folder means for the rest of the pipeline.
+
+    Printed before a run so the person starting it knows what they will and will
+    not be able to do with the result. Not a warning for its own sake: detecting
+    on the uncropped stack is a legitimate and useful thing to do, it just does
+    not lead anywhere near region counts without redoing it.
+    """
+    if source in SOURCES_IN_REGISTERED_SPACE:
+        return ("Detecting on %s -- the same images registration uses, so these "
+                "cells can be classified and counted per brain region as usual."
+                % INPUT_SOURCES[source])
+
+    return (
+        "Detecting on %s -- the WHOLE extracted stack, uncropped and "
+        "unregistered.\n"
+        "\n"
+        "What this gives you:\n"
+        "  * a real cell count for these detection settings on this brain\n"
+        "  * candidate coordinates you can load in napari and look at\n"
+        "\n"
+        "What it does NOT give you, and why:\n"
+        "  * no counts per brain region. Those need the atlas, and the atlas is\n"
+        "    fitted during registration (step 3), which has not happened.\n"
+        "  * these coordinates are in whole-stack space. A later registration is\n"
+        "    computed on a CROPPED stack, so its coordinates start from a\n"
+        "    different corner. Cells found now cannot simply be reused against\n"
+        "    that atlas -- detection is rerun on the cropped images instead.\n"
+        "\n"
+        "So this is a trial run: it answers whether the settings find cells and\n"
+        "roughly how many, on this brain, today. Treat the number as provisional\n"
+        "until the brain has been cropped and registered.\n"
+        "\n"
+        "Results go in a clearly named subfolder of %s so that steps 5 and 6\n"
+        "cannot pick them up by accident -- they only ever read the top level."
+        % (INPUT_SOURCES[source], FOLDER_DETECTION)
+    )
+
+
+def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT,
+                  source: str = "auto"):
+    """
+    Find pipeline folder for a brain.
+
+    Args:
+        brain_name: Either just the pipeline name (101_PROJ_01_02_2p5x_z5)
+                   or mouse/pipeline format
+        source: which images to detect on -- see resolve_input().
+
+    Returns:
+        (pipeline_folder, mouse_folder, source_name, input_folder, metadata)
+        or five Nones if the brain or its images could not be found.
+
+    This no longer refuses a brain that has not been registered. It used to, and
+    that was the wrong gate in the wrong place: detection does not read the
+    registration at all, so a missing atlas is a reason not to COUNT REGIONS, not
+    a reason not to detect. The approval gate that does belong -- do not spend
+    hours detecting on images whose registration a person has not checked -- is
+    still enforced in main(), and only for the crop folders it applies to.
+    """
+    root = Path(root)
+
+    for mouse_dir in root.iterdir():
+        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
+            continue
+
+        for pipeline_dir in mouse_dir.iterdir():
+            if not pipeline_dir.is_dir():
+                continue
+
+            # Match by pipeline name or full path
+            full_name = f"{mouse_dir.name}/{pipeline_dir.name}"
+            if brain_name in [pipeline_dir.name, full_name]:
+                source_name, input_folder, metadata = resolve_input(pipeline_dir, source)
+                if source_name is None:
+                    print(f"ERROR: no images to detect on for {brain_name}")
+                    if source == "auto":
+                        print(f"  Looked for a ch0 folder of .tif files in: "
+                              f"{', '.join(INPUT_SOURCES[s] for s in INPUT_PRIORITY)}")
+                        print("  Run Script 2 (2_extract_and_analyze.py) first.")
+                    else:
+                        print(f"  --source {source} means {INPUT_SOURCES[source]}, "
+                              f"and there are no .tif files in its ch0 folder.")
+                    return None, None, None, None, None
+
+                return pipeline_dir, mouse_dir, source_name, input_folder, metadata
+
+    return None, None, None, None, None
+
+
+def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT, source: str = "auto"):
+    """List every brain that has images detection could run on.
+
+    Registration is REPORTED, not required. A brain that is extracted but not
+    yet registered is a perfectly valid thing to detect on (see resolve_input);
+    hiding it from this list meant the only way to do that was to not use this
+    script, so people didn't, and then the run was never logged in the tracker.
+    """
     root = Path(root)
     brains = []
-    
+
     for mouse_dir in root.iterdir():
         if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
             continue
         if any(skip in mouse_dir.name.lower() for skip in ['script', 'backup', 'archive', 'summary']):
             continue
-        
+
         for pipeline_dir in mouse_dir.iterdir():
             if not pipeline_dir.is_dir():
                 continue
-            
+
+            source_name, input_folder, metadata = resolve_input(pipeline_dir, source)
+            if source_name is None:
+                continue
+
             reg_folder = pipeline_dir / FOLDER_REGISTRATION
             det_folder = pipeline_dir / FOLDER_DETECTION
-            
-            has_registration = (reg_folder / "brainreg.json").exists()
-            has_detection = det_folder.exists() and len(list(det_folder.glob("*.xml"))) > 0
-            
-            if has_registration:
-                brains.append({
-                    'name': f"{mouse_dir.name}/{pipeline_dir.name}",
-                    'pipeline': pipeline_dir,
-                    'mouse': mouse_dir,
-                    'registered': True,
-                    'detected': has_detection,
-                })
-    
+
+            brains.append({
+                'name': f"{mouse_dir.name}/{pipeline_dir.name}",
+                'pipeline': pipeline_dir,
+                'mouse': mouse_dir,
+                'source': source_name,
+                'input_folder': input_folder,
+                'metadata': metadata,
+                'registered': (reg_folder / "brainreg.json").exists(),
+                'approved': (reg_folder / ".registration_approved").exists(),
+                'detected': det_folder.exists() and len(list(det_folder.glob("*.xml"))) > 0,
+            })
+
     return brains
 
 
@@ -341,23 +509,39 @@ def interactive_select_brain(brains):
     
     ready = []
     already_done = []
-    
+
+    def label(brain):
+        """Say which images this brain would be detected on, and in what state.
+
+        Without this the list was just names, and two brains that would be
+        processed completely differently -- one against a registered crop, one
+        against a raw stack -- looked identical on screen.
+        """
+        where = INPUT_SOURCES[brain['source']]
+        if brain['source'] not in SOURCES_IN_REGISTERED_SPACE:
+            return f"{brain['name']}  [{where} -- not cropped, no region counts]"
+        if not brain['registered']:
+            return f"{brain['name']}  [{where} -- not registered yet]"
+        if not brain['approved']:
+            return f"{brain['name']}  [{where} -- registration NOT approved]"
+        return f"{brain['name']}  [{where}]"
+
     for i, brain in enumerate(brains):
         if brain['detected']:
-            already_done.append((i, brain['name']))
+            already_done.append((i, label(brain)))
         else:
-            ready.append((i, brain['name']))
-    
+            ready.append((i, label(brain)))
+
     if ready:
         print("\n[READY FOR DETECTION]")
         for idx, name in ready:
             print(f"  {idx + 1}. {name}")
-    
+
     if already_done:
         print("\n[ALREADY DETECTED]")
         for idx, name in already_done:
             print(f"  {idx + 1}. {name} (has results)")
-    
+
     print("\n" + "-" * 60)
     print("Enter number to select, or 'q' to quit")
     print("-" * 60)
@@ -448,6 +632,13 @@ Examples:
     parser.add_argument('--soma-diameter', type=int, help='Expected soma diameter')
     parser.add_argument('--threshold', type=int, help='Detection threshold')
     
+    parser.add_argument('--source', choices=['auto'] + list(INPUT_SOURCES),
+                        default='auto',
+                        help='Which images to detect on. auto (default) takes the '
+                             'best available: a manual crop, else an automatic '
+                             'crop, else the whole extracted stack. "full" insists '
+                             'on the uncropped stack, which works before '
+                             'registration but cannot produce region counts.')
     parser.add_argument('--n-free-cpus', type=int, default=DEFAULT_N_FREE_CPUS)
     parser.add_argument('--notes', help='Notes to add to log')
     parser.add_argument('--dry-run', action='store_true', help='Show what would run')
@@ -464,49 +655,65 @@ Examples:
     
     # Select brain
     if args.brain:
-        pipeline_folder, mouse_folder, metadata = find_pipeline(args.brain, args.root)
+        (pipeline_folder, mouse_folder, input_source, input_folder,
+         metadata) = find_pipeline(args.brain, args.root, args.source)
         if not pipeline_folder:
-            print(f"ERROR: Brain not found: {args.brain}")
+            print(f"ERROR: nothing to detect for: {args.brain}")
             sys.exit(1)
         brain_name = f"{mouse_folder.name}/{pipeline_folder.name}"
-
-        # Check registration approval
-        reg_folder = pipeline_folder / FOLDER_REGISTRATION
-        approval_file = reg_folder / ".registration_approved"
-        if not approval_file.exists():
-            print("\n" + "="*60)
-            print("WARNING: REGISTRATION NOT YET APPROVED")
-            print("="*60)
-            print("\nBefore detecting cells, you must review and approve registration QC.")
-            print("\nSteps:")
-            print("  1. Review QC images:")
-            print(f"     {reg_folder / 'QC_registration_detailed.png'}")
-            print("  2. If registration looks good, approve it:")
-            print(f"     python util_approve_registration.py --brain {args.brain}")
-            print("\nThis ensures registration quality before expensive cell detection.")
-            print("="*60)
-            sys.exit(1)
     else:
         # Interactive selection
-        brains = list_available_brains(args.root)
+        brains = list_available_brains(args.root, args.source)
         if not brains:
-            print("\nNo registered brains found!")
-            print("Run Script 3 (3_register_to_atlas.py) first.")
+            print("\nNo brains with extracted images found!")
+            print("Run Script 2 (2_extract_and_analyze.py) first.")
             sys.exit(1)
-        
+
         brain_info = interactive_select_brain(brains)
         if not brain_info:
             print("Cancelled.")
             return
-        
+
         pipeline_folder = brain_info['pipeline']
         mouse_folder = brain_info['mouse']
         brain_name = brain_info['name']
-        
-        # Load metadata
-        metadata_path = pipeline_folder / FOLDER_CROPPED / "metadata.json"
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
+        input_source = brain_info['source']
+        input_folder = brain_info['input_folder']
+        metadata = brain_info['metadata']
+
+    # Say what these images are before anything expensive starts.
+    print("\n" + "-" * 60)
+    print(describe_input_choice(input_source))
+    print("-" * 60)
+
+    # The approval gate applies to the crop folders and only to them. Its purpose
+    # is to stop hours of detection being spent on images whose registration
+    # nobody has looked at -- which is a statement about a registration that
+    # EXISTS. There is no registration to approve when detecting on the
+    # uncropped stack, so demanding approval there would be demanding the
+    # impossible, and the whole point of this path is that registration is still
+    # waiting on something.
+    if input_source in SOURCES_IN_REGISTERED_SPACE:
+        reg_folder = pipeline_folder / FOLDER_REGISTRATION
+        approval_file = reg_folder / ".registration_approved"
+        if not approval_file.exists():
+            print("\n" + "=" * 60)
+            print("STOPPING: REGISTRATION NOT YET APPROVED")
+            print("=" * 60)
+            print("\nThese are the images registration was computed on, so cell")
+            print("detection here is the expensive step that follows it -- and it")
+            print("should not run until a person has confirmed the registration is")
+            print("actually good.")
+            print("\nSteps:")
+            print("  1. Review QC images:")
+            print(f"     {reg_folder / 'QC_registration_detailed.png'}")
+            print("  2. If registration looks good, approve it:")
+            print(f"     python util_approve_registration.py --brain {pipeline_folder.name}")
+            print("\nOr, if registration is not ready and you want to try detection")
+            print("settings on the raw stack in the meantime:")
+            print(f"     python 4_detect_cells.py --brain {pipeline_folder.name} --source full")
+            print("=" * 60)
+            sys.exit(1)
 
     # Check for paradigm-best settings
     tracker = ExperimentTracker()
@@ -593,17 +800,24 @@ Examples:
         params['threshold'] = args.threshold
     
     # Get paths
-    crop_folder = pipeline_folder / FOLDER_CROPPED
     det_folder = pipeline_folder / FOLDER_DETECTION
-    
+    if input_source not in SOURCES_IN_REGISTERED_SPACE:
+        # Keep results off the top level of 4_Cell_Candidates. Steps 5 and 6 glob
+        # the top level only, so a run whose coordinates are NOT in the space the
+        # atlas will be fitted to stays invisible to them. Without this, a trial
+        # run on the uncropped stack would sit exactly where the real one belongs
+        # and later get classified and counted against the wrong coordinates --
+        # silently, and with a perfectly plausible number coming out.
+        det_folder = det_folder / ("from_" + INPUT_SOURCES[input_source])
+
     # Determine signal and background channels
     channels = metadata.get('channels', {})
     signal_ch = channels.get('signal_channel', 0)
     background_ch = channels.get('background_channel', 1)
-    
-    signal_path = crop_folder / f"ch{signal_ch}"
-    background_path = crop_folder / f"ch{background_ch}"
-    
+
+    signal_path = input_folder / f"ch{signal_ch}"
+    background_path = input_folder / f"ch{background_ch}"
+
     # Get voxel sizes
     voxel = metadata.get('voxel_size_um', {})
     voxel_sizes = (
@@ -620,6 +834,7 @@ Examples:
         print(f"Signal: {signal_path}")
         print(f"Background: {background_path}")
         print(f"Voxel sizes: {voxel_sizes}")
+        print(f"Output: {det_folder}")
         return
 
     # Log detection run (tracker already initialized for paradigm check)
@@ -632,9 +847,20 @@ Examples:
         threshold=params['threshold'],
         voxel_z=voxel_sizes[0],
         voxel_xy=voxel_sizes[1],
-        input_path=str(crop_folder),
+        input_path=str(input_folder),
         output_path=str(det_folder),
-        notes=args.notes,
+        # The source goes in the notes as well as the path, because the notes are
+        # what a person reads in the tracker table. A run on the uncropped stack
+        # and a run on the registered crop are not comparable as counts, and the
+        # record has to say which one this was without anyone decoding a path.
+        notes=" | ".join(filter(None, [
+            args.notes,
+            "images: %s (%s)" % (
+                INPUT_SOURCES[input_source],
+                "registered space"
+                if input_source in SOURCES_IN_REGISTERED_SPACE
+                else "whole-stack space, pre-registration, no region counts"),
+        ])),
         status="started",
         script_version=SCRIPT_VERSION,
     )
@@ -683,15 +909,35 @@ Examples:
         except (EOFError, KeyboardInterrupt):
             pass
 
-        # Next step guidance
+        # Next step guidance. Which next step it IS depends on what was detected
+        # on: classification and counting only make sense for cells that can be
+        # placed in the atlas.
         print("\n" + "=" * 60)
         print("WHAT TO DO NEXT")
         print("=" * 60)
-        print("\n1. Run cell classification:")
-        print(f"   python 5_classify_cells.py --brain {brain_name.split('/')[-1]}")
-        print("\n" + "-" * 60)
-        print("OR just run: python RUN_PIPELINE.py")
-        print("   (it will guide you through everything)")
+        if input_source in SOURCES_IN_REGISTERED_SPACE:
+            print("\n1. Run cell classification:")
+            print(f"   python 5_classify_cells.py --brain {brain_name.split('/')[-1]}")
+            print("\n" + "-" * 60)
+            print("OR just run: python RUN_PIPELINE.py")
+            print("   (it will guide you through everything)")
+        else:
+            print(f"\nCandidates were written to:")
+            print(f"   {det_folder}")
+            print("\nThis was a trial run on the uncropped stack, so there is no")
+            print("next pipeline step from here -- classification and region counts")
+            print("both need the atlas. What you can do now:")
+            print("\n1. Look at the candidates on the images, in napari:")
+            print("   mousebrain")
+            print("   then Plugins -> BrainTools -> 3D: 2. Setup & Tuning,")
+            print("   pick this brain and load it. The plugin reads the uncropped")
+            print("   stack when there is no crop, so the layers will line up.")
+            print("\n2. Judge the count and the settings, and re-run this script")
+            print("   with different parameters if they need changing. Every run is")
+            print("   logged in the tracker, so the comparison is kept for you.")
+            print("\n3. When the brain is finally cropped and registered, run")
+            print("   detection AGAIN on the crop -- these coordinates do not")
+            print("   transfer. Then steps 5 and 6 follow as normal.")
         print("=" * 60)
 
 
