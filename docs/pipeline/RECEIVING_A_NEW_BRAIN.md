@@ -148,6 +148,33 @@ list is not organized -- it is in a shape the scanner cannot see, and it will si
 untouched through every later step. (This was a real failure: a large brain was placed
 flat, disappeared from the listing, and nothing reported a problem.)
 
+## After the organizer: what happens next, and what can wait
+
+```
+python 2_extract_and_analyze.py            # turn the .ims into TIFFs
+```
+
+By default this extracts only, and leaves cropping to you. Extraction is the
+expensive, unattended part; cropping is a judgement call about where the brain
+ends and the cord begins, and a bad crop is not obvious until registration
+fails.
+
+From here the order is: crop, then register (`3_register_to_atlas.py`), then
+approve the registration QC by eye, then detect, classify, and count.
+
+**Detection does not have to wait for all of that.** If registration is held up
+-- a better scan is coming, the crop is not made, nobody has reviewed the QC --
+you can run detection on the whole extracted stack now:
+
+```
+python 4_detect_cells.py --brain <brain_id> --source full --routine
+```
+
+That gives you a cell count and candidates to look at, but no counts per brain
+region, and the run has to be repeated on the crop later. The full explanation
+of why, and where the results are kept so they cannot be mistaken for the real
+ones, is in `README.md` under "Running detection before registration".
+
 ## Where your own details go
 
 Everything above is true of any installation. The parts that are not -- who sends your

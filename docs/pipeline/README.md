@@ -19,7 +19,14 @@ Complete automated pipeline for processing lightsheet microscopy data through Br
 6_count_regions.py             → Count cells by brain region
 ```
 
-**Important:** Step 4 will block until registration QC is approved! This ensures you don't waste compute on badly registered brains.
+**Important:** Step 4 will block until registration QC is approved -- so that you
+don't spend hours of compute on a badly registered brain. That gate applies to
+the cropped images, which are the ones registration is computed from.
+
+Step 4 can also be run **before** cropping and registration, on the whole
+extracted stack, which is useful when registration is waiting on something. It
+is a trial run: it gives you a cell count but not counts per brain region. See
+[Running detection before registration](#running-detection-before-registration).
 
 ## Utility Scripts
 
@@ -68,11 +75,23 @@ The experiment tracker creates its CSV at:
 python 4_detect_cells.py
 
 # With preset
-python 4_detect_cells.py --brain 349_CNT_01_02_1p625x_z4 --preset balanced
+python 4_detect_cells.py --brain <brain_id> --preset balanced
+
+# With whatever settings are already proven for this kind of imaging
+python 4_detect_cells.py --brain <brain_id> --routine
 
 # Custom parameters
-python 4_detect_cells.py --brain 349_CNT_01_02_1p625x_z4 --ball-xy 5 --ball-z 12
+python 4_detect_cells.py --brain <brain_id> --ball-xy 5 --ball-z 12
+
+# On the whole extracted stack, before cropping or registration
+python 4_detect_cells.py --brain <brain_id> --source full --routine
 ```
+
+`--routine` reads the best settings recorded for this brain's imaging paradigm
+(magnification and Z-step, taken from the brain's folder name) out of the
+calibration tracker, so you do not have to remember them or type them. If
+nobody has marked a best run for that paradigm yet, it falls back to the
+`balanced` preset and says so on screen.
 
 ### Script 5: Classification
 ```bash
@@ -141,6 +160,77 @@ python util_optimize_crop.py --brain 349_CNT_01_02_1p625x_z4
 python util_optimize_crop.py --brain 349_CNT_01_02_1p625x_z4 --quick
 ```
 
+## Running detection before registration
+
+Normally detection is step 4 of 6, and it runs on the cropped images that step 3
+registered to the atlas. Sometimes you want to detect cells before any of that
+has happened -- most often because registration is waiting on something: a
+better scan of the same brain, a crop you have not made by hand yet, or your own
+review of the QC image.
+
+You can. Cell detection never reads the atlas. Cropping and registration exist
+to put cells into *atlas* space, and that is only needed when you want counts
+per brain region, which is step 6.
+
+**How to do it**
+
+In the terminal:
+
+```bash
+python 4_detect_cells.py --brain <brain_id> --source full --routine
+```
+
+In the GUI: launch `mousebrain`, open `Plugins -> BrainTools -> 3D: 2. Setup &
+Tuning`, pick the brain and press Load. When a brain has no crop, the plugin
+loads the uncropped stack automatically -- there is nothing extra to click.
+Then tune and run detection as usual.
+
+**What `--source` means**
+
+| `--source` | Reads from | Can produce region counts? |
+|---|---|---|
+| `auto` (default) | best available: manual crop, else automatic crop, else the whole stack | only if it landed on a crop |
+| `manual` | `2_Cropped_For_Registration_Manual` | yes |
+| `cropped` | `2_Cropped_For_Registration` | yes |
+| `full` | `1_Extracted_Full` | **no** |
+
+A folder only counts as available if it actually contains `ch0/*.tif`. The crop
+folders are created empty when the brain is first organised, and an empty folder
+is not data.
+
+**What you get, and what you don't**
+
+You get a real cell count for those settings on that brain, candidate
+coordinates you can look at on the images in napari, and a logged run in the
+calibration tracker like any other.
+
+You do not get counts per brain region, and you cannot carry these cells forward
+into steps 5 and 6. The reason is coordinates: the atlas is fitted to a
+*cropped* stack, so its coordinates start from a different corner than the whole
+stack's do. Cells found on the whole stack do not line up with an atlas fitted
+later. When the brain is finally cropped and registered, **detection is run
+again** on the crop.
+
+So treat the number as provisional. It answers "do these settings find cells
+here, and roughly how many" -- which is exactly what you want to know while
+registration waits.
+
+**Where the results go**
+
+Into a subfolder named after the images they came from:
+
+```
+4_Cell_Candidates/
+├── from_1_Extracted_Full/
+│   └── detected_cells.xml      ← a trial run on the whole stack
+└── detected_cells.xml          ← the real run, on the registered crop
+```
+
+Steps 5 and 6 only ever look at the top level, so a trial run cannot be
+classified or counted by mistake. The tracker records which images each run used
+in its notes, for the same reason: two runs from different spaces are not
+comparable as counts, and nobody should have to decode a path to notice that.
+
 ## Detection Presets
 
 | Preset | ball_xy | ball_z | soma | threshold | Use For |
@@ -164,6 +254,7 @@ python util_optimize_crop.py --brain 349_CNT_01_02_1p625x_z4 --quick
         │   ├── QC_registration_detailed.png  ← Registration QC (auto-generated)
         │   └── .registration_approved        ← Approval marker file
         ├── 4_Cell_Candidates/            ← 4_detect_cells.py output
+        │   └── from_1_Extracted_Full/    ← trial runs made before registration
         ├── 5_Classified_Cells/           ← 5_classify_cells.py output
         ├── 6_Region_Analysis/            ← 6_count_regions.py output
         └── _crop_optimization/           ← util_optimize_crop.py output
