@@ -185,6 +185,22 @@ Tuning`, pick the brain and press Load. When a brain has no crop, the plugin
 loads the uncropped stack automatically -- there is nothing extra to click.
 Then tune and run detection as usual.
 
+### Seeing the candidates again afterwards
+
+**Loading the brain shows the images, not the candidates.** To put a finished
+whole-stack run back on screen, load it from the **Context Panel's run list**
+(the runs table for the current brain) rather than expecting it to appear with
+the images.
+
+This is a consequence of where the results are kept, and it is deliberate. The
+plugin's "look in `4_Cell_Candidates` and load what is there" paths all read the
+top level of that folder only, and a whole-stack run is written one level down,
+in `from_1_Extracted_Full/`. If those scans reached into it, the classification
+step could pick up coordinates from a space the atlas was never fitted to and
+produce a confident, wrong answer. The run list works instead because it goes by
+the output path the tracker recorded for that run, which points straight at the
+subfolder.
+
 **What `--source` means**
 
 | `--source` | Reads from | Can produce region counts? |
