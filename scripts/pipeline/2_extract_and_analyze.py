@@ -415,6 +415,74 @@ def read_ims_attribute(attrs, name):
     return str(value).strip()
 
 
+def to_integer_counts(volume, label=""):
+    """Return the volume as integers, rounding if the source stored floats.
+
+    WHY THIS IS NEEDED
+    Cell detection requires an integer image and refuses a floating-point one
+    outright. Most deliveries arrive as 16-bit integers and pass straight
+    through. A delivery that has had a correction applied in the imaging
+    software -- flat-field or vignetting correction, which multiplies each count
+    by a gain -- arrives as float, because that multiplication produces
+    fractions.
+
+    WHY ROUNDING IS THE RIGHT ANSWER
+    The underlying quantity is a photon count, which is an integer. The fraction
+    is an artefact of the correction, not extra information: the difference
+    between 110 and 110.4 counts is below the precision the detector ever had.
+    So the values are rounded back to the integers they represent. No rescaling,
+    no normalising, no stretching -- a rescale would change what every
+    downstream intensity threshold means, and nothing here is worth that.
+
+    WHY IT REFUSES RATHER THAN CLIPS
+    Casting a value above the type's maximum wraps or clamps it silently, and
+    the brightest voxels in one of these images are the labelled cells --
+    exactly what must not be quietly altered. So the range is measured first and
+    a volume that does not fit stops the extraction with its numbers printed.
+
+    Returns (volume, conversion). conversion is None when nothing was done, and
+    otherwise a record for the metadata, so the change is not invisible to
+    whoever reads the counts later.
+    """
+    if not np.issubdtype(volume.dtype, np.floating):
+        return volume, None
+
+    lowest = float(np.nanmin(volume))
+    highest = float(np.nanmax(volume))
+    source = str(volume.dtype)
+
+    if lowest < 0:
+        raise ValueError(
+            "%s holds negative values (min %.4g). Rounding to an unsigned "
+            "integer would wrap them into very large positive ones. This needs a "
+            "person to decide what the negatives mean." % (label or "volume", lowest))
+
+    chosen = None
+    for dtype in (np.uint16, np.uint32):
+        if highest <= np.iinfo(dtype).max:
+            chosen = dtype
+            break
+    if chosen is None:
+        raise ValueError(
+            "%s reaches %.6g, which does not fit any integer type this step will "
+            "use. Converting would clip the brightest voxels, which are the "
+            "cells." % (label or "volume", highest))
+
+    print_status("%s is %s (a correction was applied upstream); rounding to %s. "
+                 "Range %.4g to %.4g, limit %d -- nothing is clipped."
+                 % (label or "volume", source, np.dtype(chosen).name, lowest,
+                    highest, np.iinfo(chosen).max))
+    return np.rint(volume).astype(chosen), {
+        "source_dtype": source,
+        "written_dtype": np.dtype(chosen).name,
+        "method": "rounded to nearest integer; no rescaling",
+        "observed_min": lowest,
+        "observed_max": highest,
+        "reason": ("the delivery stored floating-point values, which cell "
+                   "detection refuses; the underlying quantity is a photon count"),
+    }
+
+
 def get_ims_info(filepath):
     """Extract metadata from IMS file."""
     import h5py
@@ -821,6 +889,10 @@ def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
     
     volumes = []
     channel_metrics = []
+    # Any datatype conversion done on the way in, per channel, so the
+    # metadata can say the counts were rounded rather than leaving a
+    # reader to wonder why they are integers when the delivery was not.
+    conversions = {}
     total_start = time.time()
     num_slices = 0
     
@@ -910,6 +982,9 @@ def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
                 sys.stderr = old_stderr
             
             volume = np.squeeze(volume)
+            volume, conversion = to_integer_counts(volume, label=f"ch{ch_idx}")
+            if conversion:
+                conversions[f"ch{ch_idx}"] = conversion
             load_time = time.time() - start_time
             num_slices = volume.shape[0]
             print(f" done ({format_duration(load_time)})")
@@ -1075,6 +1150,7 @@ def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
             'metrics': {i: m for i, m in enumerate(channel_metrics)},
         },
         'crop_analysis': crop_analysis,
+        'datatype_conversion': conversions or None,
         'orientation': DEFAULT_ORIENTATION,
     }
     
