@@ -364,6 +364,35 @@ PROJECT_CODES = {
 }
 
 
+def is_pipeline_candidate(folder) -> bool:
+    """Whether a directory under a mouse folder should be treated as a brain.
+
+    Every step scans ``<brains root>/<mouse>/<brain>``, and until this existed
+    each step decided for itself what counted -- in practice, anything that was a
+    directory. That is too generous. People put things beside a brain: an archive
+    of a superseded delivery, a scratch folder, a copy kept while something is
+    checked. Give one of those a ``0_Raw_IMS`` inside it and every step will scan
+    it, find it complete, and report the real brain as already done.
+
+    That is not hypothetical. On 2026-10-13 a brain was re-delivered with a better
+    stitch; its previous outputs were archived into a folder beside it, inside the
+    brain folder; and the next extraction found the ARCHIVE, announced "all
+    extractions complete", and did nothing -- leaving the two steps behind it to
+    fail for reasons that pointed nowhere near the cause.
+
+    The rule: a leading underscore means "not a brain". It is already the
+    convention one level up (``_incoming``), it needs no registry of special
+    names, and it is visible in a directory listing to whoever is wondering why a
+    folder is being skipped. Dot-prefixed names are excluded too, as hidden
+    directories always are.
+    """
+    from pathlib import Path as _Path
+    folder = _Path(folder)
+    if not folder.is_dir():
+        return False
+    return not folder.name.startswith(("_", "."))
+
+
 def parse_brain_name(brain_name: str) -> dict:
     """
     Parse a brain/folder name into its hierarchical components.

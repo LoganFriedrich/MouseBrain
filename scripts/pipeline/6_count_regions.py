@@ -78,7 +78,7 @@ _has_brainglobe_utils = check_brainglobe_env()
 
 SCRIPT_VERSION = "1.0.1"
 
-from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT
+from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, is_pipeline_candidate
 from mousebrain.config import DATA_SUMMARY_DIR as SUMMARY_DATA_DIR
 from mousebrain.config import (
     REGION_COUNTS_CSV, REGION_COUNTS_ARCHIVE_CSV,
@@ -108,7 +108,9 @@ def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT):
             continue
         
         for pipeline_dir in mouse_dir.iterdir():
-            if not pipeline_dir.is_dir():
+            # Not every directory beside a brain is a brain: see
+            # config.is_pipeline_candidate for why a leading underscore excludes one.
+            if not is_pipeline_candidate(pipeline_dir):
                 continue
             
             full_name = f"{mouse_dir.name}/{pipeline_dir.name}"
@@ -156,7 +158,9 @@ def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT):
             continue
         
         for pipeline_dir in mouse_dir.iterdir():
-            if not pipeline_dir.is_dir():
+            # Not every directory beside a brain is a brain: see
+            # config.is_pipeline_candidate for why a leading underscore excludes one.
+            if not is_pipeline_candidate(pipeline_dir):
                 continue
             
             cells_xml = find_classified_cells(pipeline_dir)

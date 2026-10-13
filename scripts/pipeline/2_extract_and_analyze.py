@@ -199,7 +199,7 @@ def print_progress(current, total, prefix="", width=30):
 # =============================================================================
 # DEFAULT PATHS AND SETTINGS
 # =============================================================================
-from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT
+from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, is_pipeline_candidate
 
 # Camera pixel size in microns (Andor Neo/Zyla sCMOS)
 CAMERA_PIXEL_SIZE = 6.5
@@ -335,7 +335,9 @@ def find_organized_pipelines(root_path):
             continue
         
         for pipeline_dir in mouse_dir.iterdir():
-            if not pipeline_dir.is_dir():
+            # Not every directory beside a brain is a brain: see
+            # config.is_pipeline_candidate for why a leading underscore excludes one.
+            if not is_pipeline_candidate(pipeline_dir):
                 continue
             
             raw_folder = pipeline_dir / FOLDER_RAW_IMS

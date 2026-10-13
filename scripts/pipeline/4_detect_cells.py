@@ -143,7 +143,7 @@ check_cellfinder_api_available()
 
 SCRIPT_VERSION = "1.0.1"
 
-from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, parse_brain_name
+from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, parse_brain_name, is_pipeline_candidate
 
 # Pipeline folders (must match other scripts)
 FOLDER_FULL = "1_Extracted_Full"
@@ -329,7 +329,9 @@ def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT,
             continue
 
         for pipeline_dir in mouse_dir.iterdir():
-            if not pipeline_dir.is_dir():
+            # Not every directory beside a brain is a brain: see
+            # config.is_pipeline_candidate for why a leading underscore excludes one.
+            if not is_pipeline_candidate(pipeline_dir):
                 continue
 
             # Match by pipeline name or full path
@@ -370,7 +372,9 @@ def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT, source: str = "a
             continue
 
         for pipeline_dir in mouse_dir.iterdir():
-            if not pipeline_dir.is_dir():
+            # Not every directory beside a brain is a brain: see
+            # config.is_pipeline_candidate for why a leading underscore excludes one.
+            if not is_pipeline_candidate(pipeline_dir):
                 continue
 
             source_name, input_folder, metadata = resolve_input(pipeline_dir, source)

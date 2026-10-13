@@ -17,7 +17,7 @@ from pathlib import Path
 from datetime import datetime
 
 SCRIPT_DIR = Path(__file__).parent
-from mousebrain.config import BRAINS_ROOT
+from mousebrain.config import BRAINS_ROOT, is_pipeline_candidate
 
 
 def clear():
@@ -66,7 +66,9 @@ def find_brains():
             continue
 
         for pipeline_dir in mouse_dir.iterdir():
-            if not pipeline_dir.is_dir():
+            # Not every directory beside a brain is a brain: see
+            # config.is_pipeline_candidate for why a leading underscore excludes one.
+            if not is_pipeline_candidate(pipeline_dir):
                 continue
 
             # Check if this looks like a pipeline

@@ -30,6 +30,8 @@ import json
 import logging
 import subprocess
 import sys
+
+from mousebrain.config import is_pipeline_candidate
 import time
 import traceback
 from datetime import datetime
@@ -105,7 +107,9 @@ def find_cropped_brains() -> List[Tuple[Path, str]]:
             continue
 
         for pipeline_dir in mouse_dir.iterdir():
-            if not pipeline_dir.is_dir() or pipeline_dir.name.startswith('.'):
+            # Not every directory beside a brain is a brain: see
+            # config.is_pipeline_candidate for why a leading underscore excludes one.
+            if not is_pipeline_candidate(pipeline_dir):
                 continue
 
             cropped = pipeline_dir / FOLDER_CROPPED
