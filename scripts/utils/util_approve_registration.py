@@ -70,7 +70,7 @@ def approve_registration(pipeline_folder: Path):
     with open(approval_file, 'w') as f:
         f.write(f"Approved: {timestamp}\n")
 
-    print(f"✓ Registration approved and marked for: {pipeline_folder.name}")
+    print(f"[OK] Registration approved and marked for: {pipeline_folder.name}")
     return True
 
 
@@ -165,10 +165,10 @@ Examples:
 
     if args.status:
         if approved:
-            print(f"\n✓ Registration is APPROVED")
+            print(f"\n[OK] Registration is APPROVED")
             print(f"  {approval_data}")
         else:
-            print(f"\n⚠ Registration NOT YET APPROVED")
+            print(f"\n[!] Registration NOT YET APPROVED")
             print(f"  Review QC images and approve if registration looks good")
         sys.exit(0)
 
@@ -195,7 +195,7 @@ Examples:
     print(f"{'='*60}")
 
     if approved:
-        print(f"\n⚠ This registration is already approved:")
+        print(f"\n[!] This registration is already approved:")
         print(f"  {approval_data}")
         response = input("\nRe-approve? (yes/no): ").strip().lower()
         if response not in ['yes', 'y']:
@@ -204,7 +204,7 @@ Examples:
     else:
         response = input("\nDoes the registration look good? (yes/no): ").strip().lower()
         if response not in ['yes', 'y']:
-            print("\n✗ Registration NOT approved")
+            print("\n[FAIL] Registration NOT approved")
             print("  Re-run registration if needed, or adjust parameters")
             sys.exit(1)
 
@@ -212,7 +212,7 @@ Examples:
     approve_registration(pipeline_folder)
 
     print(f"\n{'='*60}")
-    print("✓ Registration approved!")
+    print("[OK] Registration approved!")
     print(f"{'='*60}")
     print("\nYou can now proceed to cell detection:")
     print(f"  python 4_detect_cells.py --brain {args.brain}")

@@ -190,7 +190,7 @@ def print_progress(current, total, prefix="", width=30):
     """Print a progress bar."""
     pct = current / total
     filled = int(width * pct)
-    bar = '█' * filled + '░' * (width - filled)
+    bar = '#' * filled + '-' * (width - filled)
     print(f"\r    [{timestamp()}] {prefix}|{bar}| {current}/{total} ({pct*100:.0f}%)", end='')
     sys.stdout.flush()
     if current >= total:
@@ -804,7 +804,7 @@ def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
     
     print(f"    File: {file_size_gb:.1f} GB")
     print(f"    Dimensions: {ims_info['size_x']}x{ims_info['size_y']}x{ims_info['size_z']}")
-    print(f"    Voxels (µm): X={voxel_xy:.2f}, Y={voxel_xy:.2f}, Z={voxel_z:.2f}")
+    print(f"    Voxels (um): X={voxel_xy:.2f}, Y={voxel_xy:.2f}, Z={voxel_z:.2f}")
     print(f"    Channels: {num_channels}")
     sys.stdout.flush()
     
@@ -1138,7 +1138,7 @@ def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
     print(f"    EXTRACTION COMPLETE")
     print(f"    {'='*50}")
     print(f"    Total time: {format_duration(total_time)}")
-    print(f"    Full extraction: {num_slices} Z-slices × {num_channels} channels")
+    print(f"    Full extraction: {num_slices} Z-slices x {num_channels} channels")
     print(f"    Signal channel: {signal_channel}")
     print(f"    Background channel: {background_channel}")
     if not skip_crop:
@@ -1235,10 +1235,10 @@ After extraction, use manual crop:
     print(f"\nFound {len(pipelines)} organized pipeline(s):\n")
     
     for ims_path, pipeline_folder, mouse_folder in complete:
-        print(f"  ✓ {mouse_folder.name}/{pipeline_folder.name}")
+        print(f"  [OK] {mouse_folder.name}/{pipeline_folder.name}")
     
     for ims_path, pipeline_folder, mouse_folder, status, reason in needs_work:
-        print(f"  ○ {mouse_folder.name}/{pipeline_folder.name} - {reason}")
+        print(f"  [ ]  {mouse_folder.name}/{pipeline_folder.name} - {reason}")
     
     if not needs_work:
         print("\nAll extractions complete! Ready for Script 3.")
@@ -1267,7 +1267,7 @@ After extraction, use manual crop:
     skip_crop = not args.auto_crop
 
     if not skip_crop:
-        print("\n⚠️  WARNING: Auto-crop enabled. This is NOT RECOMMENDED.")
+        print("\n[!]  WARNING: Auto-crop enabled. This is NOT RECOMMENDED.")
         print("    Auto-crop often cuts into brain tissue.")
         print("    Consider using manual crop instead: braintool --crop BRAIN_NAME\n")
 
@@ -1278,10 +1278,10 @@ After extraction, use manual crop:
         try:
             extract_and_analyze(ims_path, pipeline_folder, skip_crop=skip_crop)
             success += 1
-            print(f"\n    ✓ Complete")
+            print(f"\n    [OK] Complete")
         except Exception as e:
             failed += 1
-            print(f"\n    ✗ Error: {e}")
+            print(f"\n    [FAIL] Error: {e}")
             import traceback
             traceback.print_exc()
     
@@ -1290,7 +1290,7 @@ After extraction, use manual crop:
     print("=" * 60)
     
     if success > 0:
-        print("\n✓ Extraction complete!")
+        print("\n[OK] Extraction complete!")
         print("\nNEXT STEPS:")
         print("  1. Manual crop:  braintool --crop BRAIN_NAME")
         print("  2. Registration: python 3_register_to_atlas.py")

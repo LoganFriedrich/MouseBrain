@@ -209,7 +209,7 @@ Examples:
         widget = ManualCropWidget(viewer, pipeline_folder=pipeline_folder, metadata=metadata)
         viewer.window.add_dock_widget(widget, name="Manual Crop", area='right')
 
-        print("✓ Manual crop plugin loaded")
+        print("[OK] Manual crop plugin loaded")
         print("\nInstructions:")
         print("  1. Click 'Add Crop Line' in the plugin panel")
         print("  2. Adjust the Y position with +/- buttons")
@@ -217,7 +217,7 @@ Examples:
         print()
 
     except Exception as e:
-        print(f"⚠️  Could not load manual crop plugin")
+        print(f"[!]  Could not load manual crop plugin")
         print(f"  Error: {e}")
         print("\nYou can still crop manually using napari's built-in tools.")
 
@@ -310,7 +310,7 @@ Examples:
         crop_file.unlink()
 
         print(f"\n{'='*60}")
-        print("✓ Crop complete!")
+        print("[OK] Crop complete!")
         print(f"{'='*60}")
         print(f"Output: {output_folder}")
         print(f"\nYou can now run the next pipeline step (registration).")

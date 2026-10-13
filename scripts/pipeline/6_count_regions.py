@@ -1390,7 +1390,7 @@ def generate_cross_brain_graphs(
     stats_lines.append("")
 
     for tract, vulnerability, reason in TRACT_VULNERABILITY:
-        marker = "⚠️" if vulnerability == "HIGH" else ("⚡" if vulnerability == "MODERATE" else "✓")
+        marker = "[!]" if vulnerability == "HIGH" else ("[~]" if vulnerability == "MODERATE" else "[OK]")
         stats_lines.append(f"  {marker} {tract:<30} {vulnerability:<10} - {reason}")
 
     stats_lines.append("\n" + "-" * 80)

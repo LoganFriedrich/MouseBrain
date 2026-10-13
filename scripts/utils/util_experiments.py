@@ -248,7 +248,7 @@ def print_statistics(tracker: ExperimentTracker):
     print(f"\nTotal experiments: {stats['total']}")
     print(f"Rated: {stats['rated']}")
     if stats['avg_rating'] > 0:
-        print(f"Average rating: {stats['avg_rating']:.1f}★")
+        print(f"Average rating: {stats['avg_rating']:.1f}*")
     
     print("\nBy Type:")
     for t in sorted(stats['by_type'].keys()):

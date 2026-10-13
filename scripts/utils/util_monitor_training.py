@@ -176,11 +176,11 @@ def move_flat_to_nested(brain_id: str, dry_run: bool = False) -> bool:
 
     # Nested doesn't exist - move flat there entirely
     if dry_run:
-        print(f"  [DRY RUN] Would move: {flat_path} → {nested_path}")
+        print(f"  [DRY RUN] Would move: {flat_path} -> {nested_path}")
         return True
 
     mouse_dir.mkdir(parents=True, exist_ok=True)
-    print(f"  [MOVE] {flat_path} → {nested_path}")
+    print(f"  [MOVE] {flat_path} -> {nested_path}")
     try:
         shutil.move(str(flat_path), str(nested_path))
         return True

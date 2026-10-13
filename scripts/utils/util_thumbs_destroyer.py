@@ -386,11 +386,11 @@ Double-click mode:
             if success:
                 destroyed += 1
                 if not args.quiet:
-                    print(f"  ✓ {rel_path} ({msg})")
+                    print(f"  [OK] {rel_path} ({msg})")
             else:
                 failed += 1
                 if not args.quiet:
-                    print(f"  ✗ {rel_path} ({msg})")
+                    print(f"  [FAIL] {rel_path} ({msg})")
         
         if not args.quiet:
             print()
@@ -416,7 +416,7 @@ Double-click mode:
                 decoys_created += 1
                 if not args.quiet:
                     rel_path = folder.relative_to(root_path) if folder.is_relative_to(root_path) else folder
-                    print(f"  ✓ {rel_path}/Thumbs.db (decoy)")
+                    print(f"  [OK] {rel_path}/Thumbs.db (decoy)")
         
         if not args.quiet:
             print()
@@ -439,7 +439,7 @@ Double-click mode:
                 for window_path in saved_windows:
                     open_explorer_window(window_path)
                     if not args.quiet:
-                        print(f"  ↺ {window_path}")
+                        print(f"  [re] {window_path}")
         else:
             if not args.quiet:
                 print("  WARNING: Failed to restart Explorer. Please start it manually.")

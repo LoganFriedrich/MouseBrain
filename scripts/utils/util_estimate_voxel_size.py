@@ -254,7 +254,7 @@ def main():
     print(f"  Measured brain width: {width_px} pixels")
     print(f"  Expected brain width: ~{EXPECTED_BRAIN_WIDTH_MM} mm")
     print()
-    print(f"  Estimated XY voxel: {voxel_xy:.2f} µm")
+    print(f"  Estimated XY voxel: {voxel_xy:.2f} um")
     print()
     
     # Compare to filename z-step if available
@@ -262,11 +262,11 @@ def main():
         try:
             z_part = name.split('_z')[-1].split('_')[0].replace('p', '.')
             z_step = float(z_part)
-            print(f"  Z voxel from filename: {z_step:.2f} µm")
+            print(f"  Z voxel from filename: {z_step:.2f} um")
             print()
             
             if abs(voxel_xy - z_step) < 1.0:
-                print("  ✓ XY and Z are similar - likely isotropic voxels")
+                print("  [OK] XY and Z are similar - likely isotropic voxels")
             else:
                 print(f"  Note: XY ({voxel_xy:.2f}) differs from Z ({z_step:.2f})")
                 print("        This could be anisotropic voxels, or measurement error")
