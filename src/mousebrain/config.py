@@ -393,6 +393,106 @@ def is_pipeline_candidate(folder) -> bool:
     return not folder.name.startswith(("_", "."))
 
 
+# Where a step may read a brain's images from, best first.
+#
+# WHY THE FULL EXTRACTION IS IN THIS LIST
+# Cropping exists to remove what is not brain before the atlas is fitted. Some
+# deliveries arrive already cut -- an imaging collaborator can trim before
+# sending -- and then the crop step has nothing to do and the extraction IS the
+# volume everything downstream should use. Treating the crop folder as the only
+# possible input meant such a brain could not be registered at all, while looking
+# merely "not cropped yet".
+PIPELINE_INPUT_FOLDERS = {
+    "manual": "2_Cropped_For_Registration_Manual",
+    "cropped": "2_Cropped_For_Registration",
+    "full": "1_Extracted_Full",
+}
+PIPELINE_INPUT_PRIORITY = ("manual", "cropped", "full")
+
+# Written by registration into its own output folder, naming the images the atlas
+# was fitted to.
+#
+# WHY IT IS RECORDED RATHER THAN ASSUMED
+# Everything after registration has to work in the SAME space the atlas was
+# fitted to, or cells land in the wrong structures while every number still looks
+# reasonable. Steps used to assume that space was the crop folder, which is true
+# only when a crop was made here. Recording it makes the assumption explicit and
+# lets a later step check instead of guess.
+REGISTERED_SPACE_FILE = "registered_from.json"
+
+
+def resolve_pipeline_input(pipeline_dir, requested: str = "auto"):
+    """Which folder of images a step should read for this brain.
+
+    Args:
+        pipeline_dir: the brain's pipeline folder.
+        requested: "auto" for the best available, or a key of
+            PIPELINE_INPUT_FOLDERS to insist on one.
+
+    Returns (source_name, folder, metadata), or (None, None, None) when the brain
+    has no images. A folder counts only when it actually holds ``ch0/*.tif``: the
+    crop folders are created empty when a brain is first organised, and an empty
+    folder must never be mistaken for data.
+    """
+    import json
+    from pathlib import Path as _Path
+
+    pipeline_dir = _Path(pipeline_dir)
+    if requested != "auto" and requested not in PIPELINE_INPUT_FOLDERS:
+        raise ValueError("unknown input source %r (expected auto or one of %s)"
+                         % (requested, ", ".join(PIPELINE_INPUT_FOLDERS)))
+
+    order = PIPELINE_INPUT_PRIORITY if requested == "auto" else (requested,)
+    for source in order:
+        folder = pipeline_dir / PIPELINE_INPUT_FOLDERS[source]
+        ch0 = folder / "ch0"
+        if not ch0.is_dir() or not any(ch0.glob("*.tif")):
+            continue
+        metadata = {}
+        meta_path = folder / "metadata.json"
+        if meta_path.exists():
+            try:
+                metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                metadata = {}
+        return source, folder, metadata
+
+    return None, None, None
+
+
+def record_registered_space(registration_folder, source: str, folder) -> None:
+    """Record which images the atlas was fitted to."""
+    import json
+    from datetime import datetime
+    from pathlib import Path as _Path
+
+    registration_folder = _Path(registration_folder)
+    registration_folder.mkdir(parents=True, exist_ok=True)
+    (registration_folder / REGISTERED_SPACE_FILE).write_text(
+        json.dumps({"source": source,
+                    "folder": _Path(folder).name,
+                    "recorded_at": datetime.now().isoformat(timespec="seconds")},
+                   indent=1),
+        encoding="utf-8")
+
+
+def registered_space(pipeline_dir) -> str:
+    """The source name the atlas was fitted to, or '' when nothing is recorded.
+
+    '' means registration either has not run or predates this record. A caller
+    must then fall back to its old assumption rather than treat the brain as
+    unregistered.
+    """
+    import json
+    from pathlib import Path as _Path
+
+    path = (_Path(pipeline_dir) / "3_Registered_Atlas" / REGISTERED_SPACE_FILE)
+    try:
+        return str(json.loads(path.read_text(encoding="utf-8")).get("source", ""))
+    except (OSError, ValueError):
+        return ""
+
+
 def parse_brain_name(brain_name: str) -> dict:
     """
     Parse a brain/folder name into its hierarchical components.

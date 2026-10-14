@@ -185,7 +185,11 @@ _brainreg_path = check_brainreg_available()
 # =============================================================================
 # DEFAULT SETTINGS
 # =============================================================================
-from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, is_pipeline_candidate
+from mousebrain.config import (BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT,
+                              is_pipeline_candidate,
+                              resolve_pipeline_input,
+                              record_registered_space,
+                              PIPELINE_INPUT_FOLDERS)
 
 # Import experiment tracker for logging registration runs
 try:
@@ -242,21 +246,13 @@ def find_extracted_pipelines(root_path):
             if not is_pipeline_candidate(pipeline_dir):
                 continue
             
-            # Check for cropped data with metadata
-            crop_folder = pipeline_dir / FOLDER_CROPPED
-            metadata_path = crop_folder / "metadata.json"
-            
-            if metadata_path.exists():
-                try:
-                    with open(metadata_path, 'r') as f:
-                        metadata = json.load(f)
-                    
-                    # Verify cropped data exists
-                    ch0 = crop_folder / "ch0"
-                    if ch0.exists() and len(list(ch0.glob('Z*.tif'))) > 0:
-                        pipelines.append((pipeline_dir, mouse_dir, metadata))
-                except:
-                    pass
+            # The images to register: a hand crop, else an automatic crop, else
+            # the full extraction. The last case is a delivery that arrived
+            # already cut, where the crop step has nothing to do and the
+            # extraction IS the volume the atlas should be fitted to.
+            source, folder, metadata = resolve_pipeline_input(pipeline_dir)
+            if source and metadata:
+                pipelines.append((pipeline_dir, mouse_dir, metadata))
     
     return pipelines
 
@@ -357,11 +353,21 @@ def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLA
     """
     pipeline_folder = Path(pipeline_folder)
 
-    crop_folder = pipeline_folder / FOLDER_CROPPED
+    source, crop_folder, _resolved = resolve_pipeline_input(pipeline_folder)
+    if crop_folder is None:
+        raise FileNotFoundError(
+            "No images to register for %s: expected a ch0 folder of .tif files in "
+            "one of %s" % (pipeline_folder.name,
+                           ", ".join(PIPELINE_INPUT_FOLDERS.values())))
     reg_folder = pipeline_folder / FOLDER_REGISTRATION
 
     # Ensure registration folder exists
     reg_folder.mkdir(parents=True, exist_ok=True)
+
+    # Everything after this has to work in the SAME space the atlas was fitted
+    # to, or cells land in the wrong structures while every number still looks
+    # reasonable. Record it rather than leaving later steps to assume.
+    record_registered_space(reg_folder, source, crop_folder)
 
     # Get registration channel from metadata
     # Prefer background channel for registration (clearer tissue boundaries)

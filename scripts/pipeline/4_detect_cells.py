@@ -173,7 +173,26 @@ INPUT_PRIORITY = ("manual", "cropped", "full")
 # The crop folders hold the images registration was computed on, so cells found
 # in them can be mapped into the atlas. The uncropped stack cannot -- its voxel
 # coordinates are offset from the crop's by however much was trimmed off.
-SOURCES_IN_REGISTERED_SPACE = ("manual", "cropped")
+# Which sources are in the space the atlas was fitted to.
+#
+# A crop is, by default: registration is normally computed on one. But a delivery
+# that arrives already cut is registered on the full extraction, and then the
+# full extraction IS registered space. Registration records what it used, so ask
+# the brain rather than assume -- the fallback is the old assumption, for brains
+# registered before that record existed.
+DEFAULT_SOURCES_IN_REGISTERED_SPACE = ("manual", "cropped")
+
+
+def sources_in_registered_space(pipeline_folder=None):
+    from mousebrain.config import registered_space
+    recorded = registered_space(pipeline_folder) if pipeline_folder else ""
+    if recorded:
+        return (recorded,)
+    return DEFAULT_SOURCES_IN_REGISTERED_SPACE
+
+
+# Kept for callers that have no brain in hand (help text, listings).
+SOURCES_IN_REGISTERED_SPACE = DEFAULT_SOURCES_IN_REGISTERED_SPACE
 
 # Detection presets
 PRESETS = {
@@ -522,7 +541,7 @@ def interactive_select_brain(brains):
         against a raw stack -- looked identical on screen.
         """
         where = INPUT_SOURCES[brain['source']]
-        if brain['source'] not in SOURCES_IN_REGISTERED_SPACE:
+        if brain['source'] not in sources_in_registered_space(brain['pipeline']):
             return f"{brain['name']}  [{where} -- not cropped, no region counts]"
         if not brain['registered']:
             return f"{brain['name']}  [{where} -- not registered yet]"
@@ -697,7 +716,7 @@ Examples:
     # uncropped stack, so demanding approval there would be demanding the
     # impossible, and the whole point of this path is that registration is still
     # waiting on something.
-    if input_source in SOURCES_IN_REGISTERED_SPACE:
+    if input_source in sources_in_registered_space(pipeline_folder):
         reg_folder = pipeline_folder / FOLDER_REGISTRATION
         approval_file = reg_folder / ".registration_approved"
         if not approval_file.exists():
@@ -805,7 +824,7 @@ Examples:
     
     # Get paths
     det_folder = pipeline_folder / FOLDER_DETECTION
-    if input_source not in SOURCES_IN_REGISTERED_SPACE:
+    if input_source not in sources_in_registered_space(pipeline_folder):
         # Keep results off the top level of 4_Cell_Candidates. Steps 5 and 6 glob
         # the top level only, so a run whose coordinates are NOT in the space the
         # atlas will be fitted to stays invisible to them. Without this, a trial
@@ -862,7 +881,7 @@ Examples:
             "images: %s (%s)" % (
                 INPUT_SOURCES[input_source],
                 "registered space"
-                if input_source in SOURCES_IN_REGISTERED_SPACE
+                if input_source in sources_in_registered_space(pipeline_folder)
                 else "whole-stack space, pre-registration, no region counts"),
         ])),
         status="started",
@@ -919,7 +938,7 @@ Examples:
         print("\n" + "=" * 60)
         print("WHAT TO DO NEXT")
         print("=" * 60)
-        if input_source in SOURCES_IN_REGISTERED_SPACE:
+        if input_source in sources_in_registered_space(pipeline_folder):
             print("\n1. Run cell classification:")
             print(f"   python 5_classify_cells.py --brain {brain_name.split('/')[-1]}")
             print("\n" + "-" * 60)
