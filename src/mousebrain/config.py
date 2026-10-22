@@ -533,6 +533,15 @@ def parse_brain_name(brain_name: str) -> dict:
     if not brain_name:
         return result
 
+    # Parse the brain's own folder name. Callers pass "<mouse>/<brain>" paths
+    # too (e.g. "349_CNT_01_02/349_CNT_01_02_1p625x_z4"), and splitting that
+    # on '_' across the slash made the subject "CNT_01_02/349" and the imaging
+    # paradigm "CNT_01_02_1p625x_z4" -- one paradigm per brain, so "best
+    # settings for this paradigm" never matched another brain (found
+    # 2026-10-22 in the calibration-run tracker, still happening in October).
+    # 'raw' keeps the text as given.
+    brain_name = brain_name.replace('\\', '/').rstrip('/').rsplit('/', 1)[-1]
+
     parts = brain_name.split('_')
 
     if len(parts) < 4:
