@@ -201,7 +201,9 @@ def create_qc_visualization(data, num_levels=DEFAULT_NUM_LEVELS, output_path=Non
 
         # Column 2: Atlas reference
         ax = axes[row, 1]
-        ax.imshow(atlas_slice, cmap='nipy_spectral', interpolation='nearest', alpha=0.7)
+        regions = colour_regions(atlas_slice)
+        ax.imshow(regions, cmap='nipy_spectral', interpolation='nearest',
+                  vmin=0, vmax=max(int(regions.max() or 0), 1))
         ax.set_title(f'Atlas Reference\nAllen Mouse Brain Atlas',
                     fontsize=10, fontweight='bold')
         ax.axis('off')
@@ -229,6 +231,21 @@ def create_qc_visualization(data, num_levels=DEFAULT_NUM_LEVELS, output_path=Non
     plt.close()
 
     return output_path
+
+
+def colour_regions(annotation_slice):
+    """An atlas slice as colours that tell neighbouring regions apart.
+
+    Atlas region IDs run from 1 into the hundreds of millions, so drawn straight
+    through a colour map almost every region lands at the same dark end and the
+    atlas column looked nearly empty. Each region in the slice gets its own step
+    instead, in a fixed shuffled order so neighbours differ; outside the brain
+    stays blank (masked).
+    """
+    ids, order = np.unique(annotation_slice, return_inverse=True)
+    order = order.reshape(annotation_slice.shape)
+    steps = np.random.default_rng(0).permutation(len(ids)) + 1
+    return np.ma.masked_where(annotation_slice == 0, steps[order])
 
 
 def create_boundary_image(annotation_slice):

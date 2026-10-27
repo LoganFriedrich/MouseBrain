@@ -35,3 +35,15 @@ def test_rows_start_where_the_atlas_starts():
 def test_without_an_atlas_the_rows_span_the_image():
     brain = np.ones((100, 4, 4), np.uint16)
     assert list(qc.choose_levels(brain, None, 3)) == [9, 49, 89]
+
+
+def test_the_atlas_column_tells_regions_apart():
+    """Region IDs run into the hundreds of millions; drawn raw, nearly all of them
+    shared one dark colour and the atlas column looked empty."""
+    atlas = np.array([[0, 315, 315],
+                      [698, 614454277, 0]], np.uint32)
+    coloured = qc.colour_regions(atlas)
+    assert coloured.mask.tolist() == [[True, False, False], [False, False, True]]
+    shown = coloured.compressed().tolist()
+    assert len(set(shown)) == 3                      # three regions, three colours
+    assert coloured[0, 1] == coloured[0, 2]          # one region, one colour
