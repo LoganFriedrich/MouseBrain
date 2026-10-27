@@ -186,6 +186,7 @@ _brainreg_path = check_brainreg_available()
 # DEFAULT SETTINGS
 # =============================================================================
 from mousebrain.config import (BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT,
+                              import_util,
                               is_pipeline_candidate,
                               resolve_pipeline_input,
                               record_registered_space,
@@ -339,6 +340,22 @@ def archive_existing_registration(pipeline_folder):
 # =============================================================================
 # REGISTRATION
 # =============================================================================
+
+def draw_registration_qc(pipeline_folder):
+    """Draw QC_registration_detailed.png for a finished registration.
+
+    The drawing lives in scripts/utils/util_registration_qc.py, which is not in
+    this script's folder: it is reached through config.import_util. (Looking
+    beside this script instead is how every registration since the
+    reorganization finished without its QC picture.) Returns the picture's path,
+    or None when the registration's files cannot be read.
+    """
+    qc = import_util("util_registration_qc")
+    qc_data = qc.load_registration_data(Path(pipeline_folder))
+    if not qc_data:
+        return None
+    return qc.create_qc_visualization(qc_data, num_levels=5)
+
 
 def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLAS):
     """
@@ -505,15 +522,8 @@ def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLA
     print(f"    [{timestamp()}] Generating registration QC images...")
     qc_paths = [orientation_png] if orientation_png else []
     try:
-        # Note: Path is already imported at module level, don't re-import here
-        util_scripts = Path(__file__).parent
-        if str(util_scripts) not in sys.path:
-            sys.path.insert(0, str(util_scripts))
-        from util_registration_qc import load_registration_data, create_qc_visualization
-
-        qc_data = load_registration_data(pipeline_folder)
-        if qc_data:
-            qc_path = create_qc_visualization(qc_data, num_levels=5)
+        qc_path = draw_registration_qc(pipeline_folder)
+        if qc_path:
             qc_paths.append(str(qc_path))
             print(f"    [{timestamp()}] QC images saved: {qc_path.name}")
         else:

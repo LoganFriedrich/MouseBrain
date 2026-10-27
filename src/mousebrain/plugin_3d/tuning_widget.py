@@ -35,7 +35,7 @@ import numpy as np
 _config_dir = Path(__file__).resolve().parent.parent.parent
 if str(_config_dir) not in sys.path:
     sys.path.insert(0, str(_config_dir))
-from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR, MODELS_DIR, DATA_SUMMARY_DIR
+from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR, MODELS_DIR, DATA_SUMMARY_DIR, find_script
 
 # Repo root for finding scripts (scripts/utils/ lives here)
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent  # → MouseBrain/
@@ -1132,7 +1132,7 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Error", "Select a brain first")
             return
 
-        script = SCRIPTS_DIR / "util_optimize_crop.py"
+        script = find_script("util_optimize_crop.py")
         if script.exists():
             subprocess.Popen([sys.executable, str(script), "--brain", self.current_brain.name])
         else:
@@ -9254,7 +9254,7 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Error", "Select a brain first")
             return
 
-        script = SCRIPTS_DIR / "util_registration_qc.py"
+        script = find_script("util_registration_qc.py")
         if not script.exists():
             QMessageBox.warning(self, "Error", "Registration QC script not found")
             return
@@ -10332,7 +10332,7 @@ class TuningWidget(QWidget):
         QApplication.processEvents()
 
         try:
-            script = SCRIPTS_DIR / "util_pipeline_comparison.py"
+            script = find_script("util_pipeline_comparison.py")
             if not script.exists():
                 QMessageBox.warning(self, "Error", "Pipeline comparison script not found")
                 return
@@ -10518,7 +10518,7 @@ class TuningWidget(QWidget):
             import subprocess
             cmd = [
                 sys.executable,
-                str(SCRIPTS_DIR / "6_count_regions.py"),
+                str(find_script("6_count_regions.py")),
                 "--brain", self.current_brain.name,
             ]
 

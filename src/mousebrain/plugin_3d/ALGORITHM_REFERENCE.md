@@ -22,7 +22,7 @@ All parameters and results are recorded to a calibration run tracker (CSV) for r
 
 ## 1. Extraction & Channel Identification
 
-**Source:** `util_Scripts/2_extract_and_analyze.py` (v1.4.0)
+**Source:** `scripts/pipeline/2_extract_and_analyze.py` (v1.4.0)
 
 ### What It Does
 
@@ -81,7 +81,7 @@ These are stored in `metadata.json` and passed to brainreg and cellfinder.
 
 ## 2. Registration (brainreg)
 
-**Source:** `util_Scripts/3_register_to_atlas.py` (v2.0.2)
+**Source:** `scripts/pipeline/3_register_to_atlas.py` (v2.0.2)
 
 ### What It Does
 
@@ -147,7 +147,7 @@ After registration, the user must review QC images and explicitly approve before
 
 ## 3. Cell Candidate Detection (cellfinder)
 
-**Source:** `util_Scripts/4_detect_cells.py` (v1.0.1)
+**Source:** `scripts/pipeline/4_detect_cells.py` (v1.0.1)
 
 ### What It Detects
 
@@ -201,7 +201,7 @@ The paradigm is extracted from the brain name: `349_CNT_01_02_1p625x_z4` → par
 
 ## 4. Cell Classification (cellfinder ResNet50)
 
-**Source:** `util_Scripts/5_classify_cells.py` (v1.0.0)
+**Source:** `scripts/pipeline/5_classify_cells.py` (v1.0.0)
 
 ### What It Does
 
@@ -262,7 +262,7 @@ Like detection settings, the best-performing classification model can be stored 
 
 ## 5. Regional Cell Counting
 
-**Source:** `util_Scripts/6_count_regions.py` (v1.0.1)
+**Source:** `scripts/pipeline/6_count_regions.py` (v1.0.1)
 
 ### What It Does
 
@@ -302,7 +302,7 @@ The registration (Script 3) produces deformation fields that map between sample 
 
 ## 6. Calibration Run Tracking
 
-**Source:** `util_Scripts/experiment_tracker.py`
+**Source:** `src/mousebrain/tracker.py`
 
 ### What It Records
 

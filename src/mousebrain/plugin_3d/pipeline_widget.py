@@ -40,7 +40,7 @@ except Exception:
 _config_dir = Path(__file__).resolve().parent.parent.parent
 if str(_config_dir) not in sys.path:
     sys.path.insert(0, str(_config_dir))
-from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR
+from mousebrain.config import BRAINS_ROOT, find_script
 
 
 class SetupWizard(QWizard):
@@ -302,7 +302,7 @@ class ScriptRunner(QThread):
         self.args = args or []
 
     def run(self):
-        script_path = SCRIPTS_DIR / self.script_name
+        script_path = find_script(self.script_name)
         cmd = [sys.executable, str(script_path)] + self.args
 
         try:
@@ -310,7 +310,7 @@ class ScriptRunner(QThread):
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=str(SCRIPTS_DIR)
+                cwd=str(script_path.parent)
             )
             success = result.returncode == 0
             output = result.stdout + result.stderr

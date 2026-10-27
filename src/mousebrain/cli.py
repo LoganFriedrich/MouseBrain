@@ -216,8 +216,9 @@ def show_paths():
     """Show configured paths."""
     from mousebrain import (
         TISSUE_ROOT, CLEARED_3D_ROOT, SLICES_2D_ROOT,
-        INJURY_ROOT, BRAINS_ROOT, DATA_SUMMARY_DIR, SCRIPTS_DIR
+        INJURY_ROOT, BRAINS_ROOT, DATA_SUMMARY_DIR
     )
+    from mousebrain.config import TOOL_SCRIPTS_DIR
 
     print("BrainTools Configured Paths")
     print("=" * 50)
@@ -227,7 +228,7 @@ def show_paths():
     print(f"Injury:          {INJURY_ROOT}")
     print(f"Brains Data:     {BRAINS_ROOT}")
     print(f"Data Summary:    {DATA_SUMMARY_DIR}")
-    print(f"Scripts:         {SCRIPTS_DIR}")
+    print(f"Scripts:         {TOOL_SCRIPTS_DIR}")
     print("=" * 50)
 
     # Check existence

@@ -33,6 +33,7 @@ Environment Variable Override:
         set SCI_CONNECTOME_ROOT=C:\\Projects\\Connectome
 """
 
+import importlib
 import os
 import tempfile
 import sys
@@ -232,8 +233,41 @@ BRAINS_ROOT = CLEARED_3D_DIR / "1_Brains"
 # Where summary data and experiment tracking lives
 DATA_SUMMARY_DIR = CLEARED_3D_DIR / "2_Data_Summary"
 
-# Where the utility scripts live (this directory)
-SCRIPTS_DIR = CLEARED_3D_DIR / "util_Scripts"
+# Where the tool's own scripts live: the repository's scripts/pipeline (steps 1-6)
+# and scripts/utils (util_*.py), beside the package that is running. Found from
+# this file, never from CONNECTOME_ROOT, so what runs is always the code that is
+# installed. Until the reorganization they sat in the pipeline's
+# 3D_Cleared/util_Scripts; that folder is data, is now empty, and is kept only as
+# the marker _find_repo_root looks for. Everything that still looked there -- the
+# napari pipeline dashboard, its registration QC button, batch_process, and
+# registration's own QC picture -- failed with "not found" until this pointed here.
+TOOL_SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+PIPELINE_SCRIPTS_DIR = TOOL_SCRIPTS_DIR / "pipeline"
+UTIL_SCRIPTS_DIR = TOOL_SCRIPTS_DIR / "utils"
+SCRIPTS_DIR = UTIL_SCRIPTS_DIR  # the older name, kept for callers outside the package
+
+
+def find_script(name: str) -> Path:
+    """The tool's script called `name`: a pipeline step or a util_*.py.
+
+    A name in neither folder comes back as a path that does not exist, so the
+    caller's own "script not found" message still fires.
+    """
+    for folder in (PIPELINE_SCRIPTS_DIR, UTIL_SCRIPTS_DIR):
+        if (folder / name).is_file():
+            return folder / name
+    return UTIL_SCRIPTS_DIR / name
+
+
+def import_util(module: str):
+    """Import one of the scripts/utils modules by name.
+
+    They are scripts, not part of the package, so their folder has to be on the
+    import path first.
+    """
+    if str(UTIL_SCRIPTS_DIR) not in sys.path:
+        sys.path.insert(0, str(UTIL_SCRIPTS_DIR))
+    return importlib.import_module(module)
 
 # Where trained models are stored
 MODELS_DIR = CLEARED_3D_DIR / "util_Brainglobe" / "Trained_Models"

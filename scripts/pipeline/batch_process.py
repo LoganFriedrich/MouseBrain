@@ -41,7 +41,7 @@ import traceback
 sys.path.insert(0, str(Path(__file__).parent))
 
 from mousebrain.config import (
-    BRAINS_ROOT, DATA_SUMMARY_DIR, SCRIPTS_DIR,
+    BRAINS_ROOT, DATA_SUMMARY_DIR, find_script,
     parse_brain_name
 )
 
@@ -329,7 +329,7 @@ def run_step(script_name: str, args: List[str], timeout: int = 7200) -> Tuple[bo
 
     Returns (success, message)
     """
-    script_path = SCRIPTS_DIR / script_name
+    script_path = find_script(script_name)
     cmd = [sys.executable, str(script_path)] + args
 
     try:
@@ -338,7 +338,7 @@ def run_step(script_name: str, args: List[str], timeout: int = 7200) -> Tuple[bo
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=str(SCRIPTS_DIR),
+            cwd=str(script_path.parent),
         )
 
         if result.returncode == 0:

@@ -55,12 +55,21 @@ util_approve_registration.py   → Approve registration after QC review
 | `util_registration_qc.py` | Generate detailed QC images comparing brain to atlas |
 | `util_approve_registration.py` | Review & approve registration before cell detection |
 
-## Installation
+## Where the scripts live
 
-Copy all `.py` files to your scripts folder:
-```
-<CONNECTOME_ROOT>\Tissue\MouseBrain_Pipeline\3D_Cleared\util_Scripts\
-```
+The scripts come with the MouseBrain code; nothing is copied anywhere. The
+numbered steps are in the repository's `scripts/pipeline/`, the `util_*.py`
+scripts in `scripts/utils/`. The napari pipeline dashboard, the tuning
+widget's buttons (registration QC, crop optimisation, pipeline comparison,
+region counting) and `batch_process.py` find each script by name beside the
+installed code, so they always run the version that is installed. To run one
+by hand, run it from its folder, e.g.
+`python scripts/utils/util_registration_qc.py --brain 349_CNT_01_02_1p625x_z4`.
+
+(Before the reorganisation the scripts were copied into the pipeline's
+`3D_Cleared/util_Scripts/`. That folder is data, is empty now, and nothing runs
+from it; until this was corrected the dashboard and those buttons answered
+"script not found", and registration finished without its QC picture.)
 
 The experiment tracker creates its CSV at:
 ```
