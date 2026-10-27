@@ -4,8 +4,8 @@ util_registration_qc.py
 
 Creates detailed quality control visualizations for brain registration.
 
-Shows your registered brain slices next to atlas reference slices at the same
-dorsal-ventral positions, with overlays and region labels.
+Shows slices through your registered brain, front to back, beside the atlas
+regions registration placed on them, with the region outlines overlaid.
 
 Usage:
     python util_registration_qc.py --brain 349_CNT_01_02_1p625x_z4
@@ -35,7 +35,7 @@ import tifffile
 
 from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT
 FOLDER_REGISTERED = "3_Registered_Atlas"
-DEFAULT_NUM_LEVELS = 5  # Number of dorsal-ventral levels to show
+DEFAULT_NUM_LEVELS = 5  # Number of slices to show, front to back
 
 # =============================================================================
 # BRAIN DISCOVERY
@@ -128,13 +128,36 @@ def load_registration_data(pipeline_folder: Path):
 # CREATE QC VISUALIZATION
 # =============================================================================
 
+def choose_levels(registered_brain, atlas_annotations, num_levels):
+    """Slices to show, evenly spaced front to back.
+
+    brainreg writes both images in the atlas's orientation, and every BrainGlobe
+    atlas runs front to back along its first axis, so each slice is a coronal
+    section. (This picture used to call them "dorsal to ventral"; they never
+    were.) The slices are spread over the stretch the atlas covers, not over
+    the whole image: a brain kept with more brainstem than the atlas has -- it
+    stops partway down the medulla -- would otherwise get a row drawn where no
+    atlas is left to compare with, which looks like a failed registration when
+    it is not.
+    """
+    first, last = 0, registered_brain.shape[0] - 1
+    if atlas_annotations is not None:
+        covered = np.flatnonzero(
+            atlas_annotations.reshape(atlas_annotations.shape[0], -1).any(axis=1))
+        if covered.size:
+            first, last = int(covered[0]), int(covered[-1])
+    span = last - first
+    return np.linspace(first + int(span * 0.1), first + int(span * 0.9),
+                       num_levels, dtype=int)
+
+
 def create_qc_visualization(data, num_levels=DEFAULT_NUM_LEVELS, output_path=None):
     """
     Create detailed QC visualization showing brain slices at multiple levels.
 
     Args:
         data: Dictionary with registration data
-        num_levels: Number of dorsal-ventral levels to show
+        num_levels: Number of slices to show, front to back
         output_path: Custom output path (default: reg_folder/QC_registration_detailed.png)
     """
     registered_brain = data['registered_brain']
@@ -142,16 +165,14 @@ def create_qc_visualization(data, num_levels=DEFAULT_NUM_LEVELS, output_path=Non
     atlas_resolution = data['atlas_resolution']
     reg_folder = data['reg_folder']
 
-    # Determine slice positions (evenly spaced through dorsal-ventral axis)
-    z_max = registered_brain.shape[0]
-    slice_indices = np.linspace(int(z_max * 0.1), int(z_max * 0.9), num_levels, dtype=int)
+    slice_indices = choose_levels(registered_brain, atlas_annotations, num_levels)
 
     # Create figure with subplots: 3 columns (brain, atlas, overlay) x num_levels rows
     fig, axes = plt.subplots(num_levels, 3, figsize=(15, 5 * num_levels))
     if num_levels == 1:
         axes = axes.reshape(1, -1)
 
-    fig.suptitle('Registration Quality Control - Dorsal to Ventral',
+    fig.suptitle('Registration Quality Control - slices from front to back',
                  fontsize=16, fontweight='bold', y=0.995)
 
     for row, z_idx in enumerate(slice_indices):
@@ -173,7 +194,7 @@ def create_qc_visualization(data, num_levels=DEFAULT_NUM_LEVELS, output_path=Non
         # Column 1: Your brain
         ax = axes[row, 0]
         im = ax.imshow(brain_slice, cmap='gray', interpolation='nearest')
-        ax.set_title(f'Your Brain\nZ={z_idx} ({position_um:.0f}μm from dorsal)',
+        ax.set_title(f'Your Brain\nslice {z_idx} ({position_um / 1000:.2f} mm from the front of the image)',
                     fontsize=10, fontweight='bold')
         ax.axis('off')
         add_scale_bar(ax, atlas_resolution, brain_slice.shape[1])
@@ -365,7 +386,7 @@ Examples:
     parser.add_argument('--brain', '-b', required=True,
                        help='Brain/pipeline to analyze')
     parser.add_argument('--levels', '-l', type=int, default=DEFAULT_NUM_LEVELS,
-                       help=f'Number of dorsal-ventral levels to show (default: {DEFAULT_NUM_LEVELS})')
+                       help=f'Number of slices to show, front to back (default: {DEFAULT_NUM_LEVELS})')
     parser.add_argument('--output', '-o', type=str, default=None,
                        help='Custom output path (default: registration folder)')
     parser.add_argument('--root', type=Path, default=DEFAULT_BRAINGLOBE_ROOT,

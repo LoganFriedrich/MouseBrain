@@ -197,6 +197,17 @@ python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4 --view
 python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4 --status
 ```
 
+**How to read `QC_registration_detailed.png`:** each row is a coronal slice
+through the registered brain, front of the brain at the top row, back at the
+bottom. Left, the brain; middle, the atlas regions registration placed on it;
+right, the brain with those regions' outlines drawn over it. A good
+registration has the outlines following the brain's edges and its visible
+landmarks (the ventricles, the midline, the corpus callosum). The rows are
+spread over the stretch the atlas covers. Tissue the atlas does not have --
+brainstem beyond where the atlas stops, partway down the medulla -- has no
+outlines and gets no region; tissue the brain lost (a torn olfactory bulb)
+leaves outlines with nothing under them. Neither is a registration fault.
+
 ### Utility: Optimize Crop
 ```bash
 # Test 0%, 10%, 20%, 30%, 40%, 50% crops
