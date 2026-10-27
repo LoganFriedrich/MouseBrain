@@ -136,6 +136,43 @@ python util_manual_crop.py --brain 349_CNT_01_02_1p625x_z4
 # 2. Plugins → BrainTools → 3D: 3. Manual Crop
 ```
 
+### The orientation check (drawn by registration, or on demand)
+
+Registration has to be told how the stack lies: which way each of its three axes
+runs, as three letters such as `iar` (the brain's `metadata.json`, key
+`orientation`; `iar` when nothing says otherwise). Told wrongly, it still
+registers, for over an hour, and every cell then lands in the wrong region while
+the numbers look normal. A re-stitched delivery can come back lying differently
+from the first stitch.
+
+So **before it starts, registration draws `3_Registered_Atlas/QC_orientation_check.png`**:
+BrainGlobe's own "Check orientation" (the button in its registration window), as
+a picture. The stack is turned into the atlas's orientation as declared and
+averaged three ways -- seen from the front, from above and from the side -- under
+the same three views of the atlas, each drawn at its real size in millimetres.
+
+**How to read it:** if the declared orientation is right, each picture of the
+brain (bottom row) lies the same way as the atlas above it -- same way up, front at
+the same end (olfactory bulbs towards the top of the views from above and from the
+side). A brain cut short by the person who prepared it only looks shorter. A
+left-right mirror is nearly invisible here, because a brain is nearly symmetric;
+look for a known one-sided feature (an injection site, damage) if a mirror is in
+question.
+
+To draw it for any brain, or to try another orientation before re-registering:
+
+```bash
+mousebrain-orientation-check 349_CNT_01_02_1p625x_z4
+mousebrain-orientation-check 349_CNT_01_02_1p625x_z4 --orientation sar
+```
+
+A trial orientation is written as `QC_orientation_check_<orientation>.png`, so the
+declared one's picture is never overwritten. Each picture is entered in
+MouseBrain's analysis registry (analysis `3D_Orientation_Check`) and on the
+registration's tracker row. It takes about two minutes (it reads every sixth
+slice and pixel). To register with a different orientation, set `orientation` in
+the brain's `metadata.json` and run registration again.
+
 ### Utility: Registration QC & Approval
 ```bash
 # Generate QC images for existing registration
@@ -267,6 +304,7 @@ comparable as counts, and nobody should have to decode a path to notice that.
         │   └── QC_area_profile.png       ← Auto-crop detection visualization
         ├── 2_Cropped_For_Registration/
         ├── 3_Registered_Atlas/
+        │   ├── QC_orientation_check.png      ← Was the orientation declared right? (drawn before registering)
         │   ├── QC_registration_detailed.png  ← Registration QC (auto-generated)
         │   └── .registration_approved        ← Approval marker file
         ├── 4_Cell_Candidates/            ← 4_detect_cells.py output

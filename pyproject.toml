@@ -97,6 +97,7 @@ brainslice = "mousebrain.cli:launch_brainslice"
 brainslice-coloc = "mousebrain.plugin_2d.sliceatlas.cli.run_coloc:main"
 brainslice-roi = "mousebrain.plugin_2d.sliceatlas.cli.run_roi:main"
 mousebrain-registry = "mousebrain.analysis_registry:main"
+mousebrain-orientation-check = "mousebrain.orientation_check:main"
 
 # Single napari manifest with all widgets (napari requires name == package name)
 [project.entry-points."napari.manifest"]

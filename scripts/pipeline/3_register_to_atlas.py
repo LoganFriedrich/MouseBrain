@@ -389,6 +389,27 @@ def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLA
     # Get brain name from pipeline folder
     brain_name = pipeline_folder.name
 
+    # BrainGlobe's orientation check, drawn as a picture BEFORE the long run:
+    # the stack turned into the atlas's orientation as declared, under the
+    # same views of the atlas (mousebrain.orientation_check says why). A
+    # wrongly declared orientation still registers -- for an hour -- and puts
+    # every cell in the wrong region; this picture shows it at a glance. Never
+    # stops registration: a failure is printed and the run goes on.
+    orientation_png = None
+    try:
+        from mousebrain.orientation_check import (CHECK_FILENAME, orientation_check,
+                                                  register_check)
+        print(f"    [{timestamp()}] Drawing the orientation check ('{orientation}')...")
+        summary = orientation_check(
+            input_folder, orientation, (voxel_z, voxel_xy, voxel_xy), atlas,
+            reg_folder / CHECK_FILENAME,
+            title=f"{brain_name} -- {source} images, registration channel ch{reg_channel}")
+        register_check(brain_name, summary, input_folder)
+        orientation_png = summary["png"]
+        print(f"    [{timestamp()}] Orientation check saved: {CHECK_FILENAME}")
+    except Exception as e:
+        print(f"    [{timestamp()}] Warning: orientation check failed: {e}")
+
     # Log registration start to tracker
     exp_id = None
     tracker = None
@@ -482,7 +503,7 @@ def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLA
 
     # Generate detailed QC visualization
     print(f"    [{timestamp()}] Generating registration QC images...")
-    qc_paths = []
+    qc_paths = [orientation_png] if orientation_png else []
     try:
         # Note: Path is already imported at module level, don't re-import here
         util_scripts = Path(__file__).parent
@@ -495,18 +516,19 @@ def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLA
             qc_path = create_qc_visualization(qc_data, num_levels=5)
             qc_paths.append(str(qc_path))
             print(f"    [{timestamp()}] QC images saved: {qc_path.name}")
-
-            # Add QC image paths to tracker
-            if tracker and exp_id:
-                try:
-                    tracker.add_registration_qc_images(exp_id, qc_paths)
-                except Exception:
-                    pass
         else:
             print(f"    [{timestamp()}] Warning: Could not generate QC images")
     except Exception as e:
         print(f"    [{timestamp()}] Warning: QC generation failed: {e}")
         # Don't fail registration if QC generation fails
+
+    # Every QC picture made for this run, the orientation check included, goes
+    # on the tracker row -- also when the detailed QC above could not be drawn.
+    if qc_paths and tracker and exp_id:
+        try:
+            tracker.add_registration_qc_images(exp_id, qc_paths)
+        except Exception:
+            pass
 
     return True
 
@@ -775,6 +797,7 @@ Examples:
         print("=" * 60)
         print("\n1. REVIEW the registration QC images:")
         print("   Look in each brain's 3_Registered_Atlas folder for:")
+        print("   - QC_orientation_check.png (was the orientation declared right?)")
         print("   - QC_registration_detailed.png")
         print("\n2. APPROVE good registrations:")
         print("   python util_approve_registration.py --brain BRAIN_NAME")
