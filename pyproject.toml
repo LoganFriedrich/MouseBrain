@@ -115,7 +115,10 @@ mousebrain = ["napari.yaml"]
 # only an administrator can clear (dozens accumulated). The suite needs no cache.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-p no:cacheprovider"
+# --ignore-glob: leftover pytest-cache-files-* folders must be skipped BEFORE pytest
+# looks inside them -- norecursedirs is checked only after pytest asks whether the
+# path is a folder, and that fails with Access is denied on one this account cannot read.
+addopts = "-p no:cacheprovider --ignore-glob=*pytest-cache-files-*"
 # pytest's default skip list, plus folders a failed cache rename left behind.
 norecursedirs = ["*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules",
                  "venv", "{arch}", "pytest-cache-files-*"]
