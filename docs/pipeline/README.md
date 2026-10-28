@@ -265,7 +265,7 @@ subfolder.
 | `auto` (default) | best available: manual crop, else automatic crop, else the whole stack | only if it landed on a crop |
 | `manual` | `2_Cropped_For_Registration_Manual` | yes |
 | `cropped` | `2_Cropped_For_Registration` | yes |
-| `full` | `1_Extracted_Full` | **no** |
+| `full` | `1_Extracted_Full` | only if the atlas was fitted to the whole stack (see below) |
 
 A folder only counts as available if it actually contains `ch0/*.tif`. The crop
 folders are created empty when the brain is first organised, and an empty folder
@@ -288,6 +288,15 @@ So treat the number as provisional. It answers "do these settings find cells
 here, and roughly how many" -- which is exactly what you want to know while
 registration waits.
 
+**The exception: a brain registered on the whole stack.** A brain delivered
+already cut needs no crop, so registration is run on `1_Extracted_Full` itself.
+Registration writes down which images it used (`3_Registered_Atlas/registered_from.json`),
+and from then on the whole stack IS the atlas's space: steps 5 and 6 read their
+images from `1_Extracted_Full`, and step 5 picks up a run in
+`from_1_Extracted_Full/` (after anything at the top level). Nothing needs moving
+or re-running. A brain whose registration has no `registered_from.json`
+(registered before it was written) is treated as registered on the crop.
+
 **Where the results go**
 
 Into a subfolder named after the images they came from:
@@ -299,8 +308,9 @@ Into a subfolder named after the images they came from:
 └── detected_cells.xml          ← the real run, on the registered crop
 ```
 
-Steps 5 and 6 only ever look at the top level, so a trial run cannot be
-classified or counted by mistake. The tracker records which images each run used
+Steps 5 and 6 look at the top level, plus `from_<folder>` only when the atlas
+was fitted to that folder's images, so a trial run cannot be classified or
+counted by mistake. The tracker records which images each run used
 in its notes, for the same reason: two runs from different spaces are not
 comparable as counts, and nobody should have to decode a path to notice that.
 

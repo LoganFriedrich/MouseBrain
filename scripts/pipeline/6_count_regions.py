@@ -305,8 +305,10 @@ def run_counts_brainglobe_transform(
     )
     print(f"    Atlas orientation: {atlas.space.origin}, resolution: {atlas_resolution}um")
 
-    # Get path to source image stack folder for reference
-    crop_folder = registration_path.parent / "2_Cropped_For_Registration"
+    # Get path to source image stack folder for reference: the images the atlas
+    # was fitted to (config.registered_input says why it is not always the crop)
+    from mousebrain.config import registered_input
+    _source, crop_folder, _meta = registered_input(registration_path.parent)
     ch_folder = crop_folder / "ch0"
     if not ch_folder.exists():
         ch_folder = crop_folder / "ch1"

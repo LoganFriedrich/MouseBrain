@@ -2200,14 +2200,12 @@ class TuningWidget(QWidget):
 
         # If not loaded in viewer, load from disk (priority: manual_crop > auto_crop)
         if signal_layer is None or background_layer is None:
-            manual_crop_folder = self.current_brain / "2_Cropped_For_Registration_Manual"
-            crop_folder = self.current_brain / "2_Cropped_For_Registration"
-
-            if manual_crop_folder.exists() and (manual_crop_folder / "ch0").exists():
-                data_folder = manual_crop_folder
-                print("[Connectome] Using MANUAL crop folder (takes priority)")
-            else:
-                data_folder = crop_folder
+            # The images the atlas was fitted to (config.registered_input);
+            # brains registered before that was recorded: manual crop, then crop
+            from mousebrain.config import registered_input
+            _source, data_folder, _meta = registered_input(
+                self.current_brain, fallback=("manual", "cropped"))
+            print(f"[Connectome] Using {data_folder.name} (the registered images)")
 
             swap = getattr(self, 'swap_channels', None)
             if swap is None or swap.isChecked():
@@ -6998,13 +6996,11 @@ class TuningWidget(QWidget):
             return
 
         # Get signal channel path (priority: manual_crop > auto_crop)
-        manual_crop_folder = self.current_brain / "2_Cropped_For_Registration_Manual"
-        crop_folder = self.current_brain / "2_Cropped_For_Registration"
-
-        if manual_crop_folder.exists() and (manual_crop_folder / "ch0").exists():
-            data_folder = manual_crop_folder
-        else:
-            data_folder = crop_folder
+        # The images the atlas was fitted to (config.registered_input);
+        # brains registered before that was recorded: manual crop, then crop
+        from mousebrain.config import registered_input
+        _source, data_folder, _meta = registered_input(
+            self.current_brain, fallback=("manual", "cropped"))
 
         if self.metadata:
             signal_ch = self.metadata.get('channels', {}).get('signal_channel', 0)
@@ -7439,13 +7435,11 @@ class TuningWidget(QWidget):
                 rejected_by_z[z].append((int(coord[2]), int(coord[1])))  # XY for drawing
 
             # Find signal and background channel images (priority: manual_crop > auto_crop)
-            manual_crop_folder = self.current_brain / "2_Cropped_For_Registration_Manual"
-            crop_folder = self.current_brain / "2_Cropped_For_Registration"
-
-            if manual_crop_folder.exists() and (manual_crop_folder / "ch0").exists():
-                data_folder = manual_crop_folder
-            else:
-                data_folder = crop_folder
+            # The images the atlas was fitted to (config.registered_input);
+            # brains registered before that was recorded: manual crop, then crop
+            from mousebrain.config import registered_input
+            _source, data_folder, _meta = registered_input(
+                self.current_brain, fallback=("manual", "cropped"))
 
             if self.metadata:
                 signal_ch = self.metadata.get('channels', {}).get('signal_channel', 0)

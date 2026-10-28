@@ -527,6 +527,55 @@ def registered_space(pipeline_dir) -> str:
         return ""
 
 
+def registered_input(pipeline_dir, fallback=("cropped",)):
+    """The images the atlas was fitted to: (source_name, folder, metadata).
+
+    Classification and counting must read the SAME images registration used --
+    cell coordinates are only meaningful in that space. A brain registered on its
+    full extraction (delivered already cut, so never cropped) has an empty
+    2_Cropped_For_Registration; reading that folder by name is how steps 5 and 6
+    failed on such a brain.
+
+    A brain registered before registration recorded its input falls back to the
+    caller's old assumption, ``fallback`` (source names, first with images wins):
+    the pipeline steps assumed the crop, the napari widget the manual crop then
+    the crop. If none holds images, the last one is returned anyway so the
+    caller's own "not found" message still names it.
+    """
+    from pathlib import Path as _Path
+
+    recorded = registered_space(pipeline_dir)
+    if recorded in PIPELINE_INPUT_FOLDERS:
+        source, folder, metadata = resolve_pipeline_input(pipeline_dir, recorded)
+        if folder is not None:
+            return source, folder, metadata
+    for name in fallback:
+        source, folder, metadata = resolve_pipeline_input(pipeline_dir, name)
+        if folder is not None:
+            return source, folder, metadata
+    last = fallback[-1]
+    return last, _Path(pipeline_dir) / PIPELINE_INPUT_FOLDERS[last], {}
+
+
+def registered_candidate_folders(pipeline_dir):
+    """Folders of 4_Cell_Candidates whose coordinates are in registered space.
+
+    Step 4 writes a run on images that are NOT the registered space into
+    ``from_<folder>`` so steps 5 and 6 cannot pick it up by mistake. When the
+    atlas is later fitted to those very images (a brain registered on its full
+    extraction after detection ran on it), that subfolder IS registered space and
+    belongs in the search, after the top level.
+    """
+    from pathlib import Path as _Path
+
+    det = _Path(pipeline_dir) / "4_Cell_Candidates"
+    folders = [det]
+    recorded = registered_space(pipeline_dir)
+    if recorded in PIPELINE_INPUT_FOLDERS:
+        folders.append(det / ("from_" + PIPELINE_INPUT_FOLDERS[recorded]))
+    return folders
+
+
 def parse_brain_name(brain_name: str) -> dict:
     """
     Parse a brain/folder name into its hierarchical components.

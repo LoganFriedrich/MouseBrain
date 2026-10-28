@@ -62,6 +62,7 @@ SCRIPT_VERSION = "1.0.0"
 from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, is_pipeline_candidate
 from mousebrain.config import MODELS_DIR as DEFAULT_MODELS_DIR
 from mousebrain.config import parse_brain_name
+from mousebrain.config import registered_candidate_folders, registered_input
 
 FOLDER_CROPPED = "2_Cropped_For_Registration"
 FOLDER_DETECTION = "4_Cell_Candidates"
@@ -102,18 +103,20 @@ def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT):
 
 
 def find_detection_output(pipeline_folder: Path):
-    """Find detection output (cell candidates)."""
-    det_folder = pipeline_folder / FOLDER_DETECTION
-    
-    if not det_folder.exists():
-        return None
-    
-    # Look for detected cells (try both XML and NPY formats)
-    for pattern in ["detected_cells.xml", "cell_classification.xml", "*.xml"]:
-        files = list(det_folder.glob(pattern))
-        if files:
-            return files[0]
-    
+    """Find detection output (cell candidates) in the space the atlas was fitted to.
+
+    The top level of 4_Cell_Candidates first; then ``from_<folder>`` when the
+    atlas was fitted to that folder's images (config.registered_candidate_folders
+    says why). A run on images in any other space is never returned.
+    """
+    for det_folder in registered_candidate_folders(pipeline_folder):
+        if not det_folder.exists():
+            continue
+        for pattern in ["detected_cells.xml", "cell_classification.xml", "*.xml"]:
+            files = list(det_folder.glob(pattern))
+            if files:
+                return files[0]
+
     return None
 
 
@@ -542,8 +545,10 @@ Examples:
             sys.exit(1)
         print(f"Using default model: {model_path}")
 
-    # Load metadata
-    crop_folder = pipeline_folder / FOLDER_CROPPED
+    # Load metadata -- from the images the atlas was fitted to, which are the
+    # images detection's coordinates refer to (not always the crop: a brain
+    # delivered already cut is registered on its full extraction).
+    _source, crop_folder, _meta = registered_input(pipeline_folder)
     metadata_path = crop_folder / "metadata.json"
     
     if metadata_path.exists():

@@ -159,8 +159,10 @@ def transform_to_atlas_space(
         resolution=[atlas_resolution] * 3,
     )
 
-    # Find source image stack for reference
-    crop_folder = registration_path.parent / "2_Cropped_For_Registration"
+    # Find source image stack for reference: the images the atlas was fitted to
+    # (config.registered_input says why it is not always the crop)
+    from mousebrain.config import registered_input
+    _source, crop_folder, _meta = registered_input(registration_path.parent)
     ch_folder = crop_folder / "ch0"
     if not ch_folder.exists():
         ch_folder = crop_folder / "ch1"
@@ -570,21 +572,22 @@ def run_selective_classification(
             from cellfinder.core.classify.classify import main as classify_main
             from brainglobe_utils.IO.image.load import read_with_dask
 
-            # Auto-detect paths if not provided
+            # Auto-detect paths if not provided: the images the atlas was fitted
+            # to (config.registered_input says why it is not always the crop)
+            from mousebrain.config import registered_input
+            _source, crop_folder, _meta = registered_input(brain_path)
             if signal_path is None:
-                crop_folder = brain_path / "2_Cropped_For_Registration"
                 signal_path = crop_folder / "ch0"
                 if not signal_path.exists():
                     signal_path = crop_folder / "ch1"
 
             if background_path is None:
-                crop_folder = brain_path / "2_Cropped_For_Registration"
                 background_path = crop_folder / "ch1"
                 if not background_path.exists():
                     background_path = crop_folder / "ch0"
 
             if voxel_sizes is None:
-                metadata_path = brain_path / "2_Cropped_For_Registration" / "metadata.json"
+                metadata_path = crop_folder / "metadata.json"
                 if metadata_path.exists():
                     with open(metadata_path) as f:
                         metadata = json.load(f)
