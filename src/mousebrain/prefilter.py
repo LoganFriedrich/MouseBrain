@@ -60,46 +60,42 @@ def timestamp():
     return datetime.now().strftime("%H:%M:%S")
 
 
-def _brain_to_atlas_permutation(orientation: str) -> Tuple[int, int, int]:
-    """Compute axis permutation from brain image space to registered atlas space.
+def _raw_to_downsampled(points_raw, registration_path, orientation, voxel_sizes,
+                        downsampled_shape, atlas):
+    """Place raw-voxel (z, y, x) points in registration's downsampled space.
 
-    brainreg reorders brain axes to match the BrainGlobe atlas convention:
-      dim 0 = AP (anterior-posterior)
-      dim 1 = SI (superior-inferior / dorsal-ventral)
-      dim 2 = LR (left-right / medial-lateral)
+    registered_atlas.tiff is the atlas warped onto the brain's DOWNSAMPLED
+    image, which brainreg has turned into the atlas's orientation -- axes
+    reordered AND flipped wherever the brain's orientation letters differ from
+    the atlas's. This is BrainGlobe's own transform for that step, the one step 6
+    counts with.
 
-    The 3-letter orientation code tells which anatomical direction each brain
-    axis points to (e.g. 'iar' = axis0 is inferior, axis1 is anterior,
-    axis2 is right). From this we determine which brain axis maps to which
-    atlas dimension.
-
-    Returns (perm0, perm1, perm2) where atlas[i] indexes brain_axis[perm[i]].
-    Example: orientation='iar' -> (1, 0, 2) meaning atlas = (brain_y, brain_z, brain_x).
+    It replaced a shortcut that only reordered the axes (2026-10-27). With the
+    flips missing, a candidate was looked up ~3 mm away up-down on an 'iar' brain
+    and also ~6 mm front-back on an 'ipr' brain; for 2-3% of candidates or fewer
+    did it give the same region as this transform, so "near the surface" removed
+    an essentially arbitrary set of candidates.
     """
-    letter_to_atlas_dim = {
-        'a': 0, 'p': 0,  # anterior/posterior -> AP axis -> atlas dim 0
-        's': 1, 'i': 1,  # superior/inferior  -> SI axis -> atlas dim 1
-        'l': 2, 'r': 2,  # left/right         -> LR axis -> atlas dim 2
-    }
+    import brainglobe_space as bgs
+    from brainglobe_utils.brainreg.transform import (
+        transform_points_from_raw_to_downsampled_space,
+    )
+    from mousebrain.config import registered_input
 
-    orientation = orientation.lower().strip()
-    if len(orientation) != 3:
-        print(f"  [!] Invalid orientation '{orientation}', assuming identity mapping")
-        return (0, 1, 2)
-
-    brain_to_atlas = []
-    for i, ch in enumerate(orientation):
-        atlas_dim = letter_to_atlas_dim.get(ch)
-        if atlas_dim is None:
-            print(f"  [!] Unknown orientation letter '{ch}', assuming identity")
-            return (0, 1, 2)
-        brain_to_atlas.append(atlas_dim)
-
-    perm = [0, 0, 0]
-    for brain_axis, atlas_dim in enumerate(brain_to_atlas):
-        perm[atlas_dim] = brain_axis
-
-    return tuple(perm)
+    _source, folder, _meta = registered_input(Path(registration_path).parent)
+    source = folder / "ch0"
+    if not (source.is_dir() and any(source.glob("*.tif"))):
+        source = folder / "ch1"
+    if not (source.is_dir() and any(source.glob("*.tif"))):
+        raise FileNotFoundError(f"Cannot find the registered image stack in {folder}")
+    space = bgs.AnatomicalSpace(
+        atlas.space.origin,
+        shape=downsampled_shape,
+        resolution=[atlas.resolution[0]] * 3,
+    )
+    return transform_points_from_raw_to_downsampled_space(
+        np.asarray(points_raw, dtype=np.float64), source, orientation,
+        [float(v) for v in voxel_sizes], space)
 
 
 # =============================================================================
@@ -349,12 +345,6 @@ def prefilter_candidates(
         brain_voxel_sizes = [float(v) for v in voxel_sizes[:3]]
         orientation = brainreg_meta.get('orientation', 'iar')
 
-    # Scale factors: brain coordinates -> atlas coordinates (per axis)
-    brain_scales = [v / atlas_resolution for v in brain_voxel_sizes]
-
-    # Axis permutation: brain image axes -> registered atlas axes
-    axis_perm = _brain_to_atlas_permutation(orientation)
-
     # Convert depth thresholds to atlas voxels
     surface_depth_vox = max(1, int(round(surface_depth_um / atlas_resolution)))
     withdrawal_depth_vox = max(1, int(round(withdrawal_depth_um / atlas_resolution)))
@@ -364,8 +354,7 @@ def prefilter_candidates(
     method_label = PREFILTER_METHODS.get(method, method)
     print(f"  Brain voxel sizes: {brain_voxel_sizes} um")
     print(f"  Atlas resolution: {atlas_resolution}um")
-    print(f"  Brain scales: {brain_scales}")
-    print(f"  Orientation: {orientation}  Axis permutation: {axis_perm}")
+    print(f"  Orientation: {orientation} (placed with BrainGlobe's raw->downsampled transform)")
     print(f"  Prefilter method: {method} ({method_label})")
     print(f"  Surface depth: {surface_depth_um}um ({surface_depth_vox} atlas voxels)")
     print(f"  Withdrawal depth: {withdrawal_depth_um}um ({withdrawal_depth_vox} atlas voxels)")
@@ -451,6 +440,11 @@ def prefilter_candidates(
 
     total = len(all_coords)
     print(f"  Total candidates: {total}")
+    placed = (_raw_to_downsampled(all_coords, registration_path, orientation,
+                                  brain_voxel_sizes, ann_shape, atlas)
+              if total else np.empty((0, 3)))
+    # Where each candidate sits in the registered atlas's space, for display
+    atlas_position = {}
 
     # Classify each candidate
     interior_coords = []
@@ -463,13 +457,10 @@ def prefilter_candidates(
     category_counts = {}  # category -> count
 
     print(f"[{timestamp()}] Classifying candidates...")
-    for z_brain, y_brain, x_brain in all_coords:
-        # Scale each brain axis then permute to atlas space
-        brain_scaled = (z_brain * brain_scales[0], y_brain * brain_scales[1], x_brain * brain_scales[2])
-        a0 = int(brain_scaled[axis_perm[0]])
-        a1 = int(brain_scaled[axis_perm[1]])
-        a2 = int(brain_scaled[axis_perm[2]])
+    for (z_brain, y_brain, x_brain), position in zip(all_coords, placed):
+        a0, a1, a2 = (int(np.floor(v)) for v in position)
         idx = (a0, a1, a2)
+        atlas_position[(z_brain, y_brain, x_brain)] = tuple(float(v) for v in position)
         in_bounds = (0 <= a0 < ann_shape[0] and 0 <= a1 < ann_shape[1] and 0 <= a2 < ann_shape[2])
 
         if not in_bounds:
@@ -534,8 +525,7 @@ def prefilter_candidates(
         'filter_depth_um': filter_depth_um,
         'dark_percentile': dark_percentile,
         'extreme_oob_um': extreme_oob_um,
-        'brain_scales': brain_scales,
-        'axis_perm': list(axis_perm),
+        'placement': 'brainglobe raw->downsampled transform',
         'orientation': orientation,
         'atlas_name': atlas_name,
         'annotation_shape': list(ann_shape),
@@ -563,6 +553,7 @@ def prefilter_candidates(
         'suspicious_coords': suspicious_coords,
         'suspicious_details': suspicious_details,
         'category_counts': category_counts,
+        'atlas_position': atlas_position,
         'stats': stats,
     }
 
@@ -866,9 +857,7 @@ def _view_in_napari(result: dict, registration_path: Path, brain_name: str):
     """Open napari with atlas + interior/suspicious point layers."""
     import napari
 
-    stats = result['stats']
-    brain_scales = stats['brain_scales']
-    axis_perm = stats['axis_perm']
+    position = result['atlas_position']
 
     # Load registered atlas as background
     annotation_path = registration_path / "registered_atlas.tiff"
@@ -877,19 +866,9 @@ def _view_in_napari(result: dict, registration_path: Path, brain_name: str):
     registered_annotation = tifffile.imread(str(annotation_path))
 
     def to_display(coords):
-        arr = np.array(coords, dtype=np.float32)
-        if len(arr) == 0:
+        if not coords:
             return np.empty((0, 3), dtype=np.float32)
-        scaled = np.column_stack([
-            arr[:, 0] * brain_scales[0],
-            arr[:, 1] * brain_scales[1],
-            arr[:, 2] * brain_scales[2],
-        ])
-        return np.column_stack([
-            scaled[:, axis_perm[0]],
-            scaled[:, axis_perm[1]],
-            scaled[:, axis_perm[2]],
-        ])
+        return np.array([position[tuple(c)] for c in coords], dtype=np.float32)
 
     interior_pts = to_display(result['interior_coords'])
     suspicious_pts = to_display(result['suspicious_coords'])

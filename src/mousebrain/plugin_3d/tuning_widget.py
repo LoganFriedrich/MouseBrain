@@ -3518,26 +3518,15 @@ class TuningWidget(QWidget):
         for layer in layers_to_remove:
             self.viewer.layers.remove(layer)
 
-        # Transform brain-space coords to atlas-space for napari display
-        stats = result['stats']
-        brain_scales = stats.get('brain_scales', [0.4, 0.4, 0.4])
-        axis_perm = stats.get('axis_perm', [0, 1, 2])
+        # Draw each candidate where the prefilter placed it in the registered
+        # atlas's space (BrainGlobe's transform; prefilter.atlas_position)
+        position = result.get('atlas_position', {})
 
         def to_atlas_coords(coord_list):
-            """Scale brain coords and permute to atlas space."""
-            arr = np.array(coord_list, dtype=np.float32)
-            if len(arr) == 0:
+            """Brain-space candidates -> their registered-atlas positions."""
+            if not coord_list:
                 return np.empty((0, 3), dtype=np.float32)
-            scaled = np.column_stack([
-                arr[:, 0] * brain_scales[0],
-                arr[:, 1] * brain_scales[1],
-                arr[:, 2] * brain_scales[2],
-            ])
-            return np.column_stack([
-                scaled[:, axis_perm[0]],
-                scaled[:, axis_perm[1]],
-                scaled[:, axis_perm[2]],
-            ])
+            return np.array([position[tuple(c)] for c in coord_list], dtype=np.float32)
 
         # Interior candidates (green) -- kept for classification
         if result['interior_coords']:

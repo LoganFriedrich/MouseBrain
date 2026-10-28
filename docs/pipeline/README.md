@@ -111,6 +111,22 @@ python 5_classify_cells.py
 python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4 --model path/to/model.h5
 ```
 
+**The pre-filter (on unless `--no-prefilter`).** Before classifying, step 5
+removes candidates within 100 um of the brain's edge (surface glow, damage,
+uncleared tissue -- labelled neurons are not at the tissue edge) and candidates
+far outside the atlas. What is left is written to
+`4_Cell_Candidates/prefiltered/interior_candidates.xml` and is what gets
+classified. Candidates that land inside the brain outline but in no atlas region
+are kept.
+
+To decide where a candidate is, the pre-filter uses BrainGlobe's own transform
+from the detection images into the registration -- the same transform step 6
+counts with. Since 2026-10-27; before that it used a shortcut that reordered the
+image axes but did not reverse them, so on every brain it looked candidates up
+millimetres from where they are (up-down on brains imaged `iar`, front-back as
+well on `ipr`) and removed an essentially arbitrary set as "surface". Any
+classification made before that date went through that wrong pre-filter.
+
 ### Script 6: Regional Counting
 ```bash
 # Interactive mode
