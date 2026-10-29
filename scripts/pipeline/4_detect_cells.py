@@ -4,7 +4,8 @@
 
 Script 4 in the BrainGlobe pipeline: Cell candidate detection.
 
-Wraps cellfinder detection with presets and auto-logs to experiment tracker.
+Wraps cellfinder detection with the lab's settled settings and auto-logs to
+the experiment tracker.
 
 Normally run this AFTER Script 3 (register_to_atlas.py), on the cropped images
 registration was computed from -- that is the path that leads to counts per
@@ -12,8 +13,8 @@ brain region. It can also run BEFORE registration, on the whole extracted
 stack, which is useful when registration is waiting on something; see
 WHICH IMAGES below for what that does and does not give you.
 
-This runs cellfinder's cell candidate detection with preset parameter
-combinations or custom values, and automatically logs everything.
+This runs cellfinder's cell candidate detection with the SETTLED METHOD (see
+below) or with values you type, and automatically logs everything.
 
 ================================================================================
 HOW TO USE
@@ -21,19 +22,14 @@ HOW TO USE
 Interactive mode (recommended for first runs):
     python 4_detect_cells.py
 
-With presets:
-    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --preset sensitive
-    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --preset balanced
-    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --preset conservative
+With the settled method for this brain's kind of imaging (the normal case):
+    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5
 
-With the settings already proven for this kind of imaging (from the tracker):
-    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --routine
-
-Custom parameters:
-    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --ball-xy 6 --ball-z 15
+Changing one setting from the settled method (the run is logged as "custom"):
+    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --threshold 9
 
 Before the brain has been cropped or registered:
-    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --source full --routine
+    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --source full
 
 ================================================================================
 WHICH IMAGES  (--source)
@@ -67,19 +63,26 @@ Every run of either kind is logged in the tracker, with the source recorded in
 its notes, so two runs are never silently compared across spaces.
 
 ================================================================================
-PRESETS
+THE SETTLED METHOD
 ================================================================================
-    sensitive    - Catches more cells, more false positives
-                   ball_xy=4, ball_z=10, soma=12, threshold=8
-                   
-    balanced     - Good default starting point
-                   ball_xy=6, ball_z=15, soma=16, threshold=10
-                   
-    conservative - Fewer false positives, may miss dim cells
-                   ball_xy=8, ball_z=20, soma=20, threshold=12
-                   
-    large_cells  - For larger neurons (motor neurons, Purkinje, etc.)
-                   ball_xy=10, ball_z=25, soma=25, threshold=10
+    The detection settings (ball_xy, ball_z, soma diameter, threshold) come
+    from the calibration-run tracker: the run a person marked "Paradigm Best"
+    in Setup & Tuning for this brain's imaging setup -- the magnification and
+    z-step at the end of the brain name, e.g. 1p625x_z4. That is the method
+    the lab tuned and settled on, so every brain imaged the same way is
+    detected the same way. The numbers live in the tracker, not in this
+    script, so marking a different run as Paradigm Best changes them for every
+    later brain without touching code.
+
+    If this brain's imaging setup has NO Paradigm Best run, the script stops
+    and says so. There is deliberately no built-in fallback: the generic
+    starting values that used to be here were never tuned on real brains, and
+    quietly using them produced counts that looked plausible and were not.
+    Either tune and mark a run for the new imaging setup, or give all four
+    settings on the command line.
+
+    Any setting given on the command line replaces that one setting; the run
+    is then logged as "custom", not as the settled method.
 
 ================================================================================
 REQUIREMENTS
@@ -193,38 +196,6 @@ def sources_in_registered_space(pipeline_folder=None):
 
 # Kept for callers that have no brain in hand (help text, listings).
 SOURCES_IN_REGISTERED_SPACE = DEFAULT_SOURCES_IN_REGISTERED_SPACE
-
-# Detection presets
-PRESETS = {
-    'sensitive': {
-        'description': 'Catches more cells, more false positives',
-        'ball_xy_size': 4,
-        'ball_z_size': 10,
-        'soma_diameter': 12,
-        'threshold': 8,
-    },
-    'balanced': {
-        'description': 'Good default starting point',
-        'ball_xy_size': 6,
-        'ball_z_size': 15,
-        'soma_diameter': 16,
-        'threshold': 10,
-    },
-    'conservative': {
-        'description': 'Fewer false positives, may miss dim cells',
-        'ball_xy_size': 8,
-        'ball_z_size': 20,
-        'soma_diameter': 20,
-        'threshold': 12,
-    },
-    'large_cells': {
-        'description': 'For larger neurons (motor, Purkinje, etc.)',
-        'ball_xy_size': 10,
-        'ball_z_size': 25,
-        'soma_diameter': 25,
-        'threshold': 10,
-    },
-}
 
 DEFAULT_N_FREE_CPUS = 2
 
@@ -585,44 +556,6 @@ def interactive_select_brain(brains):
             print("Enter a number or 'q'")
 
 
-def interactive_select_preset():
-    """Interactive preset selection."""
-    print("\n" + "=" * 60)
-    print("DETECTION PRESETS")
-    print("=" * 60)
-    
-    for i, (name, preset) in enumerate(PRESETS.items()):
-        print(f"\n  {i + 1}. {name}")
-        print(f"     {preset['description']}")
-        print(f"     ball_xy={preset['ball_xy_size']}, ball_z={preset['ball_z_size']}, "
-              f"soma={preset['soma_diameter']}, threshold={preset['threshold']}")
-    
-    print(f"\n  {len(PRESETS) + 1}. custom (enter your own parameters)")
-    
-    print("\n" + "-" * 60)
-    
-    while True:
-        response = input("\nSelect preset (1-5): ").strip()
-        
-        try:
-            idx = int(response)
-            if 1 <= idx <= len(PRESETS):
-                preset_name = list(PRESETS.keys())[idx - 1]
-                return preset_name, PRESETS[preset_name].copy()
-            elif idx == len(PRESETS) + 1:
-                # Custom
-                params = {}
-                params['ball_xy_size'] = int(input("  ball_xy_size (default 6): ").strip() or "6")
-                params['ball_z_size'] = int(input("  ball_z_size (default 15): ").strip() or "15")
-                params['soma_diameter'] = int(input("  soma_diameter (default 16): ").strip() or "16")
-                params['threshold'] = int(input("  threshold (default 10): ").strip() or "10")
-                return "custom", params
-            else:
-                print(f"Enter 1-{len(PRESETS) + 1}")
-        except ValueError:
-            print("Enter a number")
-
-
 # =============================================================================
 # MAIN
 # =============================================================================
@@ -632,24 +565,20 @@ def main():
         description='Run cellfinder detection with auto-logging',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Presets:
-    sensitive     - ball_xy=4, ball_z=10, soma=12, threshold=8
-    balanced      - ball_xy=6, ball_z=15, soma=16, threshold=10 (default)
-    conservative  - ball_xy=8, ball_z=20, soma=20, threshold=12
-    large_cells   - ball_xy=10, ball_z=25, soma=25, threshold=10
+Settings come from the settled method: the tracker run marked "Paradigm Best"
+for the brain's imaging setup. Any of --ball-xy/--ball-z/--soma-diameter/
+--threshold replaces that one setting. With no settled method for the imaging
+setup, all four must be given.
 
 Examples:
     python 4_detect_cells.py                                    # Interactive mode
-    python 4_detect_cells.py --brain 349_CNT_01_02_1p625x_z4 --preset balanced
-    python 4_detect_cells.py --brain 349_CNT_01_02_1p625x_z4 --ball-xy 5 --ball-z 12
+    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5     # settled method
+    python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --threshold 9
         """
     )
     
     parser.add_argument('--brain', '-b', help='Brain/pipeline to process')
-    parser.add_argument('--preset', '-p', choices=list(PRESETS.keys()),
-                        help='Parameter preset')
-    
-    # Custom parameters
+    # Custom parameters (each replaces that one setting of the settled method)
     parser.add_argument('--ball-xy', type=int, help='Ball filter XY size')
     parser.add_argument('--ball-z', type=int, help='Ball filter Z size')
     parser.add_argument('--soma-diameter', type=int, help='Expected soma diameter')
@@ -666,8 +595,6 @@ Examples:
     parser.add_argument('--notes', help='Notes to add to log')
     parser.add_argument('--dry-run', action='store_true', help='Show what would run')
     parser.add_argument('--root', type=Path, default=DEFAULT_BRAINGLOBE_ROOT)
-    parser.add_argument('--routine', action='store_true',
-                        help='Routine processing mode: auto-use paradigm-best settings if available')
     
     args = parser.parse_args()
     
@@ -738,90 +665,65 @@ Examples:
             print("=" * 60)
             sys.exit(1)
 
-    # Check for paradigm-best settings
+    # The settled method: the tracker run marked Paradigm Best for this brain's
+    # imaging setup. No built-in fallback -- see THE SETTLED METHOD above.
     tracker = ExperimentTracker()
     parsed = parse_brain_name(pipeline_folder.name)
     imaging_paradigm = parsed.get('imaging_params', '')
-    paradigm_settings = None
+    settled = (tracker.get_paradigm_detection_settings(imaging_paradigm)
+               if imaging_paradigm else None)
 
-    if imaging_paradigm:
-        paradigm_settings = tracker.get_paradigm_detection_settings(imaging_paradigm)
-        if paradigm_settings:
-            print(f"\n[Paradigm Best Found] Settings for '{imaging_paradigm}':")
-            print(f"  Source: {paradigm_settings.get('source_brain', 'unknown')}")
-            print(f"  ball_xy={paradigm_settings['ball_xy']:.0f}, "
-                  f"ball_z={paradigm_settings['ball_z']:.0f}, "
-                  f"soma={paradigm_settings['soma_diameter']:.0f}, "
-                  f"threshold={paradigm_settings['threshold']}")
+    given = {
+        'ball_xy_size': args.ball_xy,
+        'ball_z_size': args.ball_z,
+        'soma_diameter': args.soma_diameter,
+        'threshold': args.threshold,
+    }
+    given = {k: v for k, v in given.items() if v is not None}
 
-    # Select parameters
-    if args.routine and paradigm_settings:
-        # Routine mode: auto-use paradigm-best settings
-        print("\n[Routine Mode] Using paradigm-best detection settings.")
-        preset_name = "paradigm_best"
+    if settled:
+        print(f"\n[Settled method] for imaging setup '{imaging_paradigm}':")
+        print(f"  from run {settled.get('source_exp_id')} on {settled.get('source_brain')}")
+        print(f"  ball_xy={settled['ball_xy']:.0f}, ball_z={settled['ball_z']:.0f}, "
+              f"soma={settled['soma_diameter']:.0f}, threshold={settled['threshold']}")
         params = {
-            'ball_xy_size': int(paradigm_settings['ball_xy']),
-            'ball_z_size': int(paradigm_settings['ball_z']),
-            'soma_diameter': int(paradigm_settings['soma_diameter']),
-            'threshold': int(paradigm_settings['threshold']),
+            'ball_xy_size': int(settled['ball_xy']),
+            'ball_z_size': int(settled['ball_z']),
+            'soma_diameter': int(settled['soma_diameter']),
+            'threshold': int(settled['threshold']),
         }
-    elif args.preset:
-        preset_name = args.preset
-        params = PRESETS[preset_name].copy()
-    elif any([args.ball_xy, args.ball_z, args.soma_diameter, args.threshold]):
-        # Custom from command line
-        preset_name = "custom"
-        params = {
-            'ball_xy_size': args.ball_xy or 6,
-            'ball_z_size': args.ball_z or 15,
-            'soma_diameter': args.soma_diameter or 16,
-            'threshold': args.threshold or 10,
-        }
-    elif not args.brain:
-        # Interactive preset selection - offer paradigm-best first if available
-        if paradigm_settings:
-            print("\n" + "=" * 60)
-            print("PARADIGM-BEST SETTINGS AVAILABLE")
-            print("=" * 60)
-            print(f"\nUse proven settings from '{imaging_paradigm}' paradigm? (y/n)")
-            use_paradigm = input("Selection [y]: ").strip().lower()
-            if use_paradigm in ('', 'y', 'yes'):
-                preset_name = "paradigm_best"
-                params = {
-                    'ball_xy_size': int(paradigm_settings['ball_xy']),
-                    'ball_z_size': int(paradigm_settings['ball_z']),
-                    'soma_diameter': int(paradigm_settings['soma_diameter']),
-                    'threshold': int(paradigm_settings['threshold']),
-                }
-            else:
-                preset_name, params = interactive_select_preset()
-        else:
-            preset_name, params = interactive_select_preset()
+    elif len(given) == 4:
+        params = {}
     else:
-        # Non-interactive with brain specified - use paradigm-best if available, else balanced
-        if paradigm_settings:
-            print("\n[Auto] Using paradigm-best settings (use --preset to override)")
-            preset_name = "paradigm_best"
-            params = {
-                'ball_xy_size': int(paradigm_settings['ball_xy']),
-                'ball_z_size': int(paradigm_settings['ball_z']),
-                'soma_diameter': int(paradigm_settings['soma_diameter']),
-                'threshold': int(paradigm_settings['threshold']),
-            }
-        else:
-            preset_name = "balanced"
-            params = PRESETS["balanced"].copy()
-    
-    # Override individual params if specified
-    if args.ball_xy:
-        params['ball_xy_size'] = args.ball_xy
-    if args.ball_z:
-        params['ball_z_size'] = args.ball_z
-    if args.soma_diameter:
-        params['soma_diameter'] = args.soma_diameter
-    if args.threshold:
-        params['threshold'] = args.threshold
-    
+        print("\n" + "=" * 60)
+        print("STOPPING: NO SETTLED DETECTION METHOD FOR THIS IMAGING SETUP")
+        print("=" * 60)
+        print(f"\nBrain: {pipeline_folder.name}")
+        print(f"Imaging setup: {imaging_paradigm or '(could not be read from the name)'}")
+        print("\nNo run in the tracker is marked Paradigm Best for this imaging")
+        print("setup, so there are no tuned settings to use, and this script will")
+        print("not guess.")
+        print("\nTo settle a method for it:")
+        print("  1. napari: Plugins -> BrainTools -> 3D: 2. Setup & Tuning")
+        print("  2. Tune detection on this brain until the cells look right")
+        print("  3. Select that run and click 'Mark as Paradigm Best'")
+        print("Every later brain imaged this way then uses those settings.")
+        print("\nOr give all four settings yourself:")
+        print(f"  python 4_detect_cells.py --brain {pipeline_folder.name} "
+              "--ball-xy N --ball-z N --soma-diameter N --threshold N")
+        print("=" * 60)
+        sys.exit(1)
+
+    # A setting typed on the command line wins, and the run is then recorded as
+    # "custom": the tracker must never say "settled method" about numbers that
+    # were not the settled method. "paradigm_best" is the name earlier runs were
+    # logged under, so the tracker history stays one series.
+    changed = {k: v for k, v in given.items() if params.get(k) != v}
+    params.update(given)
+    preset_name = "custom" if (changed or not settled) else "paradigm_best"
+    if changed and settled:
+        print(f"  Changed on the command line: {changed}")
+
     # Get paths
     det_folder = pipeline_folder / FOLDER_DETECTION
     if input_source not in sources_in_registered_space(pipeline_folder):
