@@ -645,14 +645,18 @@ class PipelineDashboard(QWidget):
         Read from the tracker each time (not cached), so marking a new Paradigm
         Best run in Setup & Tuning shows up here without restarting napari.
         Returns (imaging_setup, settings) -- settings is None when no run is
-        marked Paradigm Best for that imaging setup.
+        marked Paradigm Best for that imaging setup, and also when that run
+        does not record all eight settings: half a method is not the method.
         """
+        self._settled_missing = []
         if not self.current_brain:
             return "", None
         setup = parse_brain_name(self.current_brain.name).get('imaging_params', '')
         if not setup:
             return "", None
-        return setup, ExperimentTracker().get_paradigm_detection_settings(setup)
+        s = ExperimentTracker().get_paradigm_detection_settings(setup)
+        self._settled_missing = s['missing'] if s else []
+        return setup, (s if s and not s['missing'] else None)
 
     def update_settled_label(self):
         """Show the selected brain's settled numbers and where they came from."""
@@ -665,10 +669,18 @@ class PipelineDashboard(QWidget):
         if s:
             self.settled_label.setText(
                 f"ball XY {s['ball_xy']:.0f}, ball Z {s['ball_z']:.0f}, "
-                f"soma {s['soma_diameter']:.0f}, threshold {s['threshold']}  "
+                f"soma {s['soma_diameter']:.0f}, threshold {s['threshold']}, "
+                f"ball overlap {s['ball_overlap']}, soma spread {s['soma_spread']}, "
+                f"LoG sigma {s['log_sigma']}, max cluster {s['max_cluster']:,}  "
                 f"-- imaging setup {setup}, from run {s.get('source_exp_id')} "
                 f"on {s.get('source_brain')}")
             self.settled_label.setStyleSheet("color: gray; font-size: 10px;")
+        elif self._settled_missing:
+            self.settled_label.setText(
+                f"The Paradigm Best run for imaging setup '{setup}' does not record "
+                f"all its settings (missing: {', '.join(self._settled_missing)}). "
+                "Detection cannot run until a run that records all eight is marked.")
+            self.settled_label.setStyleSheet("color: #d32f2f; font-size: 10px;")
         else:
             self.settled_label.setText(
                 f"No settled method for imaging setup '{setup or 'unknown'}'. "
@@ -677,11 +689,18 @@ class PipelineDashboard(QWidget):
             self.settled_label.setStyleSheet("color: #d32f2f; font-size: 10px;")
 
     def _warn_no_settled_method(self, setup):
+        if getattr(self, '_settled_missing', None):
+            why = (f"The run marked Paradigm Best for imaging setup "
+                   f"'{setup}' does not record all of its settings (missing: "
+                   f"{', '.join(self._settled_missing)}), so the method cannot "
+                   f"be reproduced and detection will not fill the gaps.\n\n")
+        else:
+            why = (f"No run in the tracker is marked Paradigm Best for imaging "
+                   f"setup '{setup or 'unknown'}', so there are no tuned settings "
+                   f"for this brain and detection will not guess.\n\n")
         QMessageBox.warning(
             self, "No settled detection method",
-            f"No run in the tracker is marked Paradigm Best for imaging setup "
-            f"'{setup or 'unknown'}', so there are no tuned settings for this "
-            f"brain and detection will not guess.\n\n"
+            why +
             f"To settle a method:\n"
             f"  1. Open Plugins -> BrainTools -> 3D: 2. Setup & Tuning\n"
             f"  2. Tune detection on this brain until the cells look right\n"
@@ -988,6 +1007,10 @@ class PipelineDashboard(QWidget):
             detect_w.ball_z_size.value = int(p['ball_z'])
             detect_w.soma_diameter.value = float(p['soma_diameter'])
             detect_w.n_sds_above_mean_thresh.value = p['threshold']
+            detect_w.ball_overlap_fraction.value = p['ball_overlap']
+            detect_w.soma_spread_factor.value = p['soma_spread']
+            detect_w.log_sigma_size.value = p['log_sigma']
+            detect_w.max_cluster_size.value = p['max_cluster']
 
             # Use pre-trained weights by default
             detect_w.use_pre_trained_weights.value = True
