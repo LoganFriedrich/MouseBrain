@@ -63,15 +63,12 @@ from mousebrain.config import (
 
 SCRIPT_VERSION = "1.0.0"
 
-# Brain 349's calibrated detection parameters (from calibration_runs.csv)
+# The brain every other count is compared against in the report. Detection
+# settings are NOT kept here: step 4 uses the settled method for each brain's
+# imaging setup (the tracker run marked Paradigm Best, all eight settings). A
+# copy here held only four of the eight, so step 4 ran the rest at cellfinder's
+# defaults -- a different method from the one it claimed to be.
 REFERENCE_BRAIN = "349_CNT_01_02_1p625x_z4"
-REFERENCE_PARAMS = {
-    'ball_xy': 10.0,
-    'ball_z': 10.0,
-    'soma_diameter': 10.0,
-    'threshold': 8.0,
-    'preset': 'custom',
-}
 
 # Pipeline folder names
 FOLDER_CROPPED = "2_Cropped_For_Registration"
@@ -210,24 +207,13 @@ def run_registration(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
         return False, f"Registration error: {e}"
 
 
-def run_detection(brain_name: str, pipeline_dir: Path, params: Dict) -> Tuple[bool, str]:
-    """Run cellfinder detection with specified parameters."""
-    log.info(f"[{brain_name}] Running detection with params: {params}")
+def run_detection(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
+    """Run step 4 with the settled method for this brain's imaging setup."""
+    log.info(f"[{brain_name}] Running detection with the settled method")
     sys.stdout.flush()
 
     script = SCRIPTS_DIR / "4_detect_cells.py"
-
-    # Note: 4_detect_cells.py expects int values, not floats
-    cmd = [
-        sys.executable, str(script),
-        "--brain", brain_name,
-        "--ball-xy", str(int(params['ball_xy'])),
-        "--ball-z", str(int(params['ball_z'])),
-        "--threshold", str(int(params['threshold'])),
-    ]
-
-    if 'soma_diameter' in params:
-        cmd.extend(["--soma-diameter", str(int(params['soma_diameter']))])
+    cmd = [sys.executable, str(script), "--brain", brain_name]
 
     try:
         result = subprocess.run(
@@ -420,7 +406,7 @@ def process_brain(brain_name: str, pipeline_dir: Path, skip_complete: bool = Tru
         log.info(f"[{brain_name}] Detection already complete, skipping")
         result['steps']['detection'] = 'skipped'
     else:
-        success, msg = run_with_retry(run_detection, brain_name, pipeline_dir, REFERENCE_PARAMS)
+        success, msg = run_with_retry(run_detection, brain_name, pipeline_dir)
         result['steps']['detection'] = 'success' if success else 'failed'
         if not success:
             result['status'] = 'failed'
@@ -492,11 +478,10 @@ def generate_comparison_report(results: List[Dict]) -> Path:
         f"- **Successful:** {sum(1 for r in results if r['status'] == 'success')}",
         f"- **Failed:** {sum(1 for r in results if r['status'] == 'failed')}",
         "",
-        "## Detection Parameters (from brain 349)",
-        f"- ball_xy: {REFERENCE_PARAMS['ball_xy']}",
-        f"- ball_z: {REFERENCE_PARAMS['ball_z']}",
-        f"- threshold: {REFERENCE_PARAMS['threshold']}",
-        f"- soma_diameter: {REFERENCE_PARAMS['soma_diameter']}",
+        "## Detection method",
+        "- The settled method for each brain's imaging setup (the tracker run",
+        "  marked Paradigm Best). Each brain's detection run in the tracker",
+        "  records the eight settings it used.",
         "",
         "## Results by Brain",
         "",
@@ -822,7 +807,7 @@ def main():
     if args.dry_run:
         log.info("\n[DRY RUN] Would process the above brains with these parameters:")
         log.info(f"  Reference brain: {REFERENCE_BRAIN}")
-        log.info(f"  Detection params: {REFERENCE_PARAMS}")
+        log.info("  Detection: the settled method for each brain's imaging setup")
         return 0
 
     if not brains:
