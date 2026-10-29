@@ -40,7 +40,15 @@ except Exception:
 _config_dir = Path(__file__).resolve().parent.parent.parent
 if str(_config_dir) not in sys.path:
     sys.path.insert(0, str(_config_dir))
-from mousebrain.config import BRAINS_ROOT, find_script
+from mousebrain.config import BRAINS_ROOT, find_script, parse_brain_name
+from mousebrain.tracker import ExperimentTracker
+
+# The only detection option the dashboard offers. Its numbers are not here: they
+# are read from the tracker, from the run marked "Paradigm Best" for the brain's
+# imaging setup -- the same lookup step 4 does, so the dashboard shows exactly
+# what step 4 will use. The generic presets that used to fill this dropdown were
+# placeholders from before detection was tuned on real brains.
+SETTLED_METHOD = "Settled method (from tracker)"
 
 
 class SetupWizard(QWizard):
@@ -424,13 +432,22 @@ class PipelineDashboard(QWidget):
         self.run_next_btn.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px;")
         action_layout.addWidget(self.run_next_btn)
 
-        # Detection preset
+        # Detection settings: the settled method, with its numbers and the run
+        # they came from shown underneath for the selected brain.
         preset_layout = QHBoxLayout()
-        preset_layout.addWidget(QLabel("Detection preset:"))
+        preset_layout.addWidget(QLabel("Detection settings:"))
         self.preset_combo = QComboBox()
-        self.preset_combo.addItems(["balanced", "sensitive", "conservative", "large_cells"])
+        self.preset_combo.addItems([SETTLED_METHOD])
+        self.preset_combo.setToolTip(
+            "The detection settings the lab tuned and settled on for this\n"
+            "brain's imaging setup: the run marked 'Mark as Paradigm Best'\n"
+            "in 3D: 2. Setup & Tuning.")
         preset_layout.addWidget(self.preset_combo)
         action_layout.addLayout(preset_layout)
+        self.settled_label = QLabel("Select a brain to see its detection settings.")
+        self.settled_label.setWordWrap(True)
+        self.settled_label.setStyleSheet("color: gray; font-size: 10px;")
+        action_layout.addWidget(self.settled_label)
 
         # Manual actions
         action_layout.addWidget(QLabel("Manual actions:"))
@@ -620,6 +637,56 @@ class PipelineDashboard(QWidget):
         brain_path = Path(item.data(Qt.UserRole))
         self.current_brain = brain_path
         self.update_status_display()
+        self.update_settled_label()
+
+    def settled_detection_settings(self):
+        """The settled detection method for the selected brain, or None.
+
+        Read from the tracker each time (not cached), so marking a new Paradigm
+        Best run in Setup & Tuning shows up here without restarting napari.
+        Returns (imaging_setup, settings) -- settings is None when no run is
+        marked Paradigm Best for that imaging setup.
+        """
+        if not self.current_brain:
+            return "", None
+        setup = parse_brain_name(self.current_brain.name).get('imaging_params', '')
+        if not setup:
+            return "", None
+        return setup, ExperimentTracker().get_paradigm_detection_settings(setup)
+
+    def update_settled_label(self):
+        """Show the selected brain's settled numbers and where they came from."""
+        try:
+            setup, s = self.settled_detection_settings()
+        except Exception as e:
+            self.settled_label.setText(f"Could not read the tracker: {e}")
+            self.settled_label.setStyleSheet("color: #d32f2f; font-size: 10px;")
+            return
+        if s:
+            self.settled_label.setText(
+                f"ball XY {s['ball_xy']:.0f}, ball Z {s['ball_z']:.0f}, "
+                f"soma {s['soma_diameter']:.0f}, threshold {s['threshold']}  "
+                f"-- imaging setup {setup}, from run {s.get('source_exp_id')} "
+                f"on {s.get('source_brain')}")
+            self.settled_label.setStyleSheet("color: gray; font-size: 10px;")
+        else:
+            self.settled_label.setText(
+                f"No settled method for imaging setup '{setup or 'unknown'}'. "
+                "Tune detection in 3D: 2. Setup & Tuning and click "
+                "'Mark as Paradigm Best' -- detection cannot run until then.")
+            self.settled_label.setStyleSheet("color: #d32f2f; font-size: 10px;")
+
+    def _warn_no_settled_method(self, setup):
+        QMessageBox.warning(
+            self, "No settled detection method",
+            f"No run in the tracker is marked Paradigm Best for imaging setup "
+            f"'{setup or 'unknown'}', so there are no tuned settings for this "
+            f"brain and detection will not guess.\n\n"
+            f"To settle a method:\n"
+            f"  1. Open Plugins -> BrainTools -> 3D: 2. Setup & Tuning\n"
+            f"  2. Tune detection on this brain until the cells look right\n"
+            f"  3. Select that run and click 'Mark as Paradigm Best'\n\n"
+            f"Every later brain imaged this way then uses those settings.")
 
     def update_status_display(self):
         """Update the status display for current brain."""
@@ -709,8 +776,16 @@ class PipelineDashboard(QWidget):
                 self.run_next_btn.setEnabled(True)
 
         elif status['step'] == 'detect':
-            preset = self.preset_combo.currentText()
-            self.run_script('4_detect_cells.py', ['--brain', brain_name, '--preset', preset])
+            # Step 4 looks the settled method up itself; checking here first
+            # only means the person gets the explanation in a dialog instead of
+            # in the script's output.
+            setup, settled = self.settled_detection_settings()
+            if not settled:
+                self._warn_no_settled_method(setup)
+                self.message_label.setText("Detection needs a settled method first.")
+                self.run_next_btn.setEnabled(True)
+                return
+            self.run_script('4_detect_cells.py', ['--brain', brain_name])
 
         elif status['step'] == 'classify':
             self.run_script('5_classify_cells.py', ['--brain', brain_name])
@@ -904,21 +979,15 @@ class PipelineDashboard(QWidget):
                 detect_w.voxel_size_y.value = metadata['voxel_xy']
                 detect_w.voxel_size_x.value = metadata['voxel_xy']
 
-            # Get preset settings from the combo box
-            preset = self.preset_combo.currentText()
-            presets = {
-                'sensitive': {'ball_xy': 4, 'ball_z': 10, 'soma': 12, 'threshold': 8},
-                'balanced': {'ball_xy': 6, 'ball_z': 15, 'soma': 16, 'threshold': 10},
-                'conservative': {'ball_xy': 8, 'ball_z': 20, 'soma': 20, 'threshold': 12},
-                'large_cells': {'ball_xy': 10, 'ball_z': 25, 'soma': 25, 'threshold': 10},
-            }
-
-            if preset in presets:
-                p = presets[preset]
-                detect_w.ball_xy_size.value = p['ball_xy']
-                detect_w.ball_z_size.value = p['ball_z']
-                detect_w.soma_diameter.value = float(p['soma'])
-                detect_w.n_sds_above_mean_thresh.value = p['threshold']
+            # Fill in the settled method for this brain's imaging setup
+            setup, p = self.settled_detection_settings()
+            if not p:
+                self._warn_no_settled_method(setup)
+                return
+            detect_w.ball_xy_size.value = int(p['ball_xy'])
+            detect_w.ball_z_size.value = int(p['ball_z'])
+            detect_w.soma_diameter.value = float(p['soma_diameter'])
+            detect_w.n_sds_above_mean_thresh.value = p['threshold']
 
             # Use pre-trained weights by default
             detect_w.use_pre_trained_weights.value = True
