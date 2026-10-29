@@ -158,7 +158,33 @@ CSV_COLUMNS = [
     # Imaging paradigm (for auto-applying settings to similar brains)
     "imaging_paradigm",  # Extracted from brain name, e.g., "1p625x_z4"
     "paradigm_best",     # True if this is the best run for its paradigm (not just brain)
+
+    # The rest of the detection settings (added 2026-10-29). A detection method
+    # is eight settings, not the four above: before these columns existed, a
+    # Paradigm Best run carried only half its method, and step 4 filled the rest
+    # with cellfinder's defaults -- a different method (re-detecting 100 planes
+    # of the settled run that way found 533 of its 1466 cells at the same
+    # positions; with these four restored, all 1466). They sit at the END so a
+    # file written before them gains them without any existing column moving.
+    "det_ball_overlap",  # ball_overlap_fraction
+    "det_soma_spread",   # soma_spread_factor
+    "det_log_sigma",     # log_sigma_size
+    "det_max_cluster",   # max_cluster_size
 ]
+
+# The eight settings that make up a detection method: tracker column -> the
+# cellfinder argument it feeds. get_paradigm_detection_settings() returns them
+# under the short names on the left of each pair.
+DETECTION_METHOD_COLUMNS = {
+    'ball_xy': 'det_ball_xy',
+    'ball_z': 'det_ball_z',
+    'soma_diameter': 'det_soma_diameter',
+    'threshold': 'det_threshold',
+    'ball_overlap': 'det_ball_overlap',
+    'soma_spread': 'det_soma_spread',
+    'log_sigma': 'det_log_sigma',
+    'max_cluster': 'det_max_cluster',
+}
 
 
 # =============================================================================
@@ -213,6 +239,38 @@ class ExperimentTracker:
                 writer.writeheader()
         else:
             self.csv_path.parent.mkdir(parents=True, exist_ok=True)
+            self._add_missing_columns()
+
+    def _add_missing_columns(self):
+        """Give a tracker written before the newest columns those columns.
+
+        Rows are APPENDED with the current column list, so appending to a file
+        whose header is shorter would shift every later row against its header
+        -- values landing under the wrong names, which happened to this file
+        once already (2026-10-23, the row-realign repair). The header is brought
+        up to date, every existing value kept under its own name, before any
+        row is written. Written to a temporary file and swapped in, so a failure
+        part-way leaves the original untouched.
+        """
+        with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            header = reader.fieldnames or []
+            if all(col in header for col in CSV_COLUMNS):
+                return
+            rows = list(reader)
+        if any(None in row for row in rows):
+            raise RuntimeError(
+                f"{self.csv_path}: some rows have more values than the header has "
+                f"columns, so the file cannot be updated safely. Repair it first.")
+        tmp = self.csv_path.with_suffix('.csv.tmp')
+        with open(tmp, 'w', newline='', encoding='utf-8') as f:
+            # Existing columns keep their order (including any this version no
+            # longer knows); new ones go at the end.
+            columns = list(header) + [c for c in CSV_COLUMNS if c not in header]
+            writer = csv.DictWriter(f, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows(rows)
+        os.replace(tmp, self.csv_path)
 
     def _generate_exp_id(self, exp_type: str, brain: str) -> str:
         """Generate a unique experiment ID."""
@@ -260,8 +318,13 @@ class ExperimentTracker:
         # Ensure all columns exist with empty string as default
         full_row = {col: row.get(col, "") for col in CSV_COLUMNS}
 
+        # Append in the FILE's column order, not this code's: the two differ
+        # whenever the file has a column this version does not know, and writing
+        # in the wrong order would put values under the wrong names.
+        with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
+            header = next(csv.reader(f), None) or CSV_COLUMNS
         with open(self.csv_path, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+            writer = csv.DictWriter(f, fieldnames=header, extrasaction='ignore')
             writer.writerow(full_row)
 
     def _read_all(self) -> List[Dict[str, str]]:
@@ -326,6 +389,11 @@ class ExperimentTracker:
         det_z_start: Optional[int] = None,    # Starting Z slice (for partial)
         det_z_end: Optional[int] = None,      # Ending Z slice (for partial)
         det_z_center: Optional[int] = None,   # Center Z slice (for partial)
+        # The other half of the method (see DETECTION_METHOD_COLUMNS)
+        ball_overlap: Optional[float] = None,
+        soma_spread: Optional[float] = None,
+        log_sigma: Optional[float] = None,
+        max_cluster: Optional[int] = None,
     ) -> str:
         """
         Log a cell detection experiment.
@@ -371,6 +439,10 @@ class ExperimentTracker:
             "det_ball_z": ball_z,
             "det_soma_diameter": soma_diameter,
             "det_threshold": threshold,
+            "det_ball_overlap": ball_overlap,
+            "det_soma_spread": soma_spread,
+            "det_log_sigma": log_sigma,
+            "det_max_cluster": max_cluster,
             "det_scope": det_scope,
             "det_z_start": det_z_start,
             "det_z_end": det_z_end,
@@ -1025,37 +1097,48 @@ class ExperimentTracker:
 
     def get_paradigm_detection_settings(self, imaging_paradigm: str) -> Optional[Dict[str, Any]]:
         """
-        Get recommended detection settings for an imaging paradigm.
+        The settled detection method for an imaging paradigm.
 
-        Returns a dict with detection parameters that worked well for
-        other brains with the same imaging paradigm.
+        The method is the run a person marked Paradigm Best for that imaging
+        setup (magnification + z-step). All eight of its settings come from
+        that run's row (DETECTION_METHOD_COLUMNS) -- none are filled in here.
 
         Args:
             imaging_paradigm: e.g., "1p625x_z4"
 
         Returns:
-            Dict with keys: ball_xy, ball_z, soma_diameter, threshold, preset
-            Or None if no paradigm best found
+            None if no run is marked best for the paradigm. Otherwise a dict
+            with the eight settings (ball_xy, ball_z, soma_diameter, threshold,
+            ball_overlap, soma_spread, log_sigma, max_cluster), plus preset,
+            source_exp_id, source_brain, and 'missing': the names of any of
+            the eight the run's row does not record. A caller must NOT run
+            detection while 'missing' is non-empty -- it would be filling half
+            the method with someone else's numbers.
         """
         best = self.get_best_for_paradigm(imaging_paradigm, exp_type="detection")
         if not best:
             return None
 
-        # Every number here goes through float() BEFORE int(), because the tracker
-        # is a CSV: a run logged as threshold 8 comes back as the text "8.0" once
-        # anything (pandas, a spreadsheet, an earlier run) has rewritten the file.
-        # int("8.0") raises, and it raised here -- which meant asking for the
-        # paradigm's proven settings crashed instead of returning them, so every
-        # caller silently fell back to the "balanced" preset nobody calibrated.
-        return {
-            'ball_xy': float(best.get('det_ball_xy') or 6),
-            'ball_z': float(best.get('det_ball_z') or 15),
-            'soma_diameter': float(best.get('det_soma_diameter') or 16),
-            'threshold': int(float(best.get('det_threshold') or 10)),
+        # No defaults for absent values. These used to read `or 6`, `or 15`
+        # ... -- the generic numbers -- so a row missing a setting quietly
+        # became a different method. An absent value is reported in 'missing'.
+        # Numbers go through float() first because the CSV may hold "8.0".
+        settings = {'missing': []}
+        for name, column in DETECTION_METHOD_COLUMNS.items():
+            raw = (best.get(column) or '').strip()
+            if not raw:
+                settings[name] = None
+                settings['missing'].append(name)
+            elif name in ('threshold', 'max_cluster'):
+                settings[name] = int(float(raw))
+            else:
+                settings[name] = float(raw)
+        settings.update({
             'preset': best.get('det_preset') or 'custom',
             'source_exp_id': best.get('exp_id'),
             'source_brain': best.get('brain'),
-        }
+        })
+        return settings
 
     def get_paradigm_model(self, imaging_paradigm: str) -> Optional[str]:
         """
