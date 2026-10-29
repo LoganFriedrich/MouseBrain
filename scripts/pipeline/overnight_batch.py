@@ -53,7 +53,7 @@ log = logging.getLogger(__name__)
 sys.path.insert(0, str(Path(__file__).parent))
 
 from mousebrain.config import (
-    BRAINS_ROOT, DATA_SUMMARY_DIR, SCRIPTS_DIR, MODELS_DIR,
+    BRAINS_ROOT, DATA_SUMMARY_DIR, MODELS_DIR, find_script,
     CALIBRATION_RUNS_CSV, REGION_COUNTS_CSV, parse_brain_name
 )
 
@@ -169,7 +169,7 @@ def run_registration(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
     log.info(f"[{brain_name}] Running registration...")
     sys.stdout.flush()
 
-    script = SCRIPTS_DIR / "3_register_to_atlas.py"
+    script = find_script("3_register_to_atlas.py")
 
     # Use --brain to filter to just this specific brain
     # Stream output directly so we can see progress
@@ -178,7 +178,7 @@ def run_registration(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
             [sys.executable, str(script), "--batch", "--brain", brain_name],
             capture_output=False,  # Stream output to console
             timeout=7200,  # 2 hour timeout
-            cwd=str(SCRIPTS_DIR)
+            cwd=str(script.parent)
         )
 
         # Check return code AND verify output files exist
@@ -212,7 +212,7 @@ def run_detection(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
     log.info(f"[{brain_name}] Running detection with the settled method")
     sys.stdout.flush()
 
-    script = SCRIPTS_DIR / "4_detect_cells.py"
+    script = find_script("4_detect_cells.py")
     cmd = [sys.executable, str(script), "--brain", brain_name]
 
     try:
@@ -220,7 +220,7 @@ def run_detection(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
             cmd,
             capture_output=False,  # Stream output to console
             timeout=14400,  # 4 hour timeout
-            cwd=str(SCRIPTS_DIR)
+            cwd=str(script.parent)
         )
 
         if result.returncode == 0:
@@ -306,7 +306,7 @@ def run_classification(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
     """Run cell classification using paradigm-specific trained model."""
     log.info(f"[{brain_name}] Running classification...")
 
-    script = SCRIPTS_DIR / "5_classify_cells.py"
+    script = find_script("5_classify_cells.py")
 
     # Extract imaging paradigm from brain name
     brain_info = parse_brain_name(brain_name)
@@ -331,7 +331,7 @@ def run_classification(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=3600,  # 1 hour timeout
-            cwd=str(SCRIPTS_DIR)
+            cwd=str(script.parent)
         )
 
         if result.returncode == 0:
@@ -350,7 +350,7 @@ def run_counting(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
     """Run regional cell counting."""
     log.info(f"[{brain_name}] Running region counting...")
 
-    script = SCRIPTS_DIR / "6_count_regions.py"
+    script = find_script("6_count_regions.py")
 
     try:
         result = subprocess.run(
@@ -358,7 +358,7 @@ def run_counting(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=1800,  # 30 min timeout
-            cwd=str(SCRIPTS_DIR)
+            cwd=str(script.parent)
         )
 
         if result.returncode == 0:
