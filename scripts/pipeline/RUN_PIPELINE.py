@@ -295,19 +295,12 @@ def show_brain_status(brain):
             run_script('3_register_to_atlas.py')
 
     elif status['step'] == 'detect':
-        # Ask about detection settings
-        print("\nCell detection finds candidate cells in your images.")
-
-        choice = ask("Which detection preset?", [
-            "Balanced (recommended for most cases)",
-            "Sensitive (catches more, but more false positives)",
-            "Conservative (fewer false positives, may miss some)",
-            "Large cells (for motor neurons, Purkinje cells)",
-        ])
-
-        presets = ['balanced', 'sensitive', 'conservative', 'large_cells']
-        if choice is not None:
-            run_script('4_detect_cells.py', ['--brain', brain_name, '--preset', presets[choice]])
+        # No choice to make: step 4 uses the settled method for this brain's
+        # imaging setup (the tracker run marked Paradigm Best), and says how to
+        # settle one if there is none.
+        print("\nCell detection finds candidate cells in your images,")
+        print("using the settled detection method for this kind of imaging.")
+        run_script('4_detect_cells.py', ['--brain', brain_name])
 
     elif status['step'] == 'prefilter':
         print("\nPre-filtering candidates using atlas registration...")

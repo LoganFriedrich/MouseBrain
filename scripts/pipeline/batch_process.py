@@ -469,7 +469,9 @@ def process_brain(brain_path: Path, brain_name: str, auto_approve: bool = False)
 
     # Step 4: Detect cells
     print("\n[4/6] Detecting cells...")
-    success, msg = run_step('4_detect_cells.py', ['--brain', brain_name, '--preset', 'balanced'])
+    # Step 4 uses the settled method for the brain's imaging setup (the tracker's
+    # Paradigm Best run) and fails, with the reason, when there is none.
+    success, msg = run_step('4_detect_cells.py', ['--brain', brain_name])
     if not success:
         results['qc_detect'] = f"FAIL: {msg}"
         results['status'] = QCStatus.FAIL
