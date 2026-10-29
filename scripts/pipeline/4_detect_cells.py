@@ -65,8 +65,9 @@ its notes, so two runs are never silently compared across spaces.
 ================================================================================
 THE SETTLED METHOD
 ================================================================================
-    The detection settings (ball_xy, ball_z, soma diameter, threshold) come
-    from the calibration-run tracker: the run a person marked "Paradigm Best"
+    All eight detection settings (ball_xy, ball_z, soma diameter, threshold,
+    ball overlap, soma spread, LoG sigma, max cluster size) come from the
+    calibration-run tracker: the run a person marked "Paradigm Best"
     in Setup & Tuning for this brain's imaging setup -- the magnification and
     z-step at the end of the brain name, e.g. 1p625x_z4. That is the method
     the lab tuned and settled on, so every brain imaged the same way is
@@ -78,8 +79,10 @@ THE SETTLED METHOD
     and says so. There is deliberately no built-in fallback: the generic
     starting values that used to be here were never tuned on real brains, and
     quietly using them produced counts that looked plausible and were not.
-    Either tune and mark a run for the new imaging setup, or give all four
-    settings on the command line.
+    It also stops if the Paradigm Best run does not record all eight (runs
+    logged before 2026-10-29 recorded only the first four): half a method is
+    not the method. Either tune and mark a run for the new imaging setup, or
+    give all eight settings on the command line.
 
     Any setting given on the command line replaces that one setting; the run
     is then logged as "custom", not as the settled method.
@@ -446,6 +449,10 @@ def run_cellfinder_detect(
     print(f"        ball_z_size: {params['ball_z_size']}")
     print(f"        soma_diameter: {params['soma_diameter']}")
     print(f"        threshold: {params['threshold']}")
+    print(f"        ball_overlap_fraction: {params['ball_overlap_fraction']}")
+    print(f"        soma_spread_factor: {params['soma_spread_factor']}")
+    print(f"        log_sigma_size: {params['log_sigma_size']}")
+    print(f"        max_cluster_size: {params['max_cluster_size']}")
     print()
 
     start_time = time.time()
@@ -464,13 +471,13 @@ def run_cellfinder_detect(
             end_plane=-1,  # All planes
             voxel_sizes=(float(voxel_sizes[0]), float(voxel_sizes[1]), float(voxel_sizes[2])),
             soma_diameter=float(params['soma_diameter']),
-            max_cluster_size=100000,
+            max_cluster_size=int(params['max_cluster_size']),
             ball_xy_size=float(params['ball_xy_size']),
             ball_z_size=float(params['ball_z_size']),
-            ball_overlap_fraction=0.6,
-            soma_spread_factor=1.4,
+            ball_overlap_fraction=float(params['ball_overlap_fraction']),
+            soma_spread_factor=float(params['soma_spread_factor']),
             n_free_cpus=n_free_cpus,
-            log_sigma_size=0.2,
+            log_sigma_size=float(params['log_sigma_size']),
             n_sds_above_mean_thresh=float(params['threshold']),  # This is the threshold parameter
         )
 
@@ -566,9 +573,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Settings come from the settled method: the tracker run marked "Paradigm Best"
-for the brain's imaging setup. Any of --ball-xy/--ball-z/--soma-diameter/
---threshold replaces that one setting. With no settled method for the imaging
-setup, all four must be given.
+for the brain's imaging setup. Any setting given below replaces that one
+setting. With no complete settled method for the imaging setup, all eight
+must be given.
 
 Examples:
     python 4_detect_cells.py                                    # Interactive mode
@@ -583,6 +590,10 @@ Examples:
     parser.add_argument('--ball-z', type=int, help='Ball filter Z size')
     parser.add_argument('--soma-diameter', type=int, help='Expected soma diameter')
     parser.add_argument('--threshold', type=int, help='Detection threshold')
+    parser.add_argument('--ball-overlap', type=float, help='Ball overlap fraction')
+    parser.add_argument('--soma-spread', type=float, help='Soma spread factor')
+    parser.add_argument('--log-sigma', type=float, help='LoG sigma size')
+    parser.add_argument('--max-cluster', type=int, help='Max cluster size')
     
     parser.add_argument('--source', choices=['auto'] + list(INPUT_SOURCES),
                         default='auto',
@@ -672,12 +683,19 @@ Examples:
     imaging_paradigm = parsed.get('imaging_params', '')
     settled = (tracker.get_paradigm_detection_settings(imaging_paradigm)
                if imaging_paradigm else None)
+    incomplete = settled['missing'] if settled else []
+    if incomplete:
+        settled = None
 
     given = {
         'ball_xy_size': args.ball_xy,
         'ball_z_size': args.ball_z,
         'soma_diameter': args.soma_diameter,
         'threshold': args.threshold,
+        'ball_overlap_fraction': args.ball_overlap,
+        'soma_spread_factor': args.soma_spread,
+        'log_sigma_size': args.log_sigma,
+        'max_cluster_size': args.max_cluster,
     }
     given = {k: v for k, v in given.items() if v is not None}
 
@@ -686,13 +704,19 @@ Examples:
         print(f"  from run {settled.get('source_exp_id')} on {settled.get('source_brain')}")
         print(f"  ball_xy={settled['ball_xy']:.0f}, ball_z={settled['ball_z']:.0f}, "
               f"soma={settled['soma_diameter']:.0f}, threshold={settled['threshold']}")
+        print(f"  ball_overlap={settled['ball_overlap']}, soma_spread={settled['soma_spread']}, "
+              f"log_sigma={settled['log_sigma']}, max_cluster={settled['max_cluster']}")
         params = {
             'ball_xy_size': int(settled['ball_xy']),
             'ball_z_size': int(settled['ball_z']),
             'soma_diameter': int(settled['soma_diameter']),
             'threshold': int(settled['threshold']),
+            'ball_overlap_fraction': settled['ball_overlap'],
+            'soma_spread_factor': settled['soma_spread'],
+            'log_sigma_size': settled['log_sigma'],
+            'max_cluster_size': settled['max_cluster'],
         }
-    elif len(given) == 4:
+    elif len(given) == 8:
         params = {}
     else:
         print("\n" + "=" * 60)
@@ -700,17 +724,25 @@ Examples:
         print("=" * 60)
         print(f"\nBrain: {pipeline_folder.name}")
         print(f"Imaging setup: {imaging_paradigm or '(could not be read from the name)'}")
-        print("\nNo run in the tracker is marked Paradigm Best for this imaging")
-        print("setup, so there are no tuned settings to use, and this script will")
-        print("not guess.")
+        if incomplete:
+            print("\nThe run marked Paradigm Best for this imaging setup does not")
+            print(f"record all of its settings (missing: {', '.join(incomplete)}),")
+            print("so the method cannot be reproduced, and this script will not")
+            print("fill the gaps with someone else's numbers. Mark a run that")
+            print("records all eight, or give the missing ones on the command line.")
+        else:
+            print("\nNo run in the tracker is marked Paradigm Best for this imaging")
+            print("setup, so there are no tuned settings to use, and this script will")
+            print("not guess.")
         print("\nTo settle a method for it:")
         print("  1. napari: Plugins -> BrainTools -> 3D: 2. Setup & Tuning")
         print("  2. Tune detection on this brain until the cells look right")
         print("  3. Select that run and click 'Mark as Paradigm Best'")
         print("Every later brain imaged this way then uses those settings.")
-        print("\nOr give all four settings yourself:")
+        print("\nOr give all eight settings yourself:")
         print(f"  python 4_detect_cells.py --brain {pipeline_folder.name} "
-              "--ball-xy N --ball-z N --soma-diameter N --threshold N")
+              "--ball-xy N --ball-z N --soma-diameter N --threshold N "
+              "--ball-overlap N --soma-spread N --log-sigma N --max-cluster N")
         print("=" * 60)
         sys.exit(1)
 
@@ -770,6 +802,10 @@ Examples:
         ball_z=params['ball_z_size'],
         soma_diameter=params['soma_diameter'],
         threshold=params['threshold'],
+        ball_overlap=params['ball_overlap_fraction'],
+        soma_spread=params['soma_spread_factor'],
+        log_sigma=params['log_sigma_size'],
+        max_cluster=params['max_cluster_size'],
         voxel_z=voxel_sizes[0],
         voxel_xy=voxel_sizes[1],
         input_path=str(input_folder),
