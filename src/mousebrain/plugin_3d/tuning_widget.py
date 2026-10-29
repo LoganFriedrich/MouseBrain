@@ -1151,23 +1151,20 @@ class TuningWidget(QWidget):
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        # Parameter presets (quick starting points)
-        preset_group = QGroupBox("Quick Start Presets (click to load)")
+        # The settled method: the run marked Paradigm Best for this brain's
+        # imaging setup, all eight settings, read from the tracker. This replaces
+        # four generic presets that were placeholders from before detection was
+        # tuned on real brains, and a "proven" button whose numbers were typed
+        # into the code -- the method now lives in the tracker, in one place.
+        preset_group = QGroupBox("Start from")
         preset_layout = QVBoxLayout()
         preset_group.setLayout(preset_layout)
-
-        preset_btn_layout = QHBoxLayout()
-        for preset_name, tooltip in [
-            ("proven", "YOUR tested settings - ball_xy=10, ball_z=10, soma=10, thresh=8, spread=1.0"),
-            ("sensitive", "Low thresholds, catches more - ball_xy=4, ball_z=10, soma=12, thresh=8"),
-            ("balanced", "Default settings - ball_xy=6, ball_z=15, soma=16, thresh=10"),
-            ("conservative", "High thresholds, fewer FPs - ball_xy=8, ball_z=20, soma=20, thresh=12"),
-        ]:
-            btn = QPushButton(preset_name)
-            btn.setToolTip(tooltip)
-            btn.clicked.connect(lambda checked, p=preset_name: self.load_preset(p))
-            preset_btn_layout.addWidget(btn)
-        preset_layout.addLayout(preset_btn_layout)
+        settled_btn = QPushButton("Settled method (from tracker)")
+        settled_btn.setToolTip(
+            "Load all eight detection settings of the run marked\n"
+            "'Mark as Paradigm Best' for this brain's imaging setup.")
+        settled_btn.clicked.connect(self.load_settled_method)
+        preset_layout.addWidget(settled_btn)
         layout.addWidget(preset_group)
 
         # ALL detection parameters - organized by category
@@ -2078,7 +2075,7 @@ class TuningWidget(QWidget):
 
         # Check for paradigm best settings
         settings = self.tracker.get_paradigm_detection_settings(paradigm)
-        if not settings:
+        if not settings or settings['missing']:
             return
 
         # Offer to apply settings
@@ -2091,7 +2088,11 @@ class TuningWidget(QWidget):
             f"  Ball XY: {settings['ball_xy']}\n"
             f"  Ball Z: {settings['ball_z']}\n"
             f"  Soma: {settings['soma_diameter']}\n"
-            f"  Threshold: {settings['threshold']}\n\n"
+            f"  Threshold: {settings['threshold']}\n"
+            f"  Ball overlap: {settings['ball_overlap']}\n"
+            f"  Soma spread: {settings['soma_spread']}\n"
+            f"  LoG sigma: {settings['log_sigma']}\n"
+            f"  Max cluster: {settings['max_cluster']}\n\n"
             f"Apply these settings?",
             QMessageBox.Yes | QMessageBox.No
         )
@@ -2109,33 +2110,41 @@ class TuningWidget(QWidget):
             self.soma_diameter.setValue(int(settings['soma_diameter']))
         if 'threshold' in settings and hasattr(self, 'threshold'):
             self.threshold.setValue(int(settings['threshold']))
+        if settings.get('ball_overlap') is not None:
+            self.ball_overlap_fraction.setValue(settings['ball_overlap'])
+        if settings.get('soma_spread') is not None:
+            self.soma_spread_factor.setValue(settings['soma_spread'])
+        if settings.get('log_sigma') is not None:
+            self.log_sigma_size.setValue(settings['log_sigma'])
+        if settings.get('max_cluster') is not None:
+            self.max_cluster_size.setValue(int(settings['max_cluster']))
 
         source = settings.get('source_brain', 'paradigm best')
         print(f"[Connectome] Applied paradigm settings from {source}")
 
-    def load_preset(self, preset_name):
-        """Load a preset configuration."""
-        presets = {
-            "sensitive": {"ball_xy": 4, "ball_z": 10, "soma": 12, "thresh": 8, "overlap": 0.6, "spread": 1.4},
-            "balanced": {"ball_xy": 6, "ball_z": 15, "soma": 16, "thresh": 10, "overlap": 0.6, "spread": 1.4},
-            "conservative": {"ball_xy": 8, "ball_z": 20, "soma": 20, "thresh": 12, "overlap": 0.6, "spread": 1.4},
-            "large_cells": {"ball_xy": 10, "ball_z": 25, "soma": 25, "thresh": 10, "overlap": 0.6, "spread": 1.4},
-            # Your proven settings from the spreadsheet
-            "proven": {"ball_xy": 10, "ball_z": 10, "soma": 10, "thresh": 8, "overlap": 0.5, "spread": 1.0, "sigma": 0.2, "max_cluster": 100000000},
-        }
-        if preset_name in presets:
-            p = presets[preset_name]
-            self.ball_xy.setValue(p["ball_xy"])
-            self.ball_z.setValue(p["ball_z"])
-            self.soma_diameter.setValue(p["soma"])
-            self.threshold.setValue(p["thresh"])
-            self.ball_overlap_fraction.setValue(p.get("overlap", 0.6))
-            self.soma_spread_factor.setValue(p.get("spread", 1.4))
-            if "sigma" in p:
-                self.log_sigma_size.setValue(p["sigma"])
-            if "max_cluster" in p:
-                self.max_cluster_size.setValue(p["max_cluster"])
-            print(f"[Connectome] Loaded preset: {preset_name}")
+    def load_settled_method(self):
+        """Fill the detection settings with the settled method for this brain."""
+        if not self.current_brain or not self.tracker:
+            QMessageBox.warning(self, "Error", "Select a brain first")
+            return
+        from mousebrain.config import parse_brain_name
+        paradigm = parse_brain_name(self.current_brain.name).get('imaging_params', '')
+        settings = self.tracker.get_paradigm_detection_settings(paradigm) if paradigm else None
+        if not settings:
+            QMessageBox.warning(
+                self, "No settled method",
+                f"No run is marked Paradigm Best for imaging setup "
+                f"'{paradigm or 'unknown'}'.\n\nTune detection on this brain, then "
+                f"select the run and click 'Mark as Paradigm Best'.")
+            return
+        if settings['missing']:
+            QMessageBox.warning(
+                self, "Settled method incomplete",
+                f"The Paradigm Best run for '{paradigm}' ({settings['source_exp_id']}) "
+                f"does not record: {', '.join(settings['missing'])}.\n\n"
+                f"Nothing was loaded: half a method is not the method.")
+            return
+        self._apply_paradigm_settings(settings)
 
     def set_z_range_from_viewer(self):
         """Set Z range centered on current napari viewer position."""
@@ -2326,6 +2335,12 @@ class TuningWidget(QWidget):
                 ball_z=params['ball_z_size'],
                 soma_diameter=params['soma_diameter'],
                 threshold=params['threshold'],
+                # The other half of the method. Without these a run marked
+                # Paradigm Best could not be reproduced (see tracker.py).
+                ball_overlap=params['ball_overlap_fraction'],
+                soma_spread=params['soma_spread_factor'],
+                log_sigma=params['log_sigma_size'],
+                max_cluster=params['max_cluster_size'],
                 voxel_z=voxel_sizes[0],
                 voxel_xy=voxel_sizes[1],
                 output_path=str(output_path),
