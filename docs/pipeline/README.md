@@ -44,7 +44,7 @@ util_approve_registration.py   → Approve registration after QC review
 
 | Script | Purpose |
 |--------|---------|
-| `4_detect_cells.py` | cellfinder detection with presets (sensitive/balanced/conservative) |
+| `4_detect_cells.py` | cellfinder detection with the settled method (see below) |
 | `5_classify_cells.py` | cellfinder classification with trained model |
 | `6_count_regions.py` | brainglobe-segmentation regional counting |
 | `experiment_tracker.py` | Central CSV logging for all experiments |
@@ -83,24 +83,21 @@ The experiment tracker creates its CSV at:
 # Interactive mode
 python 4_detect_cells.py
 
-# With preset
-python 4_detect_cells.py --brain <brain_id> --preset balanced
+# The normal case: the settled method for this brain's imaging setup
+python 4_detect_cells.py --brain <brain_id>
 
-# With whatever settings are already proven for this kind of imaging
-python 4_detect_cells.py --brain <brain_id> --routine
-
-# Custom parameters
-python 4_detect_cells.py --brain <brain_id> --ball-xy 5 --ball-z 12
+# A trial with one setting changed (logged as "custom")
+python 4_detect_cells.py --brain <brain_id> --threshold 9
 
 # On the whole extracted stack, before cropping or registration
-python 4_detect_cells.py --brain <brain_id> --source full --routine
+python 4_detect_cells.py --brain <brain_id> --source full
 ```
 
-`--routine` reads the best settings recorded for this brain's imaging paradigm
-(magnification and Z-step, taken from the brain's folder name) out of the
-calibration tracker, so you do not have to remember them or type them. If
-nobody has marked a best run for that paradigm yet, it falls back to the
-`balanced` preset and says so on screen.
+Step 4 reads all eight detection settings from the run marked Paradigm Best
+for this brain's imaging setup (magnification and Z-step, taken from the brain's
+folder name), so nobody has to remember them or type them. If there is no such
+run, or it does not record all eight, step 4 stops and says what to do -- see
+"The Settled Detection Method" below.
 
 ### Script 5: Classification
 ```bash
@@ -250,7 +247,7 @@ per brain region, which is step 6.
 In the terminal:
 
 ```bash
-python 4_detect_cells.py --brain <brain_id> --source full --routine
+python 4_detect_cells.py --brain <brain_id> --source full
 ```
 
 In the GUI: launch `mousebrain`, open `Plugins -> BrainTools -> 3D: 2. Setup &
@@ -330,14 +327,55 @@ counted by mistake. The tracker records which images each run used
 in its notes, for the same reason: two runs from different spaces are not
 comparable as counts, and nobody should have to decode a path to notice that.
 
-## Detection Presets
+## The Settled Detection Method
 
-| Preset | ball_xy | ball_z | soma | threshold | Use For |
-|--------|---------|--------|------|-----------|---------|
-| sensitive | 4 | 10 | 12 | 8 | Catching all cells, accept false positives |
-| balanced | 6 | 15 | 16 | 10 | Default starting point |
-| conservative | 8 | 20 | 20 | 12 | Fewer false positives |
-| large_cells | 10 | 25 | 25 | 10 | Motor neurons, Purkinje cells |
+Detection always uses **the settled method**: the detection settings someone
+tuned on a real brain and then marked as the ones to use for every brain imaged
+the same way. There is no menu of presets to choose from.
+
+**Where it comes from.** In napari, `Plugins -> BrainTools -> 3D: 2. Setup &
+Tuning`, a person tunes detection on a brain until the cells look right, selects
+that run and clicks **Mark as Paradigm Best**. That run, in the calibration
+tracker (`2_Data_Summary/calibration_runs.csv`), is the settled method for its
+**imaging setup** -- the magnification and z-step at the end of the brain name
+(for example `1p625x_z4`). Marking a different run later changes the method for
+every brain detected after that; no code changes.
+
+**What it contains.** All eight cellfinder settings, each its own tracker column:
+
+| Setting | Tracker column |
+|---------|----------------|
+| ball filter XY size | `det_ball_xy` |
+| ball filter Z size | `det_ball_z` |
+| soma diameter | `det_soma_diameter` |
+| threshold (SDs above mean) | `det_threshold` |
+| ball overlap fraction | `det_ball_overlap` |
+| soma spread factor | `det_soma_spread` |
+| LoG sigma size | `det_log_sigma` |
+| max cluster size | `det_max_cluster` |
+
+All eight matter. Changing only the last four, with the first four held fixed,
+moved most of the cells a run found (see the `det_ball_overlap` comment in
+`src/mousebrain/tracker.py`). Runs logged before the last four columns existed
+recorded only the first four; such a run cannot be used as the settled method
+until its other four are filled in.
+
+**Who uses it.** Step 4, the Pipeline Dashboard (`3D: 1. Pipeline Dashboard`:
+the "Detection settings" box shows "Settled method (from tracker)" with the
+selected brain's eight numbers and the run they came from), Setup & Tuning's
+**Settled method (from tracker)** button, `batch_process.py`,
+`overnight_batch.py` and `RUN_PIPELINE.py`.
+
+**When there is none.** If no run is marked Paradigm Best for a brain's imaging
+setup, or that run does not record all eight settings, detection does not run:
+the dashboard shows the reason in red and step 4 stops with a message saying
+what to do. It never falls back to built-in numbers. (Four generic presets --
+sensitive, balanced, conservative, large_cells -- used to fill that gap. They
+were never tuned on real brains, and the counts they produced looked plausible
+and were not, so they were removed.)
+
+**Changing one setting for a trial.** Give it to step 4 on the command line,
+e.g. `--threshold 9`. The run is logged as `custom`, never as the settled method.
 
 ## Folder Structure (Updated)
 

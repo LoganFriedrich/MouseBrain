@@ -163,38 +163,42 @@ cellfinder uses a 3D ball (sphere) filter approach:
 4. **Connected component labeling** — adjacent bright voxels are grouped into candidate objects
 5. **Centroid extraction** — each candidate gets a (z, y, x) coordinate
 
-### Detection Presets
+### The Settled Method (no presets)
 
-Four presets provide tested parameter combinations:
-
-| Preset | ball_xy | ball_z | soma_diameter | threshold | Use Case |
-|--------|---------|--------|---------------|-----------|----------|
-| `sensitive` | 4 | 10 | 12 | 8 | Catches more cells, more false positives |
-| `balanced` | 6 | 15 | 16 | 10 | Good default starting point |
-| `conservative` | 8 | 20 | 20 | 12 | Fewer false positives, may miss dim cells |
-| `large_cells` | 10 | 25 | 25 | 10 | Motor neurons, Purkinje cells, etc. |
-
-### Paradigm-Best Settings
-
-If a brain has previously been processed with the same imaging paradigm (same magnification and Z-step, e.g., `1p625x_z4`), the tracker can retrieve the best-performing detection parameters from that paradigm. This avoids re-tuning for each new brain of the same type.
-
-The paradigm is extracted from the brain name: `349_CNT_01_02_1p625x_z4` → paradigm `1p625x_z4`.
+Detection always uses the **settled method** for the brain's imaging setup: the
+run a person marked **Paradigm Best** in Setup & Tuning for brains with the same
+magnification and Z-step (`349_CNT_01_02_1p625x_z4` -> setup `1p625x_z4`). The
+tracker stores all eight settings of that run, and step 4, the Pipeline
+Dashboard and Setup & Tuning all read them from there
+(`ExperimentTracker.get_paradigm_detection_settings`). With no Paradigm Best run
+for a setup, or one that does not record all eight, detection refuses to run
+rather than substitute built-in values. The four generic presets that used to be
+offered were placeholders from before detection was tuned on real brains, and
+were removed.
 
 ### Parameters
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `ball_xy_size` | 6 (balanced) | Ball filter radius in XY plane (pixels). Larger = detects larger somas |
-| `ball_z_size` | 15 (balanced) | Ball filter radius in Z (pixels). Typically 2–3x `ball_xy` due to anisotropic voxels |
-| `soma_diameter` | 16 (balanced) | Expected soma diameter (pixels). Used for connected component grouping |
-| `n_sds_above_mean_thresh` | 10 (balanced) | Detection threshold in standard deviations. Higher = fewer, brighter detections |
-| `n_free_cpus` | 2 | CPUs to leave free during detection |
+All eight come from the settled method; none has a built-in default in step 4.
+
+| Parameter | Tracker column | Description |
+|-----------|----------------|-------------|
+| `ball_xy_size` | `det_ball_xy` | Ball filter size in the XY plane. Larger = detects larger somas |
+| `ball_z_size` | `det_ball_z` | Ball filter size in Z |
+| `soma_diameter` | `det_soma_diameter` | Expected soma diameter. Used for connected component grouping |
+| `n_sds_above_mean_thresh` | `det_threshold` | Detection threshold in standard deviations. Higher = fewer, brighter detections |
+| `ball_overlap_fraction` | `det_ball_overlap` | Fraction of the ball filter that must be filled by foreground voxels, centred on a voxel, to keep that voxel |
+| `soma_spread_factor` | `det_soma_spread` | Spread factor used to set the largest volume treated as one cell before a cluster is split up |
+| `log_sigma_size` | `det_log_sigma` | Width of the in-plane Laplacian-of-Gaussian filter, as a fraction of soma diameter |
+| `max_cluster_size` | `det_max_cluster` | Largest cluster (cubic µm) that splitting is attempted on; bigger ones are treated as artifacts |
+
+`n_free_cpus` is not part of the method; step 4 keeps cellfinder under Windows'
+63-process limit whatever it is set to.
 
 ### Known Limitations
 
 - **Anisotropic voxels require separate XY and Z parameters.** Light-sheet data typically has ~4 µm XY but ~4 µm Z, but the ball filter treats them independently.
 - **Ball filter assumes spherical cells.** Elongated neurons (e.g., pyramidal cells) may be split into multiple candidates or missed entirely.
-- **Threshold coupling.** `ball_xy_size`, `ball_z_size`, and `threshold` interact — changing one often requires adjusting the others. The presets provide tested combinations.
+- **Threshold coupling.** `ball_xy_size`, `ball_z_size`, and `threshold` interact — changing one often requires adjusting the others, which is why the settled method stores all eight together.
 - **No local adaptation.** A single global threshold is applied. Regions with high autofluorescence (e.g., hippocampus) may generate more false positives than quiet regions.
 
 ---
@@ -369,7 +373,7 @@ This implements a form of transfer learning at the parameter level — settings 
 | Organization | v1.0.0 | Folder structure creation |
 | Extraction | v1.4.0 | Gradient-based crop detection, channel identification by sparsity+texture |
 | Registration | v2.0.2 | brainreg with archiving, QC generation, approval gating |
-| Detection | v1.0.1 | Python API (replaces deprecated CLI), 4 presets, paradigm-best lookup |
+| Detection | v1.0.1 | Python API (replaces deprecated CLI), settled method (all eight settings) from the tracker |
 | Classification | v1.0.0 | ResNet50 with .keras support, paradigm-best model lookup |
 | Region Counting | v1.0.1 | brainglobe-utils coordinate transformation, per-region CSV |
 | Tracking | — | 49-column CSV with paradigm-best retrieval |

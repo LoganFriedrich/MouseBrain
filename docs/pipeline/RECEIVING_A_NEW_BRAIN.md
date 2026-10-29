@@ -167,7 +167,7 @@ approve the registration QC by eye, then detect, classify, and count.
 you can run detection on the whole extracted stack now:
 
 ```
-python 4_detect_cells.py --brain <brain_id> --source full --routine
+python 4_detect_cells.py --brain <brain_id> --source full
 ```
 
 That gives you a cell count and candidates to look at, but no counts per brain

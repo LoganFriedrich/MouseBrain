@@ -26,19 +26,31 @@ The optimization loop:
 2. Load your cropped brain image (from `2_Cropped_For_Registration/ch0/`)
 3. Go to `Plugins` > `cellfinder` > `Cell detection`
 4. Adjust parameters in the widget:
-   - **Soma diameter**: Expected cell body size in microns (start with 16)
-   - **Ball filter XY/Z**: Spatial filter sizes (start with 6/15)
-   - **Threshold**: Detection sensitivity (start with 10)
+   - **Soma diameter**: Expected cell body size in microns
+   - **Ball filter XY/Z**: Spatial filter sizes
+   - **Threshold**: Detection sensitivity
+   - and the other four (ball overlap, soma spread, LoG sigma, max cluster)
 5. Run on a small region first to test
+
+Setup & Tuning (`Plugins -> BrainTools -> 3D: 2. Setup & Tuning`) does the same
+with every run logged, all eight settings included. Its **Settled method (from
+tracker)** button starts you from the method already settled for this imaging
+setup, if there is one. When a run is right, select it and click **Mark as
+Paradigm Best**: that makes it the settled method every brain imaged this way is
+detected with (README, "The Settled Detection Method").
 
 ### Using the CLI (recommended for full runs)
 
 ```bash
-# With a preset as starting point
-python 4_detect_cells.py --brain YOUR_BRAIN --preset balanced
+# The settled method for this brain's imaging setup
+python 4_detect_cells.py --brain YOUR_BRAIN
 
-# With custom parameters
-python 4_detect_cells.py --brain YOUR_BRAIN --ball-xy 6 --ball-z 15 --soma-diameter 16 --threshold 10
+# A trial with some settings changed (logged as "custom")
+python 4_detect_cells.py --brain YOUR_BRAIN --ball-xy 8 --threshold 9
+
+# No settled method yet: give all eight
+python 4_detect_cells.py --brain YOUR_BRAIN --ball-xy N --ball-z N --soma-diameter N \
+    --threshold N --ball-overlap N --soma-spread N --log-sigma N --max-cluster N
 ```
 
 ### Parameter guidance
@@ -99,19 +111,19 @@ These regions are most important for functional recovery analysis:
 - **Gigantocellular reticular nucleus** - motor output
 - **Corticospinal** - voluntary movement
 
-If these are consistently under reference, try more sensitive parameters.
-If over, try more conservative or check classification.
+If these are consistently under reference, try a lower threshold or smaller
+ball filter. If over, try the opposite, or check classification.
 
 ## Step 5: Review and Adjust
 
 ### If counts are too LOW (missing cells):
-- Decrease `threshold` (e.g., 10 → 8)
-- Decrease `ball_xy_size` (e.g., 6 → 4)
+- Decrease `threshold`
+- Decrease `ball_xy_size`
 - Check if `soma_diameter` matches your cells
 
 ### If counts are too HIGH (false positives):
-- Increase `threshold` (e.g., 10 → 12)
-- Increase `ball_xy_size` (e.g., 6 → 8)
+- Increase `threshold`
+- Increase `ball_xy_size`
 - Consider retraining the classifier with your false positives
 
 ### If specific regions are wrong:
@@ -143,34 +155,24 @@ After each detection, you're prompted to rate it 1-5. Use this to remember which
 ## Example Optimization Session
 
 ```bash
-# Start with balanced preset
-python 4_detect_cells.py --brain 349_CNT_01_02_1p625x_z4 --preset balanced
-python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4
-python 6_count_regions.py --brain 349_CNT_01_02_1p625x_z4
-python util_compare_to_published.py --brain 349_CNT_01_02_1p625x_z4
+# Start from the settled method (or, for a new imaging setup, all eight by hand)
+python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5
+python 5_classify_cells.py --brain 101_PROJ_01_02_2p5x_z5
+python 6_count_regions.py --brain 101_PROJ_01_02_2p5x_z5
+python util_compare_to_published.py --brain 101_PROJ_01_02_2p5x_z5
 
-# Review output - if too low, try sensitive
-python 4_detect_cells.py --brain 349_CNT_01_02_1p625x_z4 --preset sensitive
+# Review output, then try a change
+python 4_detect_cells.py --brain 101_PROJ_01_02_2p5x_z5 --threshold 9
 # ... repeat classify, count, compare
 
-# Fine-tune specific parameters
-python 4_detect_cells.py --brain 349_CNT_01_02_1p625x_z4 --ball-xy 5 --threshold 9
-# ... repeat
-
-# Check what worked best
-python experiment_tracker.py --search 349_CNT --best detection
+# When a run is right: Setup & Tuning -> select it -> Mark as Paradigm Best
 ```
 
-## Reference: Detection Presets
+## Reference: Detection Settings
 
-These are starting points, not validated optimal settings:
-
-| Preset | ball_xy | ball_z | soma | threshold | Use case |
-|--------|---------|--------|------|-----------|----------|
-| sensitive | 4 | 10 | 12 | 8 | Dim labeling, small cells |
-| balanced | 6 | 15 | 16 | 10 | General starting point |
-| conservative | 8 | 20 | 20 | 12 | Bright labeling, reduce noise |
-| large_cells | 10 | 25 | 25 | 10 | Motor neurons, Purkinje cells |
+There are no built-in presets. Detection uses the settled method for the
+brain's imaging setup, read from the tracker -- see "The Settled Detection
+Method" in README.md for what it contains and how to change it.
 
 ## Reference: Published Baseline
 
