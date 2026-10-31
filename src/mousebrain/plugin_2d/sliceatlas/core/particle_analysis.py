@@ -19,8 +19,11 @@ Usage:
     results = analyzer.measure_intensity(labels, red_channel)
 """
 
-from typing import Optional, Dict, Any, Tuple
+from typing import TYPE_CHECKING, Optional, Dict, Any, Tuple
 import numpy as np
+
+if TYPE_CHECKING:
+    import pandas
 
 
 # Lazy imports

@@ -9,9 +9,12 @@ Provides UI for:
 """
 
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from mousebrain.plugin_2d.sliceatlas.napari_plugin.main_widget import BrainSliceWidget
 
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,

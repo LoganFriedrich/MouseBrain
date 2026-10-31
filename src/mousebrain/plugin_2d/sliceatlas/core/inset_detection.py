@@ -15,8 +15,13 @@ Usage:
 """
 
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import TYPE_CHECKING, Optional, Dict, Any, List, Tuple
 import numpy as np
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from mousebrain.plugin_2d.sliceatlas.core.detection import NucleiDetector
+    from mousebrain.plugin_2d.sliceatlas.core.insets import InsetManager
 
 
 class InsetDetectionPipeline:
