@@ -3704,7 +3704,6 @@ class TuningWidget(QWidget):
                 f"Loaded previous: {exp_id}\n"
                 f"Total candidates:     {total:>8,}\n"
                 f"Interior (keep):      {len(interior):>8,}  ({len(interior)/max(total,1)*100:.1f}%)\n"
-                f"Outside brain (drop): {len(outside):>8,}  ({len(outside)/max(total,1)*100:.1f}%)"
                 + (f"\nSuspicious (flag):    {len(suspicious):>8,}  ({len(suspicious)/max(total,1)*100:.1f}%)" if suspicious else "")
             )
             self.prefilter_save_btn.setEnabled(True)
