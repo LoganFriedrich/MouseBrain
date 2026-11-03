@@ -14,8 +14,6 @@ def test_load_image(filename):
     loaded_image = load_image(filename)
     return(loaded_image.shape)
 
-sys.argv[1] = filename
-
 # CLI call load "filename"
 if len(sys.argv) > 1:
     # then the user provided a filename
