@@ -72,12 +72,17 @@ class BrainSliceWidget(QWidget):
         self._size_manually_set: bool = False
         self._peeked_metadata: Optional[Dict[str, Any]] = None
 
-        # Tracker
+        # Tracker. When it cannot be opened the reason is kept, so the steps
+        # that would have logged to it (e.g. the atlas fit at Run
+        # Quantification) can say so instead of silently logging nothing.
+        self._tracker_error: Optional[str] = None
         try:
             from ..tracker import SliceTracker
             self.tracker = SliceTracker()
-        except Exception:
+        except Exception as e:
             self.tracker = None
+            self._tracker_error = str(e)
+            print(f"[BrainSlice] Calibration tracker not available: {e}")
 
         # Session tracking
         self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -6214,12 +6219,20 @@ class BrainSliceWidget(QWidget):
         # Try to get registered atlas labels from alignment widget
         atlas_labels = None
         atlas_manager = None
+        fit = None
         if hasattr(self, 'alignment_widget') and self.alignment_widget.atlas_loaded:
             atlas_labels = self.alignment_widget.get_registered_atlas_labels()
             atlas_manager = self.alignment_widget.atlas_manager
+            if atlas_labels is not None:
+                # Taken at the same moment as the labels, so it is exactly
+                # the fit the worker counts with.
+                fit = self.alignment_widget.get_current_registration()
 
         # Fall back to stored atlas_labels or create dummy
+        labels_source = None
         if atlas_labels is None:
+            from ..core.atlas_fit import LABELS_STORED, LABELS_NONE
+            labels_source = LABELS_STORED if self.atlas_labels is not None else LABELS_NONE
             if self.atlas_labels is not None:
                 # Use stored atlas_labels, extracting current slice if 3D
                 atlas_labels = self._get_current_slice(self.atlas_labels)
@@ -6242,6 +6255,95 @@ class BrainSliceWidget(QWidget):
                         dtype=np.int32
                     )
 
+        # Record what these counts are made with, in two halves (see
+        # core/atlas_fit.py). Now, BEFORE the worker can touch a count file:
+        # any earlier fit file is replaced by an 'in progress' record and the
+        # tracker row is logged as 'started'. WHY now: the worker exports the
+        # counts in its own thread and the finished fit file is written only
+        # when _on_quant_finished runs here; if the window is closed or napari
+        # crashes in between, the folder must not hold new counts beside the
+        # previous run's fit file. The finished file and the
+        # 'completed'/'failed' status are written by _on_quant_finished.
+        # begin_fit_record() does not raise when the tracker cannot be
+        # written: it returns the context anyway, so the fit file is still
+        # written after the export. A failure to record is shown, never
+        # swallowed.
+        self._atlas_fit_pending = None
+        tracker_problem = None
+        if fit is not None and self.tracker is None:
+            tracker_problem = ("The calibration tracker could not be opened"
+                               + (f" ({self._tracker_error})"
+                                  if getattr(self, '_tracker_error', None) else ""))
+        from ..core.atlas_fit import atlas_fit_path
+        try:
+            from ..core.atlas_fit import begin_fit_record
+            context = begin_fit_record(
+                fit, sample_id,
+                tracker=self.tracker,
+                input_path=str(self.current_file) if self.current_file else None,
+                labels_source=labels_source,
+                output_dir=output_dir,
+            )
+            if context.get('tracker_error'):
+                tracker_problem = ("The calibration tracker could not be written "
+                                   f"({context['tracker_error']}; is its CSV open "
+                                   "in another program?)")
+        except Exception as e:
+            # Not expected (begin_fit_record keeps its own errors), but if the
+            # fit cannot even be captured, an earlier fit file must still go
+            # before the counts change: it would not describe them.
+            print(f"[BrainSlice] Could not capture the atlas fit: {e}")
+            context = None
+            stale_left = None
+            if output_dir is not None:
+                stale = atlas_fit_path(output_dir, sample_id)
+                try:
+                    if stale.exists():
+                        stale.unlink()
+                except OSError as unlink_error:
+                    stale_left = f"{stale} could not be removed ({unlink_error})"
+            if stale_left:
+                context = {'blocked': True, 'file_error': stale_left}
+            else:
+                QMessageBox.warning(
+                    self, "Atlas fit not recorded",
+                    f"The region counts will be made, but the atlas fit they use "
+                    f"could not be captured:\n{e}\nAny earlier fit file beside "
+                    f"the counts has been removed, as it would not describe them.")
+        if context is not None and context.get('blocked'):
+            # An earlier fit file could be neither replaced nor removed
+            # (usually: another program has it open). Counting now would put
+            # new counts beside a file claiming an old fit, so nothing is
+            # counted and the count files are left as they are.
+            print(f"[BrainSlice] Quantification not run: {context.get('file_error')}")
+            self.status_label.setText("Quantification not run: the atlas fit file is in use")
+            self.quant_btn.setEnabled(True)
+            QMessageBox.warning(
+                self, "Quantification not run",
+                "The earlier atlas fit file beside this sample's counts could "
+                f"not be replaced ({context.get('file_error')}). Counting now "
+                "would leave new counts beside a file describing a different "
+                "fit, so nothing was counted. Close any program that has the "
+                "file open (or delete the file) and press Run Quantification "
+                "again.")
+            return
+        # sample_id is kept with the pending record because the counts are
+        # exported under the name read NOW; the Sample ID box may be edited
+        # while the count runs, and finishing must touch this sample's fit
+        # file, never another sample's.
+        self._atlas_fit_pending = {'context': context, 'output_dir': output_dir,
+                                   'sample_id': sample_id}
+        if tracker_problem:
+            where = ("The fit will still be saved beside the exported counts."
+                     if output_dir is not None else
+                     "Export is off, so the fit will not be saved anywhere.")
+            print(f"[BrainSlice] Atlas fit not logged: {tracker_problem}")
+            QMessageBox.warning(
+                self, "Atlas fit not logged",
+                tracker_problem
+                + ", so the atlas fit these counts use will not be logged in "
+                + "the tracker. " + where)
+
         self.quant_worker = QuantificationWorker(
             self.cell_measurements,
             atlas_labels,
@@ -6253,6 +6355,54 @@ class BrainSliceWidget(QWidget):
         self.quant_worker.finished.connect(self._on_quant_finished)
         self.quant_worker.start()
 
+    def _finish_atlas_fit_record(self, success: bool):
+        """Finish the atlas-fit record begun in _run_quantification.
+
+        Called only after the worker reports, so the fit file is written only
+        beside counts that were really exported with that fit (until then the
+        folder holds an 'in progress' record). On failure the row is marked
+        failed; the earlier fit file is put back only if the failed run left
+        the count files untouched (see core/atlas_fit.py). Every problem is
+        shown to the person.
+        """
+        pending = getattr(self, '_atlas_fit_pending', None)
+        self._atlas_fit_pending = None
+        if not pending:
+            return
+        from ..core.atlas_fit import finish_fit_record
+        context = pending['context']
+        output_dir = pending['output_dir']
+        if context is None:
+            # The fit was never captured. _run_quantification already removed
+            # any earlier fit file before counting, so nothing is left to do:
+            # no fit file is beside these counts, which is the truth.
+            return
+        result = finish_fit_record(context, success, output_dir=output_dir)
+        if result.get('file_error'):
+            print(f"[BrainSlice] Atlas fit not saved: {result['file_error']}")
+            # Say what happened to the counts truthfully: on a failed count
+            # the counts were NOT made.
+            opening = ("The counts were made, but " if success
+                       else "The count failed, and ")
+            QMessageBox.warning(
+                self, "Atlas fit not saved",
+                opening + result['file_error'] + ".")
+        if result.get('counts_incomplete'):
+            QMessageBox.warning(
+                self, "Counts incomplete",
+                "The count failed after rewriting some of this sample's count "
+                "files, so the folder may hold a mix of two runs. The fit file "
+                "now says so. Close any program that has these files open and "
+                "press Run Quantification again.")
+        # A tracker error found at the start was already shown; one that
+        # appears only now (setting the row's status) is shown here.
+        if result.get('tracker_error') and result['tracker_error'] != context.get('tracker_error'):
+            print(f"[BrainSlice] Atlas fit row not updated: {result['tracker_error']}")
+            QMessageBox.warning(
+                self, "Atlas fit not logged",
+                "The tracker row for this atlas fit could not be updated "
+                f"({result['tracker_error']}).")
+
     def _on_quant_progress(self, message: str):
         """Handle quantification progress updates."""
         self.status_label.setText(message)
@@ -6260,6 +6410,7 @@ class BrainSliceWidget(QWidget):
     def _on_quant_finished(self, success: bool, message: str, cell_data, region_counts, summary):
         """Handle quantification completion."""
         self.quant_btn.setEnabled(True)
+        self._finish_atlas_fit_record(success)
 
         if success:
             self.cell_measurements = cell_data

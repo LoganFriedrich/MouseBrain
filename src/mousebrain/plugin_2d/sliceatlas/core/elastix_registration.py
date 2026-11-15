@@ -342,6 +342,10 @@ def warp_atlas_to_image(
     return {
         'warped_reference': warped_reference,
         'warped_annotation': warped_annotation,
+        # False when no transform came back and the 'warped' arrays are the
+        # atlas slices unchanged. The Align tab records whether a warp is on
+        # screen; an unchanged slice must not be recorded as one.
+        'warp_applied': result['transform_params'] is not None,
         'deformation_field': result['deformation_field'],
         'affine_params': result['affine_params'],
         'success': True,

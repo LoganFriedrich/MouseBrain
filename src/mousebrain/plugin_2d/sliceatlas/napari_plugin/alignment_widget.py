@@ -8,6 +8,7 @@ Provides interactive atlas alignment with:
 - ABBA export/import as fallback
 """
 
+import weakref
 from pathlib import Path
 from typing import Optional, Dict, Any
 import numpy as np
@@ -211,6 +212,21 @@ class AlignmentWidget(QWidget):
         self.elastix_worker = None
         self.warped_annotation = None
         self.deformation_field = None
+        # Which image the Elastix warp now drawn was computed for, as
+        # (weak reference to the red_channel array, slice index), or None when
+        # no warp is drawn. A weak reference, so the key never keeps a
+        # previous image (possibly a whole stack) in memory after another one
+        # is loaded; loading an image does not redraw this tab's overlay.
+        # Set when a warp is drawn, cleared when the unwarped overlay replaces
+        # it. WHY: the saved atlas fit says whether a warp was on screen, and
+        # it must not say so after a slider change redrew the unwarped atlas,
+        # or for a different image or slice than the warp was computed for.
+        self._warp_shown_for = None
+        # What the Elastix run in progress was started for: the image key
+        # above plus the atlas (by name), atlas position and orientation, or
+        # None when no run is in progress. Dropped as soon as the run is
+        # handled.
+        self._elastix_source = None
 
         # Boundary overlay
         self.boundaries_layer = None
@@ -844,6 +860,22 @@ class AlignmentWidget(QWidget):
         self.elastix_status_label.setText("Running registration...")
         self.elastix_status_label.setStyleSheet("color: blue; font-size: 10px;")
 
+        # Remember what this warp is computed for: the image and slice (see
+        # _warp_shown_for) and the atlas slice it is registered to -- which
+        # atlas, which position, which orientation. WHY: the run takes a
+        # while; if the position slider, the orientation, the loaded atlas,
+        # the image or the slice changes meanwhile, the finished warp belongs
+        # to something no longer shown and must be neither drawn nor
+        # recorded. The atlas is compared by name because a different atlas
+        # (another resolution) can be loaded while the slider ends on the
+        # same index number, which then names a different atlas slice.
+        self._elastix_source = {
+            'image': self._current_image_key(),
+            'atlas': self._loaded_atlas_name(),
+            'atlas_position': self.current_atlas_position,
+            'orientation': self.current_orientation,
+        }
+
         # Start worker
         self.elastix_worker = ElastixRegistrationWorker(
             image=image,
@@ -857,10 +889,50 @@ class AlignmentWidget(QWidget):
     def _on_elastix_finished(self, success: bool, message: str, result):
         """Handle Elastix registration completion."""
         self.elastix_btn.setEnabled(True)
+        source = self._elastix_source
+        # The run is handled now; drop the reference so the image it was run
+        # on (a large array) is not kept after the person loads another one.
+        self._elastix_source = None
+
+        if success and result is not None and not self._elastix_source_is_current(source):
+            # The atlas, atlas slice, orientation, image or slice changed
+            # while Elastix ran: this warp is for something no longer on screen.
+            # Drawing it would show (and the saved fit would record) a warp
+            # for the wrong atlas slice, so it is discarded.
+            self.elastix_status_label.setText(
+                "Registration discarded: the atlas, atlas position, orientation "
+                "or image changed while it ran. Press Register Atlas (Elastix) again."
+            )
+            self.elastix_status_label.setStyleSheet("color: orange; font-size: 10px;")
+            return
 
         if success and result is not None:
+            # Draw first; record the warp as on screen only once it really is.
+            # WHY: drawing removes the unwarped overlay before adding the
+            # warped one, so a drawing error part-way leaves neither -- and
+            # the saved fit must not then say a warp was on screen.
+            drawn, draw_error = self._update_atlas_overlay_with_warp(result)
+            if not drawn:
+                # Put the unwarped atlas back; that also clears every trace
+                # of a warp (warped_annotation, _warp_shown_for).
+                self._update_atlas_overlay()
+                self.warped_annotation = None
+                self.deformation_field = None
+                self._warp_shown_for = None
+                self.elastix_status_label.setText(
+                    f"Registration finished but the warped atlas could not be "
+                    f"drawn ({draw_error}); the unwarped atlas is shown.")
+                self.elastix_status_label.setStyleSheet("color: red; font-size: 10px;")
+                return
+
             self.warped_annotation = result.get('warped_annotation')
             self.deformation_field = result.get('deformation_field')
+            # Only a real warp counts as one on screen: when Elastix returns
+            # no transform the arrays are the atlas slices unchanged.
+            if self.warped_annotation is not None and result.get('warp_applied', True):
+                self._warp_shown_for = source['image']
+            else:
+                self._warp_shown_for = None
 
             # Get affine params for display
             affine = result.get('affine_params', {})
@@ -874,15 +946,19 @@ class AlignmentWidget(QWidget):
             )
             self.elastix_status_label.setStyleSheet("color: green; font-size: 10px;")
 
-            # Update overlay with warped atlas
-            self._update_atlas_overlay_with_warp(result)
-
         else:
             self.elastix_status_label.setText(f"Error: {message}")
             self.elastix_status_label.setStyleSheet("color: red; font-size: 10px;")
 
     def _update_atlas_overlay_with_warp(self, registration_result):
-        """Update atlas overlay using warped registration result."""
+        """Update atlas overlay using warped registration result.
+
+        Returns (drawn, error text or None). drawn is False when adding the
+        warped reference or regions failed; the caller then must not record
+        a warp as on screen. A failure drawing only the boundary outlines is
+        printed by _add_boundary_shapes and does not count: the warped regions
+        are on screen either way.
+        """
         try:
             warped_ref = registration_result.get('warped_reference')
             warped_annot = registration_result.get('warped_annotation')
@@ -926,6 +1002,8 @@ class AlignmentWidget(QWidget):
             print(f"[AlignmentWidget] Error updating warped overlay: {e}")
             import traceback
             traceback.print_exc()
+            return False, f"{type(e).__name__}: {e}"
+        return True, None
 
     def _add_boundary_shapes(self, annotation, deformation_field=None):
         """Add boundary outlines as Shapes layer."""
@@ -1015,6 +1093,24 @@ class AlignmentWidget(QWidget):
                     self.viewer.layers.remove(self.atlas_labels_layer)
                 except ValueError:
                     pass
+
+            # The region outlines are only ever drawn from a warp
+            # (_add_boundary_shapes). Left in place they would keep showing
+            # warped regions on top of the unwarped atlas drawn below, while
+            # the saved fit says no warp is on screen -- so they go with it.
+            if self.boundaries_layer is not None:
+                try:
+                    self.viewer.layers.remove(self.boundaries_layer)
+                except ValueError:
+                    pass
+                self.boundaries_layer = None
+
+            # Any Elastix warp that was drawn is gone from the screen now; the
+            # unwarped atlas replaces it. Forget it so the saved fit does not
+            # say a warp was shown.
+            self.warped_annotation = None
+            self.deformation_field = None
+            self._warp_shown_for = None
 
             # Add reference image
             self.atlas_ref_layer = self.viewer.add_image(
@@ -1148,17 +1244,110 @@ class AlignmentWidget(QWidget):
             import traceback
             traceback.print_exc()
 
+    def _current_image_key(self):
+        """(weak reference to the red_channel array, slice index) of the
+        image now on screen, or None when no image is loaded.
+
+        WHY a weak reference: an id() can be reused by a newly loaded array
+        once the old one is freed, so it could match the wrong image; the
+        array itself would keep the previous image alive for as long as the
+        key is held. A weak reference matches only the very same array and
+        does not keep it alive (see _key_is_current).
+        """
+        red = getattr(self.parent_widget, 'red_channel', None)
+        if red is None:
+            return None
+        slice_idx = None
+        if getattr(red, 'ndim', 0) == 3:
+            try:
+                slice_idx = int(self.viewer.dims.current_step[0])
+            except Exception:
+                slice_idx = None
+        try:
+            ref = weakref.ref(red)
+        except TypeError:
+            # An array type without weak references cannot be told apart
+            # from a later image safely, so no warp is ever tied to it.
+            return None
+        return (ref, slice_idx)
+
+    def _key_is_current(self, key) -> bool:
+        """True when `key` (from _current_image_key) names the image and
+        slice now on screen."""
+        if key is None:
+            return False
+        red = getattr(self.parent_widget, 'red_channel', None)
+        now = self._current_image_key()
+        return (red is not None and now is not None
+                and key[0]() is red and key[1] == now[1])
+
+    def _loaded_atlas_name(self):
+        """Name of the atlas now loaded (it includes the resolution), or None."""
+        manager = getattr(self, 'atlas_manager', None)
+        return getattr(manager, 'brain_atlas_name', None) if manager else None
+
+    def _elastix_source_is_current(self, source) -> bool:
+        """True when an Elastix run started for `source` still matches the
+        atlas, atlas position, orientation, image and slice now selected."""
+        if not source:
+            return False
+        if (source.get('atlas') != self._loaded_atlas_name()
+                or source.get('atlas_position') != self.current_atlas_position
+                or source.get('orientation') != self.current_orientation):
+            return False
+        return self._key_is_current(source.get('image'))
+
+    def _elastix_warp_on_screen(self) -> bool:
+        """True only while a warp is drawn AND it was computed for the image
+        and slice now on screen."""
+        shown_for = getattr(self, '_warp_shown_for', None)
+        if shown_for is None or self.warped_annotation is None:
+            return False
+        # Not cleared on a mismatch: going back to the slice the warp was
+        # computed for shows it again, and the weak reference already lets a
+        # replaced image be freed.
+        return self._key_is_current(shown_for)
+
     def get_current_registration(self) -> Dict[str, Any]:
-        """Get current registration parameters."""
+        """The atlas fit that get_registered_atlas_labels() applies, as plain values.
+
+        This is what Run Quantification records (tracker row + JSON file), so
+        it describes exactly what the region counts were made with: the atlas,
+        the slice position and orientation, and the position/rotation/scale
+        set in the Align tab -- however those values were reached (sliders,
+        DeepSlice, auto-align or an ABBA import all end in the same controls).
+        An Elastix warp drawn on screen is NOT applied by
+        get_registered_atlas_labels(); 'elastix_warp_on_screen' is True only
+        when a real warp computed for this image and slice is still drawn
+        (the position slider, an orientation change or a spin-box change
+        redraws the unwarped atlas, removes the warped region outlines and
+        clears it; the opacity slider and the show checkboxes leave it; a new
+        image or slice never matches it), so the record
+        neither implies the counts used a warp nor claims one that is gone.
+        """
+        manager = self.atlas_manager
+        atlas_name = getattr(manager, 'brain_atlas_name', None) if manager else None
+        resolution_um = None
+        if manager is not None:
+            try:
+                resolution_um = [float(r) for r in manager.brain_atlas.resolution]
+            except Exception:
+                resolution_um = None
         return {
+            'atlas': atlas_name,
+            'atlas_resolution_um': resolution_um,
             'orientation': self.current_orientation,
             'atlas_position': self.current_atlas_position,
+            'method': 'align_tab_affine',
             'transform': {
+                # Offsets are pasted as image pixels by get_registered_atlas_labels.
                 'offset_x': self.transform_offset_x,
                 'offset_y': self.transform_offset_y,
+                'offset_units': 'image_pixels',
                 'rotation': self.transform_rotation,
                 'scale': self.transform_scale,
-            }
+            },
+            'elastix_warp_on_screen': self._elastix_warp_on_screen(),
         }
 
     def get_registered_atlas_labels(self) -> Optional[np.ndarray]:

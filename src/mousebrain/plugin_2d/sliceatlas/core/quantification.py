@@ -15,6 +15,7 @@ Usage:
 
 import os
 import uuid
+import warnings
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 import numpy as np
@@ -214,6 +215,11 @@ class RegionQuantifier:
 
         Returns:
             Dict mapping output type to file path
+
+        Writes only the three count files. It does NOT touch the sample's
+        ``<sample>_atlas_fit.json``: a caller exporting into a folder that may
+        hold one must replace it around this call, as the napari window
+        (core/atlas_fit.py) and quantify_sample() do.
         """
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -338,6 +344,15 @@ def quantify_sample(
 
     Returns:
         Tuple of (cell_data, region_counts, summary)
+
+    With output_dir set, the sample's ``<sample>_atlas_fit.json`` in that
+    folder is replaced too (see core/atlas_fit.py), by a record saying that
+    no Align-tab fit was used (``atlas_fit_used: false``, ``labels_source:
+    supplied_by_caller``). WHY: this function cannot know how atlas_labels
+    were placed, and the folder may be one the napari window wrote, whose fit
+    file describes an Align-tab fit the new counts were not made with. If
+    that earlier fit file can be neither replaced nor removed, nothing is
+    exported and RuntimeError is raised.
     """
     quantifier = RegionQuantifier(atlas_manager)
 
@@ -352,6 +367,19 @@ def quantify_sample(
 
     # Export if output directory provided
     if output_dir:
-        quantifier.export_results(cell_data, region_counts, output_dir, sample_id)
+        from .atlas_fit import begin_fit_record, finish_fit_record, LABELS_CALLER
+        context = begin_fit_record(None, sample_id, labels_source=LABELS_CALLER,
+                                   output_dir=Path(output_dir))
+        if context.get('blocked'):
+            raise RuntimeError(
+                f"Counts not exported for {sample_id}: {context.get('file_error')}")
+        try:
+            quantifier.export_results(cell_data, region_counts, output_dir, sample_id)
+        except BaseException:
+            finish_fit_record(context, False)
+            raise
+        result = finish_fit_record(context, True)
+        if result.get('file_error'):
+            warnings.warn(f"{sample_id}: {result['file_error']}", RuntimeWarning)
 
     return cell_data, region_counts, summary

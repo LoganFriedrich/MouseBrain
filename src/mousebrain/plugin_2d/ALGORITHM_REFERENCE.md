@@ -242,12 +242,157 @@ Can aggregate counts to parent regions in the atlas hierarchy. For example, summ
 | `{sample}_cells.csv` | Per-cell measurements with region assignments |
 | `{sample}_regions.csv` | Per-region counts and fractions |
 | `{sample}_summary.txt` | Summary statistics |
+| `{sample}_atlas_fit.json` | The atlas fit the counts were made with, or a note that no Align-tab fit was used, that a count is in progress (or never reported back), or that a failed run left the counts incomplete (see below) |
+
+### The atlas fit is saved and logged with every count
+
+**Source:** `sliceatlas/core/atlas_fit.py`
+
+Each press of **Run Quantification** records what the region counts were made
+with, so a set of counts can always be traced back to its atlas fit after
+napari is closed. The rule is simple: **a fit file never claims a fit the
+counts beside it were not made with.** When the window cannot keep that true
+by writing the right file, it removes the wrong one and tells you.
+
+**What happens, step by step, when an atlas is loaded in the Align tab:**
+
+1. **When you press Run Quantification**, the fit is taken from the Align tab
+   at the same moment as the atlas regions handed to the counting step. Before
+   counting starts, any earlier `{sample}_atlas_fit.json` is replaced by a
+   record with `"counts_status": "in_progress"` (it keeps the earlier record
+   inside it, under `previous_record`), and a `registration` row is added to
+   the tracker (`calibration_runs.csv`) with status `started`.
+   Why the earlier file is replaced first: the counts are written while
+   counting runs, but the finished fit file only once the window hears back.
+   If napari is closed or crashes in between, the folder must not show new
+   counts beside a file describing the earlier fit. **If you find a fit file
+   that still says `in_progress`** after napari is closed, that count never
+   reported back: the count files beside it may be from that run or the one
+   before, and no fit is claimed for them. Press Run Quantification again.
+   If the earlier fit file cannot be replaced or removed (usually because
+   another program has it open), **nothing is counted**: the warning
+   *"Quantification not run"* appears, the count files are left as they are,
+   and you should close that program (or delete the file) and press Run
+   Quantification again.
+2. **When counting succeeds**, the counts are exported (if "Export to CSV" is
+   on), then `{sample}_atlas_fit.json` is written in the same `4_Quantified`
+   folder, replacing any earlier one, and the tracker row is set to
+   `completed` with the file's path in `reg_transform_path`.
+3. **When counting fails** (for example a results CSV is open in another
+   program), the tracker row is set to `failed` and the status line shows the
+   error. If the count files were not changed, the earlier fit file is put
+   back exactly as it was. The export of the three count files (`_cells.csv`, `_regions.csv`,
+   `_summary.txt`) is all-or-nothing: the new files are written under
+   temporary names first, and the old ones are swapped out only when all three
+   can be; if any one of them is locked, all three old files are put back
+   exactly as they were. So in the normal case an earlier run's counts stay,
+   with the fit file that describes them.
+   As a safety net, the window compares the count files before and after the
+   run. If a failed run did change one of them (something the all-or-nothing
+   export should prevent), the fit file is replaced by a record with
+   `"counts_status": "incomplete"` and `"atlas_fit_used": null`, the warning
+   *"Counts incomplete"* appears, and you should close whatever has the files
+   open and press Run Quantification again.
+
+The tracker row carries the atlas (`reg_atlas`), orientation
+(`reg_orientation`), method (`reg_method`, always `align_tab_affine`), the
+slice's front-to-back position in micrometers for coronal slices
+(`reg_ap_position`) and the fit as JSON in `notes`. It is written even
+when export is switched off; the file is not, because with export off there is
+no results folder.
+
+To find out whether a logged count finished, read the row's `status` column:
+`completed` (counted, and exported if export was on), `failed` (the count
+failed), or `started` (the window was closed or crashed before the count
+reported back). The `notes` JSON describes the fit only. Unlike the fit file
+it has no `counts_status` and no `atlas_fit_used` field, because `notes` is
+written once, before anything is counted, and is not changed afterwards.
+
+**When the counts are made without an Align-tab fit** (no atlas loaded, or
+the Align tab had no regions to give), any earlier `{sample}_atlas_fit.json` is
+replaced -- once the counts are exported -- by a record with
+`"atlas_fit_used": false` and `labels_source` saying what the cells were
+assigned with instead: `stored_atlas_labels` (region labels the window already
+held) or `none_all_cells_unassigned` (no regions: every cell is in region 0).
+No tracker row is written in that case, as there is no fit to log.
+
+Programs that call the `quantify_sample()` function directly with an output
+folder get the same protection: the earlier fit file is replaced by an
+in-progress record before the counts are written and by a record with
+`"atlas_fit_used": false` and `"labels_source": "supplied_by_caller"` after
+(the function cannot know how the labels it was given were placed). If the
+earlier fit file cannot be replaced, nothing is exported and the call fails
+with an error.
+
+What a fit record holds: the atlas name and resolution, orientation, the
+position-slider value (an atlas slice number), and the position, rotation and
+scale from the Align tab's controls -- the values the counts really use,
+however they were reached (sliders, DeepSlice, auto-align or an ABBA import all
+end in those controls). `elastix_warp_on_screen` says whether an Elastix warp
+was drawn over this image and slice when Run Quantification was pressed; the
+counts do NOT use that warp either way (see Known Limitations). It is `true`
+only when all of these hold: "Register Atlas (Elastix)" really warped the atlas
+(if Elastix returned no transform, nothing was warped), the warped atlas was
+actually drawn, it was run on the image and slice now shown, and nothing has
+redrawn the overlay since. These controls redraw the unwarped atlas and so
+make it `false`: the position slider, the orientation choice, the X/Y offset,
+rotation and scale boxes (and the Reset button, when it changes one of them),
+and Load Atlas. A redraw also removes the warped region outlines that "Show
+region boundaries" drew with the warp, so no warped outline is left on top of
+the unwarped atlas (the outlines come back the next time Elastix is run).
+Loading an image or moving to another slice of a stack also
+makes it `false`, because the warp was computed for a different image. The
+opacity slider and the Show reference / regions / boundaries checkboxes do NOT
+redraw anything: after them the warp is still on screen and is still recorded
+as on screen.
+
+Elastix takes a while. If the position slider or the orientation is changed,
+another atlas is loaded, or another image or slice is shown while it is still
+running, the finished warp belongs to an atlas slice or image that is no
+longer selected: it is not drawn, the status line says "Registration discarded
+... Press Register Atlas (Elastix) again", and the fit stays recorded as
+having no warp on screen. If the warped atlas cannot be drawn when Elastix
+finishes, the status line says so in red, the unwarped atlas is drawn again,
+and no warp is recorded as on screen.
+
+Every fit file written on success carries `"counts_status": "complete"`.
+
+The file is written to a temporary file first and then swapped in, so a crash
+while saving never leaves a half-written file. If the new file cannot be
+written at all after the counts were exported, the previous fit file is
+**removed** (it describes a different fit than the new counts): no fit file is
+better than a wrong one.
+
+**Warnings you may see:**
+
+- *"Atlas fit not logged"* -- the calibration tracker could not be opened, or
+  could not be written (most often because `calibration_runs.csv` is open in
+  a spreadsheet program; the reason is in brackets). The counts are still
+  made. With export on, the fit is still saved beside the counts -- only the
+  tracker row is missing; with export off, it is not recorded anywhere, and
+  the window says so. Close the spreadsheet (or fix the tracker setting) and
+  press Run Quantification again if you need the tracker row.
+- *"Atlas fit not saved"* -- `{sample}_atlas_fit.json` could not be written.
+  If the message begins "The counts were made", the new counts are in the
+  folder; if it begins "The count failed", they are not (see "Counts
+  incomplete" below), and it was the record saying the folder is incomplete
+  that could not be written. The message says whether the previous fit file was
+  removed. If it says the previous file could NOT be removed, that file
+  describes a different fit than the counts beside it: delete it by hand.
+- *"Counts incomplete"* -- see step 3 above.
+- *"Atlas fit not recorded"* -- the fit could not even be read from the Align
+  tab. The counts are still made, and any earlier fit file beside them is
+  removed before counting starts.
+- *"Quantification not run"* -- see step 1 above: the earlier fit file could
+  not be replaced, so nothing was counted.
 
 ### Known Limitations
 
 - **Centroid-only assignment.** A cell is assigned to whichever region its center pixel falls in. Large nuclei straddling a region boundary are assigned to one side only.
 - **Hard boundary clamping.** Cells with centroids outside the atlas bounds are snapped to the edge, potentially being assigned to the wrong region.
 - **Requires registered atlas.** If the atlas is poorly aligned to the tissue, region assignments will be systematically wrong.
+- **The Elastix warp is shown but not counted.** After "Register Atlas (Elastix)" the overlay shows the warped atlas regions, but Run Quantification assigns cells with the unwarped atlas placed by the Align tab's position, rotation and scale. The saved fit records whether a warp was on screen (`elastix_warp_on_screen`, above). To see on screen what the counts use, move the position slider, change the orientation, or change an X/Y offset, rotation or scale box: these redraw the unwarped atlas. The opacity slider and the Show checkboxes do not -- the warp stays on screen after them.
+- **The overlay ignores the image's pixel size; the counts work in image pixels.** The atlas overlay is drawn without the image's micrometer scale, while counting places the atlas on image pixels. When the image's pixel size is not 1, what lines up by eye on screen is not exactly what is counted.
 
 ### DeepSlice position predictions (Align tab, "Detect All Positions (DeepSlice)")
 
@@ -321,6 +466,7 @@ Every analysis run is logged to a CSV (`calibration_runs.csv`) with:
 |---------------|----------|
 | **Identity** | `run_id`, `sample_id`, `created_at`, `hostname` |
 | **Hierarchy** | `project`, `cohort`, `slice_num` |
+| **Atlas fit** (`registration` rows, written by Run Quantification: `started`, then `completed` or `failed`) | `reg_atlas`, `reg_orientation`, `reg_method`, `reg_ap_position`, `reg_transform_path` |
 | **Detection params** | `det_model`, `det_prob_thresh`, `det_nms_thresh`, `det_scale`, `det_min_area`, `det_max_area` |
 | **Colocalization params** | `coloc_background_method`, `coloc_threshold_method`, `coloc_threshold_value` |
 | **Results** | `det_nuclei_found`, `coloc_positive_cells`, `coloc_negative_cells`, `coloc_positive_fraction` |
