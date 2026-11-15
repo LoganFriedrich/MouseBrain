@@ -392,6 +392,21 @@ def setup_brain_from_ims(ims_path: Path) -> Tuple[Optional[Path], str]:
     return brain_folder, f"Created {brain_folder.name}"
 
 
+def mark_step_started(brain_name: str, brain_path: Path, step: str) -> None:
+    """Save, BEFORE a step runs, that this brain is PENDING at that step.
+
+    WHY: the status file used to be written only when a brain finished, failed
+    or stopped for review. A batch killed mid-step (closed window, reboot,
+    task ended) left its brain with no row -- or with a row from an earlier
+    run -- and --resume, which looks for PENDING rows, could never find it.
+    """
+    update_brain_status(brain_name, {
+        'status': QCStatus.PENDING,
+        'current_step': step,
+        'brain_path': str(brain_path),
+    })
+
+
 def process_brain(brain_path: Path, brain_name: str) -> dict:
     """
     Process a single brain through the pipeline with QC gates.
@@ -409,6 +424,14 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     print(f"Processing: {brain_name}")
     print(f"{'='*60}")
 
+    # A new attempt: clear the previous attempt's verdict, which a merge into
+    # the row would otherwise carry into this one (a PASS row still saying
+    # "needs registration approval").
+    update_brain_status(brain_name, {
+        'failed_step': '', 'error': '', 'needs_registration_approval': '',
+        'needs_manual_crop': '', 'completed': '', 'started': results['started'],
+    })
+
     # Step 1: Extract
     print("\n[1/6] Extracting from IMS...")
     # --batch: no question to answer; --brain: this brain only. (This passed a
@@ -416,6 +439,7 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     # brain failed here.)
     # The brain FOLDER name: batch brain names are "<mouse>/<brain>", which
     # steps 2 and 3 do not match (steps 4-6 accept either form).
+    mark_step_started(brain_name, brain_path, 'extract')
     success, msg = run_step('2_extract_and_analyze.py', ['--batch', '--brain', brain_path.name])
     if not success:
         results['qc_extract'] = f"FAIL: {msg}"
@@ -440,6 +464,7 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     if manual_crop.exists():
         print("    Using manual crop")
 
+    mark_step_started(brain_name, brain_path, 'crop')
     qc_status, qc_msg = qc_check_crop(brain_path)
     results['qc_crop'] = f"{qc_status}: {qc_msg}"
     if qc_status == QCStatus.FAIL:
@@ -453,6 +478,7 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     # Step 3: Register
     print("\n[3/6] Registering to atlas...")
     # Same for step 3: --batch replaces the --yes it never accepted.
+    mark_step_started(brain_name, brain_path, 'register')
     success, msg = run_step('3_register_to_atlas.py', ['--batch', '--brain', brain_path.name])
     if not success:
         results['qc_register'] = f"FAIL: {msg}"
@@ -480,6 +506,7 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     print("\n[4/6] Detecting cells...")
     # Step 4 uses the settled method for the brain's imaging setup (the tracker's
     # Paradigm Best run) and fails, with the reason, when there is none.
+    mark_step_started(brain_name, brain_path, 'detect')
     success, msg = run_step('4_detect_cells.py', ['--brain', brain_name])
     if not success:
         results['qc_detect'] = f"FAIL: {msg}"
@@ -499,6 +526,7 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
 
     # Step 5: Classify cells
     print("\n[5/6] Classifying cells...")
+    mark_step_started(brain_name, brain_path, 'classify')
     success, msg = run_step('5_classify_cells.py', ['--brain', brain_name])
     if not success:
         results['qc_classify'] = f"FAIL: {msg}"
@@ -518,6 +546,7 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
 
     # Step 6: Count regions
     print("\n[6/6] Counting cells by region...")
+    mark_step_started(brain_name, brain_path, 'count')
     success, msg = run_step('6_count_regions.py', ['--brain', brain_name])
     if not success:
         results['qc_count'] = f"FAIL: {msg}"
@@ -632,10 +661,20 @@ def main():
 
         for brain_name, data in status.items():
             s = data.get('status')
+            brain_path = Path(data.get('brain_path', ''))
             if s == QCStatus.PENDING:
-                to_process.append((brain_name, Path(data.get('brain_path', ''))))
+                # Interrupted part-way: every step is saved as PENDING before
+                # it starts (mark_step_started).
+                print(f"  {brain_name}: interrupted at '{data.get('current_step', '?')}' -- resuming")
+                to_process.append((brain_name, brain_path))
             elif s == QCStatus.REVIEW and data.get('needs_registration_approval'):
-                print(f"  {brain_name}: Needs registration approval (use napari)")
+                # Resumed once a person has approved THIS registration.
+                from mousebrain.registration_approval import is_approved
+                if data.get('brain_path') and is_approved(brain_path / "3_Registered_Atlas"):
+                    print(f"  {brain_name}: registration approved since -- resuming")
+                    to_process.append((brain_name, brain_path))
+                else:
+                    print(f"  {brain_name}: Needs registration approval (use napari)")
             elif args.retry_failed and s == QCStatus.FAIL:
                 to_process.append((brain_name, Path(data.get('brain_path', ''))))
 

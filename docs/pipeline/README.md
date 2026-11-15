@@ -108,6 +108,16 @@ not write.)
 `--brain` on step 2 takes the exact folder name. Without it step 2 extracts every
 brain that still needs it, as before.
 
+**Resuming.** Before each step starts, the brain's row in `pipeline_status.csv`
+is saved as `PENDING` with the step in `current_step`. If the batch is stopped
+part-way (window closed, restart, task ended), `python batch_process.py --resume`
+finds those brains and runs them again from the start; steps already done are
+skipped by the steps themselves (extraction and registration do not redo a
+finished brain). `--resume` also picks up a brain that stopped at "needs
+registration approval" once a person has approved its current registration;
+until then it only lists it. Add `--retry-failed` to retry brains that failed.
+Each new attempt clears the previous attempt's failure fields.
+
 ## Where the scripts live
 
 The scripts come with the MouseBrain code; nothing is copied anywhere. The
