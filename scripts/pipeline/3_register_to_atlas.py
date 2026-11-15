@@ -223,6 +223,8 @@ REGISTRATION_REQUIRED_FILES = [
 ]
 
 
+from mousebrain.registration_approval import APPROVAL_MARKER, retire_for_new_registration
+
 # =============================================================================
 # DISCOVERY AND STATUS
 # =============================================================================
@@ -311,10 +313,13 @@ def archive_existing_registration(pipeline_folder):
     if not reg_folder.exists():
         return False
     
-    # Get contents to archive (excluding _archive folder itself)
-    contents = [f for f in reg_folder.iterdir() 
-                if f.name != '_archive' 
-                and not f.name.startswith('.')
+    # Get contents to archive (excluding _archive folder itself). The approval
+    # marker goes WITH the registration it approved: it used to be skipped with
+    # the other dot-files, so it stayed beside the NEW registration and made
+    # that one look approved before anyone had looked at it.
+    contents = [f for f in reg_folder.iterdir()
+                if f.name != '_archive'
+                and (not f.name.startswith('.') or f.name == APPROVAL_MARKER)
                 and f.name.lower() not in ['thumbs.db', 'desktop.ini']]
     
     if not contents:
@@ -380,6 +385,14 @@ def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLA
 
     # Ensure registration folder exists
     reg_folder.mkdir(parents=True, exist_ok=True)
+
+    # A registration about to be made has not been reviewed. An approval still
+    # here (an "incomplete" earlier run is not archived first) goes into
+    # _archive, so nothing can mistake it for an approval of this run.
+    retired = retire_for_new_registration(reg_folder)
+    if retired:
+        print(f"    Previous approval moved to {retired.parent.name} -- this registration "
+              f"will need a person's approval")
 
     # Everything after this has to work in the SAME space the atlas was fitted
     # to, or cells land in the wrong structures while every number still looks
@@ -809,7 +822,8 @@ Examples:
         print("   Look in each brain's 3_Registered_Atlas folder for:")
         print("   - QC_orientation_check.png (was the orientation declared right?)")
         print("   - QC_registration_detailed.png")
-        print("\n2. APPROVE good registrations:")
+        print("\n2. APPROVE good registrations (a new registration always needs a")
+        print("   new approval, also when the brain was approved before):")
         print("   python util_approve_registration.py --brain BRAIN_NAME")
         print("\n3. Then run cell detection:")
         print("   python 4_detect_cells.py --brain BRAIN_NAME")

@@ -135,7 +135,7 @@ Previous registrations are never overwritten. When re-registering:
 
 ### Registration Approval
 
-After registration, the user must review QC images and explicitly approve before cell detection can proceed. Approval creates a `.registration_approved` marker file. Script 4 will refuse to run without this file.
+After registration, the user must review QC images and explicitly approve before cell detection can proceed. Approval creates a `.registration_approved` marker file that records WHICH registration was approved (`mousebrain.registration_approval`). Script 4 refuses to run unless the marker matches the registration in the folder now; re-registering moves the old marker into `_archive/` with its registration, and automated runs never write one.
 
 ### Known Limitations
 

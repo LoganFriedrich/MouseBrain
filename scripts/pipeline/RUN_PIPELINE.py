@@ -17,7 +17,7 @@ from pathlib import Path
 from datetime import datetime
 
 SCRIPT_DIR = Path(__file__).parent
-from mousebrain.config import BRAINS_ROOT, is_pipeline_candidate
+from mousebrain.config import BRAINS_ROOT, find_script, is_pipeline_candidate
 from mousebrain.pipeline_status import brain_status
 
 
@@ -99,8 +99,13 @@ def get_brain_status(brain_path):
 
 
 def run_script(script_name, args=None):
-    """Run a script and wait for it to finish."""
-    script_path = SCRIPT_DIR / script_name
+    """Run a script and wait for it to finish.
+
+    find_script: the steps live in scripts/pipeline, the util_*.py helpers in
+    scripts/utils. Looking only beside this file made the pre-filter action
+    fail with "can't open file".
+    """
+    script_path = find_script(script_name)
     cmd = [sys.executable, str(script_path)]
     if args:
         cmd.extend(args)
@@ -153,9 +158,17 @@ def show_brain_status(brain):
         ("Regions counted", status['counted']),
     ]
 
+    # A stale output exists but was made from something replaced since (see
+    # mousebrain.pipeline_status): shown as [!] with the reason, and the step
+    # is offered again.
+    stale_of = {"Cells detected": "detect", "Cells classified": "classify",
+                "Regions counted": "count"}
     for label, done in checks:
-        mark = "[X]" if done else "[ ]"
-        print(f"  {mark} {label}")
+        why = status['stale'].get(stale_of.get(label, ""))
+        mark = "[!]" if why else ("[X]" if done else "[ ]")
+        print(f"  {mark} {label}" + (f" -- STALE: {why}" if why else ""))
+    if status['registered'] and not status['approved']:
+        print(f"\n  Registration: {status['approval_text']}")
 
     print("-" * 60)
 
@@ -243,7 +256,18 @@ def show_brain_status(brain):
         ])
 
         if choice == 0:
-            run_script('util_approve_registration.py', ['--brain', brain_name, '--yes'])
+            # The person said yes just now, so the approval is written here,
+            # naming the registration they looked at. (This used to run the
+            # approval script with a --yes it does not accept, so it never
+            # approved anything.)
+            from mousebrain.registration_approval import approve
+            try:
+                approve(brain['path'] / "3_Registered_Atlas",
+                        note="approved in RUN_PIPELINE after viewing the QC picture")
+                print("\n[OK] Registration approved.")
+            except ValueError as e:
+                print(f"\n[FAIL] {e}")
+            input("Press Enter to continue...")
         elif choice == 1:
             print("\nRe-running registration...")
             run_script('3_register_to_atlas.py')

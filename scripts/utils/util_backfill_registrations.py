@@ -110,8 +110,10 @@ def backfill_registrations(dry_run: bool = False):
             except:
                 created_at = datetime.now()
 
-            # Check if approved
-            approved = (reg_folder / ".registration_approved").exists()
+            # Approved only when a person approved THIS registration
+            # (mousebrain.registration_approval).
+            from mousebrain.registration_approval import is_approved
+            approved = is_approved(reg_folder)
 
             # Determine initial status
             initial_status = "approved" if approved else "completed"

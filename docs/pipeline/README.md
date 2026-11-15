@@ -20,7 +20,9 @@ Complete automated pipeline for processing lightsheet microscopy data through Br
 ```
 
 **Important:** Step 4 will block until registration QC is approved -- so that you
-don't spend hours of compute on a badly registered brain. That gate applies to
+don't spend hours of compute on a badly registered brain. The approval is for one
+registration: registering again needs a new approval, and no automated run ever
+approves (see "Registration QC & Approval" below). That gate applies to
 the cropped images, which are the ones registration is computed from.
 
 Step 4 can also be run **before** cropping and registration, on the whole
@@ -47,6 +49,14 @@ is the first item on this list that is not done yet:
 | Pre-filter | optional (RUN_PIPELINE only). Done when any pre-filter output exists -- a `prefilter_report.json` in a `prefiltered_<time>` folder, or step 5's `prefiltered/interior_candidates.xml`. It is never shown once the brain is classified: step 5 pre-filters on its own by default |
 | Classify | `5_Classified_Cells/cells.xml` exists |
 | Count | a `.csv` exists in `6_Region_Analysis` |
+
+**Stale outputs.** A file that exists but was made from something replaced since
+is shown as `[!] ... STALE: <why>` and its step is offered again (nothing is
+deleted or moved). Counts are stale when they are older than the current
+registration or the classification; a classification when it is older than its
+candidates or the images; detection when it is older than the images the atlas
+is fitted to (or, for a registration that does not record its images, older
+than the registration). Anything made from a stale output is stale too.
 
 A trial detection run kept in `from_1_Extracted_Full` on a brain that was
 registered on its crop does NOT count as detection: those coordinates are not
@@ -234,6 +244,42 @@ python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4 --view
 python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4 --status
 ```
 
+**An approval belongs to ONE registration.** Approving writes
+`3_Registered_Atlas/.registration_approved`, and that file records which
+registration was approved (the size and time of the registration's own output
+files: `brainreg.json`, `registered_atlas.tiff`, `boundaries.tiff`,
+`deformation_field_0.tiff`). Every place that asks "is this brain approved?" --
+step 4, RUN_PIPELINE, the napari pipeline dashboard and Setup & Tuning, the
+overnight batch, batch_process -- compares that record with what is in the
+folder now. What that means for you:
+
+- **Registering a brain again needs a new approval**, even if the old
+  registration was approved. When registration runs, the previous approval is
+  moved into `3_Registered_Atlas/_archive/` together with the registration it
+  was for. The brain shows "Approve" again until you look at the new QC
+  pictures and approve them.
+- **Approvals written before this rule** (an empty file, or one holding only
+  "Approved: <date>") do not say which registration they were for, so they do
+  **not** count. Such a brain shows "Approve" with the explanation "the approval
+  on file does not say which registration it was for". Look at its current QC
+  pictures and approve it again -- one click or one command.
+- **Automated runs never approve.** The overnight batch and batch_process stop a
+  brain at "waiting for approval" after registering it; their reports list
+  those brains. Only a person approves: `util_approve_registration.py`, the
+  Approve button in Setup & Tuning (Registration QC tab), the Approve button in
+  the pipeline dashboard, or "Yes, approve it" in RUN_PIPELINE.
+- **You cannot approve before registering.** With no `brainreg.json` there is
+  nothing to approve, and the buttons say so.
+- **Rejecting** (the Reject button) moves the approval into `_archive/` -- kept,
+  not deleted -- and the brain is unapproved.
+
+**Re-registering also makes the region counts stale.** The status readers
+compare each output with what it was made from (see "Which step is a brain
+at?"): counts older than the current registration are shown as `[!] ... STALE`
+and the count step is offered again. Detection and classification are positions
+in the images, so they stay valid when the atlas is re-fitted to the SAME
+images; if the images were made again (a new crop), they are stale too.
+
 **How to read `QC_registration_detailed.png`:** each row is a coronal slice
 through the registered brain, front of the brain at the top row, back at the
 bottom. Left, the brain; middle, the atlas regions registration placed on it;
@@ -414,7 +460,8 @@ e.g. `--threshold 9`. The run is logged as `custom`, never as the settled method
         ├── 3_Registered_Atlas/
         │   ├── QC_orientation_check.png      ← Was the orientation declared right? (drawn before registering)
         │   ├── QC_registration_detailed.png  ← Registration QC (auto-generated)
-        │   └── .registration_approved        ← Approval marker file
+        │   ├── .registration_approved        ← A person's approval of THIS registration
+        │   └── _archive/<time>/              ← Earlier registrations, each with its approval
         ├── 4_Cell_Candidates/            ← 4_detect_cells.py output
         │   └── from_1_Extracted_Full/    ← trial runs made before registration
         ├── 5_Classified_Cells/           ← 5_classify_cells.py output

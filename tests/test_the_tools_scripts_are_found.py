@@ -31,8 +31,10 @@ def test_every_script_the_tool_starts_by_name_exists():
     names = set()
     for caller in CALLERS:
         names |= set(ASKED_FOR.findall(caller.read_text(encoding="utf-8")))
-    # the dashboard's six steps, approval, and the tuning widget's own buttons
-    assert {"3_register_to_atlas.py", "util_approve_registration.py",
+    # the dashboard's steps and the tuning widget's own buttons. (Approval is
+    # no longer started as a script: the dashboard records it in-process,
+    # mousebrain.registration_approval.approve.)
+    assert {"3_register_to_atlas.py",
             "util_registration_qc.py", "6_count_regions.py"} <= names
     missing = sorted(n for n in names if not config.find_script(n).is_file())
     assert missing == []

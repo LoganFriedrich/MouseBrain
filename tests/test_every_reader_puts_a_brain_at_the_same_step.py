@@ -14,6 +14,7 @@ import pytest
 
 from mousebrain.config import record_registered_space
 from mousebrain.pipeline_status import brain_status
+from mousebrain.registration_approval import approve
 
 PIPELINE = Path(__file__).resolve().parents[1] / "scripts" / "pipeline"
 
@@ -46,7 +47,7 @@ def _brain(tmp_path, registered_on="cropped"):
     record_registered_space(reg, registered_on, b / {"cropped": "2_Cropped_For_Registration",
                                                      "full": "1_Extracted_Full"}[registered_on])
     (reg / "brainreg.json").write_text("{}")
-    (reg / ".registration_approved").write_text("Approved")
+    approve(reg, approved_by="tester")
     return b
 
 

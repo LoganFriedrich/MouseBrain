@@ -15,7 +15,8 @@ The optimization loop:
 ## Prerequisites
 
 - Brain registered to atlas (Script 3 complete)
-- Registration approved (`python util_approve_registration.py --brain YOUR_BRAIN`)
+- Registration approved (`python util_approve_registration.py --brain YOUR_BRAIN`) -- the
+  approval is for the registration that is there now; registering again needs a new one
 - cellfinder installed
 
 ## Step 1: Run Detection

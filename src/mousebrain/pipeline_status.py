@@ -34,7 +34,9 @@ THE RULES (first missing item, in this order, is the brain's step)
             arrived already cut has nothing to crop).
   register  ``3_Registered_Atlas/brainreg.json``.
   approve   a person's approval of THIS registration (see
-            ``mousebrain.registration_approval``).
+            ``mousebrain.registration_approval``). An approval of an earlier
+            registration, or one that does not say which registration it was
+            for, is not an approval.
   detect    a candidates .xml in a registered-space candidates folder: the top
             of ``4_Cell_Candidates``, or ``from_<the registered folder>``.
   prefilter optional. Done when any pre-filter output exists: a
@@ -43,12 +45,35 @@ THE RULES (first missing item, in this order, is the brain's step)
             once it is classified -- step 5 pre-filters on its own by default.
   classify  ``5_Classified_Cells/cells.xml`` (the production classification).
   count     any ``.csv`` in ``6_Region_Analysis``.
+
+STALE OUTPUTS (reported in ``status['stale']`` and treated as NOT done)
+An output made from something that has since been replaced is stale: it
+exists, but it describes an earlier state of the brain. Nothing is deleted or
+moved -- the step is simply shown again, with the reason, so a person re-runs
+it. What each output depends on:
+  counts          the registration (regions come from the atlas fit) and the
+                  classification. Older than either: stale. So re-registering
+                  always makes the counts stale.
+  classification  the candidates it classified, and the images. Older than
+                  either: stale.
+  detection       the images the atlas is fitted to: its coordinates are
+                  positions in those images, not in the atlas, so re-fitting
+                  the atlas to the SAME images does not change them. Older
+                  than the images (a re-crop): stale. When the registration
+                  does not record which images it was fitted to, older than
+                  the registration: stale, because nothing can say the images
+                  are the same.
+A stale earlier output makes everything after it stale too.
 """
 
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from mousebrain.config import registered_candidate_folders, registered_space
+import os
+
+from mousebrain.config import registered_candidate_folders, registered_input, registered_space
+from mousebrain.registration_approval import (APPROVED, approval_state,
+                                              registration_time)
 
 FOLDER_EXTRACTED = "1_Extracted_Full"
 FOLDER_CROPPED = "2_Cropped_For_Registration"
@@ -110,17 +135,96 @@ def _prefiltered(det: Path) -> bool:
     return (det / "prefiltered" / "interior_candidates.xml").exists()
 
 
-def _approved(reg: Path) -> bool:
-    return (reg / ".registration_approved").exists()
+# File times are compared with this much slack: copies and network shares
+# round modification times, and a step that finishes within the same couple of
+# seconds as its input is not "older" than it.
+_SLACK_SECONDS = 2.0
+
+
+def _mtime(path: Optional[Path]) -> Optional[float]:
+    try:
+        return path.stat().st_mtime if path is not None else None
+    except OSError:
+        return None
+
+
+def _newest_csv(folder: Path) -> Optional[Path]:
+    if not folder.is_dir():
+        return None
+    csvs = list(folder.glob("*.csv"))
+    return max(csvs, key=lambda f: f.stat().st_mtime) if csvs else None
+
+
+def images_time(pipeline_dir) -> Optional[float]:
+    """When the images the atlas is fitted to were last written (newest
+    ``ch*/*.tif`` of that folder), or None when there are none. One directory
+    listing per channel; the times come with the listing."""
+    _source, folder, _meta = registered_input(pipeline_dir)
+    if folder is None or not Path(folder).is_dir():
+        return None
+    newest = None
+    for ch in Path(folder).glob("ch*"):
+        if not ch.is_dir():
+            continue
+        with os.scandir(ch) as it:
+            for entry in it:
+                if entry.name.lower().endswith((".tif", ".tiff")):
+                    t = entry.stat().st_mtime
+                    newest = t if newest is None or t > newest else newest
+    return newest
+
+
+def _older(a: Optional[float], b: Optional[float]) -> bool:
+    return a is not None and b is not None and a + _SLACK_SECONDS < b
+
+
+def stale_outputs(pipeline_dir, candidates: Optional[Path] = None) -> Dict[str, str]:
+    """{'detect'|'classify'|'count': why} for outputs made from something that
+    has since been replaced. See STALE OUTPUTS in the module docstring."""
+    p = Path(pipeline_dir)
+    reg_t = registration_time(p / FOLDER_REGISTRATION)
+    img_t = images_time(p)
+    cand = candidates if candidates is not None else find_candidates(p)
+    cand_t = _mtime(cand)
+    cells_t = _mtime(p / FOLDER_CLASSIFICATION / "cells.xml")
+    counts_t = _mtime(_newest_csv(p / FOLDER_ANALYSIS))
+    stale = {}
+
+    if _older(cand_t, img_t):
+        stale["detect"] = ("the candidates are older than the images they are positions in "
+                           "(the images were made again since)")
+    elif not registered_space(p) and _older(cand_t, reg_t):
+        stale["detect"] = ("the candidates are older than the registration, and the registration "
+                           "does not record which images it was fitted to")
+
+    if cells_t is not None:
+        if "detect" in stale:
+            stale["classify"] = "made from stale candidates"
+        elif _older(cells_t, cand_t):
+            stale["classify"] = "older than the candidates it should be made from"
+        elif _older(cells_t, img_t):
+            stale["classify"] = "older than the images"
+
+    if counts_t is not None:
+        if "classify" in stale:
+            stale["count"] = "counted from a stale classification"
+        elif _older(counts_t, reg_t):
+            stale["count"] = "counted on an earlier registration (the brain was registered again since)"
+        elif _older(counts_t, cells_t):
+            stale["count"] = "counted from an earlier classification"
+    return stale
 
 
 def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
     """Everything a status reader needs about one brain folder.
 
     Returns a dict with one boolean per item (has_ims, extracted, cropped,
-    registered, approved, detected, prefiltered, classified, counted), plus
-    ``step`` (a key of STEPS, or 'done'), ``step_name`` and ``step_num``
-    (1-based position in ``steps(include_prefilter)``; len+1 when done).
+    registered, approved, detected, prefiltered, classified, counted) -- a
+    stale output counts as not done -- plus ``stale`` ({step: why}),
+    ``approval`` / ``approval_text`` (see registration_approval), ``candidates``
+    (the file step 5 would classify, or None), ``step`` (a key of STEPS, or
+    'done'), ``step_name`` and ``step_num`` (1-based position in
+    ``steps(include_prefilter)``; len+1 when done).
     """
     p = Path(pipeline_dir)
     raw = p / "0_Raw_IMS"
@@ -129,6 +233,8 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
     analysis = p / FOLDER_ANALYSIS
 
     recorded_space = registered_space(p)
+    approval, approval_text = approval_state(reg)
+    candidates = find_candidates(p)
     status = {
         "has_ims": raw.is_dir() and any(raw.glob("*.ims")),
         "extracted": (p / FOLDER_EXTRACTED / "metadata.json").exists(),
@@ -136,12 +242,19 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
                     or (p / FOLDER_CROPPED_MANUAL / "metadata.json").exists()
                     or recorded_space == "full"),
         "registered": (reg / "brainreg.json").exists(),
-        "approved": _approved(reg),
-        "detected": find_candidates(p) is not None,
+        "approved": approval == APPROVED,
+        "detected": candidates is not None,
         "prefiltered": _prefiltered(det),
         "classified": (p / FOLDER_CLASSIFICATION / "cells.xml").exists(),
         "counted": analysis.is_dir() and any(analysis.glob("*.csv")),
     }
+
+    status["approval"] = approval
+    status["approval_text"] = approval_text
+    status["candidates"] = candidates
+    status["stale"] = stale_outputs(p, candidates) if status["registered"] else {}
+    for key in status["stale"]:
+        status[_DONE_FLAG[key]] = False
 
     shown = steps(include_prefilter)
     status["step"], status["step_name"], status["step_num"] = "done", "Complete!", len(shown) + 1
@@ -154,4 +267,4 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
     return status
 
 
-__all__ = ["STEPS", "steps", "brain_status", "find_candidates"]
+__all__ = ["STEPS", "steps", "brain_status", "find_candidates", "stale_outputs", "images_time"]

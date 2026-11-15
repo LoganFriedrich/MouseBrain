@@ -7800,19 +7800,25 @@ class TuningWidget(QWidget):
         if not self.current_brain:
             return
 
-        approval_file = self.current_brain / "3_Registered_Atlas" / ".registration_approved"
-        if approval_file.exists():
-            self.approval_status.setText("Status: APPROVED")
+        # Approved means a person approved THIS registration
+        # (mousebrain.registration_approval): an approval of an earlier
+        # registration of the brain is shown as such, not as APPROVED.
+        from mousebrain.registration_approval import (
+            APPROVED, NOT_REGISTERED, UNAPPROVED, approval_state)
+        state, text = approval_state(self.current_brain / "3_Registered_Atlas")
+        if state == APPROVED:
+            self.approval_status.setText(f"Status: APPROVED ({text})")
             self.approval_status.setStyleSheet("color: green;")
+        elif state == NOT_REGISTERED:
+            self.approval_status.setText("Status: NOT REGISTERED")
+            self.approval_status.setStyleSheet("color: gray;")
+        elif state == UNAPPROVED:
+            self.approval_status.setText("Status: PENDING APPROVAL")
+            self.approval_status.setStyleSheet("color: orange;")
         else:
-            # Check if registration exists but is not approved
-            brainreg_json = self.current_brain / "3_Registered_Atlas" / "brainreg.json"
-            if brainreg_json.exists():
-                self.approval_status.setText("Status: PENDING APPROVAL")
-                self.approval_status.setStyleSheet("color: orange;")
-            else:
-                self.approval_status.setText("Status: NOT REGISTERED")
-                self.approval_status.setStyleSheet("color: gray;")
+            self.approval_status.setText(f"Status: PENDING APPROVAL -- {text}")
+            self.approval_status.setStyleSheet("color: orange;")
+        self.approval_status.setWordWrap(True)
 
     def load_brain_into_napari(self):
         """Load the selected brain's channels into napari - mode-aware loading."""
@@ -9321,14 +9327,22 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Error", "Select a brain first")
             return
 
-        approval_file = self.current_brain / "3_Registered_Atlas" / ".registration_approved"
+        # The approval names the registration that is in the folder now, so
+        # registering again needs a new approval. It used to be an empty file
+        # that could be written before any registration existed -- the
+        # registration made later then inherited it.
+        from mousebrain.registration_approval import approve
         try:
-            approval_file.touch()
-            self.approval_status.setText("Status: APPROVED")
-            self.approval_status.setStyleSheet("color: green;")
-            QMessageBox.information(self, "Approved", "Registration approved!")
+            approve(self.current_brain / "3_Registered_Atlas",
+                    note="approved in the napari Setup & Tuning widget")
+        except ValueError as e:
+            QMessageBox.warning(self, "Nothing to approve", str(e))
+            return
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to approve: {e}")
+            return
+        self._update_registration_status()
+        QMessageBox.information(self, "Approved", "Registration approved!")
 
     def reject_registration(self):
         """Reject the registration."""
@@ -9337,9 +9351,14 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Error", "Select a brain first")
             return
 
-        approval_file = self.current_brain / "3_Registered_Atlas" / ".registration_approved"
-        if approval_file.exists():
-            approval_file.unlink()
+        # The approval (if any) is moved into 3_Registered_Atlas/_archive,
+        # kept rather than deleted, and the brain is unapproved.
+        from mousebrain.registration_approval import withdraw
+        try:
+            withdraw(self.current_brain / "3_Registered_Atlas", reason="rejected")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to withdraw the approval: {e}")
+            return
 
         self.approval_status.setText("Status: REJECTED")
         self.approval_status.setStyleSheet("color: red;")

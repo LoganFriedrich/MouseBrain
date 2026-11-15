@@ -189,6 +189,10 @@ INPUT_PRIORITY = ("manual", "cropped", "full")
 DEFAULT_SOURCES_IN_REGISTERED_SPACE = ("manual", "cropped")
 
 
+from mousebrain.registration_approval import (APPROVED, approval_state,
+                                              is_approved as is_registration_approved)
+
+
 def sources_in_registered_space(pipeline_folder=None):
     from mousebrain.config import registered_space
     recorded = registered_space(pipeline_folder) if pipeline_folder else ""
@@ -385,7 +389,7 @@ def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT, source: str = "a
                 'input_folder': input_folder,
                 'metadata': metadata,
                 'registered': (reg_folder / "brainreg.json").exists(),
-                'approved': (reg_folder / ".registration_approved").exists(),
+                'approved': is_registration_approved(reg_folder),
                 'detected': det_folder.exists() and len(list(det_folder.glob("*.xml"))) > 0,
             })
 
@@ -656,11 +660,16 @@ Examples:
     # waiting on something.
     if input_source in sources_in_registered_space(pipeline_folder):
         reg_folder = pipeline_folder / FOLDER_REGISTRATION
-        approval_file = reg_folder / ".registration_approved"
-        if not approval_file.exists():
+        # Approved = a person approved THIS registration. An approval of an
+        # earlier registration of the brain, or one that does not say which
+        # registration it was for, does not let detection run
+        # (mousebrain.registration_approval says why).
+        approval, approval_text = approval_state(reg_folder)
+        if approval != APPROVED:
             print("\n" + "=" * 60)
             print("STOPPING: REGISTRATION NOT YET APPROVED")
             print("=" * 60)
+            print(f"\nRegistration: {approval_text}")
             print("\nThese are the images registration was computed on, so cell")
             print("detection here is the expensive step that follows it -- and it")
             print("should not run until a person has confirmed the registration is")

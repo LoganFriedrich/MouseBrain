@@ -33,6 +33,8 @@ import sys
 
 from mousebrain.config import is_pipeline_candidate
 from mousebrain.pipeline_status import brain_status
+from mousebrain.registration_approval import (approval_state,
+                                              is_approved as is_registration_approved)
 import time
 import traceback
 from datetime import datetime
@@ -196,10 +198,11 @@ def run_registration(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
         if not boundaries_tiff.exists():
             return False, "Registration failed: boundaries.tiff not created"
 
-        # Auto-approve registration only if verification passed
-        approval_marker = reg_folder / ".registration_approved"
-        approval_marker.touch()
-        log.info(f"[{brain_name}] Registration complete, auto-approved")
+        # NOT approved here. This used to write the approval marker itself,
+        # so registrations nobody had looked at went on to detection and
+        # region counts. A person approves (mousebrain.registration_approval);
+        # process_brain stops at "awaiting approval" until then.
+        log.info(f"[{brain_name}] Registration complete -- waiting for a person to approve it")
         return True, "Registration successful"
 
     except subprocess.TimeoutExpired:
@@ -402,6 +405,15 @@ def process_brain(brain_name: str, pipeline_dir: Path, skip_complete: bool = Tru
             result['error'] = msg
             return result
 
+    # A person must approve THIS registration before anything is detected on
+    # it. The batch stops the brain here and says so in the report.
+    if not is_registration_approved(pipeline_dir / FOLDER_REGISTRATION):
+        state_text = approval_state(pipeline_dir / FOLDER_REGISTRATION)[1]
+        log.info(f"[{brain_name}] Stopping: registration not approved ({state_text})")
+        result['status'] = 'awaiting_approval'
+        result['error'] = f"registration not approved: {state_text}"
+        return result
+
     # Step 2: Detection
     if status['detected'] and skip_complete:
         log.info(f"[{brain_name}] Detection already complete, skipping")
@@ -478,6 +490,8 @@ def generate_comparison_report(results: List[Dict]) -> Path:
         f"- **Brains processed:** {len(results)}",
         f"- **Successful:** {sum(1 for r in results if r['status'] == 'success')}",
         f"- **Failed:** {sum(1 for r in results if r['status'] == 'failed')}",
+        f"- **Waiting for a person to approve the registration:** "
+        f"{sum(1 for r in results if r['status'] == 'awaiting_approval')}",
         "",
         "## Detection method",
         "- The settled method for each brain's imaging setup (the tracker run",
@@ -499,7 +513,7 @@ def generate_comparison_report(results: List[Dict]) -> Path:
         else:
             vs_ref = "N/A"
 
-        status_icon = "+" if r['status'] == 'success' else "X"
+        status_icon = {"success": "+", "awaiting_approval": "approve"}.get(r['status'], "X")
         steps = ", ".join(f"{k}:{v[0]}" for k, v in r['steps'].items())
 
         lines.append(f"| {r['brain']} | {cells} | {vs_ref} | {status_icon} | {steps} |")
@@ -861,6 +875,8 @@ def main():
     log.info(f"Total brains: {len(results)}")
     log.info(f"Successful: {sum(1 for r in results if r['status'] == 'success')}")
     log.info(f"Failed: {sum(1 for r in results if r['status'] == 'failed')}")
+    log.info(f"Waiting for registration approval: "
+             f"{sum(1 for r in results if r['status'] == 'awaiting_approval')}")
     log.info(f"Report: {report_path}")
     log.info(f"Images: {IMAGES_DIR}")
     log.info("=" * 70)

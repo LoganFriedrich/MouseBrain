@@ -222,10 +222,12 @@ def qc_check_registration(brain_path: Path) -> Tuple[str, str]:
     if not boundaries.exists():
         return QCStatus.REVIEW, "boundaries.tiff missing - may affect visualization"
 
-    # Registration always needs human review for approval
-    approved_marker = reg_dir / ".registration_approved"
-    if not approved_marker.exists():
-        return QCStatus.REVIEW, "Needs human approval (check QC images)"
+    # Registration always needs human review for approval -- of THIS
+    # registration (mousebrain.registration_approval).
+    from mousebrain.registration_approval import APPROVED, approval_state
+    state, text = approval_state(reg_dir)
+    if state != APPROVED:
+        return QCStatus.REVIEW, f"Needs human approval (check QC images): {text}"
 
     return QCStatus.PASS, "OK (approved)"
 
@@ -388,7 +390,7 @@ def setup_brain_from_ims(ims_path: Path) -> Tuple[Optional[Path], str]:
     return brain_folder, f"Created {brain_folder.name}"
 
 
-def process_brain(brain_path: Path, brain_name: str, auto_approve: bool = False) -> dict:
+def process_brain(brain_path: Path, brain_name: str) -> dict:
     """
     Process a single brain through the pipeline with QC gates.
 
@@ -455,17 +457,16 @@ def process_brain(brain_path: Path, brain_name: str, auto_approve: bool = False)
     results['qc_register'] = f"{qc_status}: {qc_msg}"
     print(f"    QC: {qc_msg}")
 
-    # Registration needs approval
-    if qc_status == QCStatus.REVIEW and not auto_approve:
+    # Registration needs a person's approval. A batch never approves: the
+    # approval exists so that a person has looked at the registration before
+    # hours of detection run on it. (--auto-approve used to try, with an
+    # argument the approval script does not accept, so it never worked.)
+    if qc_status == QCStatus.REVIEW:
         results['status'] = QCStatus.REVIEW
         results['needs_registration_approval'] = True
         update_brain_status(brain_name, results)
         print("    >>> Needs registration approval - stopping here")
         return results
-
-    if auto_approve:
-        # Auto-approve registration
-        success, _ = run_step('util_approve_registration.py', ['--brain', brain_name, '--yes'])
 
     # Step 4: Detect cells
     print("\n[4/6] Detecting cells...")
@@ -607,8 +608,6 @@ def main():
     parser.add_argument('--input', '-i', nargs='+', help='IMS files or folders to process')
     parser.add_argument('--resume', action='store_true', help='Resume pending/failed brains')
     parser.add_argument('--status', action='store_true', help='Show status of all brains')
-    parser.add_argument('--auto-approve', action='store_true',
-                        help='Auto-approve registrations (use with caution)')
     parser.add_argument('--retry-failed', action='store_true',
                         help='Retry previously failed brains')
 
@@ -676,7 +675,7 @@ def main():
     results = []
     for brain_name, brain_path in to_process:
         try:
-            result = process_brain(brain_path, brain_name, auto_approve=args.auto_approve)
+            result = process_brain(brain_path, brain_name)
             results.append(result)
         except Exception as e:
             print(f"\n  ERROR: {e}")

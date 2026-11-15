@@ -701,9 +701,17 @@ class PipelineDashboard(QWidget):
             "Regions counted",
         ]
 
+        # A stale output exists but was made from something replaced since
+        # (mousebrain.pipeline_status): [!] with the reason, step offered again.
+        stale_of = {"Cells detected": "detect", "Cells classified": "classify",
+                    "Regions counted": "count"}
         for lbl, done, text in zip(self.check_labels, checks, labels):
-            mark = "[X]" if done else "[ ]"
-            lbl.setText(f"{mark} {text}")
+            why = status['stale'].get(stale_of.get(text, ""))
+            if text == "Registration approved" and status['registered'] and not done:
+                why = status['approval_text']
+            mark = "[!]" if (why and text != "Registration approved") else ("[X]" if done else "[ ]")
+            lbl.setText(f"{mark} {text}" + (f" -- {why}" if why else ""))
+            lbl.setWordWrap(True)
 
         # Update next step
         self.next_step_label.setText(f"Next: {status['step_name']}")
@@ -747,10 +755,10 @@ class PipelineDashboard(QWidget):
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply == QMessageBox.Yes:
-                self.run_script('util_approve_registration.py', ['--brain', brain_name, '--yes'])
+                self._approve_current_registration()
             else:
                 self.message_label.setText("Registration not approved. Re-register if needed.")
-                self.run_next_btn.setEnabled(True)
+            self.run_next_btn.setEnabled(True)
 
         elif status['step'] == 'detect':
             # Step 4 looks the settled method up itself; checking here first
@@ -835,8 +843,26 @@ class PipelineDashboard(QWidget):
         )
 
         if reply == QMessageBox.Yes:
-            brain_name = self.current_brain.name
-            self.run_script('util_approve_registration.py', ['--brain', brain_name, '--yes'])
+            self._approve_current_registration()
+
+    def _approve_current_registration(self):
+        """Write the approval of the registration that is in the folder NOW.
+
+        The person has just said yes in a dialog. Both approve paths used to
+        run the approval script with a --yes it does not accept, so the script
+        stopped with a usage error and nothing was approved. The approval
+        names this registration (mousebrain.registration_approval), so a later
+        re-registration is not covered by it.
+        """
+        from mousebrain.registration_approval import approve
+        try:
+            approve(self.current_brain / "3_Registered_Atlas",
+                    note="approved in the napari pipeline dashboard")
+            self.message_label.setText("Registration approved.")
+        except ValueError as e:
+            QMessageBox.warning(self, "Nothing to approve", str(e))
+        self.refresh_brains()
+        self.update_status_display()
 
     def view_results(self):
         """View the results folder."""

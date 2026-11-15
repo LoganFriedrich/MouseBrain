@@ -169,7 +169,9 @@ tracker.mark_as_best(run_id)
 2. Select brain
 3. Click "Load Brain" → loads registration view
 4. Verify boundaries align with tissue
-5. Approve or reject registration
+5. Approve or reject registration. The approval covers this registration only:
+   registering the brain again needs a new approval (see docs/pipeline/README.md,
+   "Registration QC & Approval").
 
 ### Mode 3: Results Viewer (future)
 **Purpose**: View final cell counts per atlas region.

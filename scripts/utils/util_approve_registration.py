@@ -5,6 +5,9 @@ util_approve_registration.py
 Mark registration as approved after manual QC review.
 
 This creates a `.registration_approved` file that subsequent steps check for.
+The file names the registration it approves (mousebrain.registration_approval):
+registering the brain again needs a new approval, and an approval written
+before approvals recorded their registration does not count.
 
 Usage:
     python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4
@@ -19,7 +22,8 @@ The script will:
 import argparse
 import sys
 from pathlib import Path
-from datetime import datetime
+from mousebrain.registration_approval import (APPROVED, NOT_REGISTERED, approval_state,
+                                              approve as record_approval)
 
 # =============================================================================
 # CONFIGURATION
@@ -34,42 +38,44 @@ APPROVAL_MARKER = ".registration_approved"
 # =============================================================================
 
 def find_brain(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT):
-    """Find a brain's pipeline folder."""
-    root = Path(root)
+    """Find a brain's pipeline folder.
 
+    An exact folder name wins. Otherwise the name must match exactly ONE brain
+    folder: a part of a name that fits several brains (two imaging setups of one
+    mouse share its number) used to approve whichever was listed first.
+    """
+    from mousebrain.config import is_pipeline_candidate
+    root = Path(root)
+    partial = []
     for mouse_folder in root.iterdir():
         if not mouse_folder.is_dir():
             continue
         for pipeline_folder in mouse_folder.iterdir():
-            if not pipeline_folder.is_dir():
+            if not is_pipeline_candidate(pipeline_folder):
                 continue
-            if brain_name == pipeline_folder.name or brain_name in pipeline_folder.name:
+            if brain_name == pipeline_folder.name:
                 return pipeline_folder
-
+            if brain_name in pipeline_folder.name:
+                partial.append(pipeline_folder)
+    if len(partial) == 1:
+        return partial[0]
+    if len(partial) > 1:
+        print(f"Error: '{brain_name}' matches more than one brain; give the full name:")
+        for p in partial:
+            print(f"  {p.name}")
     return None
 
 
 def check_approval_status(pipeline_folder: Path):
-    """Check if registration has been approved."""
-    reg_folder = pipeline_folder / FOLDER_REGISTERED
-    approval_file = reg_folder / APPROVAL_MARKER
-
-    if approval_file.exists():
-        with open(approval_file, 'r') as f:
-            data = f.read().strip()
-        return True, data
-    return False, None
+    """(approved, explanation) for the registration that is in the folder now."""
+    state, text = approval_state(pipeline_folder / FOLDER_REGISTERED)
+    return state == APPROVED, text
 
 
 def approve_registration(pipeline_folder: Path):
-    """Create approval marker file."""
-    reg_folder = pipeline_folder / FOLDER_REGISTERED
-    approval_file = reg_folder / APPROVAL_MARKER
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(approval_file, 'w') as f:
-        f.write(f"Approved: {timestamp}\n")
-
+    """Record that the person running this script approved the registration."""
+    record_approval(pipeline_folder / FOLDER_REGISTERED,
+                    note="approved with util_approve_registration.py")
     print(f"[OK] Registration approved and marked for: {pipeline_folder.name}")
     return True
 
@@ -155,7 +161,7 @@ Examples:
 
     # Check if registration exists
     reg_folder = pipeline_folder / FOLDER_REGISTERED
-    if not reg_folder.exists():
+    if approval_state(reg_folder)[0] == NOT_REGISTERED:
         print(f"\nError: No registration found for this brain")
         print(f"  Run registration first: python 3_register_to_atlas.py --brain {args.brain}")
         sys.exit(1)
@@ -168,7 +174,7 @@ Examples:
             print(f"\n[OK] Registration is APPROVED")
             print(f"  {approval_data}")
         else:
-            print(f"\n[!] Registration NOT YET APPROVED")
+            print(f"\n[!] Registration NOT APPROVED: {approval_data}")
             print(f"  Review QC images and approve if registration looks good")
         sys.exit(0)
 
@@ -205,6 +211,8 @@ Examples:
         response = input("\nDoes the registration look good? (yes/no): ").strip().lower()
         if response not in ['yes', 'y']:
             print("\n[FAIL] Registration NOT approved")
+            if approval_data:
+                print(f"  ({approval_data})")
             print("  Re-run registration if needed, or adjust parameters")
             sys.exit(1)
 
