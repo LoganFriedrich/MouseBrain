@@ -987,51 +987,83 @@ class AnalysisRegistry:
     # -----------------------------------------------------------------
 
     def invalidate(self, sample: Optional[str] = None) -> List[str]:
-        """Mark entries as stale and archive their output files.
+        """Archive entries' output files and mark those entries invalidated.
 
         If *sample* is given, only that sample's entries are invalidated.
-        If None, ALL entries are invalidated.
+        If None, ALL current entries are invalidated.
 
         Archived files are moved to an ``_archived/{timestamp}/`` subdirectory
         beside where they were, so they are preserved but no longer in the
         active output path.
 
+        WHY one entry at a time, and only when every file moved:
+        an entry marked invalidated whose file is still in the active folder
+        tells every reader (and an integrator mirroring this folder) that a
+        result is gone when it is not; and moving every file first and
+        writing the manifest once at the end meant a crash part-way left files
+        in _archived/ while the manifest still called their entries current.
+        So, for each entry: move its files; if any move fails, put back the
+        ones already moved, leave the entry CURRENT, print a [!] line and
+        record it in the audit log; if all moved (or were already absent),
+        mark it invalidated and write the manifest straight away. The whole
+        pass holds the registry lock, refreshed after each entry so a long
+        pass is never mistaken for a crashed writer.
+
         Args:
             sample: Optional sample name to invalidate. None = invalidate all.
 
         Returns:
-            List of entry keys that were invalidated.
+            List of entry keys that were invalidated. An entry whose files
+            could not all be moved is NOT in it (see the printed warnings).
         """
-        # Under the lock for the whole pass (see the class docstring).
-        with self._locked():
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        invalidated: List[str] = []
+        failed: List[str] = []
+
+        with self._locked() as lock:
             registry = self._read_registry(set_aside_unreadable=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            invalidated = []
 
             for key, entry in list(registry.get("entries", {}).items()):
                 if sample is not None and entry.get("sample") != sample:
                     continue
                 if not entry.get("is_current", True):
-                    continue  # already stale
+                    continue  # already invalidated
 
-                # Archive output files
-                for output_type, rel_path in entry.get("outputs", {}).items():
+                moved: List[Tuple[Path, Path]] = []
+                problem = None
+                for _output_type, rel_path in entry.get("outputs", {}).items():
                     src = self.registry_root / rel_path
-                    if src.exists():
-                        archive_dir = src.parent / "_archived" / timestamp
-                        archive_dir.mkdir(parents=True, exist_ok=True)
-                        dest = archive_dir / src.name
+                    if not src.exists():
+                        continue  # nothing left in the active path to archive
+                    dest = src.parent / "_archived" / timestamp / src.name
+                    try:
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(src), str(dest))
+                        moved.append((src, dest))
+                    except OSError as e:
+                        problem = "could not archive %s: %s" % (src, e)
+                        break
+
+                if problem is not None:
+                    for src, dest in reversed(moved):
                         try:
-                            shutil.move(str(src), str(dest))
+                            shutil.move(str(dest), str(src))
                         except OSError as e:
-                            print(f"  [!] WARNING: Could not archive {src}: {e}")
+                            problem += "; and could not put back %s (it is at %s): %s" % (
+                                src, dest, e)
+                    print("  [!] %s NOT invalidated, still current: %s" % (key, problem))
+                    self._log_event("invalidate_failed", entry.get("sample", key),
+                                    key, problem)
+                    failed.append(key)
+                    continue
 
                 entry["is_current"] = False
                 entry["invalidated_at"] = datetime.now().isoformat()
+                self._write_registry(registry)
+                lock.touch()
                 invalidated.append(key)
 
             if invalidated:
-                self._write_registry(registry)
                 self._log_event(
                     "invalidate",
                     sample or "ALL",
@@ -1039,6 +1071,10 @@ class AnalysisRegistry:
                     timestamp,
                 )
 
+        if failed:
+            print("  [!] %d entr%s could not be invalidated (files could not be moved); "
+                  "they stay current. Free the files and run invalidate again."
+                  % (len(failed), "y" if len(failed) == 1 else "ies"))
         return invalidated
 
     # -----------------------------------------------------------------

@@ -478,3 +478,66 @@ def test_a_lock_left_by_a_crashed_writer_is_taken_over(tmp_path):
                         method_params=DEFAULT_METHOD)
     assert list(reg.get_all_entries()) == [SAMPLE]
     assert not lock.exists()
+
+
+# ---------------------------------------------------------------------------
+# invalidate(): only what really moved, recorded one entry at a time
+# ---------------------------------------------------------------------------
+
+def _register_two(tmp_path):
+    _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
+    dests = {}
+    for sample in ("E01_01_S01_DCN", "E01_01_S02_DCN"):
+        one_csv = tmp_path / "src" / f"{sample}_measurements.csv"
+        one_csv.write_text("a\n1\n", encoding="utf-8")
+        one_fig = tmp_path / "src" / f"{sample}_overlay.png"
+        one_fig.write_bytes(b"png")
+        dests[sample] = reg.register_output(
+            sample=sample, category="roi_analysis",
+            files={"figure": str(one_fig), "measurements": str(one_csv)},
+            results={}, method_params=DEFAULT_METHOD)
+    return reg, dests
+
+
+def test_an_entry_whose_file_cannot_be_moved_stays_current(tmp_path, monkeypatch):
+    reg, dests = _register_two(tmp_path)
+    stuck = dests["E01_01_S02_DCN"]["measurements"]
+    real_move = ar.shutil.move
+
+    def move(src, dst, *a, **k):
+        if Path(src) == stuck:
+            raise PermissionError(13, "held open by another program")
+        return real_move(src, dst, *a, **k)
+
+    monkeypatch.setattr(ar.shutil, "move", move)
+    assert reg.invalidate() == ["E01_01_S01_DCN"]
+
+    on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
+    assert on_disk["E01_01_S01_DCN"]["is_current"] is False
+    assert on_disk["E01_01_S02_DCN"]["is_current"] is True
+    # Every file of the entry left current is in the active path -- the
+    # figure, moved before the failure, was put back.
+    for path in dests["E01_01_S02_DCN"].values():
+        assert path.is_file(), path
+
+
+def test_each_invalidated_entry_is_recorded_before_the_next_is_moved(tmp_path, monkeypatch):
+    reg, dests = _register_two(tmp_path)
+    second = dests["E01_01_S02_DCN"]["measurements"]
+    real_move = ar.shutil.move
+
+    def move(src, dst, *a, **k):
+        if Path(src) == second:
+            raise KeyboardInterrupt  # the process stops part-way through the pass
+        return real_move(src, dst, *a, **k)
+
+    monkeypatch.setattr(ar.shutil, "move", move)
+    with pytest.raises(KeyboardInterrupt):
+        reg.invalidate()
+
+    # The first entry's files were archived AND the manifest says so.
+    for path in dests["E01_01_S01_DCN"].values():
+        assert not path.exists()
+    on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
+    assert on_disk["E01_01_S01_DCN"]["is_current"] is False
