@@ -841,23 +841,26 @@ Examples:
     print(f"Preset: {preset_name}")
     print(f"{'='*60}")
     
-    # Run detection
-    success, duration, cells_found = run_cellfinder_detect(
-        signal_path=signal_path,
-        background_path=background_path,
-        output_path=det_folder,
-        voxel_sizes=voxel_sizes,
-        params=params,
-        n_free_cpus=args.n_free_cpus,
-    )
+    # If this stops part-way (an error, Ctrl-C, a crash inside the tool),
+    # the tracker row is set to failed instead of staying 'started' forever.
+    with tracker.finish_or_fail(exp_id):
+        # Run detection
+        success, duration, cells_found = run_cellfinder_detect(
+            signal_path=signal_path,
+            background_path=background_path,
+            output_path=det_folder,
+            voxel_sizes=voxel_sizes,
+            params=params,
+            n_free_cpus=args.n_free_cpus,
+        )
     
-    # Update tracker
-    tracker.update_status(
-        exp_id,
-        status="completed" if success else "failed",
-        duration_seconds=round(duration, 1),
-        det_cells_found=cells_found,
-    )
+        # Update tracker
+        tracker.update_status(
+            exp_id,
+            status="completed" if success else "failed",
+            duration_seconds=round(duration, 1),
+            det_cells_found=cells_found,
+        )
     
     print(f"\n{'='*60}")
     if success:

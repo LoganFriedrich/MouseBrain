@@ -665,28 +665,31 @@ Examples:
 
         print(f"\nSelective Classification Run: {sel_exp_id}")
 
-        result = run_selective_classification(
-            brain_path=pipeline_folder,
-            candidates_xml=candidates,
-            model_path=model_path,
-            registration_path=registration_path,
-            tracing_type=args.tracing_type,
-            signal_path=signal_path,
-            background_path=background_path,
-            voxel_sizes=voxel_sizes,
-            cube_size=args.cube_size,
-            batch_size=args.batch_size,
-            n_free_cpus=args.n_free_cpus,
-        )
+        # If this stops part-way (an error, Ctrl-C, a crash inside the tool),
+        # the tracker row is set to failed instead of staying 'started' forever.
+        with tracker.finish_or_fail(sel_exp_id):
+            result = run_selective_classification(
+                brain_path=pipeline_folder,
+                candidates_xml=candidates,
+                model_path=model_path,
+                registration_path=registration_path,
+                tracing_type=args.tracing_type,
+                signal_path=signal_path,
+                background_path=background_path,
+                voxel_sizes=voxel_sizes,
+                cube_size=args.cube_size,
+                batch_size=args.batch_size,
+                n_free_cpus=args.n_free_cpus,
+            )
 
-        # Update tracker
-        tracker.update_status(
-            sel_exp_id,
-            status="completed" if result.final_cells > 0 else "failed",
-            duration_seconds=round(result.duration_seconds, 1),
-            class_cells_found=result.final_cells,
-            class_rejected=result.classified_rejected,
-        )
+            # Update tracker
+            tracker.update_status(
+                sel_exp_id,
+                status="completed" if result.final_cells > 0 else "failed",
+                duration_seconds=round(result.duration_seconds, 1),
+                class_cells_found=result.final_cells,
+                class_rejected=result.classified_rejected,
+            )
 
         print(f"\nExperiment ID: {sel_exp_id}")
         return
@@ -715,27 +718,30 @@ Examples:
     print(f"Brain: {brain_name}")
     print(f"{'='*60}")
     
-    # Run classification
-    success, duration, cells_found, rejected = run_cellfinder_classify(
-        signal_path=signal_path,
-        candidates_path=candidates,
-        output_path=output_path,
-        model_path=model_path,
-        voxel_sizes=voxel_sizes,
-        cube_size=args.cube_size,
-        batch_size=args.batch_size,
-        n_free_cpus=args.n_free_cpus,
-        background_path=background_path,
-    )
+    # If this stops part-way (an error, Ctrl-C, a crash inside the tool),
+    # the tracker row is set to failed instead of staying 'started' forever.
+    with tracker.finish_or_fail(exp_id):
+        # Run classification
+        success, duration, cells_found, rejected = run_cellfinder_classify(
+            signal_path=signal_path,
+            candidates_path=candidates,
+            output_path=output_path,
+            model_path=model_path,
+            voxel_sizes=voxel_sizes,
+            cube_size=args.cube_size,
+            batch_size=args.batch_size,
+            n_free_cpus=args.n_free_cpus,
+            background_path=background_path,
+        )
     
-    # Update tracker
-    tracker.update_status(
-        exp_id,
-        status="completed" if success else "failed",
-        duration_seconds=round(duration, 1),
-        class_cells_found=cells_found,
-        class_rejected=rejected,
-    )
+        # Update tracker
+        tracker.update_status(
+            exp_id,
+            status="completed" if success else "failed",
+            duration_seconds=round(duration, 1),
+            class_cells_found=cells_found,
+            class_rejected=rejected,
+        )
     
     print(f"\n{'='*60}")
     if success:

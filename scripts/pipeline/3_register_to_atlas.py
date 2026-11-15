@@ -461,99 +461,105 @@ def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLA
         except Exception as e:
             print(f"    [Tracker] Warning: Could not log registration start: {e}")
 
-    # Build brainreg command (use found path, not just "brainreg")
-    cmd = [
-        _brainreg_path,
-        str(input_folder),
-        str(reg_folder),
-        "-v", str(voxel_z), str(voxel_xy), str(voxel_xy),
-        "--orientation", orientation,
-        "--atlas", atlas,
-    ]
+    # If this stops part-way (an error, Ctrl-C, a crash inside the tool),
+    # the tracker row is set to failed instead of staying 'started' forever.
+    import contextlib
+    guard = (tracker.finish_or_fail(exp_id) if (tracker and exp_id)
+             else contextlib.nullcontext())
+    with guard:
+        # Build brainreg command (use found path, not just "brainreg")
+        cmd = [
+            _brainreg_path,
+            str(input_folder),
+            str(reg_folder),
+            "-v", str(voxel_z), str(voxel_xy), str(voxel_xy),
+            "--orientation", orientation,
+            "--atlas", atlas,
+        ]
 
-    # Add additional channels if present
-    num_channels = channels_info.get('count', 1)
-    if num_channels > 1:
-        for ch_idx in range(num_channels):
-            if ch_idx != reg_channel:
-                additional_folder = crop_folder / f"ch{ch_idx}"
-                if additional_folder.exists():
-                    cmd.extend(["-a", str(additional_folder)])
+        # Add additional channels if present
+        num_channels = channels_info.get('count', 1)
+        if num_channels > 1:
+            for ch_idx in range(num_channels):
+                if ch_idx != reg_channel:
+                    additional_folder = crop_folder / f"ch{ch_idx}"
+                    if additional_folder.exists():
+                        cmd.extend(["-a", str(additional_folder)])
 
-    # Add CPU limit if specified
-    if n_free_cpus is not None:
-        cmd.extend(["--n-free-cpus", str(n_free_cpus)])
+        # Add CPU limit if specified
+        if n_free_cpus is not None:
+            cmd.extend(["--n-free-cpus", str(n_free_cpus)])
 
-    print(f"    Registration channel: ch{reg_channel}")
-    print(f"    Voxel sizes (Z,Y,X): {voxel_z}, {voxel_xy}, {voxel_xy} um")
-    print(f"    Atlas: {atlas}")
-    print(f"    Orientation: {orientation}")
-    if n_free_cpus:
-        print(f"    CPU limit: leaving {n_free_cpus} cores free")
-    print(f"\n    [{timestamp()}] Starting brainreg (this typically takes 20-60 minutes)...")
-    print(f"    Command: {' '.join(cmd)}")
-    print(f"    {'='*50}")
-    sys.stdout.flush()
+        print(f"    Registration channel: ch{reg_channel}")
+        print(f"    Voxel sizes (Z,Y,X): {voxel_z}, {voxel_xy}, {voxel_xy} um")
+        print(f"    Atlas: {atlas}")
+        print(f"    Orientation: {orientation}")
+        if n_free_cpus:
+            print(f"    CPU limit: leaving {n_free_cpus} cores free")
+        print(f"\n    [{timestamp()}] Starting brainreg (this typically takes 20-60 minutes)...")
+        print(f"    Command: {' '.join(cmd)}")
+        print(f"    {'='*50}")
+        sys.stdout.flush()
 
-    # Run brainreg
-    start_time = datetime.now()
-    result = subprocess.run(cmd, capture_output=False)
-    elapsed = (datetime.now() - start_time).total_seconds()
+        # Run brainreg
+        start_time = datetime.now()
+        result = subprocess.run(cmd, capture_output=False)
+        elapsed = (datetime.now() - start_time).total_seconds()
 
-    print(f"    {'='*50}")
-    if result.returncode != 0:
-        # Update tracker with failure
+        print(f"    {'='*50}")
+        if result.returncode != 0:
+            # Update tracker with failure
+            if tracker and exp_id:
+                try:
+                    tracker.update_status(exp_id, status="failed", duration_seconds=elapsed)
+                except Exception:
+                    pass
+            raise RuntimeError(f"brainreg failed with return code {result.returncode}")
+
+        print(f"    [{timestamp()}] Registration completed in {elapsed/60:.1f} minutes")
+
+        # Verify output
+        status, reason = check_registration_status(pipeline_folder)
+        if status != "complete":
+            # Update tracker with failure
+            if tracker and exp_id:
+                try:
+                    tracker.update_status(exp_id, status="failed", duration_seconds=elapsed)
+                except Exception:
+                    pass
+            raise RuntimeError(f"Registration verification failed: {reason}")
+
+        # Update tracker with success
         if tracker and exp_id:
             try:
-                tracker.update_status(exp_id, status="failed", duration_seconds=elapsed)
-            except Exception:
-                pass
-        raise RuntimeError(f"brainreg failed with return code {result.returncode}")
+                tracker.update_status(exp_id, status="completed", duration_seconds=elapsed)
+                print(f"    [Tracker] Registration logged as completed")
+            except Exception as e:
+                print(f"    [Tracker] Warning: Could not update status: {e}")
 
-    print(f"    [{timestamp()}] Registration completed in {elapsed/60:.1f} minutes")
-
-    # Verify output
-    status, reason = check_registration_status(pipeline_folder)
-    if status != "complete":
-        # Update tracker with failure
-        if tracker and exp_id:
-            try:
-                tracker.update_status(exp_id, status="failed", duration_seconds=elapsed)
-            except Exception:
-                pass
-        raise RuntimeError(f"Registration verification failed: {reason}")
-
-    # Update tracker with success
-    if tracker and exp_id:
+        # Generate detailed QC visualization
+        print(f"    [{timestamp()}] Generating registration QC images...")
+        qc_paths = [orientation_png] if orientation_png else []
         try:
-            tracker.update_status(exp_id, status="completed", duration_seconds=elapsed)
-            print(f"    [Tracker] Registration logged as completed")
+            qc_path = draw_registration_qc(pipeline_folder)
+            if qc_path:
+                qc_paths.append(str(qc_path))
+                print(f"    [{timestamp()}] QC images saved: {qc_path.name}")
+            else:
+                print(f"    [{timestamp()}] Warning: Could not generate QC images")
         except Exception as e:
-            print(f"    [Tracker] Warning: Could not update status: {e}")
+            print(f"    [{timestamp()}] Warning: QC generation failed: {e}")
+            # Don't fail registration if QC generation fails
 
-    # Generate detailed QC visualization
-    print(f"    [{timestamp()}] Generating registration QC images...")
-    qc_paths = [orientation_png] if orientation_png else []
-    try:
-        qc_path = draw_registration_qc(pipeline_folder)
-        if qc_path:
-            qc_paths.append(str(qc_path))
-            print(f"    [{timestamp()}] QC images saved: {qc_path.name}")
-        else:
-            print(f"    [{timestamp()}] Warning: Could not generate QC images")
-    except Exception as e:
-        print(f"    [{timestamp()}] Warning: QC generation failed: {e}")
-        # Don't fail registration if QC generation fails
+        # Every QC picture made for this run, the orientation check included, goes
+        # on the tracker row -- also when the detailed QC above could not be drawn.
+        if qc_paths and tracker and exp_id:
+            try:
+                tracker.add_registration_qc_images(exp_id, qc_paths)
+            except Exception:
+                pass
 
-    # Every QC picture made for this run, the orientation check included, goes
-    # on the tracker row -- also when the detailed QC above could not be drawn.
-    if qc_paths and tracker and exp_id:
-        try:
-            tracker.add_registration_qc_images(exp_id, qc_paths)
-        except Exception:
-            pass
-
-    return True
+        return True
 
 
 # =============================================================================

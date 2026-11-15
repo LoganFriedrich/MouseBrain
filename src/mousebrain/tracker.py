@@ -33,7 +33,11 @@ Usage as CLI:
 
 import csv
 import os
+import socket
 import sys
+import time
+import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Any
@@ -66,8 +70,10 @@ CSV_COLUMNS = [
     "project_code",   # e.g., "CNT" - umbrella project code
     "project_name",   # e.g., "Connectome" - human-readable project name
 
-    # Status
-    "status",  # started, running, completed, failed, cancelled
+    # Status. Written by the code: started, completed, failed, approved
+    # (registration backfill), data_exported (training export). A run whose
+    # process stops without a result is set to failed (finish_or_fail).
+    "status",
     "duration_seconds",
 
     # Common parameters
@@ -187,6 +193,31 @@ DETECTION_METHOD_COLUMNS = {
 }
 
 
+# How the CSV is written (see ExperimentTracker._csv_lock and _rewrite).
+#
+# WHY A LOCK, A TEMPORARY FILE, AND THE FILE'S OWN COLUMN ORDER
+# The tracker is one CSV on the shared drive, written by the pipeline scripts,
+# the napari widget and the training script -- on several machines at once.
+# Every status change rewrites the whole file. Before this, that rewrite:
+#   * wrote in place, so a crash part-way left a truncated tracker;
+#   * had no lock, so two machines updating at once lost one update;
+#   * wrote only the columns THIS code version knows, in this version's order,
+#     so the first status change made by an older copy deleted every newer
+#     column from every row.
+# Now each write holds an exclusive lock file beside the CSV, writes a
+# temporary file in the file's own column order (keeping columns this version
+# does not know), and swaps it in with os.replace.
+#
+# The lock is a file created with O_EXCL, which the file server grants to
+# exactly one machine. A holder that crashed leaves it behind, so a lock older
+# than LOCK_STALE_SECONDS -- measured by the FILE SERVER's clock, not this
+# machine's, because the machines' clocks differ -- is taken over. A real
+# holder keeps it well under a second (one CSV rewrite).
+LOCK_STALE_SECONDS = 120
+LOCK_WAIT_SECONDS = 300
+REPLACE_RETRY_SECONDS = 30  # a reader on Windows can hold the file open briefly
+
+
 # =============================================================================
 # EXPERIMENT TRACKER CLASS
 # =============================================================================
@@ -241,6 +272,143 @@ class ExperimentTracker:
             self.csv_path.parent.mkdir(parents=True, exist_ok=True)
             self._add_missing_columns()
 
+    # -----------------------------------------------------------------
+    # Safe writing (see the note above the class)
+    # -----------------------------------------------------------------
+    @property
+    def _lock_path(self) -> Path:
+        return self.csv_path.with_name(self.csv_path.name + ".lock")
+
+    def _server_now(self) -> float:
+        """The file server's current time: the modification time of a file
+        written there just now."""
+        probe = self.csv_path.with_name(".%s.clock-%s" % (self.csv_path.name, uuid.uuid4().hex[:8]))
+        try:
+            probe.write_bytes(b"")
+            return probe.stat().st_mtime
+        finally:
+            try:
+                probe.unlink()
+            except OSError:
+                pass
+
+    def _take_over_stale_lock(self, seen: str) -> bool:
+        """Remove the lock if it is still the one we saw (content `seen`) and
+        it has been held longer than LOCK_STALE_SECONDS by the server's clock.
+        Returns True when the caller should try to take the lock again."""
+        lock = self._lock_path
+        try:
+            age = self._server_now() - lock.stat().st_mtime
+        except FileNotFoundError:
+            return True
+        if age < LOCK_STALE_SECONDS:
+            return False
+        # Move it aside (only one machine's rename can succeed), then check it
+        # is the stale lock we judged and not a fresh one taken meanwhile.
+        aside = lock.with_name(lock.name + ".stale-" + uuid.uuid4().hex[:8])
+        try:
+            os.rename(lock, aside)
+        except OSError:
+            return True
+        try:
+            content = aside.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            content = seen
+        if content != seen:
+            try:
+                os.rename(aside, lock)  # not ours to break: put it back
+            except OSError:
+                pass
+            return True
+        print("[Tracker] [!] Took over a lock left %.0f s ago by: %s" % (age, seen.strip()))
+        try:
+            aside.unlink()
+        except OSError:
+            pass
+        return True
+
+    @contextmanager
+    def _csv_lock(self):
+        """Hold the tracker's write lock for the duration of the block."""
+        lock = self._lock_path
+        mine = "%s pid %d at %s token %s\n" % (socket.gethostname(), os.getpid(),
+                                               datetime.now().isoformat(timespec="seconds"),
+                                               uuid.uuid4().hex)
+        deadline = time.monotonic() + LOCK_WAIT_SECONDS
+        told = False
+        while True:
+            try:
+                fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+                    f.write(mine)
+                break
+            except (FileExistsError, PermissionError):
+                try:
+                    seen = lock.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    seen = ""
+                if seen and self._take_over_stale_lock(seen):
+                    continue
+                if time.monotonic() > deadline:
+                    raise TimeoutError(
+                        "the calibration tracker %s is locked by %s for longer than %d s. If "
+                        "nothing is writing to it, delete %s." % (
+                            self.csv_path, seen.strip() or "another process",
+                            LOCK_WAIT_SECONDS, lock))
+                if not told:
+                    print("[Tracker] Waiting for the tracker lock (held by %s)" % (seen.strip() or "?"))
+                    told = True
+                time.sleep(0.2)
+        try:
+            yield
+        finally:
+            try:
+                if lock.read_text(encoding="utf-8", errors="replace") == mine:
+                    lock.unlink()
+            except OSError:
+                pass
+
+    def _replace(self, tmp: Path) -> None:
+        deadline = time.monotonic() + REPLACE_RETRY_SECONDS
+        while True:
+            try:
+                os.replace(tmp, self.csv_path)
+                return
+            except PermissionError:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.2)
+
+    def _rewrite(self, mutate):
+        """Read every row, let `mutate(rows)` change them, write them back.
+
+        Under the lock; in the file's own column order, keeping columns this
+        version does not know and adding any column it does know at the end;
+        through a temporary file. Returns what `mutate` returns.
+        """
+        with self._csv_lock():
+            with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                header = list(reader.fieldnames or [])
+                rows = list(reader)
+            if any(None in row for row in rows):
+                raise RuntimeError(
+                    f"{self.csv_path}: some rows have more values than the header has "
+                    f"columns, so the file cannot be rewritten without losing them. "
+                    f"Repair it first.")
+            result = mutate(rows)
+            columns = header + [c for c in CSV_COLUMNS if c not in header]
+            extra = [k for row in rows for k in row if k not in columns]
+            columns += list(dict.fromkeys(extra))
+            tmp = self.csv_path.with_name(self.csv_path.name + ".tmp-%d" % os.getpid())
+            with open(tmp, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=columns)
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({c: row.get(c, "") for c in columns})
+            self._replace(tmp)
+            return result
+
     def _add_missing_columns(self):
         """Give a tracker written before the newest columns those columns.
 
@@ -253,30 +421,21 @@ class ExperimentTracker:
         part-way leaves the original untouched.
         """
         with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            header = reader.fieldnames or []
-            if all(col in header for col in CSV_COLUMNS):
-                return
-            rows = list(reader)
-        if any(None in row for row in rows):
-            raise RuntimeError(
-                f"{self.csv_path}: some rows have more values than the header has "
-                f"columns, so the file cannot be updated safely. Repair it first.")
-        tmp = self.csv_path.with_suffix('.csv.tmp')
-        with open(tmp, 'w', newline='', encoding='utf-8') as f:
-            # Existing columns keep their order (including any this version no
-            # longer knows); new ones go at the end.
-            columns = list(header) + [c for c in CSV_COLUMNS if c not in header]
-            writer = csv.DictWriter(f, fieldnames=columns)
-            writer.writeheader()
-            writer.writerows(rows)
-        os.replace(tmp, self.csv_path)
+            header = next(csv.reader(f), None) or []
+        if all(col in header for col in CSV_COLUMNS):
+            return
+        # Existing columns keep their order (including any this version no
+        # longer knows); new ones go at the end -- which is what _rewrite does.
+        self._rewrite(lambda rows: None)
 
     def _generate_exp_id(self, exp_type: str, brain: str) -> str:
         """Generate a unique experiment ID."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Short hash for uniqueness
-        hash_input = f"{exp_type}_{brain}_{timestamp}_{os.getpid()}"
+        # Short hash for uniqueness. It includes a random part: two runs logged
+        # by one process within the same second (prefilter + classification in
+        # step 5, say) used to get the SAME id, and every later update to
+        # either then changed only the first.
+        hash_input = f"{exp_type}_{brain}_{timestamp}_{os.getpid()}_{uuid.uuid4().hex}"
         short_hash = hashlib.md5(hash_input.encode()).hexdigest()[:6]
         return f"{exp_type[:3]}_{timestamp}_{short_hash}"
 
@@ -320,12 +479,14 @@ class ExperimentTracker:
 
         # Append in the FILE's column order, not this code's: the two differ
         # whenever the file has a column this version does not know, and writing
-        # in the wrong order would put values under the wrong names.
-        with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
-            header = next(csv.reader(f), None) or CSV_COLUMNS
-        with open(self.csv_path, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=header, extrasaction='ignore')
-            writer.writerow(full_row)
+        # in the wrong order would put values under the wrong names. Under the
+        # lock, so an append never lands inside another machine's rewrite.
+        with self._csv_lock():
+            with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
+                header = next(csv.reader(f), None) or CSV_COLUMNS
+            with open(self.csv_path, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=header, extrasaction='ignore')
+                writer.writerow(full_row)
 
     def _read_all(self) -> List[Dict[str, str]]:
         """Read all experiments from CSV."""
@@ -337,31 +498,58 @@ class ExperimentTracker:
             return list(reader)
 
     def _update_row(self, exp_id: str, updates: Dict[str, Any]) -> bool:
-        """Update a specific row by exp_id."""
-        rows = self._read_all()
-        found = False
+        """Update a specific row by exp_id. One locked rewrite (see _rewrite):
+        columns this code version does not know are kept, never dropped."""
+        return self._update_rows({exp_id: updates})
 
-        for row in rows:
-            if row['exp_id'] == exp_id:
-                row.update({k: str(v) if v is not None else "" for k, v in updates.items()})
-                found = True
-                break
-
-        if found:
-            # Filter rows to only include valid CSV_COLUMNS keys
-            # This handles cases where CSV has extra/invalid columns
-            clean_rows = []
+    def _update_rows(self, updates_by_id: Dict[str, Dict[str, Any]]) -> bool:
+        """Apply several rows' updates in ONE locked rewrite, so a change
+        that must touch more than one row (moving a 'best' mark) can never be
+        left half done. True when the first id given was found."""
+        def mutate(rows):
+            found = set()
             for row in rows:
-                clean_row = {k: row.get(k, "") for k in CSV_COLUMNS}
-                clean_rows.append(clean_row)
+                upd = updates_by_id.get(row.get('exp_id'))
+                if upd is not None and row['exp_id'] not in found:
+                    row.update({k: str(v) if v is not None else "" for k, v in upd.items()})
+                    found.add(row['exp_id'])
+            return found
+        found = self._rewrite(mutate)
+        first = next(iter(updates_by_id), None)
+        return first in found
 
-            # Rewrite entire file
-            with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-                writer.writeheader()
-                writer.writerows(clean_rows)
+    @contextmanager
+    def finish_or_fail(self, exp_id: Optional[str]):
+        """Wrap a run's work: if the block ends while the run is still
+        'started' -- an exception, Ctrl-C, sys.exit, or a path that forgot to
+        record a result -- the run is set to 'failed' with the reason in its
+        notes. Rows stuck at 'started' forever used to be indistinguishable
+        from runs still going. (A process killed outright -- task end, power
+        loss -- runs no code at all and still leaves 'started'.)"""
+        try:
+            yield
+        except BaseException as e:
+            self._fail_if_unfinished(exp_id, "stopped before finishing: %s: %s"
+                                     % (type(e).__name__, e))
+            raise
+        else:
+            self._fail_if_unfinished(exp_id, "ended without recording a result")
 
-        return found
+    def _fail_if_unfinished(self, exp_id: Optional[str], why: str) -> None:
+        if not exp_id:
+            return
+        try:
+            def mutate(rows):
+                for row in rows:
+                    if row.get('exp_id') == exp_id and row.get('status') == 'started':
+                        row['status'] = 'failed'
+                        row['notes'] = "; ".join(filter(None, [row.get('notes', ''), why]))
+                        return True
+                return False
+            if self._rewrite(mutate):
+                print("[Tracker] Run %s marked failed: %s" % (exp_id, why))
+        except Exception as e:  # never hide the original error behind this one
+            print("[Tracker] [!] Could not mark run %s failed: %s" % (exp_id, e))
 
     # =========================================================================
     # LOGGING METHODS

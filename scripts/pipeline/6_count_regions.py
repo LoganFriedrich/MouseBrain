@@ -2045,20 +2045,23 @@ Examples:
             script_version=SCRIPT_VERSION,
         )
         
-        success, duration, total_cells, output_csv = run_brainglobe_counts(
-            cells_path=brain['cells_xml'],
-            registration_path=reg_folder,
-            output_path=output_path,
-            atlas=args.atlas,
-        )
+        # If this stops part-way (an error, Ctrl-C, a crash inside the tool),
+        # the tracker row is set to failed instead of staying 'started' forever.
+        with tracker.finish_or_fail(exp_id):
+            success, duration, total_cells, output_csv = run_brainglobe_counts(
+                cells_path=brain['cells_xml'],
+                registration_path=reg_folder,
+                output_path=output_path,
+                atlas=args.atlas,
+            )
         
-        tracker.update_status(
-            exp_id,
-            status="completed" if success else "failed",
-            duration_seconds=round(duration, 1),
-            count_total_cells=total_cells,
-            count_output_csv=str(output_csv) if output_csv else None,
-        )
+            tracker.update_status(
+                exp_id,
+                status="completed" if success else "failed",
+                duration_seconds=round(duration, 1),
+                count_total_cells=total_cells,
+                count_output_csv=str(output_csv) if output_csv else None,
+            )
         
         if success:
             success_count += 1

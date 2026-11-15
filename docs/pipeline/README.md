@@ -481,6 +481,27 @@ All runs are logged to `experiments.csv` with:
 
 This eliminates the months-long manual optimization cycles by keeping a complete record of what was tried and what worked.
 
+**How the tracker file is written** (`2_Data_Summary/calibration_runs.csv`). Several
+machines write it, and every status change rewrites the whole file, so each write:
+
+- holds a lock file beside it, `calibration_runs.csv.lock`, for the moment of the
+  write (well under a second). Another machine that wants to write waits and
+  prints `Waiting for the tracker lock (held by ...)`. A lock left by a process
+  that crashed is taken over after 2 minutes (by the file server's clock). If a
+  write ever reports that the tracker has been locked for 5 minutes and nothing
+  is running, delete the `.lock` file.
+- keeps the file's own column order and every column in it, including columns
+  added by a newer version of the code -- an older copy of the code can no
+  longer delete them.
+- writes a temporary file and swaps it in, so a crash part-way leaves the
+  previous file, never a cut-off one.
+
+**A run is never left at `started`.** Steps 3-6 mark their tracker row `failed`
+(with the reason in `notes`) when they stop part-way -- an error, Ctrl-C, a
+crash inside brainreg or cellfinder. Only a process killed outright (the task
+ended from Task Manager, a power cut) can still leave `started`, because it runs
+no code at all on the way out.
+
 ## Requirements
 
 ```bash
