@@ -12,6 +12,7 @@ Usage:
     Plugins -> Slice Annotator
 """
 
+from functools import partial
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import numpy as np
@@ -518,12 +519,52 @@ class SliceAnnotatorWidget(QWidget):
         if path.exists():
             self._load_file(path)
 
+    def _abandon_current_load(self):
+        """Stop listening to the load in progress, then cancel it.
+
+        WHY: a cancelled worker still reports back -- it emits
+        finished(False, "Loading cancelled") -- and Qt delivers that report
+        after the new load has already started. Handled as an ordinary
+        result it popped up a "Load Error" box for a load the person
+        replaced on purpose and re-enabled the load buttons while the new
+        file was still loading. The old worker's signals are disconnected
+        first, and every handler also checks that the report comes from the
+        current worker (a report already queued before the disconnect is
+        dropped there).
+        """
+        old = self.loader_worker
+        if old is None:
+            return
+        for signal in (old.progress, old.finished):
+            try:
+                signal.disconnect()
+            except (TypeError, RuntimeError):
+                pass  # nothing connected
+        if old.isRunning():
+            old.cancel()
+            old.wait()
+
+    def _start_worker(self, worker, progress_handler):
+        """Make `worker` the current load and start it.
+
+        Each signal is bound to the worker that sent it, so a report from a
+        worker that is no longer current is recognised and ignored.
+        """
+        self.loader_worker = worker
+        worker.progress.connect(partial(self._from_current_worker, worker, progress_handler))
+        worker.finished.connect(partial(self._from_current_worker, worker, self._on_load_finished))
+        worker.start()
+
+    def _from_current_worker(self, worker, handler, *args):
+        """Pass a worker's report on only if that worker is the current load."""
+        if worker is not self.loader_worker:
+            return
+        handler(*args)
+
     def _load_file(self, file_path: Path):
         """Load an ND2 file."""
-        # Cancel any existing load
-        if self.loader_worker and self.loader_worker.isRunning():
-            self.loader_worker.cancel()
-            self.loader_worker.wait()
+        # Cancel any existing load without hearing back from it
+        self._abandon_current_load()
 
         # Get options
         lazy = self.lazy_checkbox.isChecked()
@@ -543,10 +584,10 @@ class SliceAnnotatorWidget(QWidget):
         self.status_label.setText(f"Loading {file_path.name}...")
 
         # Start worker
-        self.loader_worker = ND2LoaderWorker(file_path, lazy=lazy, z_projection=z_projection)
-        self.loader_worker.progress.connect(self._on_load_progress)
-        self.loader_worker.finished.connect(self._on_load_finished)
-        self.loader_worker.start()
+        self._start_worker(
+            ND2LoaderWorker(file_path, lazy=lazy, z_projection=z_projection),
+            self._on_load_progress,
+        )
 
     def _load_folder(self, folder_path: Path):
         """Load all ND2 files from a folder as stacked tissue sections.
@@ -556,10 +597,8 @@ class SliceAnnotatorWidget(QWidget):
         """
         from mousebrain.plugin_2d.sliceatlas.napari_plugin.annotator_worker import FolderLoaderWorker
 
-        # Cancel any existing load
-        if self.loader_worker and self.loader_worker.isRunning():
-            self.loader_worker.cancel()
-            self.loader_worker.wait()
+        # Cancel any existing load without hearing back from it
+        self._abandon_current_load()
 
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)
@@ -567,10 +606,10 @@ class SliceAnnotatorWidget(QWidget):
         self.status_label.setText(f"Loading folder {folder_path.name}...")
 
         # Use max projection by default for folder loading
-        self.loader_worker = FolderLoaderWorker(folder_path, z_projection='max')
-        self.loader_worker.progress.connect(self._on_folder_load_progress)
-        self.loader_worker.finished.connect(self._on_load_finished)
-        self.loader_worker.start()
+        self._start_worker(
+            FolderLoaderWorker(folder_path, z_projection='max'),
+            self._on_folder_load_progress,
+        )
 
     def _on_load_progress(self, message: str):
         """Handle load progress update."""

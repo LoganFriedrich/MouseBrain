@@ -58,6 +58,23 @@ that produced it. The registry lives inside the pipeline data folder:
   what is there, how it was produced and whether it is still current.
 - Inspect a registry: `mousebrain-registry --name <analysis> --stale --summary`.
 
+## Annotating ND2 slices (2D: BrainSlice, tab "7. Annotate")
+
+Open **Plugins → BrainTools → 2D: 1. BrainSlice** and go to the **7. Annotate**
+tab. It has its own tabs: Load, Channels, Annotate, Export.
+
+**Loading.** Click **Load ND2 File...** (one file) or **Load Folder...** (every
+`.nd2` in a folder, one tissue section per file). While a file loads, the load
+button is greyed out and a progress bar runs.
+
+- *Changing your mind mid-load:* starting another load (for example by
+  double-clicking a file under Recent Files) cancels the one that is running.
+  The cancelled load is dropped silently: no error box appears, and the load
+  button stays greyed out until the NEW file has finished loading. The window
+  may pause briefly while the old load stops.
+- *A file that really fails to load* still shows a "Load Error" box with the
+  reason, and the buttons come back on so you can try another file.
+
 ## Troubleshooting
 
 If something breaks, re-run the installer:
