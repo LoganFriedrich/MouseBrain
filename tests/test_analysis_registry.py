@@ -377,6 +377,78 @@ def test_cli_main_root_and_hidden_alias(tmp_path, capsys):
 
 
 # ---------------------------------------------------------------------------
+# An unreadable manifest is set aside, never emptied
+# ---------------------------------------------------------------------------
+
+def test_an_unreadable_manifest_is_kept_not_replaced_by_an_empty_one(tmp_path):
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    damaged = '{"entries": {"E01_01_S01_DCN": {"sample": "E01_01_S01_DCN"'  # cut off
+    reg.registry_path.write_text(damaged, encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="unreadable"):
+        reg.register_output(sample=SAMPLE, category="detection",
+                            files={"measurements": str(csv_file)}, results={},
+                            method_params=DEFAULT_METHOD)
+
+    kept = reg.set_aside_files()
+    # Kept outside the mirrored exports folder (see test_the_mirrored_...).
+    assert not list(reg.exports_dir.glob("registry.json.unreadable-*"))
+    assert len(kept) == 1
+    assert kept[0].read_text(encoding="utf-8") == damaged  # byte for byte
+
+    # A new manifest is in place at once -- the analysis folder is never
+    # left without one, so an integrator that finds analyses by their
+    # registry.json still lists it -- and its header names the kept file.
+    started = json.loads(reg.registry_path.read_text(encoding="utf-8"))
+    assert started["entries"] == {}
+    assert [r["file"] for r in started["set_aside_manifests"]] == [kept[0].name]
+
+    # The next registration adds to it; the kept file is untouched.
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    assert list(reg.get_all_entries()) == [SAMPLE]
+    assert kept[0].read_text(encoding="utf-8") == damaged
+
+
+def test_if_no_new_manifest_can_be_written_the_damaged_one_is_put_back(tmp_path, monkeypatch):
+    # Setting a damaged manifest aside must never leave the analysis folder
+    # without a registry.json: if the new one cannot be written (the share
+    # dropped out), the damaged file goes back exactly as it was.
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    damaged = '{"entries": {"E01_01_S01_DCN": {"sample"'
+    reg.registry_path.write_text(damaged, encoding="utf-8")
+
+    def refuse(*a, **k):
+        raise OSError(5, "the network drive is not available")
+
+    monkeypatch.setattr(AnalysisRegistry, "_write_registry", refuse)
+    with pytest.raises(RuntimeError, match="no new manifest"):
+        reg.register_output(sample=SAMPLE, category="detection",
+                            files={"measurements": str(csv_file)}, results={},
+                            method_params=DEFAULT_METHOD)
+    assert reg.registry_path.read_text(encoding="utf-8") == damaged
+    assert reg.set_aside_files() == []
+    assert not (reg.exports_dir / SAMPLE).exists()
+
+
+def test_reading_an_unreadable_manifest_raises_and_moves_nothing(tmp_path, capsys):
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.registry_path.write_text('["not", "a", "manifest"]', encoding="utf-8")
+
+    with pytest.raises(RuntimeError):
+        reg.get_all_entries()
+    assert ar.main(["--name", "A", "--root", str(tmp_path)]) == 1
+    assert "[FAIL]" in capsys.readouterr().out
+    # Inspection never renames: the file is exactly where and what it was.
+    assert reg.registry_path.read_text(encoding="utf-8") == '["not", "a", "manifest"]'
+    assert not list(reg.exports_dir.glob("registry.json.unreadable-*"))
+    assert reg.set_aside_files() == []
+
+
+# ---------------------------------------------------------------------------
 # Two registrations at once both land (the manifest is written under a lock)
 # ---------------------------------------------------------------------------
 
@@ -601,6 +673,99 @@ def test_the_mirrored_exports_folder_holds_only_outputs_and_the_manifest(tmp_pat
         assert set(names) <= {"measurements.csv", "registry.json"}, names
 
 
+def test_a_set_aside_manifest_is_kept_outside_the_mirrored_folder(tmp_path):
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
+    reg.registry_path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(RuntimeError):
+        reg.register_output(sample=SAMPLE, category="detection",
+                            files={"measurements": str(csv_file)}, results={},
+                            method_params=DEFAULT_METHOD)
+    exported = [p.name for p in (reg.registry_root / "exports").rglob("*") if p.is_file()]
+    assert exported == ["registry.json"]  # the new, empty manifest only
+    kept = reg.set_aside_files()
+    assert [p.read_text(encoding="utf-8") for p in kept] == ["{not json"]
+    assert kept[0].parent == reg.registry_root / "logs"
+
+
+def test_the_registry_adds_no_folders_of_its_own(tmp_path):
+    # The lock, its probes, temporary files and set-aside manifests live in
+    # the existing logs/ folder: a registry people browse gains no new
+    # folders, and none of those names can be taken for an audit log.
+    csv_file, fig_file = _make_source_files(tmp_path)
+    root = tmp_path / "Registry"
+    reg = AnalysisRegistry(analysis_name="A", registry_root=root)
+    reg.register_output(sample=SAMPLE, category="roi_analysis",
+                        files={"measurements": str(csv_file), "figure": str(fig_file)},
+                        results={}, method_params=DEFAULT_METHOD)
+    reg.register_roi_counts(SAMPLE, "DCN", {"TOTAL": {"total": 1, "positive": 1,
+                                                      "negative": 0, "fraction": 1.0}},
+                            method_params=DEFAULT_METHOD)
+    reg.registry_path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(RuntimeError):
+        reg.register_output(sample=SAMPLE, category="detection",
+                            files={"measurements": str(csv_file)}, results={},
+                            method_params=DEFAULT_METHOD)
+    assert sorted(p.name for p in root.iterdir()) == ["exports", "figures", "logs"]
+    assert [p.name for p in (root / "logs").iterdir() if p.is_dir()] == []
+    logs = sorted(p.name for p in (root / "logs").iterdir())
+    assert [n for n in logs if n.endswith(".log")] == ["A.log"]
+
+
+# ---------------------------------------------------------------------------
+# A set-aside manifest stays visible until a person deals with it
+# ---------------------------------------------------------------------------
+
+def _set_one_aside(tmp_path, damaged):
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
+    reg.registry_path.write_text(damaged, encoding="utf-8")
+    with pytest.raises(RuntimeError):
+        reg.register_output(sample=SAMPLE, category="detection",
+                            files={"measurements": str(csv_file)}, results={},
+                            method_params=DEFAULT_METHOD)
+    return reg, csv_file
+
+
+def test_a_set_aside_manifest_is_reported_before_the_next_registration(tmp_path, capsys):
+    # Until the earlier entries are merged back, the registry holds fewer
+    # entries than were registered: every reader says so, not only writers.
+    reg, _ = _set_one_aside(tmp_path, '{"entries": {"a": {"registered_at": "x"}, "b"')
+    capsys.readouterr()
+    assert ar.main(["--name", "A", "--root", str(reg.registry_root)]) == 0
+    out = capsys.readouterr().out
+    assert "[!] 1 damaged manifest" in out
+    assert reg.set_aside_files()[0].name in out
+
+    AnalysisRegistry(analysis_name="A", registry_root=reg.registry_root).get_all_entries()
+    out = capsys.readouterr().out
+    assert "[!]" in out and reg.set_aside_files()[0].name in out
+
+
+def test_the_next_manifest_records_each_set_aside_one_until_it_is_dealt_with(tmp_path, capsys):
+    damaged = ('{"entries": {"a": {"registered_at": "x"}, "b": {"registered_at": "y"}, '
+               '"c": {"regis')
+    reg, csv_file = _set_one_aside(tmp_path, damaged)
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    header = json.loads(reg.registry_path.read_text(encoding="utf-8"))
+    [record] = header["set_aside_manifests"]
+    assert record["file"] == reg.set_aside_files()[0].name
+    assert record["entries_estimate"] == 2
+    assert record["set_aside_at"]
+    assert record["size_bytes"] == len(damaged.encode("utf-8"))
+
+    # After a person has repaired, merged and removed it, the next write
+    # drops the record.
+    reg.set_aside_files()[0].unlink()
+    reg.register_output(sample="E01_01_S02_DCN", category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    header = json.loads(reg.registry_path.read_text(encoding="utf-8"))
+    assert "set_aside_manifests" not in header
+
+
 # ---------------------------------------------------------------------------
 # A registration that is refused changes no file: the registry's files and
 # the manifest entry describing them always come from the same run
@@ -632,6 +797,20 @@ def _register_run(reg, tmp_path, n, sample=SAMPLE):
 def _registered_csv(reg, sample=SAMPLE):
     return (reg.registry_root / reg.get_entry(sample)["outputs"]["measurements"]).read_text(
         encoding="utf-8")
+
+
+def test_a_damaged_manifest_refuses_before_replacing_the_earlier_files(tmp_path):
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
+    dest = _register_run(reg, tmp_path, 1)["measurements"]
+    good = reg.registry_path.read_text(encoding="utf-8")
+    reg.registry_path.write_text(good[:-20], encoding="utf-8")  # cut off
+
+    with pytest.raises(RuntimeError):
+        _register_run(reg, tmp_path, 2)
+    # The file is still run 1's, so the set-aside manifest (which says run 1)
+    # describes it correctly once repaired and merged back.
+    assert dest.read_text(encoding="utf-8") == "run\n1\n"
+    assert _work_leftovers(reg) == []  # nothing staged or kept behind
 
 
 def test_a_failed_manifest_write_puts_the_earlier_files_back(tmp_path, monkeypatch):
@@ -667,6 +846,22 @@ def test_a_lock_that_never_comes_free_changes_no_file(tmp_path, monkeypatch):
     with pytest.raises(TimeoutError):
         _register_run(reg, tmp_path, 2)
     assert dest.read_text(encoding="utf-8") == "run\n1\n"
+
+
+def test_refused_roi_counts_leave_the_earlier_counts_and_summary(tmp_path):
+    reg = AnalysisRegistry(analysis_name="R", registry_root=tmp_path / "Registry")
+    first = {"TOTAL": {"total": 10, "positive": 5, "negative": 5, "fraction": 0.5}}
+    counts_path = reg.register_roi_counts(SAMPLE, "DCN", first, method_params={"k": 1})
+    summary = reg.exports_dir / "roi_summary_DCN.csv"
+    counts_before = counts_path.read_text(encoding="utf-8")
+    summary_before = summary.read_text(encoding="utf-8")
+    reg.registry_path.write_text("{cut off", encoding="utf-8")
+
+    second = {"TOTAL": {"total": 99, "positive": 1, "negative": 98, "fraction": 0.01}}
+    with pytest.raises(RuntimeError):
+        reg.register_roi_counts(SAMPLE, "DCN", second, method_params={"k": 2})
+    assert counts_path.read_text(encoding="utf-8") == counts_before
+    assert summary.read_text(encoding="utf-8") == summary_before
 
 
 def test_roi_counts_are_replaced_when_the_registration_succeeds(tmp_path):
