@@ -420,6 +420,23 @@ def test_reading_an_unreadable_manifest_raises_and_moves_nothing(tmp_path, capsy
     assert reg.set_aside_files() == []
 
 
+@pytest.mark.parametrize("flag", ["--refresh-approved", "--no-approved-method",
+                                  "--follows-approved-method"])
+def test_refreshing_the_header_of_an_unreadable_manifest_moves_nothing(tmp_path, capsys, flag):
+    # The guide tells a person to run --refresh-approved to check a repaired
+    # manifest. It registers nothing, so it must never set the file aside
+    # (and print that a registration was not recorded).
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.registry_path.write_text('{"entries": {"x"', encoding="utf-8")
+
+    assert ar.main(["--name", "A", "--root", str(tmp_path), flag]) == 1
+    out = capsys.readouterr().out
+    assert "[FAIL]" in out
+    assert "registration was not recorded" not in out
+    assert reg.registry_path.read_text(encoding="utf-8") == '{"entries": {"x"'
+    assert reg.set_aside_files() == []
+
+
 # ---------------------------------------------------------------------------
 # Two registrations at once both land (the manifest is written under a lock)
 # ---------------------------------------------------------------------------
@@ -785,6 +802,23 @@ def test_a_damaged_manifest_refuses_before_replacing_the_earlier_files(tmp_path)
     assert _work_leftovers(reg) == []  # nothing staged or kept behind
 
 
+def test_a_broken_approved_method_file_refuses_before_replacing_the_earlier_files(tmp_path):
+    # Also for an analysis that does not follow the shared approved method:
+    # a file that cannot be parsed might name it, so its header cannot be
+    # resolved and nothing may change.
+    root = tmp_path / "Registry"
+    reg = AnalysisRegistry(analysis_name="A", registry_root=root,
+                           follows_approved_method=False)
+    _register_run(reg, tmp_path, 1)
+    (root / "approved_method.json").write_text("{broken", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Approved-method file"):
+        _register_run(reg, tmp_path, 2)
+    (root / "approved_method.json").unlink()
+    assert reg.get_entry(SAMPLE)["results"] == {"run": 1}
+    assert _registered_csv(reg) == "run\n1\n"
+
+
 def test_a_failed_manifest_write_puts_the_earlier_files_back(tmp_path, monkeypatch):
     reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
     _register_run(reg, tmp_path, 1)
@@ -959,6 +993,193 @@ def test_invalidate_leaves_a_damaged_manifest_where_it_is(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# An approved method per analysis; analyses with none are never "stale"
+# ---------------------------------------------------------------------------
+
+
+def _stale_report(root, name, capsys):
+    capsys.readouterr()
+    assert ar.main(["--name", name, "--root", str(root), "--stale"]) == 0
+    return capsys.readouterr().out
+
+
+def test_an_analysis_named_in_the_approved_file_is_judged_by_its_own_method(
+        tmp_path, capsys):
+    own = {"atlas": "atlas_x", "ball_xy": 6, "threshold": 10}
+    (tmp_path / "approved_method.json").write_text(
+        json.dumps({"analyses": {"B": own, "C": None}}), encoding="utf-8")
+    csv_file, _ = _make_source_files(tmp_path)
+
+    reg = AnalysisRegistry(analysis_name="B", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="region_counts",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=own)
+    assert reg._read_registry()["approved_method_hash"] == AnalysisRegistry.get_method_hash(own)
+    assert "All entries are current." in _stale_report(tmp_path, "B", capsys)
+
+    reg.register_output(sample="E01_01_S14_DCN", category="region_counts",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=dict(own, threshold=12))
+    assert "1 stale entries" in _stale_report(tmp_path, "B", capsys)
+
+    # null in the file: this analysis has no approved method at all.
+    reg_c = AnalysisRegistry(analysis_name="C", registry_root=tmp_path)
+    reg_c.register_output(sample=SAMPLE, category="detection",
+                          files={"measurements": str(csv_file)}, results={},
+                          method_params=DEFAULT_METHOD)
+    assert reg_c._read_registry()["approved_method_hash"] is None
+    assert "No approved method is declared" in _stale_report(tmp_path, "C", capsys)
+
+    # An analysis the file does not name follows the shared method, which
+    # is the built-in default when the file gives no "default".
+    assert get_approved_method(tmp_path) == DEFAULT_METHOD
+    assert ar.approved_method_for("D", tmp_path) == DEFAULT_METHOD
+    assert ar.approved_method_for("D", tmp_path, follows_approved_method=False) is None
+
+
+def test_a_malformed_per_analysis_table_is_refused(tmp_path):
+    (tmp_path / "approved_method.json").write_text(
+        json.dumps({"analyses": {"B": []}}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="pproved-method"):
+        ar.approved_method_for("B", tmp_path)
+
+
+def test_a_malformed_entry_for_another_analysis_stops_only_the_analyses_it_concerns(tmp_path):
+    # Every registration resolves its analysis's approved method. A fault in
+    # a part of the file an analysis is not judged by used to stop the
+    # registrations of every analysis, the 3D ones included.
+    root = tmp_path / "Registry"
+    (root).mkdir()
+    (root / "approved_method.json").write_text(json.dumps({
+        "default": {"detection": "x"},
+        "analyses": {"Broken": [], "Own": {"p": 1}}}), encoding="utf-8")
+    own_free = AnalysisRegistry(analysis_name="ThreeD", registry_root=root,
+                                follows_approved_method=False)
+    csv_file, _ = _make_source_files(tmp_path)
+    own_free.register_output(sample=SAMPLE, category="detection",
+                             files={"measurements": str(csv_file)}, results={},
+                             method_params={"atlas": "a"})
+    assert own_free.get_entry(SAMPLE) is not None
+    assert json.loads(own_free.registry_path.read_text(encoding="utf-8"))[
+        "approved_method_hash"] is None
+    assert ar.approved_method_for("Own", root) == {"p": 1}
+
+    # The analysis the broken entry belongs to, and every analysis judged by
+    # the shared method, still stop with the error.
+    with pytest.raises(RuntimeError, match="Broken"):
+        ar.approved_method_for("Broken", root, follows_approved_method=False)
+    with pytest.raises(RuntimeError, match="pproved-method"):
+        ar.approved_method_for("Slices", root, follows_approved_method=True)
+
+    # A file that cannot be parsed might name any analysis: it stops them all.
+    (root / "approved_method.json").write_text("{broken", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="pproved-method"):
+        ar.approved_method_for("ThreeD", root, follows_approved_method=False)
+
+
+# ---------------------------------------------------------------------------
+# The manifest's approved-method header follows the approved method
+# ---------------------------------------------------------------------------
+
+def _header(reg):
+    return json.loads(reg.registry_path.read_text(encoding="utf-8"))
+
+
+def test_the_header_follows_a_changed_approved_method_on_the_next_write(tmp_path):
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    assert _header(reg)["approved_method_hash"] == AnalysisRegistry.get_method_hash(DEFAULT_METHOD)
+
+    # The lab approves a new method; the next registration records it in the
+    # header, so an integrator counting "stale vs approved" from the header
+    # now sees the first entry as stale.
+    changed = dict(DEFAULT_METHOD, soma_dilation=8)
+    (tmp_path / "approved_method.json").write_text(json.dumps(changed), encoding="utf-8")
+    reg.register_output(sample="E01_01_S14_DCN", category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=changed)
+
+    header = _header(reg)
+    assert header["approved_method"] == changed
+    assert header["approved_method_hash"] == AnalysisRegistry.get_method_hash(changed)
+    assert "approved_method_recorded_at" in header
+    stale_by_header = [k for k, e in header["entries"].items()
+                       if e["is_current"] and e["method_hash"] != header["approved_method_hash"]]
+    assert stale_by_header == [SAMPLE]
+
+
+def test_refresh_approved_rewrites_the_header_without_registering(tmp_path, capsys):
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    changed = dict(DEFAULT_METHOD, soma_dilation=8)
+    (tmp_path / "approved_method.json").write_text(json.dumps(changed), encoding="utf-8")
+    entries_before = _header(reg)["entries"]
+
+    assert ar.main(["--name", "A", "--root", str(tmp_path), "--refresh-approved"]) == 0
+    assert "[OK]" in capsys.readouterr().out
+    header = _header(reg)
+    assert header["approved_method_hash"] == AnalysisRegistry.get_method_hash(changed)
+    assert header["entries"] == entries_before
+
+    # An analysis with no manifest is left alone, not created.
+    assert ar.main(["--name", "Z", "--root", str(tmp_path), "--refresh-approved"]) == 0
+    assert not (tmp_path / "exports" / "Z" / "registry.json").exists()
+
+
+def test_a_producer_declaration_reaches_an_existing_manifest(tmp_path):
+    # A manifest written before analyses declared whether they follow the
+    # shared method: the producer's next write records its declaration.
+    csv_file, _ = _make_source_files(tmp_path)
+    old = AnalysisRegistry(analysis_name="B", registry_root=tmp_path)
+    old.register_output(sample=SAMPLE, category="qc",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params={"check": "x", "version": "1"})
+    assert _header(old)["approved_method_hash"] is not None
+
+    producer = AnalysisRegistry(analysis_name="B", registry_root=tmp_path,
+                                follows_approved_method=False)
+    producer.register_output(sample="E01_01_S14_DCN", category="qc",
+                             files={"measurements": str(csv_file)}, results={},
+                             method_params={"check": "x", "version": "1"})
+    assert _header(old)["approved_method_hash"] is None
+    # ...and a reader that declares nothing keeps it.
+    assert AnalysisRegistry(analysis_name="B", registry_root=tmp_path).approved_method() is None
+
+
+def test_a_file_holding_only_a_default_is_the_per_analysis_form(tmp_path):
+    # {"default": {...}} with no "analyses" table used to be read as the flat
+    # form: a method with one parameter named "default", so every entry of
+    # every analysis following the shared method showed as stale.
+    shared = dict(DEFAULT_METHOD, soma_dilation=8)
+    (tmp_path / "approved_method.json").write_text(
+        json.dumps({"default": shared}), encoding="utf-8")
+    assert get_approved_method(tmp_path) == shared
+    assert ar.approved_method_for("A", tmp_path) == shared
+    assert ar.approved_method_for("A", tmp_path, follows_approved_method=False) is None
+
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=shared)
+    assert reg.check_staleness(reg.approved_method()) == []
+    assert _header(reg)["approved_method_hash"] == AnalysisRegistry.get_method_hash(shared)
+
+
+def test_a_default_that_is_not_a_set_of_parameters_is_refused(tmp_path):
+    (tmp_path / "approved_method.json").write_text(
+        json.dumps({"default": "threshold+log"}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="pproved-method"):
+        get_approved_method(tmp_path)
+
+
+# ---------------------------------------------------------------------------
 # invalidate(): a manifest write that fails puts the entry's files back
 # ---------------------------------------------------------------------------
 
@@ -990,6 +1211,18 @@ def test_a_failed_manifest_write_puts_the_files_back_and_keeps_the_entry_current
     assert "invalidate_failed" in log
 
 
+def test_a_broken_approved_method_file_stops_invalidate_before_anything_moves(tmp_path):
+    reg, dests = _register_two(tmp_path)
+    (reg.registry_root / "approved_method.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="pproved-method"):
+        reg.invalidate()
+    on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
+    assert all(e["is_current"] for e in on_disk.values())
+    for paths in dests.values():
+        for path in paths.values():
+            assert path.is_file(), path
+
+
 def test_a_manifest_held_open_briefly_is_written_on_a_retry(tmp_path, monkeypatch):
     reg, dests = _register_two(tmp_path)
     real_replace = ar.os.replace
@@ -1005,3 +1238,68 @@ def test_a_manifest_held_open_briefly_is_written_on_a_retry(tmp_path, monkeypatc
     assert sorted(reg.invalidate()) == sorted(dests)
     on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
     assert not any(e["is_current"] for e in on_disk.values())
+
+
+# ---------------------------------------------------------------------------
+# The command line can record an analysis's declaration in an old manifest
+# ---------------------------------------------------------------------------
+
+def test_the_cli_records_that_an_old_manifest_has_no_approved_method(tmp_path, capsys):
+    # A manifest written before analyses declared anything follows the shared
+    # method, and --refresh-approved alone keeps that; --no-approved-method
+    # records the declaration without waiting for the producer's next run.
+    csv_file, _ = _make_source_files(tmp_path)
+    old = AnalysisRegistry(analysis_name="B", registry_root=tmp_path)
+    old.register_output(sample=SAMPLE, category="qc",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params={"check": "x", "version": "1"})
+    assert "1 stale entries" in _stale_report(tmp_path, "B", capsys)
+
+    assert ar.main(["--name", "B", "--root", str(tmp_path), "--refresh-approved"]) == 0
+    assert _header(old)["approved_method_hash"] is not None
+
+    assert ar.main(["--name", "B", "--root", str(tmp_path), "--no-approved-method"]) == 0
+    header = _header(old)
+    assert header["approved_method_hash"] is None
+    assert header["follows_approved_method"] is False
+    assert "No approved method is declared" in _stale_report(tmp_path, "B", capsys)
+
+    assert ar.main(["--name", "B", "--root", str(tmp_path),
+                    "--follows-approved-method"]) == 0
+    assert _header(old)["approved_method_hash"] is not None
+
+
+def test_the_stale_report_names_a_broken_approved_method_file(tmp_path, capsys):
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    (tmp_path / "approved_method.json").write_text("{not json", encoding="utf-8")
+    capsys.readouterr()
+    assert ar.main(["--name", "A", "--root", str(tmp_path), "--stale"]) == 1
+    assert "[FAIL]" in capsys.readouterr().out
+
+
+def test_the_header_records_where_the_approved_method_came_from(tmp_path, monkeypatch):
+    # The environment variable wins over approved_method.json and can differ
+    # per machine; since the header is rewritten on every write, it records
+    # the source and the machine so a flip between two values is visible.
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    assert _header(reg)["approved_method_source"] == "built-in parameters"
+    assert _header(reg)["approved_method_recorded_on"] == ar._get_hostname()
+
+    (tmp_path / "approved_method.json").write_text(json.dumps(DEFAULT_METHOD),
+                                                   encoding="utf-8")
+    reg.refresh_approved_method()
+    assert _header(reg)["approved_method_source"] == str(tmp_path / "approved_method.json")
+
+    elsewhere = tmp_path / "machine_override.json"
+    elsewhere.write_text(json.dumps(DEFAULT_METHOD), encoding="utf-8")
+    monkeypatch.setenv("MOUSEBRAIN_APPROVED_METHOD", str(elsewhere))
+    reg.refresh_approved_method()
+    assert _header(reg)["approved_method_source"] == "MOUSEBRAIN_APPROVED_METHOD=%s" % elsewhere
