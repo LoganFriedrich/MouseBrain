@@ -910,6 +910,8 @@ def main():
 
     # Process each file
     all_results = []
+    replaced = []   # samples whose earlier entry a no-nuclei result replaced
+    kept = []       # samples that failed while an earlier entry stays current
     start_time = time.time()
 
     for i, nd2_path in enumerate(nd2_files):
@@ -959,6 +961,49 @@ def main():
             except Exception as _reg_err:
                 print(f"  Registry warning: {_reg_err}")
 
+        # "No nuclei" IS a result of this run, so it replaces the sample's
+        # earlier entry: the old entry is invalidated (its files go to
+        # _archived/, its record is kept under 'superseded' in the new entry)
+        # and a current entry with 0 nuclei and no files is registered.
+        # WHY: otherwise the earlier counts stay current and keep being
+        # exported as this sample's result although this run found nothing.
+        elif result.get('status') == 'no_nuclei' and registry is not None:
+            sample_id = nd2_path.stem
+            try:
+                archived = registry.invalidate(
+                    sample=sample_id,
+                    reason="batch re-run found no nuclei")
+                if archived:
+                    replaced.append(sample_id)
+                    print(f"  [!] earlier registry entry for {sample_id} replaced "
+                          f"by this run's result (no nuclei)")
+                registry.register_output(
+                    sample=sample_id,
+                    category="detection",
+                    files={},
+                    results={'n_nuclei': 0, 'n_positive': 0,
+                             'positive_fraction': None, 'background': None},
+                    method_params=method_params,
+                    source_files={'nd2': str(nd2_path)},
+                )
+            except Exception as _reg_err:
+                print(f"  Registry warning: {_reg_err}")
+
+        # An error is NOT a result: it says nothing about whether the earlier
+        # entry is wrong. A file on the share that cannot be read for a moment,
+        # a tracker CSV locked by another program or a bug all end here, and
+        # retiring the earlier entry would take a good result out of the
+        # exports for an infrastructure reason. So the earlier entry is left
+        # exactly as it is, and the sample is named loudly here and in the
+        # end-of-batch summary so the failure is re-run, not overlooked.
+        elif result.get('status') == 'error':
+            sample_id = nd2_path.stem
+            entry = registry.get_entry(sample_id) if registry is not None else None
+            if entry and entry.get('is_current'):
+                kept.append(sample_id)
+                print(f"  [!] not retired: earlier registry entry for {sample_id} "
+                      f"stays current (this run failed: {result.get('error', '')})")
+
     # Write summary CSV
     summary_path = args.output / "summary.csv"
     fieldnames = [
@@ -983,6 +1028,12 @@ def main():
     print(f"  Completed: {completed}")
     print(f"  No nuclei: {no_nuclei}")
     print(f"  Errors:    {errored}")
+    if replaced:
+        print(f"  Earlier registry entries replaced by a no-nuclei result "
+              f"({len(replaced)}): {', '.join(replaced)}")
+    if kept:
+        print(f"  [!] Failed, earlier result kept as current -- re-run these "
+              f"({len(kept)}): {', '.join(kept)}")
     print(f"  Summary:   {summary_path}")
     print(f"{'=' * 60}")
 
