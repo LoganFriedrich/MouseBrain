@@ -148,3 +148,21 @@ PARTICLE_ANALYSIS_COLUMNS = [
 # this version; an older row is refused with a message saying to re-run it.
 COLOC_SIGMA_RECORDED_VERSION = "1.1.0"
 
+
+def coloc_fold_change_threshold(row) -> "float | None":
+    """The fold-change threshold a colocalization row records, or None.
+
+    WHY: from COLOC_SIGMA_RECORDED_VERSION on, a background_mean row's
+    coloc_threshold_value is a SIGMA (standard deviations above the background
+    mean), not a fold change. Code that draws a fold-change threshold (the
+    widget's diagnostic plots after "Load selected run") must not draw a sigma
+    as if it were one; it gets None and falls back to its own fold-change
+    setting, exactly as it does right after a live run.
+    """
+    if (row.get('coloc_threshold_method') == 'background_mean'
+            and row.get('script_version') == COLOC_SIGMA_RECORDED_VERSION):
+        return None
+    try:
+        return float(row.get('coloc_threshold_value', ''))
+    except (TypeError, ValueError):
+        return None
