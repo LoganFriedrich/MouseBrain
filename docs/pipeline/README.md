@@ -28,6 +28,30 @@ extracted stack, which is useful when registration is waiting on something. It
 is a trial run: it gives you a cell count but not counts per brain region. See
 [Running detection before registration](#running-detection-before-registration).
 
+## Which step is a brain at?
+
+`RUN_PIPELINE.py`, the napari pipeline dashboard (Plugins -> BrainTools -> 3D:
+1. Pipeline Dashboard) and `overnight_batch.py` all show each brain at a step.
+Nothing records that step; it is worked out every time from which files exist,
+and all three use the same rules (`mousebrain.pipeline_status`), so they always
+agree with each other and with what the next script will do. The brain's step
+is the first item on this list that is not done yet:
+
+| Step | Done when |
+|---|---|
+| Extract | `1_Extracted_Full/metadata.json` exists (extraction writes it last, so it means every channel finished) |
+| Crop | `metadata.json` exists in `2_Cropped_For_Registration` or `2_Cropped_For_Registration_Manual`, or the brain was registered on its full extraction (it arrived already cut, so there is nothing to crop) |
+| Register | `3_Registered_Atlas/brainreg.json` exists |
+| Approve | a person approved this registration (see "Registration QC & Approval" below) |
+| Detect | a candidates file is where step 5 will look: the top of `4_Cell_Candidates`, or `4_Cell_Candidates/from_<the folder the atlas was fitted to>` |
+| Pre-filter | optional (RUN_PIPELINE only). Done when any pre-filter output exists -- a `prefilter_report.json` in a `prefiltered_<time>` folder, or step 5's `prefiltered/interior_candidates.xml`. It is never shown once the brain is classified: step 5 pre-filters on its own by default |
+| Classify | `5_Classified_Cells/cells.xml` exists |
+| Count | a `.csv` exists in `6_Region_Analysis` |
+
+A trial detection run kept in `from_1_Extracted_Full` on a brain that was
+registered on its crop does NOT count as detection: those coordinates are not
+in the space the atlas was fitted to, and step 5 will not read them.
+
 ## Utility Scripts
 
 ```

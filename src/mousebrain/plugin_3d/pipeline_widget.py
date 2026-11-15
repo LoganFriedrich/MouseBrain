@@ -42,6 +42,7 @@ if str(_config_dir) not in sys.path:
     sys.path.insert(0, str(_config_dir))
 from mousebrain.config import BRAINS_ROOT, find_script, parse_brain_name
 from mousebrain.tracker import ExperimentTracker
+from mousebrain.pipeline_status import brain_status
 
 # The only detection option the dashboard offers. Its numbers are not here: they
 # are read from the tracker, from the run marked "Paradigm Best" for the brain's
@@ -565,55 +566,12 @@ class PipelineDashboard(QWidget):
                     self.brain_list.addItem(item)
 
     def get_brain_status(self, brain_path):
-        """Get status of a brain."""
-        p = Path(brain_path)
+        """Get status of a brain.
 
-        status = {
-            'has_ims': len(list((p / "0_Raw_IMS").glob("*.ims"))) > 0 if (p / "0_Raw_IMS").exists() else False,
-            'extracted': (p / "1_Extracted_Full" / "metadata.json").exists() if (p / "1_Extracted_Full").exists() else False,
-            'cropped': (p / "2_Cropped_For_Registration" / "metadata.json").exists() if (p / "2_Cropped_For_Registration").exists() else False,
-            'registered': (p / "3_Registered_Atlas" / "brainreg.json").exists() if (p / "3_Registered_Atlas").exists() else False,
-            'approved': (p / "3_Registered_Atlas" / ".registration_approved").exists() if (p / "3_Registered_Atlas").exists() else False,
-            'detected': len(list((p / "4_Cell_Candidates").glob("*.xml"))) > 0 if (p / "4_Cell_Candidates").exists() else False,
-            'classified': (p / "5_Classified_Cells" / "cells.xml").exists() if (p / "5_Classified_Cells").exists() else False,
-            'counted': len(list((p / "6_Region_Analysis").glob("*.csv"))) > 0 if (p / "6_Region_Analysis").exists() else False,
-        }
-
-        # Determine current step
-        if not status['extracted']:
-            status['step'] = 'extract'
-            status['step_name'] = 'Extract images'
-            status['step_num'] = 1
-        elif not status['cropped']:
-            status['step'] = 'crop'
-            status['step_name'] = 'Crop spinal cord'
-            status['step_num'] = 2
-        elif not status['registered']:
-            status['step'] = 'register'
-            status['step_name'] = 'Register to atlas'
-            status['step_num'] = 3
-        elif not status['approved']:
-            status['step'] = 'approve'
-            status['step_name'] = 'Approve registration'
-            status['step_num'] = 4
-        elif not status['detected']:
-            status['step'] = 'detect'
-            status['step_name'] = 'Detect cells'
-            status['step_num'] = 5
-        elif not status['classified']:
-            status['step'] = 'classify'
-            status['step_name'] = 'Classify cells'
-            status['step_num'] = 6
-        elif not status['counted']:
-            status['step'] = 'count'
-            status['step_name'] = 'Count regions'
-            status['step_num'] = 7
-        else:
-            status['step'] = 'done'
-            status['step_name'] = 'Complete!'
-            status['step_num'] = 8
-
-        return status
+        Same rules as RUN_PIPELINE and the overnight batch
+        (mousebrain.pipeline_status); this dashboard has no pre-filter row.
+        """
+        return brain_status(brain_path, include_prefilter=False)
 
     def add_new_brain(self):
         """Launch the setup wizard to add a new brain."""

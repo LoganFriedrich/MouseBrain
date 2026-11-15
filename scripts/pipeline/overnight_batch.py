@@ -32,6 +32,7 @@ import subprocess
 import sys
 
 from mousebrain.config import is_pipeline_candidate
+from mousebrain.pipeline_status import brain_status
 import time
 import traceback
 from datetime import datetime
@@ -120,15 +121,15 @@ def find_cropped_brains() -> List[Tuple[Path, str]]:
 
 
 def get_brain_status(pipeline_dir: Path) -> Dict[str, bool]:
-    """Get completion status of each pipeline step for a brain."""
-    return {
-        'cropped': (pipeline_dir / FOLDER_CROPPED / "ch0").exists(),
-        'registered': (pipeline_dir / FOLDER_REGISTRATION / "brainreg.json").exists(),
-        'detected': (pipeline_dir / FOLDER_DETECTION).exists() and
-                    bool(list((pipeline_dir / FOLDER_DETECTION).glob("*.xml"))),
-        'classified': (pipeline_dir / FOLDER_CLASSIFICATION / "cells.xml").exists(),
-        'counted': (pipeline_dir / FOLDER_ANALYSIS / "cell_counts_by_region.csv").exists(),
-    }
+    """Get completion status of each pipeline step for a brain.
+
+    Read through mousebrain.pipeline_status, the rules RUN_PIPELINE and the
+    napari dashboard use, so a step this batch skips as done is one the other
+    readers also show as done.
+    """
+    s = brain_status(pipeline_dir)
+    return {k: s[k] for k in ('cropped', 'registered', 'approved',
+                              'detected', 'classified', 'counted')}
 
 
 def run_with_retry(func, *args, max_retries: int = MAX_RETRIES, **kwargs) -> Tuple[bool, str]:

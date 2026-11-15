@@ -18,6 +18,7 @@ from datetime import datetime
 
 SCRIPT_DIR = Path(__file__).parent
 from mousebrain.config import BRAINS_ROOT, is_pipeline_candidate
+from mousebrain.pipeline_status import brain_status
 
 
 def clear():
@@ -88,60 +89,13 @@ def find_brains():
 
 
 def get_brain_status(brain_path):
-    """Get detailed status of a brain."""
-    p = brain_path
+    """Get detailed status of a brain.
 
-    status = {
-        'has_ims': len(list((p / "0_Raw_IMS").glob("*.ims"))) > 0 if (p / "0_Raw_IMS").exists() else False,
-        'extracted': (p / "1_Extracted_Full" / "metadata.json").exists() if (p / "1_Extracted_Full").exists() else False,
-        'cropped': (p / "2_Cropped_For_Registration" / "metadata.json").exists() if (p / "2_Cropped_For_Registration").exists() else False,
-        'registered': (p / "3_Registered_Atlas" / "brainreg.json").exists() if (p / "3_Registered_Atlas").exists() else False,
-        'approved': (p / "3_Registered_Atlas" / ".registration_approved").exists() if (p / "3_Registered_Atlas").exists() else False,
-        'detected': len(list((p / "4_Cell_Candidates").glob("*.xml"))) > 0 if (p / "4_Cell_Candidates").exists() else False,
-        'prefiltered': (p / "4_Cell_Candidates" / "prefilter_report.json").exists() if (p / "4_Cell_Candidates").exists() else False,
-        'classified': (p / "5_Classified_Cells" / "cells.xml").exists() if (p / "5_Classified_Cells").exists() else False,
-        'counted': len(list((p / "6_Region_Analysis").glob("*.csv"))) > 0 if (p / "6_Region_Analysis").exists() else False,
-    }
-
-    # Determine current step
-    if not status['extracted']:
-        status['step'] = 'extract'
-        status['step_name'] = 'Extract images from IMS file'
-        status['step_num'] = 1
-    elif not status['cropped']:
-        status['step'] = 'crop'
-        status['step_name'] = 'Crop to remove spinal cord'
-        status['step_num'] = 2
-    elif not status['registered']:
-        status['step'] = 'register'
-        status['step_name'] = 'Register to atlas'
-        status['step_num'] = 3
-    elif not status['approved']:
-        status['step'] = 'approve'
-        status['step_name'] = 'Review and approve registration'
-        status['step_num'] = 4
-    elif not status['detected']:
-        status['step'] = 'detect'
-        status['step_name'] = 'Detect cells'
-        status['step_num'] = 5
-    elif not status['prefiltered']:
-        status['step'] = 'prefilter'
-        status['step_name'] = 'Pre-filter candidates (atlas)'
-        status['step_num'] = 6
-    elif not status['classified']:
-        status['step'] = 'classify'
-        status['step_name'] = 'Classify cells'
-        status['step_num'] = 7
-    elif not status['counted']:
-        status['step'] = 'count'
-        status['step_name'] = 'Count cells by region'
-        status['step_num'] = 8
-    else:
-        status['step'] = 'done'
-        status['step_name'] = 'Complete!'
-        status['step_num'] = 9
-
-    return status
+    The rules live in mousebrain.pipeline_status, shared with the napari
+    dashboard and the overnight batch, so every reader puts a brain at the same
+    step -- and at the step the next script will actually take up.
+    """
+    return brain_status(brain_path, include_prefilter=True)
 
 
 def run_script(script_name, args=None):
