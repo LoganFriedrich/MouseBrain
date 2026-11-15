@@ -849,3 +849,159 @@ def test_roi_counts_are_replaced_when_the_registration_succeeds(tmp_path):
     assert "4,1,3,0.25" in summary and "10,5,5" not in summary
     assert reg.get_entry(SAMPLE + "__roi_counts")["method_params"] == {"k": 2}
     assert _work_leftovers(reg) == []
+
+
+# ---------------------------------------------------------------------------
+# invalidate(): only what really moved, recorded one entry at a time
+# ---------------------------------------------------------------------------
+
+def _register_two(tmp_path):
+    _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
+    dests = {}
+    for sample in ("E01_01_S01_DCN", "E01_01_S02_DCN"):
+        one_csv = tmp_path / "src" / f"{sample}_measurements.csv"
+        one_csv.write_text("a\n1\n", encoding="utf-8")
+        one_fig = tmp_path / "src" / f"{sample}_overlay.png"
+        one_fig.write_bytes(b"png")
+        dests[sample] = reg.register_output(
+            sample=sample, category="roi_analysis",
+            files={"figure": str(one_fig), "measurements": str(one_csv)},
+            results={}, method_params=DEFAULT_METHOD)
+    return reg, dests
+
+
+def test_an_entry_whose_file_cannot_be_moved_stays_current(tmp_path, monkeypatch):
+    reg, dests = _register_two(tmp_path)
+    monkeypatch.setattr(AnalysisRegistry, "REPLACE_RETRY_SECONDS", 0.3, raising=False)
+    stuck = dests["E01_01_S02_DCN"]["measurements"]
+    real_rename = ar.os.rename
+
+    def move(src, dst, *a, **k):
+        if Path(src) == stuck:
+            raise PermissionError(13, "held open by another program")
+        return real_rename(src, dst, *a, **k)
+
+    monkeypatch.setattr(ar.os, "rename", move)
+    assert reg.invalidate() == ["E01_01_S01_DCN"]
+
+    on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
+    assert on_disk["E01_01_S01_DCN"]["is_current"] is False
+    assert on_disk["E01_01_S02_DCN"]["is_current"] is True
+    # Every file of the entry left current is in the active path -- the
+    # figure, moved before the failure, was put back.
+    for path in dests["E01_01_S02_DCN"].values():
+        assert path.is_file(), path
+
+
+def test_each_invalidated_entry_is_recorded_before_the_next_is_moved(tmp_path, monkeypatch):
+    reg, dests = _register_two(tmp_path)
+    second = dests["E01_01_S02_DCN"]["measurements"]
+    real_rename = ar.os.rename
+
+    def move(src, dst, *a, **k):
+        if Path(src) == second:
+            raise KeyboardInterrupt  # the process stops part-way through the pass
+        return real_rename(src, dst, *a, **k)
+
+    monkeypatch.setattr(ar.os, "rename", move)
+    with pytest.raises(KeyboardInterrupt):
+        reg.invalidate()
+
+    # The first entry's files were archived AND the manifest says so.
+    for path in dests["E01_01_S01_DCN"].values():
+        assert not path.exists()
+    on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
+    assert on_disk["E01_01_S01_DCN"]["is_current"] is False
+    # The interrupted entry: its figure had already moved when the stop came.
+    # It is put back, so every file is where the manifest (current) says.
+    assert on_disk["E01_01_S02_DCN"]["is_current"] is True
+    for path in dests["E01_01_S02_DCN"].values():
+        assert path.is_file(), path
+
+
+@pytest.mark.skipif(os.name != "nt", reason="only Windows refuses to move a file held open")
+def test_a_file_held_open_is_left_in_place_with_no_copy_in_the_archive(tmp_path, monkeypatch):
+    # A file another program has open cannot be renamed on Windows. Moving it
+    # with a copy-then-delete fallback copied it into _archived/ and then
+    # failed to delete the original: the entry rightly stayed current, but a
+    # stray copy sat in _archived/ for ever, mirrored as an archived result.
+    reg, dests = _register_two(tmp_path)
+    monkeypatch.setattr(AnalysisRegistry, "REPLACE_RETRY_SECONDS", 0.3, raising=False)
+    held = dests["E01_01_S02_DCN"]["measurements"]
+    with open(held, "rb"):  # a real handle, as a spreadsheet program holds one
+        try:
+            reg.invalidate()
+        except OSError:
+            pass
+    stray = sorted(p for p in held.parent.rglob("*") if p.is_file() and p.name == held.name
+                   and p != held)
+    assert stray == [], "a copy of the held file was left in the archive: %s" % stray
+    assert held.is_file()
+    on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
+    assert on_disk["E01_01_S02_DCN"]["is_current"] is True
+    for path in dests["E01_01_S02_DCN"].values():
+        assert path.is_file(), path
+
+
+def test_invalidate_leaves_a_damaged_manifest_where_it_is(tmp_path):
+    # invalidate records nothing of its own, so it must not start the
+    # "no manifest" window a set-aside opens: it refuses and moves nothing.
+    reg, dests = _register_two(tmp_path)
+    reg.registry_path.write_text("{cut off", encoding="utf-8")
+    with pytest.raises(RuntimeError):
+        reg.invalidate()
+    assert reg.registry_path.read_text(encoding="utf-8") == "{cut off"
+    assert reg.set_aside_files() == []
+    for files in dests.values():
+        for path in files.values():
+            assert path.is_file(), path
+
+
+# ---------------------------------------------------------------------------
+# invalidate(): a manifest write that fails puts the entry's files back
+# ---------------------------------------------------------------------------
+
+def test_a_failed_manifest_write_puts_the_files_back_and_keeps_the_entry_current(
+        tmp_path, monkeypatch):
+    reg, dests = _register_two(tmp_path)
+    monkeypatch.setattr(AnalysisRegistry, "REPLACE_RETRY_SECONDS", 0.3, raising=False)
+    real_replace = ar.os.replace
+
+    def replace(src, dst, *a, **k):
+        # registry.json held open by a reader for longer than the retry time
+        if Path(dst).name == "registry.json":
+            raise PermissionError(13, "held open by another program")
+        return real_replace(src, dst, *a, **k)
+
+    monkeypatch.setattr(ar.os, "replace", replace)
+    with pytest.raises(PermissionError):
+        reg.invalidate()
+
+    monkeypatch.setattr(ar.os, "replace", real_replace)
+    on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
+    assert all(e["is_current"] for e in on_disk.values())
+    # The files of every entry the manifest still calls current are in the
+    # active path, not in _archived/.
+    for paths in dests.values():
+        for path in paths.values():
+            assert path.is_file(), path
+    log = (reg.logs_dir / "A.log").read_text(encoding="utf-8")
+    assert "invalidate_failed" in log
+
+
+def test_a_manifest_held_open_briefly_is_written_on_a_retry(tmp_path, monkeypatch):
+    reg, dests = _register_two(tmp_path)
+    real_replace = ar.os.replace
+    refusals = {"left": 2}
+
+    def replace(src, dst, *a, **k):
+        if Path(dst).name == "registry.json" and refusals["left"]:
+            refusals["left"] -= 1
+            raise PermissionError(13, "held open by another program")
+        return real_replace(src, dst, *a, **k)
+
+    monkeypatch.setattr(ar.os, "replace", replace)
+    assert sorted(reg.invalidate()) == sorted(dests)
+    on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
+    assert not any(e["is_current"] for e in on_disk.values())
