@@ -70,6 +70,35 @@ python 5_classify_cells.py --brain YOUR_BRAIN
 ```
 
 This uses the trained network to filter detection candidates into real cells vs artifacts.
+Step 5 writes the brain's **production** classification,
+`5_Classified_Cells/cells.xml` -- the file step 6 counts.
+
+### Trying a model in napari does not change production
+
+Classification runs started from Setup & Tuning (Classification tab, "Run
+Classification") are calibration runs. Each one is written to its own folder,
+`2_Data_Summary/optimization_runs/<brain>/class_<date>_<time>/` (`cells.xml`,
+`rejected.xml`), and that folder is the run's `output_path` in the tracker. The
+brain's `5_Classified_Cells` is not touched, so trying a model can never replace
+the classification the counts come from.
+
+**To make a napari run the production classification** (promote it): right after
+the run finishes, click **Promote last run to production...** under "Run
+Classification" and confirm. What happens:
+
+1. The files currently in `5_Classified_Cells` (`cells.xml`, `rejected.xml`,
+   `promoted_from.json`) move to `5_Classified_Cells/_archive/<date>_<time>/` --
+   kept, not deleted.
+2. The run's `cells.xml` and `rejected.xml` are copied into `5_Classified_Cells`,
+   with `promoted_from.json` naming the run, its folder, who promoted it and when.
+3. The run's tracker row is tagged `promoted_to_production`.
+4. Region counts made before the promotion are now older than the
+   classification, so RUN_PIPELINE and the pipeline dashboard show them as stale
+   and offer counting again. Run step 6 to update them.
+
+The button only promotes the last run made in this napari session, for the brain
+it was made on. Running step 5 again also replaces production (that is what step
+5 is for).
 
 ## Step 3: Count by Region
 

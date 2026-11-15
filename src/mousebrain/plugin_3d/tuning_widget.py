@@ -446,6 +446,11 @@ class TuningWidget(QWidget):
         self._selected_class_run = None
         self._selected_cells_xml = None
 
+        # The last GUI classification run's own folder and tracker id (never
+        # the production 5_Classified_Cells; see run_classification)
+        self._last_class_output = None
+        self._last_class_exp_id = None
+
         # Initialize tracker if available
         self.tracker = ExperimentTracker() if TRACKER_AVAILABLE else None
 
@@ -3818,6 +3823,18 @@ class TuningWidget(QWidget):
         self.classify_status.setWordWrap(True)
         run_layout.addWidget(self.classify_status)
 
+        run_layout.addWidget(QLabel(
+            "Runs here are kept in their own folder and do not change the brain's\n"
+            "production classification (5_Classified_Cells, which counting uses)."
+        ))
+        self.promote_class_btn = QPushButton("Promote last run to production...")
+        self.promote_class_btn.setToolTip(
+            "Make the last classification run the brain's production classification.\n"
+            "The current 5_Classified_Cells files are archived first, not deleted.")
+        self.promote_class_btn.clicked.connect(self._promote_last_classification)
+        self.promote_class_btn.setEnabled(False)
+        run_layout.addWidget(self.promote_class_btn)
+
         content_layout.addWidget(run_group)
 
         # =================================================================
@@ -7026,9 +7043,15 @@ class TuningWidget(QWidget):
         else:
             voxel_sizes = (4, 4, 4)
 
-        # Output path
-        output_path = self.current_brain / "5_Classified_Cells"
+        # Output path: this run's own folder, NEVER the brain's production
+        # 5_Classified_Cells (which step 6 counts). A tuning run used to
+        # overwrite production there; promoting a run is now a separate,
+        # explicit action (mousebrain.classification_runs).
+        from mousebrain.classification_runs import gui_run_folder
+        output_path = gui_run_folder(DATA_SUMMARY_DIR, self.current_brain.name)
         output_path.mkdir(parents=True, exist_ok=True)
+        self._last_class_output = output_path
+        self._last_class_exp_id = None
 
         # Get signal and background arrays from loaded layers
         signal_layer = None
@@ -7085,6 +7108,7 @@ class TuningWidget(QWidget):
                 parent_experiment=parent_exp,
                 notes="Run from napari tuning widget (Python API)",
             )
+            self._last_class_exp_id = exp_id
 
         # Update UI
         self.classify_btn.setEnabled(False)
@@ -7143,12 +7167,18 @@ class TuningWidget(QWidget):
                     batch_size=self.classify_batch_size.value(),
                 )
 
+            # This run's own folder (never production; see run_classification)
+            run_folder = getattr(self, '_last_class_output', None)
+            if hasattr(self, 'promote_class_btn'):
+                self.promote_class_btn.setEnabled(run_folder is not None)
+
             # Generate QC image with actual slice visuals
             self._generate_classification_qc_image(
                 cells_found=cells_found,
                 rejected=rejected,
                 model_name=model_name,
                 exp_id=exp_id,
+                folder=run_folder,
             )
 
             self.classify_status.setText(
@@ -7161,7 +7191,7 @@ class TuningWidget(QWidget):
 
             if auto_triggered:
                 # Auto-triggered: load results automatically and run comparison
-                self._load_classified_cells()
+                self._load_classified_cells(folder=run_folder)
                 self._auto_compare_classification(exp_id, cells_found, rejected, model_name)
             else:
                 # Manual: offer to load results
@@ -7170,12 +7200,14 @@ class TuningWidget(QWidget):
                     f"Classification complete!\n\n"
                     f"Cells found: {cells_found}\n"
                     f"Rejected: {rejected}\n\n"
+                    f"The result is kept with this run, not in the brain's\n"
+                    f"5_Classified_Cells (use 'Promote to production' for that).\n\n"
                     f"Load classified cells into napari?",
                     QMessageBox.Yes | QMessageBox.No
                 )
 
                 if reply == QMessageBox.Yes:
-                    self._load_classified_cells()
+                    self._load_classified_cells(folder=run_folder)
         else:
             if self.tracker and exp_id:
                 self.tracker.update_status(exp_id, status="failed")
@@ -7288,9 +7320,46 @@ class TuningWidget(QWidget):
 
         print(f"[Connectome] === COMPARISON COMPLETE ===\n")
 
-    def _load_classified_cells(self):
+    def _promote_last_classification(self):
+        """Make the last GUI classification run this brain's production one,
+        after the person confirms (mousebrain.classification_runs)."""
+        run_folder = getattr(self, '_last_class_output', None)
+        if not self.current_brain or not run_folder:
+            QMessageBox.warning(self, "Nothing to promote", "Run a classification first.")
+            return
+        if Path(run_folder).parent.name != self.current_brain.name:
+            QMessageBox.warning(self, "Different brain",
+                                "The last classification run was for another brain.")
+            return
+        reply = QMessageBox.question(
+            self, "Promote to production",
+            f"Make this run the production classification of {self.current_brain.name}?\n\n"
+            f"Run: {run_folder}\n\n"
+            f"The current files in 5_Classified_Cells are moved to\n"
+            f"5_Classified_Cells/_archive/ first. Region counts made before this\n"
+            f"will show as stale until counting is run again.",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        from mousebrain.classification_runs import promote_to_production
+        try:
+            promote_to_production(run_folder, self.current_brain,
+                                  exp_id=getattr(self, '_last_class_exp_id', None),
+                                  tracker=self.tracker)
+        except Exception as e:
+            QMessageBox.warning(self, "Not promoted", str(e))
+            return
+        QMessageBox.information(self, "Promoted",
+                                "This run is now the production classification.\n"
+                                "Run region counting to update the counts.")
+
+    def _load_classified_cells(self, *_ignored, folder=None):
         """
         Load classified cells into napari with high-contrast, semi-transparent markers.
+
+        folder: a classification run's folder; default the brain's production
+        5_Classified_Cells. (Keyword-only: a button's clicked signal passes a
+        positional 'checked' value.)
 
         Uses cyan for cells and magenta for rejected - these are complementary colors
         that are easily distinguished on grey background and from each other.
@@ -7305,8 +7374,9 @@ class TuningWidget(QWidget):
         if not self.current_brain:
             return
 
-        cells_path = self.current_brain / "5_Classified_Cells" / "cells.xml"
-        rejected_path = self.current_brain / "5_Classified_Cells" / "rejected.xml"
+        folder = Path(folder) if folder else self.current_brain / "5_Classified_Cells"
+        cells_path = folder / "cells.xml"
+        rejected_path = folder / "rejected.xml"
 
         # Load cells (confirmed) - cyan discs
         if cells_path.exists():
@@ -7379,7 +7449,8 @@ class TuningWidget(QWidget):
             indices.append(idx)
         return indices
 
-    def _generate_classification_qc_image(self, cells_found: int, rejected: int, model_name: str, exp_id: str = None):
+    def _generate_classification_qc_image(self, cells_found: int, rejected: int, model_name: str, exp_id: str = None,
+                                          folder=None):
         """
         Generate a QC image after classification showing actual slice images.
 
@@ -7415,8 +7486,10 @@ class TuningWidget(QWidget):
             brain_name = self.current_brain.name
 
             # Load cell coordinates
-            cells_path = self.current_brain / "5_Classified_Cells" / "cells.xml"
-            rejected_path = self.current_brain / "5_Classified_Cells" / "rejected.xml"
+            # The run's own folder when given (a GUI run), else production
+            class_folder = Path(folder) if folder else self.current_brain / "5_Classified_Cells"
+            cells_path = class_folder / "cells.xml"
+            rejected_path = class_folder / "rejected.xml"
 
             cell_coords = self._parse_cellfinder_xml(cells_path) if cells_path.exists() else []
             rejected_coords = self._parse_cellfinder_xml(rejected_path) if rejected_path.exists() else []
