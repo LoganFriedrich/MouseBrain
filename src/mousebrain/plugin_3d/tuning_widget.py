@@ -2202,15 +2202,21 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Error", "Select a brain first")
             return
 
-        # Check if brain is loaded in napari - use those arrays if available
-        signal_layer = None
-        background_layer = None
-        for layer in self.viewer.layers:
-            if isinstance(layer, napari.layers.Image):
-                if 'Signal' in layer.name or 'signal' in layer.name:
-                    signal_layer = layer
-                elif 'Background' in layer.name or 'background' in layer.name:
-                    background_layer = layer
+        # Use the loaded layers only if they are THIS brain's (tagged when
+        # loaded; mousebrain.brain_context). Another brain's images in the
+        # viewer are never used, and are not silently replaced by a disk read.
+        from mousebrain.brain_context import layer_source_folder, pick_image_layers
+        signal_layer, background_layer, other_images = pick_image_layers(
+            [l for l in self.viewer.layers if isinstance(l, napari.layers.Image)],
+            self.current_brain)
+        if (signal_layer is None or background_layer is None) and other_images:
+            QMessageBox.warning(
+                self, "Images of another brain",
+                f"The images in the viewer were not loaded for {self.current_brain.name}.\n\n"
+                "Load this brain (Load Brain into Napari) or remove the other brain's "
+                "image layers, then run detection again.")
+            return
+        input_path = layer_source_folder(signal_layer) if signal_layer is not None else ""
 
         # If not loaded in viewer, load from disk (priority: manual_crop > auto_crop)
         if signal_layer is None or background_layer is None:
@@ -2220,6 +2226,7 @@ class TuningWidget(QWidget):
             _source, data_folder, _meta = registered_input(
                 self.current_brain, fallback=("manual", "cropped"))
             print(f"[Connectome] Using {data_folder.name} (the registered images)")
+            input_path = str(data_folder)
 
             swap = getattr(self, 'swap_channels', None)
             if swap is None or swap.isChecked():
@@ -2348,6 +2355,9 @@ class TuningWidget(QWidget):
                 max_cluster=params['max_cluster_size'],
                 voxel_z=voxel_sizes[0],
                 voxel_xy=voxel_sizes[1],
+                # The images this run read: without it a run on the wrong
+                # brain's pixels could not be told from a right one.
+                input_path=input_path or None,
                 output_path=str(output_path),
                 notes=", ".join(notes_parts),
                 status="started",
@@ -5817,9 +5827,12 @@ class TuningWidget(QWidget):
         if self.tracker:
             try:
                 brain_name = self.current_brain.name if hasattr(self.current_brain, 'name') else str(self.current_brain)
+                from mousebrain.brain_context import layer_source_folder, pick_image_layers
+                _sig, _bg, _other = pick_image_layers(list(self.viewer.layers), self.current_brain)
                 self.tracker.log_training(
                     brain=brain_name,
                     epochs=0,  # Not training yet, just exporting
+                    input_path=(layer_source_folder(_sig) if _sig is not None else None) or None,
                     output_path=str(self.training_data_dir),
                     notes=f"Training data export (BrainGlobe format): {cells_exported} cells, {non_cells_exported} non-cells",
                     status="data_exported"
@@ -7053,17 +7066,17 @@ class TuningWidget(QWidget):
         self._last_class_output = output_path
         self._last_class_exp_id = None
 
-        # Get signal and background arrays from loaded layers
-        signal_layer = None
-        background_layer = None
-        for layer in self.viewer.layers:
-            if 'Signal' in layer.name and hasattr(layer, 'data'):
-                signal_layer = layer
-            elif 'Background' in layer.name and hasattr(layer, 'data'):
-                background_layer = layer
+        # Get signal and background arrays from loaded layers -- this brain's
+        # only (tagged when loaded; mousebrain.brain_context)
+        from mousebrain.brain_context import pick_image_layers
+        signal_layer, background_layer, other_images = pick_image_layers(
+            list(self.viewer.layers), self.current_brain)
 
         if signal_layer is None:
-            QMessageBox.warning(self, "Error", "Signal layer not loaded. Load brain first.")
+            QMessageBox.warning(
+                self, "Error",
+                (f"The images in the viewer were not loaded for {self.current_brain.name}. "
+                 if other_images else "Signal layer not loaded. ") + "Load this brain first.")
             return
 
         signal_array = signal_layer.data
@@ -7827,6 +7840,15 @@ class TuningWidget(QWidget):
         path = self.brain_combo.currentData()
         if path:
             self.current_brain = Path(path)
+            # Everything the widget held for the previous brain is dropped
+            # (mousebrain.brain_context says why); its image layers stay in the
+            # viewer but are tagged with their brain, and runs refuse to use them.
+            from mousebrain.brain_context import reset_per_brain_state
+            reset_per_brain_state(self)
+            for btn_name in ('prefilter_save_btn', 'prefilter_to_training_btn', 'promote_class_btn'):
+                btn = getattr(self, btn_name, None)
+                if btn is not None:
+                    btn.setEnabled(False)
             self.load_metadata()
             self.parse_voxel_from_filename()
             self.brain_status_label.setText(f"Selected: {self.current_brain.name}")
@@ -7962,8 +7984,12 @@ class TuningWidget(QWidget):
             signal_path = data_folder / "ch0"
             background_path = data_folder / "ch1"
 
-        # Store source for use in callback
+        # Store source for use in callback -- and WHICH brain and folder, so
+        # the layers are named and tagged for the brain whose pixels they are,
+        # even if another brain is selected before loading finishes.
         self._loading_source = source
+        self._loading_brain = self.current_brain
+        self._loading_folder = data_folder
 
         # Update UI
         self.brain_status_label.setText(f"Loading {self.current_brain.name}...")
@@ -8229,6 +8255,9 @@ class TuningWidget(QWidget):
 
         if success:
             source = self._loading_source or "unknown"
+            from mousebrain.brain_context import tag_layer
+            loaded_brain = getattr(self, '_loading_brain', None) or self.current_brain
+            loaded_folder = getattr(self, '_loading_folder', None)
 
             # Layer setup:
             # - Signal channel: green colormap
@@ -8244,7 +8273,7 @@ class TuningWidget(QWidget):
             if bg_stack is not None:
                 bg_layer = self.viewer.add_image(
                     bg_stack,
-                    name=f"{self.current_brain.name} - Background ({source})",
+                    name=f"{loaded_brain.name} - Background ({source})",
                     colormap='magenta',
                     blending='additive',
                     gamma=1.2,  # User-preferred setting for better visibility
@@ -8257,12 +8286,16 @@ class TuningWidget(QWidget):
             if signal_stack is not None:
                 signal_layer = self.viewer.add_image(
                     signal_stack,
-                    name=f"{self.current_brain.name} - Signal ({source})",
+                    name=f"{loaded_brain.name} - Signal ({source})",
                     colormap='green',
                     blending='additive',
                     gamma=1.2,  # User-preferred setting for better visibility
                 )
                 print(f"  Added signal layer: {signal_stack.shape}")
+
+            for lyr in (bg_layer, signal_layer):
+                if lyr is not None:
+                    tag_layer(lyr, loaded_brain, loaded_folder)
 
             # Set user-preferred contrast limits
             if signal_layer is not None:
@@ -9127,6 +9160,10 @@ class TuningWidget(QWidget):
         if not self.current_brain:
             return
 
+        # Never keep the previous brain's metadata when this one has none.
+        self.metadata = {}
+        self._metadata_source = None
+
         # Try to load from folders in priority order: manual_crop > auto_crop > extracted
         for folder in ["2_Cropped_For_Registration_Manual", "2_Cropped_For_Registration", "1_Extracted_Full"]:
             meta_path = self.current_brain / folder / "metadata.json"
@@ -9134,6 +9171,8 @@ class TuningWidget(QWidget):
                 try:
                     with open(meta_path, 'r') as f:
                         self.metadata = json.load(f)
+                    # Save writes back here and only here (save_metadata)
+                    self._metadata_source = meta_path.parent
 
                     # Update UI from metadata
                     if 'voxel_size_um' in self.metadata:
@@ -9188,8 +9227,10 @@ class TuningWidget(QWidget):
                             print(f"[Connectome] Metadata says channels are swapped (signal=ch1)")
 
                     return
-                except:
-                    pass
+                except Exception as e:
+                    print(f"[Connectome] [!] Could not read {meta_path}: {e}")
+                    self.metadata = {}
+                    self._metadata_source = None
 
     def save_metadata(self):
         """Save current settings to metadata."""
@@ -9236,19 +9277,29 @@ class TuningWidget(QWidget):
             'n_free_cpus': self.n_free_cpus.value(),
         }
 
-        # Save to all data folders that exist
-        for folder in ["2_Cropped_For_Registration_Manual", "2_Cropped_For_Registration", "1_Extracted_Full"]:
-            meta_dir = self.current_brain / folder
-            if meta_dir.exists():
-                meta_path = meta_dir / "metadata.json"
-                try:
-                    with open(meta_path, 'w') as f:
-                        json.dump(self.metadata, f, indent=2)
-                except Exception as e:
-                    QMessageBox.warning(self, "Error", f"Failed to save: {e}")
-                    return
+        # Only into the folder the metadata was loaded from. This used to write
+        # into EVERY existing image folder: it overwrote the extraction's own
+        # record with the crop's, and created 2_Cropped_For_Registration/
+        # metadata.json -- the "cropped" marker -- in a brain that had not been
+        # cropped. A brain with no metadata.json gets none from here: it is
+        # written by extraction or cropping.
+        from mousebrain.brain_context import metadata_save_target
+        target = metadata_save_target(getattr(self, '_metadata_source', None))
+        if target is None or target.parent != self.current_brain:
+            QMessageBox.warning(
+                self, "Not saved",
+                "This brain has no metadata.json to update (extraction or cropping "
+                "writes it). Nothing was saved.")
+            return
+        meta_path = target / "metadata.json"
+        try:
+            with open(meta_path, 'w') as f:
+                json.dump(self.metadata, f, indent=2)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to save: {e}")
+            return
 
-        QMessageBox.information(self, "Saved", "Settings saved to metadata.json")
+        QMessageBox.information(self, "Saved", f"Settings saved to {meta_path}")
 
     def create_qc_tab(self):
         """Tab for registration QC and approval."""

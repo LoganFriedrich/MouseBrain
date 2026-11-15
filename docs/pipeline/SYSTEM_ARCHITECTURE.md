@@ -173,6 +173,27 @@ tracker.mark_as_best(run_id)
    registering the brain again needs a new approval (see docs/pipeline/README.md,
    "Registration QC & Approval").
 
+### Switching brains in Setup & Tuning
+
+Selecting another brain in the brain list starts that brain from a clean slate:
+its own metadata (never the previous brain's), no pre-filter result, no selected
+classification, no training-data folder, no "last run". The buttons that act on
+those (Save pre-filter results, Send to training, Promote last run to
+production) are disabled until you make a new one for this brain.
+
+Image layers already in the viewer stay there, but every image layer carries the
+brain and folder it was loaded from. Run Test Detection and Run Classification
+use only layers of the selected brain; if the viewer holds only another brain's
+images they stop with "Images of another brain" -- load this brain first. Each
+detection run records the image folder it read as `input_path` in the tracker,
+and a training-data export records the folder of the images it cut cubes from.
+
+**Save (settings to metadata.json)** writes only into the folder the brain's
+metadata was loaded from (the hand crop, else the crop, else the extraction). It
+never creates a `metadata.json` where there was none -- that file is how the
+status readers know a brain was extracted or cropped -- so a brain with no
+metadata says "Nothing was saved".
+
 ### Mode 3: Results Viewer (future)
 **Purpose**: View final cell counts per atlas region.
 
