@@ -27,7 +27,36 @@ Layout (rooted at the registry root, by default <pipeline root>/Registry/)
     +-- figures/{analysis_name}/       Figures, organised by animal/region
     |   +-- {animal}/{region}/         (created on the first figure write)
     +-- logs/{analysis_name}.log       Audit trail, one line per event
+    +-- logs/{analysis_name}.lock      The write lock, present only while a
+    |                                  write is in progress. For that moment
+    |                                  logs/ may also hold temporary files
+    |                                  whose names start with "." and end in
+    |                                  ".tmp" or ".part", and the lock's clock
+    |                                  probes ".clock-<8 hex>"; a lock taken
+    |                                  over from a crashed writer is renamed
+    |                                  "{analysis_name}.lock.stale-<8 hex>"
+    |                                  before it is deleted (see
+    |                                  mousebrain.file_lock). Any of these
+    |                                  left behind by a crash is safe to
+    |                                  delete when nothing is registering.
     +-- approved_method.json           Optional: a lab's approved parameters
+
+    Every write holds the analysis's lock.
+
+    WHY the lock, its probes and temporary files are
+    kept OUT of exports/{analysis_name}/: an integrator mirrors every file
+    under that folder. A lock caught there by a nightly pull would be copied
+    as if it were a result (and archived as a vanished result the next
+    night), and a probe or temporary file that vanished between the
+    integrator listing the folder and reading it would stop its whole pull.
+    So everything under exports/ and figures/ is a registered output or a
+    manifest.
+
+    WHY in logs/ and not in a folder of their own: logs/ already exists in
+    every registry, sits on the same drive (so files can be renamed into
+    place), and an integrator takes only the ``{analysis_name}.log`` files
+    from it. No name used here ends in ".log". Adding new folders to a
+    registry that people browse was avoided on purpose.
 
     Invalidated outputs are moved to <their folder>/_archived/<timestamp>/.
     Paths recorded in registry.json are RELATIVE to the registry root, so the
@@ -67,10 +96,14 @@ import os
 import shutil
 import socket
 import tempfile
+import time
+import uuid
 import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+
+from mousebrain.file_lock import exclusive_file_lock
 
 __all__ = [
     "AnalysisRegistry",
@@ -383,8 +416,15 @@ class AnalysisRegistry:
       - Registration timestamp
       - Staleness flag (is_current)
 
-    Thread safety: writes use atomic temp-file-then-rename to avoid corruption
-    when multiple processes register outputs concurrently.
+    Concurrent writers: every change to the manifest is a read-change-write
+    of the whole registry.json, done while holding the analysis's lock,
+    ``logs/{analysis_name}.lock`` under the registry root
+    (mousebrain.file_lock; one holder at a time across processes and
+    machines), and written through a temporary file swapped in with
+    os.replace. The lock prevents a LOST update (two registrations at once
+    each writing back the manifest they read, so the second erased the
+    first's entry); the temporary file prevents a TORN file. The per-region
+    ROI summary CSV is rewritten under the same lock for the same reason.
 
     Args:
         analysis_name: Name of the analysis (e.g. "ENCR_Detection").
@@ -420,6 +460,10 @@ class AnalysisRegistry:
         self.figures_dir = self.registry_root / "figures" / analysis_name
         self.logs_dir = self.registry_root / "logs"
         self.registry_path = self.exports_dir / "registry.json"
+        # Outside the mirrored exports/ tree, in the existing logs/ folder
+        # (see the module docstring for why there).
+        self.work_dir = self.logs_dir
+        self.lock_path = self.logs_dir / ("%s.lock" % analysis_name)
 
         # exports/ and logs/ are needed by every registry (manifest + audit
         # log). figures/<analysis>/ is NOT created here: it is made on the
@@ -439,6 +483,25 @@ class AnalysisRegistry:
     # Registry I/O (atomic read/write)
     # -----------------------------------------------------------------
 
+    # A lock untouched for this long (file server's clock) was left by a
+    # crashed process and is taken over; a waiter gives up after
+    # LOCK_WAIT_SECONDS with a message naming the holder and the lock file.
+    LOCK_STALE_SECONDS = 120
+    LOCK_WAIT_SECONDS = 300
+
+    def _locked(self):
+        """Hold this analysis's registry lock (see the class docstring).
+
+        A live holder keeps its lock fresh by itself for as long as it holds
+        it (mousebrain.file_lock refreshes it from a background thread), so a
+        registration copying one large file over a slow share for longer
+        than LOCK_STALE_SECONDS is never mistaken for a crashed writer.
+        """
+        return exclusive_file_lock(self.registry_path, "Registry",
+                                   stale_seconds=self.LOCK_STALE_SECONDS,
+                                   wait_seconds=self.LOCK_WAIT_SECONDS,
+                                   lock_path=self.lock_path)
+
     def _read_registry(self) -> Dict[str, Any]:
         """Read the registry manifest from disk.
 
@@ -457,6 +520,12 @@ class AnalysisRegistry:
         except (json.JSONDecodeError, OSError):
             return self._empty_registry()
 
+    # How long a write keeps retrying while Windows refuses to replace
+    # registry.json because a reader (the CLI, an integrator pulling this
+    # folder) has it open for a moment -- the same rule the calibration
+    # tracker uses for its CSV.
+    REPLACE_RETRY_SECONDS = 10
+
     def _write_registry(self, data: Dict[str, Any]) -> None:
         """Write registry manifest atomically (write temp, then rename).
 
@@ -466,17 +535,28 @@ class AnalysisRegistry:
         data["last_updated"] = datetime.now().isoformat()
         content = json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
-        # Write to a temp file in the same directory, then rename.
-        # os.replace is atomic on the same filesystem on both Windows and POSIX.
+        # Write to a temp file, then rename. os.replace is atomic on the same
+        # filesystem on both Windows and POSIX. The temp file is in logs/
+        # (same drive, outside the mirrored exports folder; see the module
+        # docstring).
+        self.work_dir.mkdir(parents=True, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(
-            dir=str(self.exports_dir), suffix=".tmp", prefix=".registry_"
-        )
+            dir=str(self.work_dir), suffix=".tmp",
+            prefix=".%s.registry_" % self.analysis_name)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(content)
-            # Atomic replace
-            os.replace(tmp_path, str(self.registry_path))
-        except Exception:
+            # Atomic replace; on Windows retried while a reader holds the file.
+            deadline = time.monotonic() + self.REPLACE_RETRY_SECONDS
+            while True:
+                try:
+                    os.replace(tmp_path, str(self.registry_path))
+                    break
+                except PermissionError:
+                    if time.monotonic() > deadline:
+                        raise
+                    time.sleep(0.2)
+        except BaseException:
             # Clean up temp file on failure
             try:
                 os.unlink(tmp_path)
@@ -556,63 +636,75 @@ class AnalysisRegistry:
         """
         animal, region = parse_sample_id(sample)
 
-        # Compute destination directories
+        # Compute destination directories (created below, under the lock, only
+        # when a file is actually placed there).
         paths = get_database_path(
             self.registry_root, category, sample, animal, region, self.analysis_name
         )
         export_dir = paths["export_dir"]
         figure_dir = paths["figure_dir"]
-        export_dir.mkdir(parents=True, exist_ok=True)
-        # figure_dir is created below, only when a figure is actually copied
-        # (see the constructor for why figure folders are made lazily).
 
-        # Copy files into the registry and build the relative output map
-        output_map = {}
-        dest_paths = {}
-        for output_type, src_path_str in files.items():
-            src_path = Path(src_path_str)
-            if not src_path.exists():
-                print(f"  [!] WARNING: Source file does not exist: {src_path}")
-                continue
+        # WHY everything happens under the lock, and in this order:
+        # the files are placed only once the manifest has been read and the
+        # approved method resolved -- the steps that can refuse. The files
+        # used to be copied first, so a refusal (for example the lock not
+        # coming free, a damaged manifest, a broken approved-method file) left the NEW
+        # run's files in the registry while the manifest entry still
+        # described the OLD run, and an integrator mirrored them as one.
+        # A file being replaced is kept in logs/ until the manifest
+        # write has succeeded, and put back if it fails (see _place).
+        with self._locked() as lock:
+            registry = self._read_registry()
 
-            # Route figures to figure_dir, everything else to export_dir
-            if output_type in _FIGURE_OUTPUT_TYPES:
-                figure_dir.mkdir(parents=True, exist_ok=True)
-                dest = figure_dir / src_path.name
-            else:
-                dest = export_dir / src_path.name
-
-            shutil.copy2(str(src_path), str(dest))
-            dest_paths[output_type] = dest
-
-            # Store path relative to the registry root for portability
+            output_map: Dict[str, str] = {}
+            dest_paths: Dict[str, Path] = {}
+            placed: List[Tuple[Path, Optional[Path]]] = []
             try:
-                rel = dest.relative_to(self.registry_root)
-                output_map[output_type] = str(rel)
-            except ValueError:
-                output_map[output_type] = str(dest)
+                for output_type, src_path_str in files.items():
+                    src_path = Path(src_path_str)
+                    if not src_path.exists():
+                        print(f"  [!] WARNING: Source file does not exist: {src_path}")
+                        continue
 
-        # Build provenance entry
-        method_hash = self.get_method_hash(method_params)
-        entry = {
-            "sample": sample,
-            "animal": animal,
-            "region": region,
-            "category": category,
-            "results": results,
-            "method_params": method_params,
-            "method_hash": method_hash,
-            "source_files": {k: str(v) for k, v in (source_files or {}).items()},
-            "outputs": output_map,
-            "registered_at": datetime.now().isoformat(),
-            "hostname": _get_hostname(),
-            "is_current": True,
-        }
+                    # Route figures to figure_dir, everything else to export_dir
+                    if output_type in _FIGURE_OUTPUT_TYPES:
+                        dest = figure_dir / src_path.name
+                    else:
+                        dest = export_dir / src_path.name
 
-        # Update registry
-        registry = self._read_registry()
-        registry["entries"][sample] = entry
-        self._write_registry(registry)
+                    self._place(src_path, dest, placed)
+                    lock.touch()
+                    dest_paths[output_type] = dest
+
+                    # Store path relative to the registry root for portability
+                    try:
+                        rel = dest.relative_to(self.registry_root)
+                        output_map[output_type] = str(rel)
+                    except ValueError:
+                        output_map[output_type] = str(dest)
+
+                # Build provenance entry
+                method_hash = self.get_method_hash(method_params)
+                entry = {
+                    "sample": sample,
+                    "animal": animal,
+                    "region": region,
+                    "category": category,
+                    "results": results,
+                    "method_params": method_params,
+                    "method_hash": method_hash,
+                    "source_files": {k: str(v) for k, v in (source_files or {}).items()},
+                    "outputs": output_map,
+                    "registered_at": datetime.now().isoformat(),
+                    "hostname": _get_hostname(),
+                    "is_current": True,
+                }
+                registry["entries"][sample] = entry
+                self._write_registry(registry)
+            except BaseException as e:
+                self._undo_placed(placed, sample, e)
+                raise
+            self._discard_replaced(placed)
 
         # Write audit log
         self._log_event("register", sample, category, method_hash)
@@ -654,39 +746,9 @@ class AnalysisRegistry:
         animal, _ = parse_sample_id(sample)
         base_reg = _base_region(region) if region else region
 
-        # Write per-sample ROI counts CSV
         export_dir = self.exports_dir / animal / base_reg
-        export_dir.mkdir(parents=True, exist_ok=True)
         counts_path = export_dir / f"{sample}_roi_counts.csv"
-
-        # Fixed columns first; any further count keys (e.g. the dual-channel
-        # dual/red_only/green_only/neither) are appended so no count is lost.
-        base_fields = ["roi", "total", "positive", "negative", "fraction"]
-        extra_fields = sorted({
-            str(k) for counts in roi_results.values() for k in counts
-            if str(k) not in base_fields
-        })
-        fieldnames = base_fields + extra_fields
-        with open(counts_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames, restval="")
-            writer.writeheader()
-            for roi_name, counts in roi_results.items():
-                row = {
-                    "roi": roi_name,
-                    "total": counts.get("total", 0),
-                    "positive": counts.get("positive", 0),
-                    "negative": counts.get("negative", 0),
-                    "fraction": counts.get("fraction", 0.0),
-                }
-                for k in extra_fields:
-                    if k in counts:
-                        row[k] = counts[k]
-                writer.writerow(row)
-
-        # Update the per-region summary CSV (roi_summary_{region}.csv)
-        self._update_region_summary(sample, base_reg, roi_results)
-
-        # Record in registry
+        summary_path = self.exports_dir / f"roi_summary_{base_reg}.csv"
         method_hash = self.get_method_hash(method_params)
         entry_key = f"{sample}__roi_counts"
         entry = {
@@ -706,24 +768,151 @@ class AnalysisRegistry:
             "is_current": True,
         }
 
-        registry = self._read_registry()
-        registry["entries"][entry_key] = entry
-        self._write_registry(registry)
+        # The per-sample CSV, the region summary CSV and the manifest are all
+        # written under the lock, AFTER the manifest has been read and the
+        # approved method resolved, for the reasons given in register_output:
+        # a refusal must leave the earlier counts in place, never new counts
+        # beside an entry describing the old run. Both CSVs are written in
+        # logs/ and swapped in; the files they replace are put back
+        # if the manifest cannot be written.
+        with self._locked() as lock:
+            registry = self._read_registry()
+            placed: List[Tuple[Path, Optional[Path]]] = []
+            try:
+                staged = self._staging_path(counts_path.name)
+                try:
+                    self._write_roi_counts_csv(staged, roi_results)
+                    self._place(staged, counts_path, placed, move=True)
+                finally:
+                    _unlink_quietly(staged)
+                lock.touch()
+
+                staged = self._staging_path(summary_path.name)
+                try:
+                    self._update_region_summary(sample, base_reg, roi_results, out_path=staged)
+                    self._place(staged, summary_path, placed, move=True)
+                finally:
+                    _unlink_quietly(staged)
+
+                registry["entries"][entry_key] = entry
+                self._write_registry(registry)
+            except BaseException as e:
+                self._undo_placed(placed, sample, e)
+                raise
+            self._discard_replaced(placed)
 
         self._log_event("register_roi_counts", sample, region, method_hash)
         return counts_path
+
+    @staticmethod
+    def _write_roi_counts_csv(path: Path, roi_results: Dict[str, Dict[str, Any]]) -> None:
+        """Write one sample's per-ROI counts. Fixed columns first; any further
+        count keys (e.g. the dual-channel dual/red_only/green_only/neither)
+        are appended so no count is lost."""
+        base_fields = ["roi", "total", "positive", "negative", "fraction"]
+        extra_fields = sorted({
+            str(k) for counts in roi_results.values() for k in counts
+            if str(k) not in base_fields
+        })
+        fieldnames = base_fields + extra_fields
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, restval="")
+            writer.writeheader()
+            for roi_name, counts in roi_results.items():
+                row = {
+                    "roi": roi_name,
+                    "total": counts.get("total", 0),
+                    "positive": counts.get("positive", 0),
+                    "negative": counts.get("negative", 0),
+                    "fraction": counts.get("fraction", 0.0),
+                }
+                for k in extra_fields:
+                    if k in counts:
+                        row[k] = counts[k]
+                writer.writerow(row)
+
+    # -----------------------------------------------------------------
+    # Placing files so that a failed registration changes nothing
+    # -----------------------------------------------------------------
+
+    def _staging_path(self, name: str) -> Path:
+        """A fresh path in logs/ (same drive as the registry, outside the
+        mirrored folders) for a file about to be placed. The name starts with
+        "." and ends in ".part", so it is never taken for an audit log."""
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        return self.work_dir / (".%s.%s.%s.part" % (
+            self.analysis_name, uuid.uuid4().hex[:8], name))
+
+    def _place(self, src: Path, dest: Path, placed: List[Tuple[Path, Optional[Path]]],
+               move: bool = False) -> None:
+        """Put *src* at *dest* (copied, or moved when *move*), keeping the
+        file it replaces in logs/ and recording (dest, kept copy) in
+        *placed* so _undo_placed can put it back.
+
+        The new file is first copied into logs/ and then renamed into
+        place, so *dest* is never a half-copied file and is missing only for
+        the instant between the two renames."""
+        if not move and dest.exists() and _same_file(src, dest):
+            return  # already where it belongs (re-registering the registry's own copy)
+        staged = src
+        if not move:
+            staged = self._staging_path(dest.name)
+            shutil.copy2(str(src), str(staged))
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            kept = None
+            if dest.exists():
+                kept = self._staging_path("replaced-" + dest.name)
+                _move_file(dest, kept)
+            placed.append((dest, kept))
+            _move_file(staged, dest)
+        finally:
+            if not move:
+                _unlink_quietly(staged)
+
+    def _undo_placed(self, placed: List[Tuple[Path, Optional[Path]]], sample: str,
+                     error: BaseException) -> None:
+        """A registration failed after placing some files: put back what they
+        replaced (newest first) and remove the ones that replaced nothing, so
+        the registry holds exactly what the manifest describes. A file that
+        cannot be put back is named in a [!] line and the audit log."""
+        problem = ""
+        for dest, kept in reversed(placed):
+            try:
+                if kept is not None:
+                    _move_file(kept, dest)
+                else:
+                    dest.unlink()
+            except OSError as e:
+                problem += "; could not put back %s%s: %s" % (
+                    dest, " (the earlier file is at %s)" % kept if kept else "", e)
+        if problem:
+            print("  [!] Registration of %s failed (%s: %s) and the earlier files "
+                  "could not all be put back%s" % (sample, type(error).__name__, error,
+                                                   problem))
+            self._log_event("register_failed", sample, "files not restored", problem)
+
+    @staticmethod
+    def _discard_replaced(placed: List[Tuple[Path, Optional[Path]]]) -> None:
+        """The manifest now describes the new files: drop the kept earlier ones."""
+        for _dest, kept in placed:
+            if kept is not None:
+                _unlink_quietly(kept)
 
     def _update_region_summary(
         self,
         sample: str,
         base_region: str,
         roi_results: Dict[str, Dict[str, Any]],
+        out_path: Optional[Path] = None,
     ) -> None:
         """Update (or create) the per-region summary CSV.
 
         The summary CSV (e.g. roi_summary_DCN.csv) aggregates TOTAL counts
         from every sample in that region. If the sample already has a row, it
-        is replaced; otherwise a new row is appended.
+        is replaced; otherwise a new row is appended. The result is written
+        to *out_path* when given (register_roi_counts writes it in
+        logs/ and swaps it in), else over the summary itself.
 
         Format:
             sample,roi,total,positive,negative,fraction
@@ -756,7 +945,7 @@ class AnalysisRegistry:
 
         # Write back
         fieldnames = ["sample", "roi", "total", "positive", "negative", "fraction"]
-        with open(summary_path, "w", newline="", encoding="utf-8") as f:
+        with open(out_path or summary_path, "w", newline="", encoding="utf-8") as f:
             # extrasaction="ignore": per-sample rows may carry extra count columns
             # (dual-channel results); the summary keeps the fixed schema so every
             # region summary stays comparable, and the per-sample CSV keeps the rest.
@@ -917,7 +1106,7 @@ class AnalysisRegistry:
 
         Archived files are moved to an ``_archived/{timestamp}/`` subdirectory
         beside where they were, so they are preserved but no longer in the
-        active output path.
+        active output path. The whole pass holds the registry lock.
 
         Args:
             sample: Optional sample name to invalidate. None = invalidate all.
@@ -925,40 +1114,42 @@ class AnalysisRegistry:
         Returns:
             List of entry keys that were invalidated.
         """
-        registry = self._read_registry()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         invalidated = []
 
-        for key, entry in list(registry.get("entries", {}).items()):
-            if sample is not None and entry.get("sample") != sample:
-                continue
-            if not entry.get("is_current", True):
-                continue  # already stale
+        with self._locked():
+            registry = self._read_registry()
 
-            # Archive output files
-            for output_type, rel_path in entry.get("outputs", {}).items():
-                src = self.registry_root / rel_path
-                if src.exists():
-                    archive_dir = src.parent / "_archived" / timestamp
-                    archive_dir.mkdir(parents=True, exist_ok=True)
-                    dest = archive_dir / src.name
-                    try:
-                        shutil.move(str(src), str(dest))
-                    except OSError as e:
-                        print(f"  [!] WARNING: Could not archive {src}: {e}")
+            for key, entry in list(registry.get("entries", {}).items()):
+                if sample is not None and entry.get("sample") != sample:
+                    continue
+                if not entry.get("is_current", True):
+                    continue  # already stale
 
-            entry["is_current"] = False
-            entry["invalidated_at"] = datetime.now().isoformat()
-            invalidated.append(key)
+                # Archive output files
+                for output_type, rel_path in entry.get("outputs", {}).items():
+                    src = self.registry_root / rel_path
+                    if src.exists():
+                        archive_dir = src.parent / "_archived" / timestamp
+                        archive_dir.mkdir(parents=True, exist_ok=True)
+                        dest = archive_dir / src.name
+                        try:
+                            shutil.move(str(src), str(dest))
+                        except OSError as e:
+                            print(f"  [!] WARNING: Could not archive {src}: {e}")
 
-        if invalidated:
-            self._write_registry(registry)
-            self._log_event(
-                "invalidate",
-                sample or "ALL",
-                f"{len(invalidated)} entries",
-                timestamp,
-            )
+                entry["is_current"] = False
+                entry["invalidated_at"] = datetime.now().isoformat()
+                invalidated.append(key)
+
+            if invalidated:
+                self._write_registry(registry)
+                self._log_event(
+                    "invalidate",
+                    sample or "ALL",
+                    f"{len(invalidated)} entries",
+                    timestamp,
+                )
 
         return invalidated
 
@@ -986,6 +1177,42 @@ class AnalysisRegistry:
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
+
+def _move_file(src: Path, dest: Path) -> None:
+    """Rename *src* to *dest*, replacing *dest*; copy-and-delete when they are
+    on different drives. On Windows a rename onto a file another program has
+    open for a moment is retried for a few seconds, as the manifest write is."""
+    deadline = time.monotonic() + AnalysisRegistry.REPLACE_RETRY_SECONDS
+    while True:
+        try:
+            os.replace(str(src), str(dest))
+            return
+        except PermissionError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.2)
+        except OSError:
+            # Different drive (or another reason a rename cannot work).
+            shutil.copy2(str(src), str(dest))
+            src.unlink()
+            return
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return os.path.samefile(str(a), str(b))
+    except OSError:
+        return False
+
+
+def _unlink_quietly(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
 
 def _get_hostname() -> str:
     """Get the machine hostname, safely."""
@@ -1033,6 +1260,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             "  mousebrain-registry --name ENCR_Detection --stale\n"
             "  mousebrain-registry --name ENCR_Detection --summary\n"
             "  mousebrain-registry --name ENCR_Detection --root /path/to/Registry\n"
+            "\n"
+            "Guide: docs/pipeline/ANALYSIS_REGISTRY.md\n"
         ),
     )
     parser.add_argument(
@@ -1053,7 +1282,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--summary", action="store_true", help="Print summary table"
     )
-
     args = parser.parse_args(argv)
     try:
         registry = AnalysisRegistry(analysis_name=args.name, registry_root=args.root)

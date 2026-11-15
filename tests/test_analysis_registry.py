@@ -8,6 +8,7 @@ Run from the repository root:
 """
 
 import json
+import os
 import warnings
 from pathlib import Path
 
@@ -373,3 +374,311 @@ def test_cli_main_root_and_hidden_alias(tmp_path, capsys):
 
     assert ar.main(["--name", "A", "--db-root", str(tmp_path)]) == 0
     assert ar._cli_main is ar.main
+
+
+# ---------------------------------------------------------------------------
+# Two registrations at once both land (the manifest is written under a lock)
+# ---------------------------------------------------------------------------
+
+def test_two_registrations_at_once_both_land(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    csv_file, _ = _make_source_files(tmp_path)
+    reg_a = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg_b = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+
+    # Widen the gap between reading the manifest and writing it back, the
+    # window in which a second writer used to read the same old manifest.
+    real_write = AnalysisRegistry._write_registry
+
+    def slow_write(self, data, *args, **kwargs):
+        time.sleep(0.6)
+        real_write(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(AnalysisRegistry, "_write_registry", slow_write)
+
+    errors = []
+
+    def register(reg, sample):
+        try:
+            reg.register_output(sample=sample, category="detection",
+                                files={"measurements": str(csv_file)}, results={},
+                                method_params=DEFAULT_METHOD)
+        except Exception as e:  # pragma: no cover - surfaced below
+            errors.append(e)
+
+    threads = [threading.Thread(target=register, args=(reg_a, "E01_01_S01_DCN")),
+               threading.Thread(target=register, args=(reg_b, "E01_01_S02_DCN"))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Without the lock one entry was lost: either written over by the other
+    # writer's stale manifest, or refused when both swapped the file at once.
+    assert sorted(reg_a.get_all_entries()) == ["E01_01_S01_DCN", "E01_01_S02_DCN"]
+    assert errors == []
+    assert not reg_a.lock_path.exists()  # let go after use
+
+
+def test_a_registration_copying_one_slow_file_keeps_its_lock(tmp_path, monkeypatch):
+    # One file copy that lasts longer than the lock's stale age (a large
+    # figure over a slow share) must not let a second writer take the lock
+    # over: the second writer's entry was then written over by the first
+    # writer's manifest and lost. Stale age scaled down to 1 s, one copy
+    # slowed to 2.5 s.
+    import threading
+    import time
+
+    monkeypatch.setattr(AnalysisRegistry, "LOCK_STALE_SECONDS", 1, raising=False)
+    src = tmp_path / "src"
+    src.mkdir()
+    slow_src = src / "slow_measurements.csv"
+    slow_src.write_text("a\n1\n", encoding="utf-8")
+    fast_src = src / "fast_measurements.csv"
+    fast_src.write_text("a\n2\n", encoding="utf-8")
+    real_copy2 = ar.shutil.copy2
+    copying = threading.Event()
+
+    def copy2(s, d, *a, **k):
+        if Path(s) == slow_src:
+            copying.set()
+            time.sleep(2.5)
+        return real_copy2(s, d, *a, **k)
+
+    monkeypatch.setattr(ar.shutil, "copy2", copy2)
+    reg_a = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
+    reg_b = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
+    errors = []
+
+    def register(reg, sample, f):
+        try:
+            reg.register_output(sample=sample, category="detection",
+                                files={"measurements": str(f)}, results={},
+                                method_params=DEFAULT_METHOD)
+        except Exception as e:  # pragma: no cover - surfaced below
+            errors.append(e)
+
+    first = threading.Thread(target=register, args=(reg_a, "E01_01_S01_DCN", slow_src))
+    first.start()
+    assert copying.wait(10)
+    time.sleep(0.2)
+    second = threading.Thread(target=register, args=(reg_b, "E01_01_S02_DCN", fast_src))
+    second.start()
+    first.join()
+    second.join()
+
+    assert errors == []
+    assert sorted(reg_a.get_all_entries()) == ["E01_01_S01_DCN", "E01_01_S02_DCN"]
+
+
+def test_a_lock_left_by_a_crashed_writer_is_taken_over(tmp_path):
+    import os
+    import time
+
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    lock = reg.lock_path
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("other-machine pid 1 at earlier token x\n", encoding="utf-8")
+    old = time.time() - 3600
+    os.utime(lock, (old, old))
+
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    assert list(reg.get_all_entries()) == [SAMPLE]
+    assert not lock.exists()
+
+
+_WRITER = """
+import sys
+from mousebrain.analysis_registry import AnalysisRegistry, DEFAULT_METHOD
+root, src, worker, n = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+reg = AnalysisRegistry(analysis_name="A", registry_root=root)
+for i in range(n):
+    reg.register_output(sample="E%02d_01_S%02d_DCN" % (worker, i + 1),
+                        category="detection", files={"measurements": src},
+                        results={"i": i}, method_params=DEFAULT_METHOD)
+"""
+
+_READER = """
+import sys, time
+from pathlib import Path
+from mousebrain.analysis_registry import AnalysisRegistry
+reg = AnalysisRegistry(analysis_name="A", registry_root=sys.argv[1])
+# Wherever this version keeps the lock (older versions: beside the manifest).
+lock = getattr(reg, "lock_path", reg.registry_path.with_name("registry.json.lock"))
+stop = Path(sys.argv[2])
+while not stop.exists():
+    # What an inspector and every waiting writer do: read the manifest and
+    # look at the lock, holding each open for a moment.
+    try:
+        reg.get_all_entries()
+    except Exception:
+        pass
+    try:
+        with open(lock, "rb"):
+            time.sleep(0.01)
+    except OSError:
+        pass
+"""
+
+
+def test_several_processes_registering_at_once_all_land_promptly(tmp_path):
+    # Separate PROCESSES (not threads), more than two writers, and a reader
+    # opening the manifest and the lock all the while. Without a lock entries
+    # were lost; with a lock whose release failed while a reader had it open,
+    # writers stalled in two-minute steps until it aged out.
+    import os
+    import subprocess
+    import sys
+    import time
+
+    csv_file, _ = _make_source_files(tmp_path)
+    root = tmp_path / "Registry"
+    AnalysisRegistry(analysis_name="A", registry_root=root)
+    env = dict(os.environ)
+    src_dir = str(Path(ar.__file__).resolve().parents[1])
+    env["PYTHONPATH"] = src_dir + os.pathsep + env.get("PYTHONPATH", "")
+    env.pop("MOUSEBRAIN_REGISTRY_ROOT", None)
+    env.pop("MOUSEBRAIN_APPROVED_METHOD", None)
+    stop = tmp_path / "stop"
+    writers, per_writer = 5, 6
+
+    reader = subprocess.Popen([sys.executable, "-c", _READER, str(root), str(stop)],
+                              env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    started = time.monotonic()
+    procs = [subprocess.Popen([sys.executable, "-c", _WRITER, str(root), str(csv_file),
+                               str(w + 1), str(per_writer)],
+                              env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+             for w in range(writers)]
+    outputs = []
+    try:
+        for proc in procs:
+            # Far below the two-minute stale age: a release left behind would
+            # show up as a writer still waiting here.
+            out, _ = proc.communicate(timeout=max(1.0, 90 - (time.monotonic() - started)))
+            outputs.append((proc.returncode, out.decode("utf-8", "replace")))
+    finally:
+        stop.write_text("", encoding="utf-8")
+        for proc in procs + [reader]:
+            if proc.poll() is None:
+                proc.kill()
+        reader.wait(timeout=30)
+
+    assert [code for code, _ in outputs] == [0] * writers, outputs
+    reg = AnalysisRegistry(analysis_name="A", registry_root=root)
+    assert len(reg.get_all_entries()) == writers * per_writer
+    assert not any("Took over a lock" in out for _, out in outputs), outputs
+    assert not reg.lock_path.exists()
+
+
+def test_the_mirrored_exports_folder_holds_only_outputs_and_the_manifest(tmp_path, monkeypatch):
+    # An integrator mirrors every file under exports/<analysis>/. The lock,
+    # the server-clock probes and the temporary manifest used to be created
+    # there: one caught by a nightly pull was copied as a result, and one that
+    # vanished between the pull listing the folder and reading it stopped
+    # the pull. Look at the folder at the instant the manifest is swapped in,
+    # while the lock is held and the temporary manifest exists.
+    csv_file, fig_file = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
+    seen = []
+    real_replace = ar.os.replace
+
+    def replace(src, dst, *a, **k):
+        seen.append(sorted(p.name for p in (reg.registry_root / "exports").rglob("*")
+                           if p.is_file()))
+        return real_replace(src, dst, *a, **k)
+
+    monkeypatch.setattr(ar.os, "replace", replace)
+    reg.register_output(sample=SAMPLE, category="roi_analysis",
+                        files={"measurements": str(csv_file), "figure": str(fig_file)},
+                        results={}, method_params=DEFAULT_METHOD)
+    assert seen
+    for names in seen:
+        assert set(names) <= {"measurements.csv", "registry.json"}, names
+
+
+# ---------------------------------------------------------------------------
+# A registration that is refused changes no file: the registry's files and
+# the manifest entry describing them always come from the same run
+# ---------------------------------------------------------------------------
+
+def _work_leftovers(reg):
+    """Working files left in logs/ (anything but the audit logs and a
+    set-aside manifest)."""
+    return sorted(p.name for p in reg.work_dir.iterdir()
+                  if not p.name.endswith(".log")
+                  and not p.name.startswith(reg.set_aside_prefix))
+
+
+def _run(tmp_path, n):
+    """A source CSV holding run *n*'s content."""
+    src = tmp_path / "src"
+    src.mkdir(exist_ok=True)
+    f = src / "measurements.csv"
+    f.write_text("run\n%d\n" % n, encoding="utf-8")
+    return f
+
+
+def _register_run(reg, tmp_path, n, sample=SAMPLE):
+    return reg.register_output(sample=sample, category="detection",
+                               files={"measurements": str(_run(tmp_path, n))},
+                               results={"run": n}, method_params={"k": n})
+
+
+def _registered_csv(reg, sample=SAMPLE):
+    return (reg.registry_root / reg.get_entry(sample)["outputs"]["measurements"]).read_text(
+        encoding="utf-8")
+
+
+def test_a_failed_manifest_write_puts_the_earlier_files_back(tmp_path, monkeypatch):
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
+    _register_run(reg, tmp_path, 1)
+    real_write = AnalysisRegistry._write_registry
+
+    def failing_write(self, data, *args, **kwargs):
+        raise OSError("the share dropped out")
+
+    monkeypatch.setattr(AnalysisRegistry, "_write_registry", failing_write)
+    with pytest.raises(OSError):
+        _register_run(reg, tmp_path, 2)
+    with pytest.raises(OSError):  # a new sample: its file is removed again
+        _register_run(reg, tmp_path, 2, sample="E01_01_S14_DCN")
+    monkeypatch.setattr(AnalysisRegistry, "_write_registry", real_write)
+
+    assert reg.get_entry(SAMPLE)["results"] == {"run": 1}
+    assert _registered_csv(reg) == "run\n1\n"
+    assert not (reg.exports_dir / "E01_01_S14_DCN" / "measurements.csv").exists()
+    assert _work_leftovers(reg) == []  # nothing kept behind in logs/
+
+
+def test_a_lock_that_never_comes_free_changes_no_file(tmp_path, monkeypatch):
+    from mousebrain.file_lock import exclusive_file_lock
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
+    dest = _register_run(reg, tmp_path, 1)["measurements"]
+    reg.lock_path.write_text("busy-host pid 2 token b\n", encoding="utf-8")  # a live holder
+    monkeypatch.setattr(
+        AnalysisRegistry, "_locked",
+        lambda self: exclusive_file_lock(self.registry_path, "Registry", stale_seconds=120,
+                                         wait_seconds=0.5, lock_path=self.lock_path))
+    with pytest.raises(TimeoutError):
+        _register_run(reg, tmp_path, 2)
+    assert dest.read_text(encoding="utf-8") == "run\n1\n"
+
+
+def test_roi_counts_are_replaced_when_the_registration_succeeds(tmp_path):
+    reg = AnalysisRegistry(analysis_name="R", registry_root=tmp_path / "Registry")
+    reg.register_roi_counts(SAMPLE, "DCN",
+                            {"TOTAL": {"total": 10, "positive": 5, "negative": 5,
+                                       "fraction": 0.5}}, method_params={"k": 1})
+    counts_path = reg.register_roi_counts(
+        SAMPLE, "DCN", {"TOTAL": {"total": 4, "positive": 1, "negative": 3,
+                                  "fraction": 0.25}}, method_params={"k": 2})
+    assert "4,1,3,0.25" in counts_path.read_text(encoding="utf-8")
+    summary = (reg.exports_dir / "roi_summary_DCN.csv").read_text(encoding="utf-8")
+    assert "4,1,3,0.25" in summary and "10,5,5" not in summary
+    assert reg.get_entry(SAMPLE + "__roi_counts")["method_params"] == {"k": 2}
+    assert _work_leftovers(reg) == []
