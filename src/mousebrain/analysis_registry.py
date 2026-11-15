@@ -627,7 +627,18 @@ class AnalysisRegistry:
 
         This prevents corruption if two processes write simultaneously or
         the process is interrupted mid-write.
+
+        Every write also refreshes the approved-method header
+        (approved_method, approved_method_hash, approved_method_recorded_at).
+        WHY: an integrator counts "stale vs approved" by comparing each
+        entry's method_hash with the header's approved_method_hash. The
+        header used to be written only when the manifest was first created,
+        so after a lab changed its approved method every later count was
+        still judged by the old one and showed nothing stale. A broken
+        approved-method file therefore stops the write with its error rather
+        than recording a header nobody chose.
         """
+        self._set_approved_header(data)
         data["last_updated"] = datetime.now().isoformat()
         content = json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
@@ -690,6 +701,25 @@ class AnalysisRegistry:
         data["approved_method"] = approved
         data["approved_method_hash"] = (
             self.get_method_hash(approved) if approved is not None else None)
+        # When these fields were last read from the approved-method source,
+        # so a reader can say "approved method as recorded <time>".
+        data["approved_method_recorded_at"] = datetime.now().isoformat()
+
+    def refresh_approved_method(self) -> Optional[Dict[str, Any]]:
+        """Re-read the approved method and rewrite the manifest header now,
+        without registering anything (CLI: --refresh-approved).
+
+        Every write refreshes the header anyway (see _write_registry); this
+        is for a manifest that has not been written since the approved method
+        changed. Returns the refreshed manifest, or None when this analysis
+        has no manifest yet (nothing is created).
+        """
+        with self._locked():
+            if not self.registry_path.exists():
+                return None
+            data = self._read_registry(set_aside_unreadable=True)
+            self._write_registry(data)
+            return data
 
     # -----------------------------------------------------------------
     # Method hashing
@@ -1291,6 +1321,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--summary", action="store_true", help="Print summary table"
     )
+    parser.add_argument(
+        "--refresh-approved", action="store_true",
+        help=("Re-read the approved method now and rewrite it into the manifest "
+              "header (the hash an integrator counts 'stale vs approved' against). "
+              "Every registration does this anyway; use it after changing "
+              "approved_method.json when nothing new has been registered since."),
+    )
 
     args = parser.parse_args(argv)
     try:
@@ -1306,8 +1343,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("=" * 70)
 
     try:
+        if args.refresh_approved:
+            refreshed = registry.refresh_approved_method()
+            if refreshed is None:
+                print("\n  [!] No manifest for this analysis yet; nothing to refresh.")
+            else:
+                print("\n  [OK] Approved-method header refreshed.")
         data = registry._read_registry()
-    except RegistryUnreadableError as e:
+    except (RuntimeError, TimeoutError) as e:  # unreadable manifest or approved-method file, lock held
         print("[FAIL] %s" % e)
         return 1
     entries = data.get("entries", {})
@@ -1318,6 +1361,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  Current:       {n_current}")
     print(f"  Invalidated:   {n_stale}")
     print(f"  Last updated:  {data.get('last_updated', 'never')}")
+    recorded_hash = data.get("approved_method_hash")
+    print("  Approved method in the header: %s (recorded %s)" % (
+        recorded_hash[:12] if recorded_hash else "none declared",
+        data.get("approved_method_recorded_at", "when the manifest was created")))
 
     if args.stale:
         print("\n--- Staleness check (vs approved method) ---")

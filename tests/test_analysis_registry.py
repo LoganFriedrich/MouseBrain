@@ -640,3 +640,78 @@ def test_a_malformed_per_analysis_table_is_refused(tmp_path):
         json.dumps({"analyses": {"B": []}}), encoding="utf-8")
     with pytest.raises(RuntimeError, match="pproved-method"):
         ar.approved_method_for("B", tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# The manifest's approved-method header follows the approved method
+# ---------------------------------------------------------------------------
+
+def _header(reg):
+    return json.loads(reg.registry_path.read_text(encoding="utf-8"))
+
+
+def test_the_header_follows_a_changed_approved_method_on_the_next_write(tmp_path):
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    assert _header(reg)["approved_method_hash"] == AnalysisRegistry.get_method_hash(DEFAULT_METHOD)
+
+    # The lab approves a new method; the next registration records it in the
+    # header, so an integrator counting "stale vs approved" from the header
+    # now sees the first entry as stale.
+    changed = dict(DEFAULT_METHOD, soma_dilation=8)
+    (tmp_path / "approved_method.json").write_text(json.dumps(changed), encoding="utf-8")
+    reg.register_output(sample="E01_01_S14_DCN", category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=changed)
+
+    header = _header(reg)
+    assert header["approved_method"] == changed
+    assert header["approved_method_hash"] == AnalysisRegistry.get_method_hash(changed)
+    assert "approved_method_recorded_at" in header
+    stale_by_header = [k for k, e in header["entries"].items()
+                       if e["is_current"] and e["method_hash"] != header["approved_method_hash"]]
+    assert stale_by_header == [SAMPLE]
+
+
+def test_refresh_approved_rewrites_the_header_without_registering(tmp_path, capsys):
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    changed = dict(DEFAULT_METHOD, soma_dilation=8)
+    (tmp_path / "approved_method.json").write_text(json.dumps(changed), encoding="utf-8")
+    entries_before = _header(reg)["entries"]
+
+    assert ar.main(["--name", "A", "--root", str(tmp_path), "--refresh-approved"]) == 0
+    assert "[OK]" in capsys.readouterr().out
+    header = _header(reg)
+    assert header["approved_method_hash"] == AnalysisRegistry.get_method_hash(changed)
+    assert header["entries"] == entries_before
+
+    # An analysis with no manifest is left alone, not created.
+    assert ar.main(["--name", "Z", "--root", str(tmp_path), "--refresh-approved"]) == 0
+    assert not (tmp_path / "exports" / "Z" / "registry.json").exists()
+
+
+def test_a_producer_declaration_reaches_an_existing_manifest(tmp_path):
+    # A manifest written before analyses declared whether they follow the
+    # shared method: the producer's next write records its declaration.
+    csv_file, _ = _make_source_files(tmp_path)
+    old = AnalysisRegistry(analysis_name="B", registry_root=tmp_path)
+    old.register_output(sample=SAMPLE, category="qc",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params={"check": "x", "version": "1"})
+    assert _header(old)["approved_method_hash"] is not None
+
+    producer = AnalysisRegistry(analysis_name="B", registry_root=tmp_path,
+                                follows_approved_method=False)
+    producer.register_output(sample="E01_01_S14_DCN", category="qc",
+                             files={"measurements": str(csv_file)}, results={},
+                             method_params={"check": "x", "version": "1"})
+    assert _header(old)["approved_method_hash"] is None
+    # ...and a reader that declares nothing keeps it.
+    assert AnalysisRegistry(analysis_name="B", registry_root=tmp_path).approved_method() is None
