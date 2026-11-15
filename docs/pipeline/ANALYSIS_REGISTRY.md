@@ -103,12 +103,19 @@ mousebrain-registry --name 3D_Orientation_Check --no-approved-method --stale
 - An analysis not named there is judged by `"default"` if it follows the
   shared method, and has no approved method otherwise. Leaving `"default"`
   out means the built-in parameters.
-- The slice batch tools (detection and ROI counting) record, as the
-  parameters of each result they register, the approved method of THEIR
-  analysis: its own entry under `"analyses"` if you gave it one, else
-  `"default"`. (They record the approved method; the values a batch actually
-  ran with come from its command line and the tuning tracker.) So naming a
-  slice analysis under `"analyses"` takes effect from its next batch run.
+- The slice detection batch (`batch_encr`, analysis `ENCR_Detection`) takes
+  every number you did not type from the approved method of ITS analysis --
+  its own entry under `"analyses"` if you gave it one, else `"default"` --
+  compares itself with that method in its banner, and records, with each
+  result, the numbers it actually ran with. So a result made with other
+  numbers shows as stale, and naming `ENCR_Detection` under `"analyses"`
+  changes the batch's numbers from its next run. If its entry is `null`, the
+  batch says it has no approved method, takes untyped numbers from its
+  built-in defaults, and its results are never stale. (Full guide:
+  `src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, section 6.)
+- The ROI counting step (`run_roi`) still records the approved method of its
+  analysis as the parameters of each result, whatever it ran with, so its
+  results never show as stale for a change of numbers.
 - The old form -- the parameters alone, `{ "detection": ..., ... }` -- still
   works and means the same as `{"default": {...}}`.
 - `"default"` and `"analyses"` are reserved words at the top of the file: a

@@ -269,6 +269,13 @@ The pipeline generates several quality-control visualizations:
 | **Background Mask** | Tissue mask (blue) and excluded nuclei (red) overlaid on the green channel | Does the blue region cover actual tissue? |
 | **ROI Summary** | Bar chart of positive/negative counts per manually-drawn ROI | Consistent across ROIs? |
 
+**The threshold line is always a fold change.** The fold-change histogram and
+the intensity scatter draw the threshold as "times the background". For the
+`background_mean` method, which classifies at *background + sigma x std*, the
+batch script (section 6) draws the line at that cutoff divided by the
+background, so the line sits exactly where its cells were split. (With sigma 0
+that is 1.0x, the background itself.)
+
 ### Human-Readable Report
 
 A plain-text report (`qc_report.txt`) is generated explaining:
@@ -298,6 +305,23 @@ Every analysis run is logged to a CSV (`calibration_runs.csv`) with:
 | **Paths** | `input_path`, `output_path`, `measurements_path`, `labels_path` |
 | **Quality** | `status`, `rating`, `marked_best`, `notes` |
 
+**What `coloc_threshold_value` means depends on the row.** Read it together
+with `coloc_threshold_method` and `script_version`:
+
+| `coloc_threshold_method` | `script_version` | `coloc_threshold_value` is |
+|---|---|---|
+| `background_mean` | `1.1.0` | the **sigma**: a cell is positive when its signal is above background mean + sigma x background std |
+| `background_mean` | anything older (empty, `1.0.0`) | not trustworthy: the napari widget wrote its fold-change box here even for this method. The batch never uses such a row |
+| `fold_change` (and `area_fraction`) | any | a **fold change**: times the background |
+| `absolute` | any | an intensity value |
+| `percentile` | any | a percentile of the cells' intensities |
+
+`coloc_background_method` is `gmm+local` (or another name followed by
+`+local`) when the widget's local-background box was ticked: a block-wise
+background, not the global one of the same name. Colocalization rows written
+by the widget or the batch from `script_version` `1.1.0` on also carry
+`soma_dilation=...; bg_exclusion_dilation=...` in `notes`.
+
 ### Run Loading
 
 Previous runs can be reloaded from the widget's Run History panel. The measurements CSV is read back from disk, and the colocalization visualization is re-displayed in napari. This allows:
@@ -314,6 +338,202 @@ Sample IDs are automatically parsed to extract hierarchy fields:
 | Compact | `E01_01_S12` | project=ENCR, cohort=01, subject=01, slice=12 |
 | Full | `ENCR_01_01_S12` | project=ENCR, cohort=01, subject=01, slice=12 |
 | Generic | `anything_else` | Underscore-split with pattern matching |
+
+---
+
+## 6. Batch Colocalization (`batch_encr`): choosing its numbers and running it
+
+**Source:** `sliceatlas/batch/batch_encr.py`
+
+The batch script runs ONE fixed method on every ND2 file of a project:
+threshold + LoG nucleus detection, GMM background, `background_mean`
+classification with a sigma threshold, measured in the green channel. What
+you choose is six numbers: the sigma threshold, the background percentile,
+the soma dilation, the background-exclusion dilation and the two detector
+settings (`threshold_fraction`, `log_threshold`).
+
+### Two different things: the batch's numbers and the approved method
+
+- **The batch's numbers** are what it runs with. They come from the list
+  below; marking a run best in BrainSlice is one way to choose two of them.
+- **The approved method** is what the analysis registry judges every result
+  of this batch (analysis `ENCR_Detection`) against. It comes from the
+  approved-method file (`approved_method.json` under the registry root, or the
+  file named by `MOUSEBRAIN_APPROVED_METHOD`):
+  - if the file is in the per-analysis form and names `ENCR_Detection` under
+    `"analyses"`, that entry is the batch's approved method;
+  - otherwise it is the shared method: `"default"` in the per-analysis form,
+    or the whole file in the plain form;
+  - without any file it is the built-in method.
+
+  A result made with any number that differs from it is registered as
+  **stale**, and shows so in `mousebrain-registry --stale` and in any database
+  that pulls the registry. The batch takes its untyped numbers from, and
+  compares itself with, this same method -- never a different one.
+  If the file gives `ENCR_Detection` the entry `null` ("no approved method"),
+  the banner says `Approved:  none ...`, untyped numbers come from the
+  built-in defaults, and the batch's results are never reported stale.
+
+Marking a run best does **not** change the approved method. If you mark a run
+whose sigma or percentile differs from it, the batch uses the run's numbers,
+prints `[!] NOT the approved method` with the differences, and registers its
+results as stale. To make those numbers approved, write them into the
+approved-method file (next section) and the batch's next results are current.
+
+### Making numbers the approved method
+
+1. Run the batch once with `--dry-run` (below). Its banner lists every number
+   it would use; under `[!] NOT the approved method` it lists each one that
+   differs, as `this run ...` and `approved ...`.
+2. Open (or create) `approved_method.json` in the registry folder
+   (`<pipeline root>/Registry/`). It is a plain text file holding one JSON
+   object. The parameter names are: `detection`, `threshold_fraction`,
+   `log_threshold`, `log_decision_tree`, `size_filter_um`, `colocalization`,
+   `sigma_threshold`, `soma_dilation`, `background`, `background_percentile`,
+   `bg_exclusion_dilation`.
+
+   - If the file already has `"default"` or `"analyses"` at its top (the
+     per-analysis form), put the numbers for this batch under
+     `"analyses"` -> `"ENCR_Detection"` (this changes only this batch), or
+     into `"default"` (this changes every analysis that follows the shared
+     method and has no entry of its own):
+
+     ```json
+     {"default": {"...": "..."},
+      "analyses": {
+        "ENCR_Detection": {"detection": "threshold+log", "threshold_fraction": 0.2,
+          "log_threshold": 0.005, "log_decision_tree": true,
+          "size_filter_um": [10, 25], "colocalization": "background_mean",
+          "sigma_threshold": 0.5, "soma_dilation": 6, "background": "gmm",
+          "background_percentile": 10, "bg_exclusion_dilation": 50}}}
+     ```
+
+   - Otherwise (the plain form: the parameters alone) edit the values in
+     place, or change the file to the form above to give this batch its own:
+
+     ```json
+     {"detection": "threshold+log", "threshold_fraction": 0.2,
+      "log_threshold": 0.005, "log_decision_tree": true,
+      "size_filter_um": [10, 25], "colocalization": "background_mean",
+      "sigma_threshold": 0.5, "soma_dilation": 6, "background": "gmm",
+      "background_percentile": 10, "bg_exclusion_dilation": 50}
+     ```
+
+   The values in the examples only illustrate the format; the size range in
+   particular is the open question at the end of this section. The full
+   description of both forms is in `docs/pipeline/ANALYSIS_REGISTRY.md`
+   ("The approved method").
+
+3. Put in the `this run` value of every line the banner listed, save, and run
+   `--dry-run` again: the `[!] NOT the approved method` block is gone when the
+   two agree. An unreadable file stops the batch with a message naming it.
+
+Results registered before the change are judged against the new approved
+method too; any made with other numbers now show as stale. The registry's
+header picks the change up at the batch's next registration, or at once with
+`mousebrain-registry --name ENCR_Detection --refresh-approved`.
+
+### Where each number comes from
+
+For each number, the first of these that gives one wins:
+
+| Order | Source | Gives |
+|-------|--------|-------|
+| 1 | What you type on the command line (`--threshold`, `--bg-percentile`, `--soma-dilation`, `--dilation`) | that number, even when it equals the default |
+| 2 | A colocalization run of **this project** marked best in the tracker (skipped with `--ignore-tracker`) | sigma threshold and background percentile only |
+| 3 | The approved method of `ENCR_Detection` (see above) | every number |
+| 4 | Built-in defaults (sigma 0, percentile 10, soma 6 px, exclusion 50, threshold_fraction 0.20, log_threshold 0.005) | every number |
+
+The banner printed at the start lists every number with its source in square
+brackets, e.g. `sigma_threshold=0.5 [marked-best run col_...]`.
+
+### Choosing the sigma and percentile in the napari widget
+
+1. In BrainSlice, run colocalization on an image of the project with
+   **Single Channel** mode, threshold method **background_mean**, background
+   method **gmm**, the local-background box **unticked**, and a **soma
+   dilation above 0**.
+2. In the **Run History** panel, click the run, then **Mark Selected as Best**.
+3. A message says whether the batch will use it, and for which project: the
+   tracker's project for that run (read from the sample name), or any batch
+   whose files include that sample. A batch of another project ignores it. If it says *will NOT use*,
+   it gives the reason (another method, another channel, soma dilation 0, a
+   run logged before runs recorded their sigma, ...): run again as in step 1
+   and mark the new run.
+
+**Not the same measurement.** The widget measures each cell's green signal in
+a disk around its nucleus (the disks of neighbouring cells may overlap), using
+the widget's own detection settings. The batch measures a ring around each
+nucleus that leaves the nucleus out and is never shared with a neighbour, and
+detects with its own fixed settings. A sigma chosen in the widget is therefore
+applied by the batch to a related, not identical, measurement. A run with soma
+dilation 0 measured the nucleus itself and is never used.
+
+**Per project.** A marked run counts for a batch when its slice is one of the
+files the batch processes, or the tracker files it under the batch's project.
+Marks on other projects' slices are ignored (the batch prints how many).
+
+**One mark per sample.** Marking a run clears the previous best of the same
+sample only. If marked runs of different samples of the project carry
+**different** numbers, the batch stops before processing anything and lists
+them with their samples. To settle it, open each sample whose mark you did not
+mean, select its starred run in Run History and click **Unmark Best**. (Or
+type both `--threshold` and `--bg-percentile`, or use `--ignore-tracker`.)
+Nothing else counts: an unmarked run, however recent, never changes the batch.
+Run History lists the 20 newest completed runs of the open sample, followed by
+every run of that sample marked best (whatever its age), so a starred run can
+always be found and unmarked there. If the panel cannot be used (no napari at
+hand), type both `--threshold` and `--bg-percentile`, or use
+`--ignore-tracker`.
+
+The soma dilation and exclusion dilation of a run are written in its notes
+(`soma_dilation=...; bg_exclusion_dilation=...`) for reference; the batch does
+not take them from the run. Type them, or set them in the approved method.
+
+### Running it
+
+```
+conda activate <your MouseBrain environment>
+python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project PROJECT_A --dry-run
+python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project PROJECT_A
+```
+
+`--dry-run` prints the banner and the file list and changes nothing. Read the
+banner before the real run.
+
+### What it records
+
+- **Tracker** (`calibration_runs.csv`): per file, a detection row with the
+  pixel-area range the detector applied to that image and, in its notes, the
+  diameter range and detector settings; and a colocalization row with the
+  sigma threshold actually used.
+- **Registry** (`ENCR_Detection`): per sample, the counts and the method
+  parameters **this run used** (not simply the approved method). When any of
+  them differs from the approved method, the banner says
+  `[!] NOT the approved method` and lists the differences; those entries show
+  as stale.
+- **A sample with no nuclei** gets a current entry with 0 nuclei and no files.
+  Its earlier entry's files are moved to `_archived/`, and the earlier record
+  is kept inside the new entry under `superseded`, with
+  `invalidated_reason` saying why and `outputs` naming where its files now
+  are in `_archived/`. The end-of-batch summary lists these
+  samples.
+- **A sample whose run fails** (file cannot be read, tracker file locked by
+  another program, any other error) changes nothing in the registry: an
+  error is not a result, so its earlier entry stays current. The console
+  prints `[!] not retired: ...` for it, and the end-of-batch summary lists
+  every such sample under `Failed, earlier result kept as current -- re-run
+  these`. Its row in `summary.csv` has status `error` and the message. Fix the
+  cause (close the tracker file, reconnect the share) and run the batch again.
+
+### Open question: the nucleus diameter range
+
+The batch detects nuclei 10-25 um across. The built-in approved method says
+8-25 um. Until a lab settles which is approved (by setting `size_filter_um`
+in its approved-method file, or by a code change), every batch run with the
+built-in approved method prints the `NOT the approved method` warning for
+`size_filter_um` and its entries show as stale. That is the record being
+honest, not a failed run.
 
 ---
 

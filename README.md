@@ -72,6 +72,15 @@ that produced it. The registry lives inside the pipeline data folder:
   first), with its `outputs` pointing at the archived files, so the manifest
   still shows what the sample's earlier result was, why it was retired and
   where its files are.
+- The 2D detection batch (`batch_encr`, analysis `ENCR_Detection`) records
+  with each entry the parameters its run actually used, so its results made
+  with anything other than ENCR_Detection's approved method show as stale.
+  (The ROI counting step still records the approved method whatever it ran
+  with.) The batch prints where each of its parameters came from and warns
+  before it runs with anything that is not that approved method. Marking a run best in
+  the BrainSlice Run History panel chooses the batch's sigma and percentile
+  but does not change the approved method; how to do both is in
+  `src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, section 6.
 
 ## Annotating ND2 slices (2D: BrainSlice, tab "7. Annotate")
 
