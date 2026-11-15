@@ -897,6 +897,7 @@ class AnalysisRegistry:
         # that lacks this entry.
         with self._locked():
             registry = self._read_registry(set_aside_unreadable=True)
+            self._keep_superseded(registry, sample, entry)
             registry["entries"][sample] = entry
             self._write_registry(registry)
 
@@ -995,6 +996,7 @@ class AnalysisRegistry:
         with self._locked():
             self._update_region_summary(sample, base_reg, roi_results)
             registry = self._read_registry(set_aside_unreadable=True)
+            self._keep_superseded(registry, entry_key, entry)
             registry["entries"][entry_key] = entry
             self._write_registry(registry)
 
@@ -1197,11 +1199,16 @@ class AnalysisRegistry:
     # Invalidation / archival
     # -----------------------------------------------------------------
 
-    def invalidate(self, sample: Optional[str] = None) -> List[str]:
+    def invalidate(self, sample: Optional[str] = None,
+                   reason: Optional[str] = None) -> List[str]:
         """Archive entries' output files and mark those entries invalidated.
 
         If *sample* is given, only that sample's entries are invalidated.
         If None, ALL current entries are invalidated.
+
+        *reason*, when given, is stored in each entry as ``invalidated_reason``
+        so the manifest itself says why a sample stopped being current (the
+        audit log alone is not read by whoever looks at the manifest).
 
         Archived files are moved to an ``_archived/{timestamp}/`` subdirectory
         beside where they were, so they are preserved but no longer in the
@@ -1238,6 +1245,7 @@ class AnalysisRegistry:
 
         Args:
             sample: Optional sample name to invalidate. None = invalidate all.
+            reason: Optional text recorded as the entries' invalidated_reason.
 
         Returns:
             List of entry keys that were invalidated. An entry whose files
@@ -1284,6 +1292,20 @@ class AnalysisRegistry:
 
                 entry["is_current"] = False
                 entry["invalidated_at"] = datetime.now().isoformat()
+                if reason:
+                    entry["invalidated_reason"] = reason
+                # Where each moved file now is, relative to the registry root.
+                # WHY: "outputs" keeps the active paths (the integrator and
+                # every older reader know an entry by them), but once the
+                # sample is registered again those paths hold the NEW files;
+                # without this map nothing would say where the invalidated
+                # entry's own files went.
+                entry["archived_outputs"] = {
+                    output_type: str(dest.relative_to(self.registry_root))
+                    for output_type, rel_path in entry.get("outputs", {}).items()
+                    for src, dest in moved
+                    if src == self.registry_root / rel_path
+                }
                 try:
                     self._write_registry(registry, refresh_header=False)
                 except BaseException as e:
@@ -1291,6 +1313,8 @@ class AnalysisRegistry:
                     # make the files and the in-memory entry say so too.
                     entry["is_current"] = True
                     entry.pop("invalidated_at", None)
+                    entry.pop("invalidated_reason", None)
+                    entry.pop("archived_outputs", None)
                     problem = ("the manifest could not be written (%s: %s)"
                                % (type(e).__name__, e)) + self._put_back(moved)
                     print("  [!] %s NOT invalidated, still current: %s" % (key, problem))
@@ -1318,6 +1342,33 @@ class AnalysisRegistry:
                   "they stay current. Free the files and run invalidate again."
                   % (len(failed), "y" if len(failed) == 1 else "ies"))
         return invalidated
+
+    @staticmethod
+    def _keep_superseded(registry: Dict[str, Any], key: str,
+                         entry: Dict[str, Any]) -> None:
+        """Keep an invalidated entry's record inside the entry replacing it.
+
+        WHY: the manifest holds one entry per key, so registering an
+        invalidated sample again used to drop the old record (its results,
+        method, and when and why it was invalidated), leaving only its moved
+        files and an audit-log line.
+
+        The kept record's ``outputs`` are rewritten to where invalidate()
+        moved its files (``archived_outputs``); an output that was not moved
+        (it was already missing when the entry was invalidated) is left out,
+        because its active path now holds the NEW entry's file. A CURRENT
+        entry being overwritten is not kept: its files are overwritten in
+        place, so a record of it could only point at files that no longer
+        hold its data.
+        """
+        previous = registry.get("entries", {}).get(key)
+        if not isinstance(previous, dict) or previous.get("is_current", True):
+            return
+        older = previous.pop("superseded", [])
+        record = dict(previous)
+        archived = record.pop("archived_outputs", None) or {}
+        record["outputs"] = dict(archived)
+        entry["superseded"] = [record] + list(older)
 
     @staticmethod
     def _put_back(moved: List[Tuple[Path, Path]]) -> str:

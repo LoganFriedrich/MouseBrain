@@ -201,6 +201,25 @@ while the manifest still calls it current, and the log has no `invalidate`
 line for it. To repair it, move the files back from `_archived/<time>/` (or
 run the invalidation again after moving them back).
 
+### What an invalidated entry says, and what happens when its sample comes back
+
+An invalidated entry keeps its record in the manifest with
+`is_current: false`, `invalidated_at`, `invalidated_reason` (when the code
+that invalidated it gave a reason -- the slice detection batch does) and
+`archived_outputs`: for each of its files, where that file now is under
+`_archived/<time>/`. Its `outputs` keep the old active paths.
+
+When the same sample is registered again (by `register_output` or
+`register_roi_counts`), the new entry takes its place and the invalidated
+record is kept inside it, under `superseded` (newest first). In that kept
+record `outputs` names the ARCHIVED files -- the active paths now hold the
+new result's files -- and a file that was already missing when the entry was
+invalidated is left out. So the manifest still shows what the earlier result
+was, why it was retired, and where its files are. An entry that was still
+current when it was registered over is not kept: its files were overwritten
+in place, so nothing would hold its data. Entries invalidated before
+`archived_outputs` existed are kept with empty `outputs`.
+
 ## When the manifest cannot be read
 
 If `registry.json` is damaged (not valid JSON, or not a manifest), nothing

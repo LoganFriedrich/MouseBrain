@@ -64,6 +64,14 @@ that produced it. The registry lives inside the pipeline data folder:
   as mousedb, for example) may pull from this folder; the manifest tells it
   what is there, how it was produced and whether it is still current.
 - Inspect a registry: `mousebrain-registry --name <analysis> --stale --summary`.
+- Invalidating an entry moves its files to `_archived/<timestamp>/` and marks
+  it not current (with `invalidated_reason` when the caller gave one, and
+  `archived_outputs` saying where each file went). When the same sample is
+  registered again (`register_output` or `register_roi_counts`), the
+  invalidated record is kept inside the new entry under `superseded` (newest
+  first), with its `outputs` pointing at the archived files, so the manifest
+  still shows what the sample's earlier result was, why it was retired and
+  where its files are.
 
 ## Annotating ND2 slices (2D: BrainSlice, tab "7. Annotate")
 
