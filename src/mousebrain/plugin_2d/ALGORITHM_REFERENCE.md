@@ -249,6 +249,35 @@ Can aggregate counts to parent regions in the atlas hierarchy. For example, summ
 - **Hard boundary clamping.** Cells with centroids outside the atlas bounds are snapped to the edge, potentially being assigned to the wrong region.
 - **Requires registered atlas.** If the atlas is poorly aligned to the tissue, region assignments will be systematically wrong.
 
+### DeepSlice position predictions (Align tab, "Detect All Positions (DeepSlice)")
+
+**Source:** `sliceatlas/core/deepslice_wrapper.py`
+
+DeepSlice suggests an atlas position for every image in the loaded folder. The
+suggestions are kept in `deepslice_positions.json` in that same folder (with
+DeepSlice's own output in `DeepSlice_Output/` beside it), so a second press of
+the button on the same folder answers at once instead of running the network
+again.
+
+The saved file also lists every image it was made from: name, size and the
+time it was last changed. **The saved suggestions are reused only when the
+folder still holds exactly those images.** If an image was added, removed or
+re-exported since, the button runs DeepSlice again on the whole folder and
+replaces the file (the status line says "Images changed since the cached
+predictions -- running DeepSlice again"). A `deepslice_positions.json` written
+by an older version holds no such list; it is never trusted and is replaced the
+first time the button is pressed.
+
+**Where these files live is not settled.** They are written into the image
+folder because that is where they have always been. Moving them under the
+pipeline folder is waiting on a decision about where per-image and
+folder-wide 2D outputs belong (the same decision as for the per-image analysis
+folders), so do not rely on the location staying as it is. Note that a fresh
+DeepSlice run may delete and recreate `DeepSlice_Output/` in the image folder
+(it always does when the images had to be converted first -- ND2 or TIFF -- or
+the folder is on a network drive; for a local folder of PNG/JPG images it
+writes its files into the existing folder). Keep nothing of your own in it.
+
 ---
 
 ## 4. Visualization & Reporting

@@ -6,7 +6,8 @@ coordinates for 2D coronal brain sections.
 
 Features:
 - Batch processing of entire folders
-- Caching of predictions to JSON
+- Caching of predictions to JSON, tied to the exact image files they were
+  made from (a cache made for a different set of images is never used)
 - Conversion of CCF coordinates to atlas slice indices
 """
 
@@ -29,6 +30,29 @@ def _check_deepslice():
         except ImportError:
             _deepslice_available = False
     return _deepslice_available
+
+
+# The image types DeepSlice is given (other formats are converted to PNG first).
+IMAGE_SUFFIXES = ('.png', '.jpg', '.jpeg', '.nd2', '.tif', '.tiff')
+
+
+def image_fingerprint(folder_path: Path) -> Dict[str, List[int]]:
+    """Name -> [size in bytes, modification time in ns] of every image in a folder.
+
+    WHY: the predictions cache sits in the image folder and used to be returned
+    whenever it existed. After an image was added, removed or re-exported, the
+    folder was answered from the old prediction run: a new image got no
+    position, and a re-exported one kept the position predicted for its old
+    pixels. Storing this fingerprint with the predictions lets a later run see
+    that the folder is no longer the one the predictions describe.
+    """
+    folder_path = Path(folder_path)
+    fingerprint = {}
+    for f in sorted(folder_path.iterdir()):
+        if f.is_file() and f.suffix.lower() in IMAGE_SUFFIXES:
+            st = f.stat()
+            fingerprint[f.name] = [int(st.st_size), int(st.st_mtime_ns)]
+    return fingerprint
 
 
 class DeepSliceWrapper:
@@ -96,13 +120,31 @@ class DeepSliceWrapper:
         if not os.path.isdir(folder_str):
             raise ValueError(f"Folder not found or not accessible: {folder_str}")
 
+        # The cache (and DeepSlice_Output/) still sit in the image folder.
+        # WHY not under the pipeline's per-sample folder: this cache
+        # describes a whole FOLDER of images, not one sample, and where
+        # folder-wide 2D outputs belong has not been decided (the same open
+        # question as for the per-image analysis folders). Until it is, the
+        # cache stays here and is guarded by the fingerprint check below.
         cache_path = folder_path / self.CACHE_FILENAME
 
-        # Check cache
+        # Taken BEFORE predicting: if an image changes while DeepSlice runs, the
+        # saved cache will not match the folder afterwards and is predicted again.
+        source_images = image_fingerprint(folder_path)
+
+        # Check cache. It is used only when it was made from exactly the images
+        # now in the folder (same names, sizes and modification times). A cache
+        # written before fingerprints were stored has none and is never trusted.
         if use_cache and cache_path.exists():
+            if self.cache_matches(cache_path, source_images):
+                if progress_callback:
+                    progress_callback("Loading cached predictions...")
+                return self.load_cache(cache_path)
+            print("[DeepSlice] Images changed since the cached predictions were made "
+                  "-- predicting again")
             if progress_callback:
-                progress_callback("Loading cached predictions...")
-            return self.load_cache(cache_path)
+                progress_callback(
+                    "Images changed since the cached predictions -- running DeepSlice again...")
 
         # Run DeepSlice
         if progress_callback:
@@ -161,7 +203,7 @@ class DeepSliceWrapper:
             # We need to convert other formats (ND2, TIFF) to PNG
             files_to_process = [
                 f for f in sorted(folder_path.iterdir())
-                if f.is_file() and f.suffix.lower() in ['.png', '.jpg', '.jpeg', '.nd2', '.tif', '.tiff']
+                if f.is_file() and f.suffix.lower() in IMAGE_SUFFIXES
             ]
             total_files = len(files_to_process)
             print(f"[DeepSlice] Found {total_files} image files to process")
@@ -360,7 +402,8 @@ class DeepSliceWrapper:
         # Process into our format (with filename restoration)
         predictions = self._process_predictions(raw_predictions, filename_map)
 
-        # Save to our cache
+        # Save to our cache, with the fingerprint of the images it describes
+        predictions['source_images'] = source_images
         self.save_cache(cache_path, predictions)
 
         if progress_callback:
@@ -512,6 +555,24 @@ class DeepSliceWrapper:
         """Save predictions to cache file."""
         with open(cache_path, 'w') as f:
             json.dump(predictions, f, indent=2)
+
+    @staticmethod
+    def cache_matches(cache_path: Path, source_images: Dict[str, List[int]]) -> bool:
+        """True when the cache was made from exactly these images.
+
+        An unreadable cache, or one without a stored fingerprint (written by
+        an older version), does not match: there is no way to tell which
+        images it describes, so predicting again is the only safe answer.
+        """
+        try:
+            with open(cache_path, 'r') as f:
+                cached = json.load(f)
+        except (OSError, ValueError):
+            return False
+        stored = cached.get('source_images')
+        if not isinstance(stored, dict):
+            return False
+        return {k: list(v) for k, v in stored.items()} == source_images
 
     def load_cache(self, cache_path: Path) -> Dict[str, Any]:
         """Load predictions from cache file."""
