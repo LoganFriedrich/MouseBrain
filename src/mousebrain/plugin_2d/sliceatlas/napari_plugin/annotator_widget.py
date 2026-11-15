@@ -97,6 +97,9 @@ class SliceAnnotatorWidget(QWidget):
         self.channel_settings: List[ChannelSettings] = []
         self.channel_layers: List[napari.layers.Image] = []
         self.loader_worker: Optional[ND2LoaderWorker] = None
+        # True once the person has typed or browsed an export folder; until
+        # then the folder follows whichever file or folder was loaded last.
+        self._output_folder_chosen = False
 
         # Setup UI
         self._setup_ui()
@@ -503,6 +506,9 @@ class SliceAnnotatorWidget(QWidget):
         folder_layout = QHBoxLayout()
         self.output_folder_edit = QLineEdit()
         self.output_folder_edit.setPlaceholderText("Select output folder...")
+        # textEdited fires only for the person's own typing, never for
+        # setText, so it tells a chosen folder from one filled in for them.
+        self.output_folder_edit.textEdited.connect(self._on_output_folder_typed)
         folder_layout.addWidget(self.output_folder_edit)
 
         self.browse_output_btn = QPushButton("Browse...")
@@ -712,8 +718,13 @@ class SliceAnnotatorWidget(QWidget):
         # Update channels tab
         self._update_channels_ui()
 
-        # Set default output folder
-        if not self.output_folder_edit.text():
+        # Point the export folder at what was just loaded.
+        # WHY: it used to be filled in only while empty, so after the first
+        # file every later file exported into the FIRST file's folder, beside
+        # images it does not belong with. It now follows each load, unless the
+        # person has typed or browsed a folder themselves -- that choice is
+        # kept until they clear the box.
+        if not self._output_folder_chosen:
             output_folder = self.current_file.parent if 'file_path' in metadata else self.current_file
             self.output_folder_edit.setText(str(output_folder))
 
@@ -1436,6 +1447,16 @@ class SliceAnnotatorWidget(QWidget):
         folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
         if folder:
             self.output_folder_edit.setText(folder)
+            self._output_folder_chosen = True
+
+    def _on_output_folder_typed(self, text: str):
+        """The person typed in the export folder box.
+
+        A typed folder is their choice and is kept across loads; clearing the
+        box hands the folder back to the automatic choice (the loaded file's
+        folder, filled in at the next load).
+        """
+        self._output_folder_chosen = bool(text.strip())
 
     def _on_export(self):
         """Handle export button click."""

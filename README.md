@@ -87,6 +87,16 @@ them in the Channels tab or in napari's own layer controls.
   layer you added through napari's own "new layer" buttons is not touched;
   draw annotations with the Annotate tab if they must follow the image.
 
+**Where exports go (Export tab, Output).** Each time you load a file, the
+output folder is set to that file's own folder (for **Load Folder...**, the
+folder you loaded). Loading another file moves it to that file's folder, so
+pictures never land beside a different file's images.
+
+- To export somewhere else, type a folder into the box or click
+  **Browse...**. Your folder is then kept for every later load.
+- To go back to "the loaded file's folder", empty the box; the next load
+  fills it in again.
+
 ## Troubleshooting
 
 If something breaks, re-run the installer:
