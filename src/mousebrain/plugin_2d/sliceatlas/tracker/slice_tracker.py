@@ -17,6 +17,7 @@ import csv
 import os
 import socket
 import hashlib
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Any
@@ -55,9 +56,16 @@ class SliceTracker:
                 writer.writeheader()
 
     def _generate_run_id(self, run_type: str, sample_id: str) -> str:
-        """Generate a unique run ID."""
+        """Generate a unique run ID.
+
+        The id keeps its readable form (type, second, 6 hex digits), but the
+        hash includes a random part. WHY: it used to hash only the type,
+        sample, second and process id, so two runs of one sample started in
+        the same second got the same id -- and update_status() then changed
+        the first matching row, i.e. the wrong run.
+        """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        hash_input = f"{run_type}_{sample_id}_{timestamp}_{os.getpid()}"
+        hash_input = f"{run_type}_{sample_id}_{timestamp}_{os.getpid()}_{uuid.uuid4().hex}"
         short_hash = hashlib.md5(hash_input.encode()).hexdigest()[:6]
         return f"{run_type[:3]}_{timestamp}_{short_hash}"
 
