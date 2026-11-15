@@ -170,6 +170,35 @@ python 6_count_regions.py --brain 349_CNT_01_02_1p625x_z4
 python 6_count_regions.py --all
 ```
 
+What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
+
+- `2_Data_Summary/region_counts.csv` and `elife_counts.csv` -- one row per brain,
+  keyed by `brain` (`<mouse folder>/<brain folder>`). These are the files an
+  integrator pulls. Each is written to a temporary file and swapped in, so a
+  crash never leaves a cut-off file.
+- When a brain is counted again, its previous row moves to
+  `region_counts_archive.csv` / `elife_counts_archive.csv`, written in the
+  archive's own column order; new columns extend the archive's header. (Before
+  this was fixed, archived rows after the first were written in a different
+  order from the header, so their values sat under the wrong column names. If
+  step 6 finds an archive like that, it renames it to
+  `region_counts_archive.malformed-<date>_<time>.csv`, keeps it untouched, prints
+  a warning and starts a new archive.)
+- The `det_*` and `voxel_*` columns: the settings of the detection run behind
+  the brain's `cells.xml`, found by following the tracker from the
+  classification that wrote `cells.xml`, through the pre-filter if there was
+  one, to the detection run whose output those candidates are. If the chain
+  cannot be followed (runs from before the tracker recorded these links), the
+  `det_*` columns stay empty and step 6 prints `[!] The detection run behind
+  this cells.xml could not be traced`; the voxel size then comes from the
+  images' `metadata.json`. The `subject`, `cohort` and `brain_id` columns come
+  from the brain folder name.
+- An entry in MouseBrain's analysis registry, `Registry/exports/3D_Region_Counts/`
+  (`mousebrain.analysis_registry`): the counts CSV, the total, the detection
+  settings, the detection and classification run ids, the model, and the source
+  `cells.xml` and registration. A registry problem is printed and does not undo
+  the count.
+
 ### Utility: Browse Experiments
 ```bash
 # Interactive browser

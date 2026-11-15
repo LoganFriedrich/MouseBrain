@@ -80,6 +80,8 @@ SCRIPT_VERSION = "1.0.1"
 
 from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, is_pipeline_candidate
 from mousebrain.config import DATA_SUMMARY_DIR as SUMMARY_DATA_DIR
+from mousebrain.region_counts_io import (append_archive_row, detection_provenance,
+                                         write_rows_atomic)
 from mousebrain.config import (
     REGION_COUNTS_CSV, REGION_COUNTS_ARCHIVE_CSV,
     ELIFE_COUNTS_CSV, ELIFE_COUNTS_ARCHIVE_CSV,
@@ -725,6 +727,39 @@ def run_counts_direct_lookup(cells_path, registration_path, output_csv, atlas_na
         return False, time.time() - start_time, 0, None
 
 
+REGISTRY_ANALYSIS = "3D_Region_Counts"
+
+
+def register_counts(pipeline_folder: Path, output_csv: Path, total_cells: int,
+                    detection_params: Dict[str, Any], prov: Optional[Dict[str, str]],
+                    cells_xml: Path, reg_folder: Path) -> None:
+    """Enter this brain's counts in MouseBrain's analysis registry
+    (mousebrain.analysis_registry) with what produced them. Never raises: a
+    registry problem must not undo a finished count; it is printed."""
+    try:
+        from mousebrain.analysis_registry import AnalysisRegistry
+        files = {"region_counts": str(output_csv)}
+        for name in ("cell_counts_elife_grouped.csv", "comparison_report.txt"):
+            if (output_csv.parent / name).exists():
+                files[Path(name).stem] = str(output_csv.parent / name)
+        method = {k: detection_params.get(k, '') for k in (
+            'atlas', 'preset', 'ball_xy', 'ball_z', 'soma_diameter', 'threshold',
+            'voxel_xy', 'voxel_z')}
+        method.update({"detection_exp_id": (prov or {}).get("exp_id", ""),
+                       "classification_exp_id": (prov or {}).get("classification_exp_id", ""),
+                       "model": (prov or {}).get("model", ""),
+                       "script_version": SCRIPT_VERSION})
+        AnalysisRegistry(analysis_name=REGISTRY_ANALYSIS).register_output(
+            sample=pipeline_folder.name, category="region_counts", files=files,
+            results={"total_cells": int(total_cells or 0)},
+            method_params=method,
+            source_files={"cells_xml": str(cells_xml),
+                          "registration": str(reg_folder / "brainreg.json")})
+        print(f"    Registered in the analysis registry ({REGISTRY_ANALYSIS})")
+    except Exception as e:
+        print(f"    [!] Counts NOT entered in the analysis registry: {e}")
+
+
 def update_region_counts_csv(
     brain_name: str,
     region_counts: Dict[str, int],
@@ -753,8 +788,10 @@ def update_region_counts_csv(
 
     run_date = run_date or datetime.now().isoformat()
 
-    # Parse brain name for hierarchy
-    parsed = parse_brain_name(brain_name)
+    # Parse brain name for hierarchy. The row key is "<mouse>/<brain>"; the
+    # hierarchy comes from the brain folder name alone (parsing the whole key
+    # put "<subject>/<brain number>" into the subject column).
+    parsed = parse_brain_name(brain_name.split('/')[-1])
 
     # Build the data row (wide format)
     row_data = {
@@ -818,25 +855,11 @@ def update_region_counts_csv(
         else:
             new_rows.append(row)
 
-    # Archive old row if it exists
+    # Archive old row if it exists -- in the archive's OWN column order
+    # (region_counts_io.append_archive_row says what went wrong before).
     if old_row:
-        archive_exists = REGION_COUNTS_ARCHIVE_CSV.exists()
-        with open(REGION_COUNTS_ARCHIVE_CSV, 'a', newline='', encoding='utf-8') as f:
-            # Get all archive columns
-            archive_columns = list(all_columns)
-            if archive_exists:
-                with open(REGION_COUNTS_ARCHIVE_CSV, 'r', newline='', encoding='utf-8') as af:
-                    reader = csv.DictReader(af)
-                    archive_columns = list(set(archive_columns + list(reader.fieldnames or [])))
-
-            # Add archived_at timestamp
-            old_row['archived_at'] = datetime.now().isoformat()
-            archive_columns = sorted(set(archive_columns) | {'archived_at'})
-
-            writer = csv.DictWriter(f, fieldnames=archive_columns)
-            if not archive_exists:
-                writer.writeheader()
-            writer.writerow({k: old_row.get(k, '') for k in archive_columns})
+        old_row['archived_at'] = datetime.now().isoformat()
+        append_archive_row(REGION_COUNTS_ARCHIVE_CSV, old_row)
 
         print(f"    Archived previous run for {brain_name}")
 
@@ -864,12 +887,9 @@ def update_region_counts_csv(
     final_columns = fixed_columns + total_region_cols + left_region_cols + right_region_cols
 
     # Write updated CSV
-    REGION_COUNTS_CSV.parent.mkdir(parents=True, exist_ok=True)
-    with open(REGION_COUNTS_CSV, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=final_columns)
-        writer.writeheader()
-        for row in new_rows:
-            writer.writerow({k: row.get(k, '') for k in final_columns})
+    # Through a temporary file: a crash part-way leaves the previous file,
+    # never a cut-off one (this is the file an integrator pulls).
+    write_rows_atomic(REGION_COUNTS_CSV, final_columns, new_rows)
 
     return REGION_COUNTS_CSV
 
@@ -917,8 +937,10 @@ def update_elife_counts_csv(
         aggregated_left = aggregate_to_elife(left_counts)
         aggregated_right = aggregate_to_elife(right_counts)
 
-    # Parse brain name for hierarchy
-    parsed = parse_brain_name(brain_name)
+    # Parse brain name for hierarchy. The row key is "<mouse>/<brain>"; the
+    # hierarchy comes from the brain folder name alone (parsing the whole key
+    # put "<subject>/<brain number>" into the subject column).
+    parsed = parse_brain_name(brain_name.split('/')[-1])
 
     # Build the data row (wide format)
     row_data = {
@@ -997,25 +1019,11 @@ def update_elife_counts_csv(
         else:
             new_rows.append(row)
 
-    # Archive old row if it exists
+    # Archive old row if it exists -- in the archive's OWN column order
+    # (region_counts_io.append_archive_row says what went wrong before).
     if old_row:
-        archive_exists = ELIFE_COUNTS_ARCHIVE_CSV.exists()
-        with open(ELIFE_COUNTS_ARCHIVE_CSV, 'a', newline='', encoding='utf-8') as f:
-            # Get all archive columns
-            archive_columns = list(all_columns)
-            if archive_exists:
-                with open(ELIFE_COUNTS_ARCHIVE_CSV, 'r', newline='', encoding='utf-8') as af:
-                    reader = csv.DictReader(af)
-                    archive_columns = list(set(archive_columns + list(reader.fieldnames or [])))
-
-            # Add archived_at timestamp
-            old_row['archived_at'] = datetime.now().isoformat()
-            archive_columns = sorted(set(archive_columns) | {'archived_at'})
-
-            writer = csv.DictWriter(f, fieldnames=archive_columns)
-            if not archive_exists:
-                writer.writeheader()
-            writer.writerow({k: old_row.get(k, '') for k in archive_columns})
+        old_row['archived_at'] = datetime.now().isoformat()
+        append_archive_row(ELIFE_COUNTS_ARCHIVE_CSV, old_row)
 
     # Add new row
     new_rows.append(row_data)
@@ -1039,12 +1047,9 @@ def update_elife_counts_csv(
     final_columns = fixed_columns + total_group_cols + left_group_cols + right_group_cols
 
     # Write updated CSV
-    ELIFE_COUNTS_CSV.parent.mkdir(parents=True, exist_ok=True)
-    with open(ELIFE_COUNTS_CSV, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=final_columns)
-        writer.writeheader()
-        for row in new_rows:
-            writer.writerow({k: row.get(k, '') for k in final_columns})
+    # Through a temporary file: a crash part-way leaves the previous file,
+    # never a cut-off one (this is the file an integrator pulls).
+    write_rows_atomic(ELIFE_COUNTS_CSV, final_columns, new_rows)
 
     return ELIFE_COUNTS_CSV
 
@@ -2081,11 +2086,28 @@ Examples:
                 # Parse the per-cell CSV to get region counts + hemisphere data
                 region_counts, hemisphere_counts = parse_region_counts_from_csv(output_csv)
                 if region_counts:
-                    detection_params = {
-                        'atlas': args.atlas,
-                        # Note: detection params should come from parent experiment
-                        # For now, we record what's available
-                    }
+                    # Provenance: the settings of the detection run behind
+                    # this cells.xml, traced through the tracker. Left empty
+                    # (and said so) when the chain cannot be followed.
+                    detection_params = {'atlas': args.atlas}
+                    prov = detection_provenance(
+                        tracker._read_all(), pipeline_folder.name, brain['cells_xml'])
+                    if prov:
+                        detection_params.update({k: prov[k] for k in (
+                            'preset', 'ball_xy', 'ball_z', 'soma_diameter', 'threshold',
+                            'voxel_xy', 'voxel_z')})
+                        print(f"    Detection run behind these cells: {prov['exp_id']}")
+                    else:
+                        print("    [!] The detection run behind this cells.xml could not be traced "
+                              "in the tracker; the det_* columns stay empty.")
+                    if not detection_params.get('voxel_xy'):
+                        # The voxel size is a property of the images, recorded
+                        # with them, whatever run found the cells.
+                        from mousebrain.config import registered_input
+                        _src, _folder, meta = registered_input(pipeline_folder)
+                        voxel = (meta or {}).get('voxel_size_um') or {}
+                        detection_params['voxel_xy'] = voxel.get('x', '')
+                        detection_params['voxel_z'] = voxel.get('z', '')
                     region_csv = update_region_counts_csv(
                         brain_name=brain['name'],
                         region_counts=region_counts,
@@ -2103,6 +2125,12 @@ Examples:
                     )
                     if elife_csv:
                         print(f"    eLife counts: {elife_csv}")
+
+                    # Register the outputs in MouseBrain's own analysis
+                    # registry, with provenance (every analysis output is
+                    # registered; an integrator pulls the registry).
+                    register_counts(pipeline_folder, output_csv, total_cells,
+                                    detection_params, prov, brain['cells_xml'], reg_folder)
 
                     # Generate comparison report (vs cervical reference + other brains)
                     report_path = generate_comparison_report(

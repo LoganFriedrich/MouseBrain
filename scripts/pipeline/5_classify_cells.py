@@ -613,6 +613,7 @@ Examples:
                 _coords_to_xml(result['interior_coords'], prefiltered_xml)
 
                 # Use prefiltered candidates for classification
+                prefilter_source = candidates
                 candidates = prefiltered_xml
                 print(f"    Using {interior} pre-filtered candidates for classification")
 
@@ -623,6 +624,9 @@ Examples:
                     interior=interior,
                     suspicious=suspicious,
                     tracing_type='descending',
+                    # What was filtered: step 6 follows this back to the
+                    # detection run to record its settings with the counts.
+                    input_path=str(prefilter_source),
                     output_path=str(prefiltered_xml),
                     status="completed",
                 )
