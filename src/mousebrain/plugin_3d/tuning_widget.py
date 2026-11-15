@@ -92,7 +92,7 @@ class BrainLoaderWorker(QThread):
             bg_ok, bg_why = (cache_state(self.background_path, zarr_bg) if zarr_bg
                              else (True, "no background"))
             if zarr_signal.exists() and not (sig_ok and bg_ok):
-                print(f"[Connectome] Not using the Zarr cache "
+                print(f"[MouseBrain] Not using the Zarr cache "
                       f"({sig_why if not sig_ok else bg_why}); loading the TIFFs")
 
             if sig_ok and bg_ok:
@@ -9239,7 +9239,7 @@ class TuningWidget(QWidget):
 
                     return
                 except Exception as e:
-                    print(f"[Connectome] [!] Could not read {meta_path}: {e}")
+                    print(f"[MouseBrain] [!] Could not read {meta_path}: {e}")
                     self.metadata = {}
                     self._metadata_source = None
 
