@@ -127,11 +127,16 @@ no manifest yet.
 
 Every change to a manifest takes `registry.json.lock` first, so two
 registrations at the same moment both land. You will normally never see the
-lock: it exists for well under a second. If a machine crashed while holding it,
-the next writer takes it over after two minutes and prints
-`[Registry] [!] Took over a lock left ...`. A writer that cannot get the lock
-in five minutes stops with a message naming the holder; if nothing is really
-writing, delete the `.lock` file it names.
+lock: a registration holds it for about a second. An invalidation holds it for
+the whole pass (it touches the lock after each entry, so it never looks
+abandoned), and other writers wait for it to finish.
+
+If a machine crashed while holding the lock, the next writer takes it over
+once the lock has gone untouched for two minutes and prints
+`[Registry] [!] Took over a lock left ...`. That includes an EMPTY lock file,
+which a crash in the instant of creating it leaves behind. A writer that
+cannot get the lock in five minutes stops with a message naming the holder;
+if nothing is really writing, delete the `.lock` file it names.
 
 ## Invalidating results
 
