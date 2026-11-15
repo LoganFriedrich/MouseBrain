@@ -373,3 +373,44 @@ def test_cli_main_root_and_hidden_alias(tmp_path, capsys):
 
     assert ar.main(["--name", "A", "--db-root", str(tmp_path)]) == 0
     assert ar._cli_main is ar.main
+
+
+# ---------------------------------------------------------------------------
+# An unreadable manifest is set aside, never emptied
+# ---------------------------------------------------------------------------
+
+def test_an_unreadable_manifest_is_kept_not_replaced_by_an_empty_one(tmp_path):
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    damaged = '{"entries": {"E01_01_S01_DCN": {"sample": "E01_01_S01_DCN"'  # cut off
+    reg.registry_path.write_text(damaged, encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="unreadable"):
+        reg.register_output(sample=SAMPLE, category="detection",
+                            files={"measurements": str(csv_file)}, results={},
+                            method_params=DEFAULT_METHOD)
+
+    kept = list(reg.exports_dir.glob("registry.json.unreadable-*"))
+    assert len(kept) == 1
+    assert kept[0].read_text(encoding="utf-8") == damaged  # byte for byte
+    assert not reg.registry_path.exists()
+
+    # The next registration starts a new manifest; the kept file is untouched.
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    assert list(reg.get_all_entries()) == [SAMPLE]
+    assert kept[0].read_text(encoding="utf-8") == damaged
+
+
+def test_reading_an_unreadable_manifest_raises_and_moves_nothing(tmp_path, capsys):
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.registry_path.write_text('["not", "a", "manifest"]', encoding="utf-8")
+
+    with pytest.raises(RuntimeError):
+        reg.get_all_entries()
+    assert ar.main(["--name", "A", "--root", str(tmp_path)]) == 1
+    assert "[FAIL]" in capsys.readouterr().out
+    # Inspection never renames: the file is exactly where and what it was.
+    assert reg.registry_path.read_text(encoding="utf-8") == '["not", "a", "manifest"]'
+    assert not list(reg.exports_dir.glob("registry.json.unreadable-*"))

@@ -74,6 +74,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 __all__ = [
     "AnalysisRegistry",
+    "RegistryUnreadableError",
     "DEFAULT_METHOD",
     "APPROVED_METHOD_FILENAME",
     "default_registry_root",
@@ -313,6 +314,10 @@ def get_database_path(
     return {"export_dir": export_dir, "figure_dir": figure_dir}
 
 
+class RegistryUnreadableError(RuntimeError):
+    """registry.json exists but could not be read; see AnalysisRegistry._read_registry."""
+
+
 # Output types that are routed to the figures/ tree instead of exports/.
 _FIGURE_OUTPUT_TYPES = ("figure", "roi_figure", "qc_figure", "overlay")
 
@@ -439,23 +444,71 @@ class AnalysisRegistry:
     # Registry I/O (atomic read/write)
     # -----------------------------------------------------------------
 
-    def _read_registry(self) -> Dict[str, Any]:
+    def _read_registry(self, set_aside_unreadable: bool = False) -> Dict[str, Any]:
         """Read the registry manifest from disk.
 
-        Returns a fresh skeleton if the file does not exist or is corrupted.
+        Returns a fresh skeleton ONLY when the file does not exist.
+
+        WHY an unreadable manifest is never treated as empty: every write is a
+        read-change-write of the whole manifest, so reading a damaged file as
+        "no entries" and then writing one new entry over it erased the record
+        of every output registered before. Instead:
+
+        * a file that cannot be OPENED (share hiccup, file held by another
+          program) raises RegistryUnreadableError and is left exactly where it
+          is -- the next attempt will most likely read it fine;
+        * a file that opens but is not a registry manifest (not JSON, or JSON
+          without an "entries" object) raises RegistryUnreadableError too.
+          When *set_aside_unreadable* is True (the writers, which hold the
+          registry lock) it is first RENAMED to
+          ``registry.json.unreadable-<time>`` beside where it was -- its
+          bytes are kept for a person to repair and merge back -- so the
+          registration after this one starts a new manifest instead of every
+          registration failing until someone notices. Read-only callers (the
+          query methods, the CLI) never move anything.
         """
         if not self.registry_path.exists():
             return self._empty_registry()
 
         try:
             with open(self.registry_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            # Basic validation
-            if not isinstance(data, dict) or "entries" not in data:
-                return self._empty_registry()
+                text = f.read()
+        except OSError as e:
+            raise RegistryUnreadableError(
+                "The registry manifest %s could not be opened (%s). Nothing was "
+                "changed; try again, and if it keeps failing check that the file "
+                "is not held open by another program." % (self.registry_path, e)
+            ) from e
+
+        problem = None
+        try:
+            data = json.loads(text)
+        except ValueError as e:
+            problem = "it is not valid JSON (%s)" % e
+        else:
+            if not isinstance(data, dict) or not isinstance(data.get("entries"), dict):
+                problem = "it has no 'entries' object"
+        if problem is None:
             return data
-        except (json.JSONDecodeError, OSError):
-            return self._empty_registry()
+
+        if not set_aside_unreadable:
+            raise RegistryUnreadableError(
+                "The registry manifest %s cannot be read: %s. Nothing was changed. "
+                "Repair it by hand (or restore it from a backup) before relying on "
+                "this registry; the next registration will set it aside as "
+                "registry.json.unreadable-<time>." % (self.registry_path, problem))
+
+        aside = self.registry_path.with_name(
+            "%s.unreadable-%s" % (self.registry_path.name,
+                                  datetime.now().strftime("%Y%m%d_%H%M%S_%f")))
+        os.replace(str(self.registry_path), str(aside))
+        self._log_event("set_aside_unreadable", "-", aside.name, problem)
+        raise RegistryUnreadableError(
+            "The registry manifest %s could not be read (%s). It has been kept, "
+            "unchanged, as %s and THIS registration was not recorded. The next "
+            "registration starts a new manifest. To recover the earlier entries, "
+            "repair the kept file and merge its 'entries' back into registry.json "
+            "(see the analysis registry guide)." % (self.registry_path, problem, aside))
 
     def _write_registry(self, data: Dict[str, Any]) -> None:
         """Write registry manifest atomically (write temp, then rename).
@@ -610,7 +663,7 @@ class AnalysisRegistry:
         }
 
         # Update registry
-        registry = self._read_registry()
+        registry = self._read_registry(set_aside_unreadable=True)
         registry["entries"][sample] = entry
         self._write_registry(registry)
 
@@ -706,7 +759,7 @@ class AnalysisRegistry:
             "is_current": True,
         }
 
-        registry = self._read_registry()
+        registry = self._read_registry(set_aside_unreadable=True)
         registry["entries"][entry_key] = entry
         self._write_registry(registry)
 
@@ -925,7 +978,7 @@ class AnalysisRegistry:
         Returns:
             List of entry keys that were invalidated.
         """
-        registry = self._read_registry()
+        registry = self._read_registry(set_aside_unreadable=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         invalidated = []
 
@@ -1067,7 +1120,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  Manifest:      {registry.registry_path}")
     print("=" * 70)
 
-    data = registry._read_registry()
+    try:
+        data = registry._read_registry()
+    except RegistryUnreadableError as e:
+        print("[FAIL] %s" % e)
+        return 1
     entries = data.get("entries", {})
     n_current = sum(1 for e in entries.values() if e.get("is_current", True))
     n_stale = sum(1 for e in entries.values() if not e.get("is_current", True))
