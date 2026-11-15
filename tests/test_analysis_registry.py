@@ -844,3 +844,27 @@ def test_the_stale_report_names_a_broken_approved_method_file(tmp_path, capsys):
     capsys.readouterr()
     assert ar.main(["--name", "A", "--root", str(tmp_path), "--stale"]) == 1
     assert "[FAIL]" in capsys.readouterr().out
+
+
+def test_the_header_records_where_the_approved_method_came_from(tmp_path, monkeypatch):
+    # The environment variable wins over approved_method.json and can differ
+    # per machine; since the header is rewritten on every write, it records
+    # the source and the machine so a flip between two values is visible.
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    assert _header(reg)["approved_method_source"] == "built-in parameters"
+    assert _header(reg)["approved_method_recorded_on"] == ar._get_hostname()
+
+    (tmp_path / "approved_method.json").write_text(json.dumps(DEFAULT_METHOD),
+                                                   encoding="utf-8")
+    reg.refresh_approved_method()
+    assert _header(reg)["approved_method_source"] == str(tmp_path / "approved_method.json")
+
+    elsewhere = tmp_path / "machine_override.json"
+    elsewhere.write_text(json.dumps(DEFAULT_METHOD), encoding="utf-8")
+    monkeypatch.setenv("MOUSEBRAIN_APPROVED_METHOD", str(elsewhere))
+    reg.refresh_approved_method()
+    assert _header(reg)["approved_method_source"] == "MOUSEBRAIN_APPROVED_METHOD=%s" % elsewhere

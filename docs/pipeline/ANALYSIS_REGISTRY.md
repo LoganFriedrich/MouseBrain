@@ -138,6 +138,24 @@ Do this once for each analysis after changing `approved_method.json`. It
 registers nothing, changes no entry, and does nothing for an analysis that has
 no manifest yet.
 
+### Every machine that registers must see the same approved method
+
+The header is rewritten by whichever machine wrote last, from the approved
+method as THAT machine resolves it. `MOUSEBRAIN_APPROVED_METHOD` wins over
+`approved_method.json`, and it is set per machine. If one machine has it set
+and another does not, the header -- and with it the "stale vs approved" count
+a lab database shows -- changes back and forth depending on which machine
+registered last. So: either set `MOUSEBRAIN_APPROVED_METHOD` to the same file
+on every machine that runs the pipeline, or (simpler) set it on none and keep
+one `Registry/approved_method.json`.
+
+To check, look at the header line `mousebrain-registry --name <analysis>`
+prints: `recorded <time> on <machine>, from <source>`. The source is
+`MOUSEBRAIN_APPROVED_METHOD=<file>`, the path of `approved_method.json`, or
+`built-in parameters`. The same three fields are in `registry.json`
+(`approved_method_recorded_at`, `approved_method_recorded_on`,
+`approved_method_source`).
+
 ## Two machines writing at once
 
 Every change to a manifest takes `registry.json.lock` first, so two

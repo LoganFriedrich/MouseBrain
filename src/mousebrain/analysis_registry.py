@@ -89,6 +89,7 @@ __all__ = [
     "default_registry_root",
     "get_approved_method",
     "approved_method_for",
+    "approved_method_source",
     "get_database_path",
     "parse_sample_id",
     "roi_results_from_rows",
@@ -141,6 +142,21 @@ def _load_method_file(path: Path, origin: str) -> Dict[str, Any]:
             f"of parameter name -> value: {path}"
         )
     return data
+
+
+def approved_method_source(registry_root: Optional[Union[str, Path]] = None) -> str:
+    """Where the approved method is read from on THIS machine: the
+    MOUSEBRAIN_APPROVED_METHOD file, the registry's approved_method.json, or
+    the built-in parameters. Recorded in each manifest header (see
+    AnalysisRegistry._set_approved_header) because the environment variable
+    wins and can differ from machine to machine."""
+    env_path = os.environ.get("MOUSEBRAIN_APPROVED_METHOD")
+    if env_path:
+        return "MOUSEBRAIN_APPROVED_METHOD=%s" % env_path
+    root = Path(registry_root) if registry_root else default_registry_root()
+    if root is not None and (root / APPROVED_METHOD_FILENAME).is_file():
+        return str(root / APPROVED_METHOD_FILENAME)
+    return "built-in parameters"
 
 
 def _approved_method_file(registry_root: Optional[Union[str, Path]]) -> Optional[Dict[str, Any]]:
@@ -738,9 +754,14 @@ class AnalysisRegistry:
         data["approved_method"] = approved
         data["approved_method_hash"] = (
             self.get_method_hash(approved) if approved is not None else None)
-        # When these fields were last read from the approved-method source,
-        # so a reader can say "approved method as recorded <time>".
+        # When, where and from what these fields were last read, so a reader
+        # can say "approved method as recorded <time>" -- and so a header
+        # that flips between two values because two machines resolve the
+        # approved method differently (MOUSEBRAIN_APPROVED_METHOD set on one
+        # of them) shows which machine wrote which.
         data["approved_method_recorded_at"] = datetime.now().isoformat()
+        data["approved_method_recorded_on"] = _get_hostname()
+        data["approved_method_source"] = approved_method_source(self.registry_root)
 
     def refresh_approved_method(self) -> Optional[Dict[str, Any]]:
         """Re-read the approved method and rewrite the manifest header now,
@@ -1470,9 +1491,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  Invalidated:   {n_stale}")
     print(f"  Last updated:  {data.get('last_updated', 'never')}")
     recorded_hash = data.get("approved_method_hash")
-    print("  Approved method in the header: %s (recorded %s)" % (
+    print("  Approved method in the header: %s (recorded %s on %s, from %s)" % (
         recorded_hash[:12] if recorded_hash else "none declared",
-        data.get("approved_method_recorded_at", "when the manifest was created")))
+        data.get("approved_method_recorded_at", "when the manifest was created"),
+        data.get("approved_method_recorded_on", "?"),
+        data.get("approved_method_source", "?")))
 
     if args.stale:
         print("\n--- Staleness check (vs approved method) ---")
