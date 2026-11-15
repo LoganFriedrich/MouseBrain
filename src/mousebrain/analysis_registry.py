@@ -166,10 +166,20 @@ def _per_analysis_table(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The ``"analyses"`` table of a per-analysis approved-method file, or
     None for the plain (flat) form. Raises on a malformed table, for the
     same reason _load_method_file does: an approval that is configured but
-    misread would silently compare every output with the wrong method."""
+    misread would silently compare every output with the wrong method.
+
+    WHY either top-level key marks the per-analysis form: a file holding
+    only ``{"default": {...}}`` used to be read as the flat form, i.e. as
+    a method with ONE parameter named "default", and every entry of every
+    analysis following the shared method then showed as stale with no
+    error. So "default" and "analyses" are reserved words: a file with
+    either one is the per-analysis form (a missing "analyses" = an empty
+    table), and neither can be the name of a parameter."""
+    if "analyses" not in data and "default" not in data:
+        return None
     table = data.get("analyses")
     if table is None:
-        return None
+        table = {}
     if not isinstance(table, dict):
         raise RuntimeError(
             "Approved-method file: 'analyses' must be an object of analysis "

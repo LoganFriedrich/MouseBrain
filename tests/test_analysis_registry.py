@@ -715,3 +715,30 @@ def test_a_producer_declaration_reaches_an_existing_manifest(tmp_path):
     assert _header(old)["approved_method_hash"] is None
     # ...and a reader that declares nothing keeps it.
     assert AnalysisRegistry(analysis_name="B", registry_root=tmp_path).approved_method() is None
+
+
+def test_a_file_holding_only_a_default_is_the_per_analysis_form(tmp_path):
+    # {"default": {...}} with no "analyses" table used to be read as the flat
+    # form: a method with one parameter named "default", so every entry of
+    # every analysis following the shared method showed as stale.
+    shared = dict(DEFAULT_METHOD, soma_dilation=8)
+    (tmp_path / "approved_method.json").write_text(
+        json.dumps({"default": shared}), encoding="utf-8")
+    assert get_approved_method(tmp_path) == shared
+    assert ar.approved_method_for("A", tmp_path) == shared
+    assert ar.approved_method_for("A", tmp_path, follows_approved_method=False) is None
+
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=shared)
+    assert reg.check_staleness(reg.approved_method()) == []
+    assert _header(reg)["approved_method_hash"] == AnalysisRegistry.get_method_hash(shared)
+
+
+def test_a_default_that_is_not_a_set_of_parameters_is_refused(tmp_path):
+    (tmp_path / "approved_method.json").write_text(
+        json.dumps({"default": "threshold+log"}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="pproved-method"):
+        get_approved_method(tmp_path)
