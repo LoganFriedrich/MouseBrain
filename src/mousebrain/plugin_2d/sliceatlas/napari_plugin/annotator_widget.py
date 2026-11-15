@@ -40,6 +40,11 @@ from mousebrain.plugin_2d.sliceatlas.core.image_utils import auto_contrast, COLO
 # tool's points, a layer the person added through napari itself) are left alone.
 ANNOTATION_TAG = "slice_annotator_annotation"
 
+# The display settings of a channel layer that rotate/flip carries over when it
+# has to rebuild the channel layers (see _show_reoriented_data).
+DISPLAY_SETTINGS = ("contrast_limits", "colormap", "gamma", "opacity",
+                    "visible", "blending")
+
 
 def rotate_yx(coords, k: int, shape_yx):
     """Where pixel coordinates land after np.rot90(image, k, axes=(-2, -1)).
@@ -878,8 +883,10 @@ class SliceAnnotatorWidget(QWidget):
         contrast, color, gamma, opacity and visibility the person has set --
         in the Channels tab or in napari's own layer controls -- still apply.
         Rebuilding the layers reset all of that to defaults on every click.
-        Only when the channel layers are gone (closed by hand, or cleared by
-        another tool) are they rebuilt from scratch.
+        When some channel layers are gone (closed by hand, or cleared by
+        another tool) the layers are rebuilt, but every channel whose layer
+        survived gets its own settings back; only the channels that were
+        closed come back with defaults.
         """
         arrays = list(self._channel_arrays())
         layers = self.channel_layers
@@ -888,7 +895,27 @@ class SliceAnnotatorWidget(QWidget):
             for layer, array in zip(layers, arrays):
                 layer.data = array
             return
+
+        # Rebuild path: remember what each surviving channel looked like.
+        # channel_layers[i] is channel i (they are appended in channel order).
+        kept = {}
+        for index, layer in enumerate(layers):
+            if layer in self.viewer.layers:
+                old_settings = (self.channel_settings[index]
+                                if index < len(self.channel_settings) else None)
+                kept[index] = (
+                    {name: getattr(layer, name) for name in DISPLAY_SETTINGS},
+                    old_settings,
+                )
         self._create_channel_layers()
+        for index, (display, old_settings) in kept.items():
+            if index >= len(self.channel_layers):
+                continue
+            layer = self.channel_layers[index]
+            for name, value in display.items():
+                setattr(layer, name, value)
+            if old_settings is not None and index < len(self.channel_settings):
+                self.channel_settings[index] = old_settings
         self._update_channels_ui()
 
     def _channel_arrays(self):

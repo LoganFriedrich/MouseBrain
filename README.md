@@ -83,6 +83,9 @@ channel settings are kept: contrast, color, gamma, opacity and which
 channels are hidden do not change when you rotate or flip, whether you set
 them in the Channels tab or in napari's own layer controls.
 
+- If you closed one of the channel layers, rotate/flip brings it back. The
+  channels you did not close keep their settings; the one you closed comes
+  back with the default settings.
 - Only layers made with the Annotate tab's buttons move. A shapes or points
   layer you added through napari's own "new layer" buttons is not touched;
   draw annotations with the Annotate tab if they must follow the image.

@@ -43,6 +43,9 @@ def _new_layer(widget, add):
 def _value_at(widget, coord):
     """Pixel of channel 0 under an annotation coordinate."""
     idx = tuple(int(round(c)) for c in coord)
+    shape = widget.channel_layers[0].data.shape
+    assert len(idx) == len(shape) and all(0 <= i < n for i, n in zip(idx, shape)), (
+        f"annotation at {idx} lies outside the image {shape}")
     return widget.channel_layers[0].data[idx]
 
 
@@ -103,3 +106,24 @@ def test_channel_display_settings_survive_rotate_and_flip():
     assert green2.visible is False
     assert green2.colormap.name == "magenta"
     assert len([l for l in widget.viewer.layers if l in widget.channel_layers]) == 2
+
+
+def test_closing_one_channel_keeps_the_other_channels_settings():
+    """If a channel layer was closed, rotate/flip has to rebuild the channel
+    layers; the channels that were still open keep their settings."""
+    widget, _ = make_widget()
+    _load(widget)
+    red, green = widget.channel_layers
+    red.contrast_limits = (5, 50)
+    red.gamma = 1.7
+    red.colormap = "cyan"
+    widget.viewer.layers.remove(green)
+
+    widget._rotate_data(90)
+
+    red2, green2 = widget.channel_layers
+    assert red2.data.shape == (W, H), "the image really was turned"
+    assert green2 in widget.viewer.layers, "the closed channel is shown again"
+    assert tuple(red2.contrast_limits) == (5, 50)
+    assert red2.gamma == pytest.approx(1.7)
+    assert red2.colormap.name == "cyan"
