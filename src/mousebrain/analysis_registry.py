@@ -72,6 +72,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
+from mousebrain.file_lock import exclusive_file_lock
+
 __all__ = [
     "AnalysisRegistry",
     "RegistryUnreadableError",
@@ -388,8 +390,14 @@ class AnalysisRegistry:
       - Registration timestamp
       - Staleness flag (is_current)
 
-    Thread safety: writes use atomic temp-file-then-rename to avoid corruption
-    when multiple processes register outputs concurrently.
+    Concurrent writers: every change to the manifest is a read-change-write
+    of the whole registry.json, done while holding ``registry.json.lock``
+    (mousebrain.file_lock; one holder at a time across processes and
+    machines), and written through a temporary file swapped in with
+    os.replace. The lock prevents a LOST update (two registrations at once
+    each writing back the manifest they read, so the second erased the
+    first's entry); the temporary file prevents a TORN file. The per-region
+    ROI summary CSV is rewritten under the same lock for the same reason.
 
     Args:
         analysis_name: Name of the analysis (e.g. "ENCR_Detection").
@@ -443,6 +451,17 @@ class AnalysisRegistry:
     # -----------------------------------------------------------------
     # Registry I/O (atomic read/write)
     # -----------------------------------------------------------------
+
+    def _locked(self):
+        """Hold this analysis's registry lock (see the class docstring).
+
+        A live holder keeps it for well under a second per registration, so
+        a lock untouched for two minutes (file server's clock) is taken to be
+        left by a crashed process and taken over; a waiter gives up after
+        five minutes with a message naming the holder and the lock file.
+        """
+        return exclusive_file_lock(self.registry_path, "Registry",
+                                   stale_seconds=120, wait_seconds=300)
 
     def _read_registry(self, set_aside_unreadable: bool = False) -> Dict[str, Any]:
         """Read the registry manifest from disk.
@@ -662,10 +681,13 @@ class AnalysisRegistry:
             "is_current": True,
         }
 
-        # Update registry
-        registry = self._read_registry(set_aside_unreadable=True)
-        registry["entries"][sample] = entry
-        self._write_registry(registry)
+        # Update registry: read, change and write under the lock, so another
+        # process registering at the same moment cannot write back a manifest
+        # that lacks this entry.
+        with self._locked():
+            registry = self._read_registry(set_aside_unreadable=True)
+            registry["entries"][sample] = entry
+            self._write_registry(registry)
 
         # Write audit log
         self._log_event("register", sample, category, method_hash)
@@ -736,9 +758,6 @@ class AnalysisRegistry:
                         row[k] = counts[k]
                 writer.writerow(row)
 
-        # Update the per-region summary CSV (roi_summary_{region}.csv)
-        self._update_region_summary(sample, base_reg, roi_results)
-
         # Record in registry
         method_hash = self.get_method_hash(method_params)
         entry_key = f"{sample}__roi_counts"
@@ -759,9 +778,14 @@ class AnalysisRegistry:
             "is_current": True,
         }
 
-        registry = self._read_registry(set_aside_unreadable=True)
-        registry["entries"][entry_key] = entry
-        self._write_registry(registry)
+        # The region summary CSV and the manifest are both read-change-write
+        # files shared by every process counting this analysis: both under
+        # the lock (see the class docstring).
+        with self._locked():
+            self._update_region_summary(sample, base_reg, roi_results)
+            registry = self._read_registry(set_aside_unreadable=True)
+            registry["entries"][entry_key] = entry
+            self._write_registry(registry)
 
         self._log_event("register_roi_counts", sample, region, method_hash)
         return counts_path
@@ -978,40 +1002,42 @@ class AnalysisRegistry:
         Returns:
             List of entry keys that were invalidated.
         """
-        registry = self._read_registry(set_aside_unreadable=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        invalidated = []
+        # Under the lock for the whole pass (see the class docstring).
+        with self._locked():
+            registry = self._read_registry(set_aside_unreadable=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            invalidated = []
 
-        for key, entry in list(registry.get("entries", {}).items()):
-            if sample is not None and entry.get("sample") != sample:
-                continue
-            if not entry.get("is_current", True):
-                continue  # already stale
+            for key, entry in list(registry.get("entries", {}).items()):
+                if sample is not None and entry.get("sample") != sample:
+                    continue
+                if not entry.get("is_current", True):
+                    continue  # already stale
 
-            # Archive output files
-            for output_type, rel_path in entry.get("outputs", {}).items():
-                src = self.registry_root / rel_path
-                if src.exists():
-                    archive_dir = src.parent / "_archived" / timestamp
-                    archive_dir.mkdir(parents=True, exist_ok=True)
-                    dest = archive_dir / src.name
-                    try:
-                        shutil.move(str(src), str(dest))
-                    except OSError as e:
-                        print(f"  [!] WARNING: Could not archive {src}: {e}")
+                # Archive output files
+                for output_type, rel_path in entry.get("outputs", {}).items():
+                    src = self.registry_root / rel_path
+                    if src.exists():
+                        archive_dir = src.parent / "_archived" / timestamp
+                        archive_dir.mkdir(parents=True, exist_ok=True)
+                        dest = archive_dir / src.name
+                        try:
+                            shutil.move(str(src), str(dest))
+                        except OSError as e:
+                            print(f"  [!] WARNING: Could not archive {src}: {e}")
 
-            entry["is_current"] = False
-            entry["invalidated_at"] = datetime.now().isoformat()
-            invalidated.append(key)
+                entry["is_current"] = False
+                entry["invalidated_at"] = datetime.now().isoformat()
+                invalidated.append(key)
 
-        if invalidated:
-            self._write_registry(registry)
-            self._log_event(
-                "invalidate",
-                sample or "ALL",
-                f"{len(invalidated)} entries",
-                timestamp,
-            )
+            if invalidated:
+                self._write_registry(registry)
+                self._log_event(
+                    "invalidate",
+                    sample or "ALL",
+                    f"{len(invalidated)} entries",
+                    timestamp,
+                )
 
         return invalidated
 

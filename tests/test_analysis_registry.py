@@ -414,3 +414,67 @@ def test_reading_an_unreadable_manifest_raises_and_moves_nothing(tmp_path, capsy
     # Inspection never renames: the file is exactly where and what it was.
     assert reg.registry_path.read_text(encoding="utf-8") == '["not", "a", "manifest"]'
     assert not list(reg.exports_dir.glob("registry.json.unreadable-*"))
+
+
+# ---------------------------------------------------------------------------
+# Two registrations at once both land (the manifest is written under a lock)
+# ---------------------------------------------------------------------------
+
+def test_two_registrations_at_once_both_land(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    csv_file, _ = _make_source_files(tmp_path)
+    reg_a = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg_b = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+
+    # Widen the gap between reading the manifest and writing it back, the
+    # window in which a second writer used to read the same old manifest.
+    real_write = AnalysisRegistry._write_registry
+
+    def slow_write(self, data):
+        time.sleep(0.6)
+        real_write(self, data)
+
+    monkeypatch.setattr(AnalysisRegistry, "_write_registry", slow_write)
+
+    errors = []
+
+    def register(reg, sample):
+        try:
+            reg.register_output(sample=sample, category="detection",
+                                files={"measurements": str(csv_file)}, results={},
+                                method_params=DEFAULT_METHOD)
+        except Exception as e:  # pragma: no cover - surfaced below
+            errors.append(e)
+
+    threads = [threading.Thread(target=register, args=(reg_a, "E01_01_S01_DCN")),
+               threading.Thread(target=register, args=(reg_b, "E01_01_S02_DCN"))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Without the lock one entry was lost: either written over by the other
+    # writer's stale manifest, or refused when both swapped the file at once.
+    assert sorted(reg_a.get_all_entries()) == ["E01_01_S01_DCN", "E01_01_S02_DCN"]
+    assert errors == []
+    assert not (reg_a.exports_dir / "registry.json.lock").exists()  # let go after use
+
+
+def test_a_lock_left_by_a_crashed_writer_is_taken_over(tmp_path):
+    import os
+    import time
+
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    lock = reg.exports_dir / "registry.json.lock"
+    lock.write_text("other-machine pid 1 at earlier token x\n", encoding="utf-8")
+    old = time.time() - 3600
+    os.utime(lock, (old, old))
+
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    assert list(reg.get_all_entries()) == [SAMPLE]
+    assert not lock.exists()
