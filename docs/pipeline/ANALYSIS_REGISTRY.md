@@ -86,11 +86,20 @@ and the declaration is kept in the manifest (`follows_approved_method`).
 - An analysis named under `"analyses"` is judged by its own entry. `null`
   means "this analysis has no approved method".
 - An analysis not named there is judged by `"default"` if it follows the
-  shared method (the slice tools also RUN with `"default"`), and has no
-  approved method otherwise. Leaving `"default"` out means the built-in
-  parameters.
+  shared method, and has no approved method otherwise. Leaving `"default"`
+  out means the built-in parameters.
+- The slice batch tools (detection and ROI counting) record, as the
+  parameters of each result they register, the approved method of THEIR
+  analysis: its own entry under `"analyses"` if you gave it one, else
+  `"default"`. (They record the approved method; the values a batch actually
+  ran with come from its command line and the tuning tracker.) So naming a
+  slice analysis under `"analyses"` takes effect from its next batch run.
 - The old form -- the parameters alone, `{ "detection": ..., ... }` -- still
   works and means the same as `{"default": {...}}`.
+- `"default"` and `"analyses"` are reserved words at the top of the file: a
+  file with either one is read as the per-analysis form (a file holding only
+  `{"default": {...}}` is fine), so neither can be the name of a parameter
+  in the old form.
 - A file that cannot be read, or an entry that is not a set of parameters,
   stops every registration with a message naming the file. Fix the file; the
   tool never guesses which parameters you meant.

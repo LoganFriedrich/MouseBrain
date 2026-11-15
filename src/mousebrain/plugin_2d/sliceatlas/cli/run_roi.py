@@ -837,7 +837,9 @@ def cmd_batch(args):
         # counting continues -- the counts on disk are the primary output.
         try:
             from mousebrain.analysis_registry import AnalysisRegistry
-            registry = AnalysisRegistry(analysis_name=f'{base_folder.name}_ROI_Analysis')
+            # Follows the shared approved method (see batch_encr).
+            registry = AnalysisRegistry(analysis_name=f'{base_folder.name}_ROI_Analysis',
+                                        follows_approved_method=True)
         except Exception as e:
             print(f"[!] registry: {e}")
 
@@ -902,7 +904,9 @@ def cmd_batch(args):
                     sample=s_name,
                     region=base_region,
                     roi_results=roi_results_from_rows(results),
-                    method_params=get_approved_method(registry.registry_root),
+                    # The method this analysis is judged by (see batch_encr).
+                    method_params=(registry.approved_method()
+                                   or get_approved_method(registry.registry_root)),
                     source_files={
                         "nd2": str(sample['nd2_path']),
                         "roi_json": str(rois_path),
