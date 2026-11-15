@@ -89,6 +89,25 @@ util_approve_registration.py   → Approve registration after QC review
 | `util_registration_qc.py` | Generate detailed QC images comparing brain to atlas |
 | `util_approve_registration.py` | Review & approve registration before cell detection |
 
+## Batch processing (`batch_process.py`)
+
+`batch_process.py` takes brains through the steps one at a time and stops a
+brain at the first check it fails, recording why in
+`2_Data_Summary/pipeline_status.csv`. For each brain it runs extraction
+(`2_extract_and_analyze.py --batch --brain <brain>`, that brain only), then
+checks that `1_Extracted_Full` holds `metadata.json` and `ch*/` TIFFs. It then
+needs a crop -- `ch0/` TIFFs plus `metadata.json` in
+`2_Cropped_For_Registration_Manual` or `2_Cropped_For_Registration`; with none,
+the brain stops as "needs manual crop": crop it by hand and run it again. Then
+registration (`3_register_to_atlas.py --batch --brain <brain>`), after which the
+brain always stops at "needs registration approval" until a person approves it.
+(Until this was fixed every brain failed at extraction: the batch passed steps 2
+and 3 an option they do not accept, and the checks looked for files the steps do
+not write.)
+
+`--brain` on step 2 takes the exact folder name. Without it step 2 extracts every
+brain that still needs it, as before.
+
 ## Where the scripts live
 
 The scripts come with the MouseBrain code; nothing is copied anywhere. The

@@ -142,8 +142,10 @@ def qc_check_extraction(brain_path: Path) -> Tuple[str, str]:
     if not metadata_file.exists():
         return QCStatus.FAIL, "No metadata.json found"
 
-    # Check for tiff files
-    tiff_files = list(extracted_dir.glob("*.tiff")) + list(extracted_dir.glob("*.tif"))
+    # Check for tiff files. Extraction writes one folder per channel
+    # (ch0/Z0000.tif ...), never TIFFs at the top -- looking only at the top
+    # failed every brain.
+    tiff_files = [f for f in extracted_dir.glob("ch*/*.tif*") if f.is_file()]
     if not tiff_files:
         return QCStatus.FAIL, "No TIFF files extracted"
 
@@ -165,17 +167,17 @@ def qc_check_crop(brain_path: Path) -> Tuple[str, str]:
 
     Returns (status, message)
     """
-    crop_dir = brain_path / "2_Cropped_For_Registration"
-
-    if not crop_dir.exists():
-        return QCStatus.FAIL, "Crop folder not created"
-
-    # Check for output files
-    zarr_file = crop_dir / "downsampled.zarr"
-    tiff_file = crop_dir / "downsampled.tiff"
-
-    if not zarr_file.exists() and not tiff_file.exists():
-        return QCStatus.FAIL, "No cropped output found"
+    # A crop is a ch0 folder of TIFFs plus metadata.json, by hand
+    # (_Manual) or automatic -- what every crop writer produces. This used to
+    # look for downsampled.zarr / downsampled.tiff, which no crop writer makes.
+    crop_dir = None
+    for name in ("2_Cropped_For_Registration_Manual", "2_Cropped_For_Registration"):
+        d = brain_path / name
+        if (d / "metadata.json").exists() and any((d / "ch0").glob("*.tif*")):
+            crop_dir = d
+            break
+    if crop_dir is None:
+        return QCStatus.FAIL, "No cropped output found (crop the brain by hand, then run it again)"
 
     # Check metadata for crop info
     metadata_file = crop_dir / "metadata.json"
@@ -409,7 +411,10 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
 
     # Step 1: Extract
     print("\n[1/6] Extracting from IMS...")
-    success, msg = run_step('2_extract_and_analyze.py', ['--brain', brain_name, '--yes'])
+    # --batch: no question to answer; --brain: this brain only. (This passed a
+    # --yes that step 2 does not accept, so argparse stopped it and every
+    # brain failed here.)
+    success, msg = run_step('2_extract_and_analyze.py', ['--batch', '--brain', brain_name])
     if not success:
         results['qc_extract'] = f"FAIL: {msg}"
         results['status'] = QCStatus.FAIL
@@ -445,7 +450,8 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
 
     # Step 3: Register
     print("\n[3/6] Registering to atlas...")
-    success, msg = run_step('3_register_to_atlas.py', ['--brain', brain_name, '--yes'])
+    # Same for step 3: --batch replaces the --yes it never accepted.
+    success, msg = run_step('3_register_to_atlas.py', ['--batch', '--brain', brain_name])
     if not success:
         results['qc_register'] = f"FAIL: {msg}"
         results['status'] = QCStatus.FAIL

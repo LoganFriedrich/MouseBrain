@@ -1267,6 +1267,8 @@ After extraction, use manual crop:
                         help='Enable automatic crop detection (NOT RECOMMENDED - use manual crop instead)')
     parser.add_argument('--batch', '-b', action='store_true',
                         help='Non-interactive mode - process all pending')
+    parser.add_argument('--brain', type=str, default=None,
+                        help='Extract only this brain (its exact folder name)')
     
     args = parser.parse_args()
     
@@ -1301,6 +1303,11 @@ After extraction, use manual crop:
         # per-brain selection -- extracting the one brain you want also extracts
         # every overview, which then looks ready for registration.
         if pipeline_folder.name.upper().endswith('PANO'):
+            continue
+        # One brain only (batch_process asks for one at a time). An exact
+        # name: a partial one could extract a second brain whose name
+        # contains it.
+        if args.brain and pipeline_folder.name != args.brain:
             continue
         status, reason = check_extraction_status(pipeline_folder)
 
