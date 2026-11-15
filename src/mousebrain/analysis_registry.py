@@ -39,11 +39,16 @@ Layout (rooted at the registry root, by default <pipeline root>/Registry/)
     |                                  mousebrain.file_lock). Any of these
     |                                  left behind by a crash is safe to
     |                                  delete when nothing is registering.
+    +-- logs/{analysis_name}.registry.json.unreadable-{time}
+    |                                  A damaged manifest, set aside for repair
+    |                                  (only ever created when one was damaged)
     +-- approved_method.json           Optional: a lab's approved parameters
 
-    Every write holds the analysis's lock.
+    Every write holds the analysis's lock; a manifest that cannot be parsed is
+    set aside, never emptied, and is listed in the next manifest's header
+    until a person deals with it.
 
-    WHY the lock, its probes and temporary files are
+    WHY the lock, its probes, temporary files and set-aside manifests are
     kept OUT of exports/{analysis_name}/: an integrator mirrors every file
     under that folder. A lock caught there by a nightly pull would be copied
     as if it were a result (and archived as a vanished result the next
@@ -107,6 +112,7 @@ from mousebrain.file_lock import exclusive_file_lock
 
 __all__ = [
     "AnalysisRegistry",
+    "RegistryUnreadableError",
     "DEFAULT_METHOD",
     "APPROVED_METHOD_FILENAME",
     "default_registry_root",
@@ -346,6 +352,13 @@ def get_database_path(
     return {"export_dir": export_dir, "figure_dir": figure_dir}
 
 
+class RegistryUnreadableError(RuntimeError):
+    """registry.json exists but could not be read; see AnalysisRegistry._read_registry."""
+
+
+# Time stamp at the end of a set-aside manifest's name.
+_SET_ASIDE_TIME_FORMAT = "%Y%m%d_%H%M%S_%f"
+
 # Output types that are routed to the figures/ tree instead of exports/.
 _FIGURE_OUTPUT_TYPES = ("figure", "roi_figure", "qc_figure", "overlay")
 
@@ -464,6 +477,11 @@ class AnalysisRegistry:
         # (see the module docstring for why there).
         self.work_dir = self.logs_dir
         self.lock_path = self.logs_dir / ("%s.lock" % analysis_name)
+        self.set_aside_dir = self.logs_dir
+        self.set_aside_prefix = "%s.%s.unreadable-" % (analysis_name, self.registry_path.name)
+        # The [!] line about set-aside manifests is printed once per instance
+        # (see _warn_about_set_aside), not on every read.
+        self._set_aside_warned = False
 
         # exports/ and logs/ are needed by every registry (manifest + audit
         # log). figures/<analysis>/ is NOT created here: it is made on the
@@ -502,23 +520,138 @@ class AnalysisRegistry:
                                    wait_seconds=self.LOCK_WAIT_SECONDS,
                                    lock_path=self.lock_path)
 
-    def _read_registry(self) -> Dict[str, Any]:
+    def _read_registry(self, set_aside_unreadable: bool = False) -> Dict[str, Any]:
         """Read the registry manifest from disk.
 
-        Returns a fresh skeleton if the file does not exist or is corrupted.
+        Returns a fresh skeleton ONLY when the file does not exist.
+
+        WHY an unreadable manifest is never treated as empty: every write is a
+        read-change-write of the whole manifest, so reading a damaged file as
+        "no entries" and then writing one new entry over it erased the record
+        of every output registered before. Instead:
+
+        * a file that cannot be OPENED (share hiccup, file held by another
+          program) raises RegistryUnreadableError and is left exactly where it
+          is -- the next attempt will most likely read it fine;
+        * a file that opens but is not a registry manifest (not JSON, or JSON
+          without an "entries" object) raises RegistryUnreadableError too.
+          When *set_aside_unreadable* is True (the two registration
+          methods, which hold the registry lock) it is first MOVED to
+          ``<registry root>/logs/<analysis>.registry.json.unreadable-<time>``
+          -- its bytes are kept for a person to repair and merge back, outside
+          the mirrored exports folder -- so the registration after this one
+          starts a new manifest instead of every registration failing until
+          someone notices. Everything else (the query methods, the CLI and
+          invalidate) never moves anything.
+
+        WHY every read warns about set-aside manifests: once one has been set
+        aside, the registry holds fewer entries than were registered (or none
+        at all until the next registration), and nothing else says so. So a
+        [!] line naming them is printed (once per instance), and every write
+        lists them in the manifest header (``set_aside_manifests``) for an
+        integrator to show, until a person repairs and removes them.
         """
+        self._warn_about_set_aside()
         if not self.registry_path.exists():
             return self._empty_registry()
 
         try:
             with open(self.registry_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            # Basic validation
-            if not isinstance(data, dict) or "entries" not in data:
-                return self._empty_registry()
+                text = f.read()
+        except OSError as e:
+            raise RegistryUnreadableError(
+                "The registry manifest %s could not be opened (%s). Nothing was "
+                "changed; try again, and if it keeps failing check that the file "
+                "is not held open by another program." % (self.registry_path, e)
+            ) from e
+
+        problem = None
+        try:
+            data = json.loads(text)
+        except ValueError as e:
+            problem = "it is not valid JSON (%s)" % e
+        else:
+            if not isinstance(data, dict) or not isinstance(data.get("entries"), dict):
+                problem = "it has no 'entries' object"
+        if problem is None:
             return data
-        except (json.JSONDecodeError, OSError):
-            return self._empty_registry()
+
+        if not set_aside_unreadable:
+            raise RegistryUnreadableError(
+                "The registry manifest %s cannot be read: %s. Nothing was changed. "
+                "Repair it by hand (or restore it from a backup) before relying on "
+                "this registry; the next registration will move it into %s as "
+                "%s<time>." % (
+                    self.registry_path, problem, self.set_aside_dir, self.set_aside_prefix))
+
+        self.set_aside_dir.mkdir(parents=True, exist_ok=True)
+        aside = self.set_aside_dir / ("%s%s" % (
+            self.set_aside_prefix, datetime.now().strftime(_SET_ASIDE_TIME_FORMAT)))
+        # shutil.move: a rename on the same drive (the usual case), a copy
+        # and delete otherwise.
+        shutil.move(str(self.registry_path), str(aside))
+        self._log_event("set_aside_unreadable", "-", str(aside), problem)
+        raise RegistryUnreadableError(
+            "The registry manifest %s could not be read (%s). It has been kept, "
+            "unchanged, as %s and THIS registration was not recorded. The next "
+            "registration starts a new manifest. To recover the earlier entries, "
+            "repair the kept file and merge its 'entries' back into registry.json "
+            "(see the analysis registry guide)." % (self.registry_path, problem, aside))
+
+    def set_aside_files(self) -> List[Path]:
+        """The damaged manifests of this analysis that were set aside and are
+        still waiting for a person (oldest first)."""
+        try:
+            return sorted(p for p in self.set_aside_dir.iterdir()
+                          if p.is_file() and p.name.startswith(self.set_aside_prefix))
+        except OSError:
+            return []
+
+    def set_aside_records(self) -> List[Dict[str, Any]]:
+        """One record per set-aside manifest: file name, when it was set
+        aside, its size, and an ESTIMATE of how many entries it holds (the
+        file is damaged, so its entries are counted by their
+        "registered_at" fields, not parsed)."""
+        records = []
+        for path in self.set_aside_files():
+            stamp = path.name[len(self.set_aside_prefix):]
+            try:
+                set_aside_at = datetime.strptime(stamp, _SET_ASIDE_TIME_FORMAT).isoformat()
+            except ValueError:
+                set_aside_at = None
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+                size, estimate = path.stat().st_size, text.count('"registered_at"')
+            except OSError:
+                size, estimate = None, None
+            records.append({"file": path.name, "set_aside_at": set_aside_at,
+                            "size_bytes": size, "entries_estimate": estimate})
+        return records
+
+    def _record_set_aside(self, data: Dict[str, Any]) -> None:
+        """List in the manifest header (``set_aside_manifests``) the damaged
+        manifests still waiting for a person (see _read_registry); drop the
+        field once there are none."""
+        set_aside = self.set_aside_records()
+        if set_aside:
+            data["set_aside_manifests"] = set_aside
+        else:
+            data.pop("set_aside_manifests", None)
+
+    def _warn_about_set_aside(self) -> None:
+        """Print a [!] line (once per instance) when damaged manifests of this
+        analysis are waiting in the set-aside place; see _read_registry."""
+        if self._set_aside_warned:
+            return
+        files = self.set_aside_files()
+        if not files:
+            return
+        self._set_aside_warned = True
+        print("  [!] %s: %d damaged manifest%s set aside in %s (%s). Entries "
+              "recorded only there are NOT in this registry until a person repairs "
+              "the file and merges them back (see the analysis registry guide)." % (
+                  self.analysis_name, len(files), "" if len(files) == 1 else "s",
+                  self.set_aside_dir, ", ".join(p.name for p in files)))
 
     # How long a write keeps retrying while Windows refuses to replace
     # registry.json because a reader (the CLI, an integrator pulling this
@@ -530,8 +663,10 @@ class AnalysisRegistry:
         """Write registry manifest atomically (write temp, then rename).
 
         This prevents corruption if two processes write simultaneously or
-        the process is interrupted mid-write.
+        the process is interrupted mid-write. Every write also refreshes
+        the header's list of set-aside manifests (_record_set_aside).
         """
+        self._record_set_aside(data)
         data["last_updated"] = datetime.now().isoformat()
         content = json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
@@ -654,7 +789,7 @@ class AnalysisRegistry:
         # A file being replaced is kept in logs/ until the manifest
         # write has succeeded, and put back if it fails (see _place).
         with self._locked() as lock:
-            registry = self._read_registry()
+            registry = self._read_registry(set_aside_unreadable=True)
 
             output_map: Dict[str, str] = {}
             dest_paths: Dict[str, Path] = {}
@@ -776,7 +911,7 @@ class AnalysisRegistry:
         # logs/ and swapped in; the files they replace are put back
         # if the manifest cannot be written.
         with self._locked() as lock:
-            registry = self._read_registry()
+            registry = self._read_registry(set_aside_unreadable=True)
             placed: List[Tuple[Path, Optional[Path]]] = []
             try:
                 staged = self._staging_path(counts_path.name)
@@ -1118,7 +1253,11 @@ class AnalysisRegistry:
         invalidated = []
 
         with self._locked():
-            registry = self._read_registry()
+            # A damaged manifest is NOT set aside here: invalidate has nothing
+            # of its own to record, so moving the file would only leave the
+            # analysis without a manifest until the next registration. It
+            # raises RegistryUnreadableError and moves nothing.
+            registry = self._read_registry(set_aside_unreadable=False)
 
             for key, entry in list(registry.get("entries", {}).items()):
                 if sample is not None and entry.get("sample") != sample:
@@ -1295,7 +1434,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  Manifest:      {registry.registry_path}")
     print("=" * 70)
 
-    data = registry._read_registry()
+    # Listed here, before anything else, so a set-aside manifest is seen even
+    # when the counts below look complete (or are zero). See _read_registry.
+    registry._set_aside_warned = True  # listed in full here instead
+    set_aside = registry.set_aside_records()
+    if set_aside:
+        print("\n  [!] %d damaged manifest%s of this analysis set aside, waiting for a "
+              "person to repair and merge back:" % (len(set_aside),
+                                                     "" if len(set_aside) == 1 else "s"))
+        for rec in set_aside:
+            print("      %s  (set aside %s, about %s entries)" % (
+                registry.set_aside_dir / rec["file"], rec["set_aside_at"] or "?",
+                "?" if rec["entries_estimate"] is None else rec["entries_estimate"]))
+        print("      Entries recorded only there are NOT counted below. Guide: "
+              "docs/pipeline/ANALYSIS_REGISTRY.md")
+
+    try:
+        data = registry._read_registry()
+    except RuntimeError as e:  # unreadable manifest
+        print("[FAIL] %s" % e)
+        return 1
     entries = data.get("entries", {})
     n_current = sum(1 for e in entries.values() if e.get("is_current", True))
     n_stale = sum(1 for e in entries.values() if not e.get("is_current", True))
