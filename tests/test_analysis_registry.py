@@ -742,3 +742,64 @@ def test_a_default_that_is_not_a_set_of_parameters_is_refused(tmp_path):
         json.dumps({"default": "threshold+log"}), encoding="utf-8")
     with pytest.raises(RuntimeError, match="pproved-method"):
         get_approved_method(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# invalidate(): a manifest write that fails puts the entry's files back
+# ---------------------------------------------------------------------------
+
+def test_a_failed_manifest_write_puts_the_files_back_and_keeps_the_entry_current(
+        tmp_path, monkeypatch):
+    reg, dests = _register_two(tmp_path)
+    monkeypatch.setattr(AnalysisRegistry, "REPLACE_RETRY_SECONDS", 0.3, raising=False)
+    real_replace = ar.os.replace
+
+    def replace(src, dst, *a, **k):
+        # registry.json held open by a reader for longer than the retry time
+        if Path(dst).name == "registry.json":
+            raise PermissionError(13, "held open by another program")
+        return real_replace(src, dst, *a, **k)
+
+    monkeypatch.setattr(ar.os, "replace", replace)
+    with pytest.raises(PermissionError):
+        reg.invalidate()
+
+    monkeypatch.setattr(ar.os, "replace", real_replace)
+    on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
+    assert all(e["is_current"] for e in on_disk.values())
+    # The files of every entry the manifest still calls current are in the
+    # active path, not in _archived/.
+    for paths in dests.values():
+        for path in paths.values():
+            assert path.is_file(), path
+    log = (reg.logs_dir / "A.log").read_text(encoding="utf-8")
+    assert "invalidate_failed" in log
+
+
+def test_a_broken_approved_method_file_stops_invalidate_before_anything_moves(tmp_path):
+    reg, dests = _register_two(tmp_path)
+    (reg.registry_root / "approved_method.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="pproved-method"):
+        reg.invalidate()
+    on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
+    assert all(e["is_current"] for e in on_disk.values())
+    for paths in dests.values():
+        for path in paths.values():
+            assert path.is_file(), path
+
+
+def test_a_manifest_held_open_briefly_is_written_on_a_retry(tmp_path, monkeypatch):
+    reg, dests = _register_two(tmp_path)
+    real_replace = ar.os.replace
+    refusals = {"left": 2}
+
+    def replace(src, dst, *a, **k):
+        if Path(dst).name == "registry.json" and refusals["left"]:
+            refusals["left"] -= 1
+            raise PermissionError(13, "held open by another program")
+        return real_replace(src, dst, *a, **k)
+
+    monkeypatch.setattr(ar.os, "replace", replace)
+    assert sorted(reg.invalidate()) == sorted(dests)
+    on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
+    assert not any(e["is_current"] for e in on_disk.values())

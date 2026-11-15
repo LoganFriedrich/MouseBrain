@@ -138,13 +138,30 @@ writing, delete the `.lock` file it names.
 `AnalysisRegistry(...).invalidate()` (all current entries) or
 `invalidate(sample=...)` (one sample) moves each entry's files into an
 `_archived/<time>/` folder beside where they were and marks the entry
-invalidated. It does this one entry at a time and writes the manifest after
-each, so a stop part-way never leaves archived files under an entry still
-called current. If ANY file of an entry cannot be moved (open in another
-program, for example), the files already moved are put back, the entry stays
-**current**, and you see `[!] <entry> NOT invalidated, still current: ...`.
-Close whatever holds the file and run it again; entries already invalidated
-are skipped.
+invalidated. It works one entry at a time and writes the manifest after each:
+
+- It first reads the approved method. If that file is broken, it stops with
+  the file's error before moving anything.
+- If ANY file of an entry cannot be moved (open in another program, for
+  example), the files already moved are put back, the entry stays
+  **current**, you see `[!] <entry> NOT invalidated, still current: ...`, and
+  it goes on to the next entry.
+- If the files moved but the manifest cannot be written (the network drive
+  dropped out, or `registry.json` was held open by another program for more
+  than ten seconds), the files are put back, the entry stays **current**, you
+  see the same `[!]` line plus `[!] Invalidation stopped ...`, and the
+  command stops with the error. Entries done before it stay invalidated.
+
+In every case, fix the cause and run it again; entries already invalidated
+are skipped. Each failure is also written to `logs/<analysis>.log` as an
+`invalidate_failed` line.
+
+The one case this cannot cover is the process being killed outright (power
+cut, ended in Task Manager) in the instant between moving an entry's files
+and writing the manifest. That entry's files are then in `_archived/<time>/`
+while the manifest still calls it current, and the log has no `invalidate`
+line for it. To repair it, move the files back from `_archived/<time>/` (or
+run the invalidation again after moving them back).
 
 ## When the manifest cannot be read
 

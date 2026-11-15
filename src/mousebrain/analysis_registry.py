@@ -73,6 +73,7 @@ import os
 import shutil
 import socket
 import tempfile
+import time
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -638,7 +639,13 @@ class AnalysisRegistry:
             "repair the kept file and merge its 'entries' back into registry.json "
             "(see the analysis registry guide)." % (self.registry_path, problem, aside))
 
-    def _write_registry(self, data: Dict[str, Any]) -> None:
+    # How long a write keeps retrying while Windows refuses to replace
+    # registry.json because a reader (the CLI, an integrator pulling this
+    # folder) has it open for a moment -- the same rule the calibration
+    # tracker uses for its CSV.
+    REPLACE_RETRY_SECONDS = 10
+
+    def _write_registry(self, data: Dict[str, Any], refresh_header: bool = True) -> None:
         """Write registry manifest atomically (write temp, then rename).
 
         This prevents corruption if two processes write simultaneously or
@@ -653,8 +660,14 @@ class AnalysisRegistry:
         still judged by the old one and showed nothing stale. A broken
         approved-method file therefore stops the write with its error rather
         than recording a header nobody chose.
+
+        *refresh_header* False keeps the header the caller already set:
+        invalidate() reads the approved method ONCE, before it moves any
+        file, so that a broken approved-method file stops it before anything
+        has moved rather than between a move and the write that records it.
         """
-        self._set_approved_header(data)
+        if refresh_header:
+            self._set_approved_header(data)
         data["last_updated"] = datetime.now().isoformat()
         content = json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
@@ -666,9 +679,17 @@ class AnalysisRegistry:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(content)
-            # Atomic replace
-            os.replace(tmp_path, str(self.registry_path))
-        except Exception:
+            # Atomic replace; on Windows retried while a reader holds the file.
+            deadline = time.monotonic() + self.REPLACE_RETRY_SECONDS
+            while True:
+                try:
+                    os.replace(tmp_path, str(self.registry_path))
+                    break
+                except PermissionError:
+                    if time.monotonic() > deadline:
+                        raise
+                    time.sleep(0.2)
+        except BaseException:
             # Clean up temp file on failure
             try:
                 os.unlink(tmp_path)
@@ -1171,12 +1192,28 @@ class AnalysisRegistry:
         result is gone when it is not; and moving every file first and
         writing the manifest once at the end meant a crash part-way left files
         in _archived/ while the manifest still called their entries current.
-        So, for each entry: move its files; if any move fails, put back the
-        ones already moved, leave the entry CURRENT, print a [!] line and
-        record it in the audit log; if all moved (or were already absent),
-        mark it invalidated and write the manifest straight away. The whole
-        pass holds the registry lock, refreshed after each entry so a long
-        pass is never mistaken for a crashed writer.
+        So:
+
+        * the approved-method header is read and checked ONCE, before any
+          file moves (a broken approved-method file stops the pass with
+          nothing moved);
+        * for each entry: move its files; if any move fails, put back the
+          ones already moved, leave the entry CURRENT, print a [!] line and
+          record it in the audit log, and go on to the next entry;
+        * if all moved (or were already absent), mark it invalidated and
+          write the manifest straight away. If THAT write fails (a share
+          dropping out, the file held open past the retry time), the entry
+          is marked current again, its files are put back, the failure is
+          printed and logged, and the error is raised -- the pass stops,
+          because the next write would most likely fail the same way.
+
+        The one window that remains is a hard stop of the process (power
+        loss, the process killed) between an entry's last move and the write
+        that records it: that entry's files are then in _archived/ while the
+        manifest still calls it current, and the audit log has no
+        "invalidate" line for it. The whole pass holds the registry lock,
+        refreshed after each entry so a long pass is never mistaken for a
+        crashed writer.
 
         Args:
             sample: Optional sample name to invalidate. None = invalidate all.
@@ -1191,6 +1228,9 @@ class AnalysisRegistry:
 
         with self._locked() as lock:
             registry = self._read_registry(set_aside_unreadable=True)
+            # Read (and check) the approved method before anything moves; the
+            # per-entry writes below keep this header (refresh_header=False).
+            self._set_approved_header(registry)
 
             for key, entry in list(registry.get("entries", {}).items()):
                 if sample is not None and entry.get("sample") != sample:
@@ -1214,12 +1254,7 @@ class AnalysisRegistry:
                         break
 
                 if problem is not None:
-                    for src, dest in reversed(moved):
-                        try:
-                            shutil.move(str(dest), str(src))
-                        except OSError as e:
-                            problem += "; and could not put back %s (it is at %s): %s" % (
-                                src, dest, e)
+                    problem += self._put_back(moved)
                     print("  [!] %s NOT invalidated, still current: %s" % (key, problem))
                     self._log_event("invalidate_failed", entry.get("sample", key),
                                     key, problem)
@@ -1228,7 +1263,24 @@ class AnalysisRegistry:
 
                 entry["is_current"] = False
                 entry["invalidated_at"] = datetime.now().isoformat()
-                self._write_registry(registry)
+                try:
+                    self._write_registry(registry, refresh_header=False)
+                except BaseException as e:
+                    # The manifest on disk still calls this entry current:
+                    # make the files and the in-memory entry say so too.
+                    entry["is_current"] = True
+                    entry.pop("invalidated_at", None)
+                    problem = ("the manifest could not be written (%s: %s)"
+                               % (type(e).__name__, e)) + self._put_back(moved)
+                    print("  [!] %s NOT invalidated, still current: %s" % (key, problem))
+                    print("  [!] Invalidation stopped; %d earlier entr%s invalidated."
+                          % (len(invalidated), "y was" if len(invalidated) == 1 else "ies were"))
+                    self._log_event("invalidate_failed", entry.get("sample", key),
+                                    key, problem)
+                    if invalidated:
+                        self._log_event("invalidate", sample or "ALL",
+                                        f"{len(invalidated)} entries", timestamp)
+                    raise
                 lock.touch()
                 invalidated.append(key)
 
@@ -1245,6 +1297,20 @@ class AnalysisRegistry:
                   "they stay current. Free the files and run invalidate again."
                   % (len(failed), "y" if len(failed) == 1 else "ies"))
         return invalidated
+
+    @staticmethod
+    def _put_back(moved: List[Tuple[Path, Path]]) -> str:
+        """Move archived files back to where they were (newest first).
+
+        Returns "" when all went back, else text naming each file that could
+        not be put back and where it is now, for the [!] line and the log."""
+        problem = ""
+        for src, dest in reversed(moved):
+            try:
+                shutil.move(str(dest), str(src))
+            except OSError as e:
+                problem += "; and could not put back %s (it is at %s): %s" % (src, dest, e)
+        return problem
 
     # -----------------------------------------------------------------
     # Logging
