@@ -69,6 +69,21 @@ match those, so they are **not** judged by them: their registries say
 is ever counted as stale. The code that registers an analysis declares this,
 and the declaration is kept in the manifest (`follows_approved_method`).
 
+**A 3D manifest made before this version** has no declaration yet, so it is
+still judged by the slice parameters and shows its entries as stale. It picks
+the declaration up on its next registration (the next region count or
+orientation check of any brain). `--refresh-approved` alone does NOT change
+it. To record the declaration now, without waiting:
+
+```
+mousebrain-registry --name 3D_Region_Counts --no-approved-method --stale
+mousebrain-registry --name 3D_Orientation_Check --no-approved-method --stale
+```
+
+`--no-approved-method` records "this analysis has no approved method unless
+`approved_method.json` names it" and refreshes the header;
+`--follows-approved-method` records the opposite. Neither changes any entry.
+
 ### Giving each analysis its own approved method
 
 `approved_method.json` can name analyses one by one:

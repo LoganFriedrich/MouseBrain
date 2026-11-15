@@ -803,3 +803,44 @@ def test_a_manifest_held_open_briefly_is_written_on_a_retry(tmp_path, monkeypatc
     assert sorted(reg.invalidate()) == sorted(dests)
     on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
     assert not any(e["is_current"] for e in on_disk.values())
+
+
+# ---------------------------------------------------------------------------
+# The command line can record an analysis's declaration in an old manifest
+# ---------------------------------------------------------------------------
+
+def test_the_cli_records_that_an_old_manifest_has_no_approved_method(tmp_path, capsys):
+    # A manifest written before analyses declared anything follows the shared
+    # method, and --refresh-approved alone keeps that; --no-approved-method
+    # records the declaration without waiting for the producer's next run.
+    csv_file, _ = _make_source_files(tmp_path)
+    old = AnalysisRegistry(analysis_name="B", registry_root=tmp_path)
+    old.register_output(sample=SAMPLE, category="qc",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params={"check": "x", "version": "1"})
+    assert "1 stale entries" in _stale_report(tmp_path, "B", capsys)
+
+    assert ar.main(["--name", "B", "--root", str(tmp_path), "--refresh-approved"]) == 0
+    assert _header(old)["approved_method_hash"] is not None
+
+    assert ar.main(["--name", "B", "--root", str(tmp_path), "--no-approved-method"]) == 0
+    header = _header(old)
+    assert header["approved_method_hash"] is None
+    assert header["follows_approved_method"] is False
+    assert "No approved method is declared" in _stale_report(tmp_path, "B", capsys)
+
+    assert ar.main(["--name", "B", "--root", str(tmp_path),
+                    "--follows-approved-method"]) == 0
+    assert _header(old)["approved_method_hash"] is not None
+
+
+def test_the_stale_report_names_a_broken_approved_method_file(tmp_path, capsys):
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    (tmp_path / "approved_method.json").write_text("{not json", encoding="utf-8")
+    capsys.readouterr()
+    assert ar.main(["--name", "A", "--root", str(tmp_path), "--stale"]) == 1
+    assert "[FAIL]" in capsys.readouterr().out

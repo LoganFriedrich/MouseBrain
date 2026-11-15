@@ -1413,10 +1413,30 @@ def main(argv: Optional[List[str]] = None) -> int:
               "Every registration does this anyway; use it after changing "
               "approved_method.json when nothing new has been registered since."),
     )
+    # WHY these exist: the code that registers an analysis declares whether
+    # it follows the shared approved method, and the declaration is kept in
+    # the manifest. A manifest written before declarations existed carries
+    # none (= follows the shared method) until its producer next registers;
+    # these record the declaration now, without waiting for that.
+    declare = parser.add_mutually_exclusive_group()
+    declare.add_argument(
+        "--no-approved-method", dest="follows", action="store_const", const=False,
+        help=("Record in the manifest that this analysis has NO approved method "
+              "unless approved_method.json names it (the 3D analyses), then "
+              "refresh the header. Implies --refresh-approved."),
+    )
+    declare.add_argument(
+        "--follows-approved-method", dest="follows", action="store_const", const=True,
+        help=("Record in the manifest that this analysis is judged by the shared "
+              "approved method, then refresh the header. Implies --refresh-approved."),
+    )
 
     args = parser.parse_args(argv)
+    if args.follows is not None:
+        args.refresh_approved = True
     try:
-        registry = AnalysisRegistry(analysis_name=args.name, registry_root=args.root)
+        registry = AnalysisRegistry(analysis_name=args.name, registry_root=args.root,
+                                    follows_approved_method=args.follows)
     except RuntimeError as e:  # unconfigured root: one line, exit code, no traceback
         print("[FAIL] %s" % e)
         return 1
@@ -1435,6 +1455,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             else:
                 print("\n  [OK] Approved-method header refreshed.")
         data = registry._read_registry()
+        # Resolved here, inside the try, so a broken approved-method file is
+        # one [FAIL] line, not a traceback.
+        approved = registry.approved_method(data) if args.stale else None
     except (RuntimeError, TimeoutError) as e:  # unreadable manifest or approved-method file, lock held
         print("[FAIL] %s" % e)
         return 1
@@ -1453,7 +1476,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.stale:
         print("\n--- Staleness check (vs approved method) ---")
-        approved = registry.approved_method(data)
         stale_list = [] if approved is None else registry.check_staleness(approved)
         if approved is None:
             print("  No approved method is declared for this analysis, so none of")
