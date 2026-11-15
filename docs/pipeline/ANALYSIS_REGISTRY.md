@@ -213,6 +213,10 @@ Instead:
   registration with a message saying so, and the registration after it starts
   a new, empty manifest. The pipeline step prints the message as a warning
   line and carries on (its own results on disk are not affected).
+- Between the setting-aside and the next registration, the analysis's folder
+  has NO `registry.json`. Anything that pulls the registry (a lab database)
+  sees an analysis folder without a manifest for that time; it should keep
+  what it already copied rather than treat the analysis as withdrawn.
 
 To recover the old entries: open the `.unreadable-<time>` file, repair it (or
 take the manifest from a backup), and copy its `"entries"` into the new
