@@ -81,6 +81,7 @@ __all__ = [
     "APPROVED_METHOD_FILENAME",
     "default_registry_root",
     "get_approved_method",
+    "approved_method_for",
     "get_database_path",
     "parse_sample_id",
     "roi_results_from_rows",
@@ -135,28 +136,13 @@ def _load_method_file(path: Path, origin: str) -> Dict[str, Any]:
     return data
 
 
-def get_approved_method(registry_root: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
-    """Return the method parameters this installation treats as approved.
+def _approved_method_file(registry_root: Optional[Union[str, Path]]) -> Optional[Dict[str, Any]]:
+    """The parsed approved-method file, or None when none is configured.
 
-    A lab records the parameters it has signed off on OUTSIDE the code, so the
-    tool carries no project history. Resolution order:
-
-      1. MOUSEBRAIN_APPROVED_METHOD -- path to a JSON file holding the dict.
+    Resolution order:
+      1. MOUSEBRAIN_APPROVED_METHOD -- path to a JSON file.
       2. ``<registry root>/approved_method.json`` when that file exists
          (*registry_root* if given, else default_registry_root()).
-      3. DEFAULT_METHOD (the built-in parameters above).
-
-    The JSON file is a flat object with the same keys as DEFAULT_METHOD, e.g.
-    ``{"detection": "threshold+log", "threshold_fraction": 0.2, ...}``.
-    Whatever the source, the returned dict has the same flat shape, so method
-    hashes computed from it compare with hashes already stored in a registry.
-
-    Args:
-        registry_root: Registry root to look under for approved_method.json.
-            Defaults to the resolved default root.
-
-    Returns:
-        A fresh dict of parameter name -> value (safe to modify).
     """
     env_path = os.environ.get("MOUSEBRAIN_APPROVED_METHOD")
     if env_path:
@@ -167,8 +153,105 @@ def get_approved_method(registry_root: Optional[Union[str, Path]] = None) -> Dic
         candidate = root / APPROVED_METHOD_FILENAME
         if candidate.is_file():
             return _load_method_file(candidate, APPROVED_METHOD_FILENAME)
+    return None
 
-    return dict(DEFAULT_METHOD)
+
+def _per_analysis_table(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The ``"analyses"`` table of a per-analysis approved-method file, or
+    None for the plain (flat) form. Raises on a malformed table, for the
+    same reason _load_method_file does: an approval that is configured but
+    misread would silently compare every output with the wrong method."""
+    table = data.get("analyses")
+    if table is None:
+        return None
+    if not isinstance(table, dict):
+        raise RuntimeError(
+            "Approved-method file: 'analyses' must be an object of analysis "
+            "name -> parameters (or null for 'no approved method').")
+    for name, method in table.items():
+        if method is not None and (not isinstance(method, dict) or not method):
+            raise RuntimeError(
+                "Approved-method file: the entry for analysis %r must be a "
+                "non-empty object of parameter name -> value, or null." % name)
+    default = data.get("default")
+    if default is not None and (not isinstance(default, dict) or not default):
+        raise RuntimeError(
+            "Approved-method file: 'default' must be a non-empty object of "
+            "parameter name -> value.")
+    return table
+
+
+def get_approved_method(registry_root: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
+    """Return the SHARED approved method: the parameters the slice-analysis
+    tools run with and that analyses following the shared method are judged by.
+
+    A lab records the parameters it has signed off on OUTSIDE the code, so the
+    tool carries no project history. Resolution order:
+
+      1. MOUSEBRAIN_APPROVED_METHOD -- path to a JSON file.
+      2. ``<registry root>/approved_method.json`` when that file exists
+         (*registry_root* if given, else default_registry_root()).
+      3. DEFAULT_METHOD (the built-in parameters above).
+
+    The file takes one of two forms:
+
+    * flat -- the parameters themselves, with the same keys as
+      DEFAULT_METHOD: ``{"detection": "threshold+log", ...}``;
+    * per analysis -- ``{"default": {...}, "analyses": {"<analysis>": {...},
+      "<other analysis>": null}}``. Here the shared method is ``"default"``
+      (DEFAULT_METHOD when it is left out); per-analysis entries are read by
+      approved_method_for().
+
+    Whatever the source, the returned dict has the same flat shape, so method
+    hashes computed from it compare with hashes already stored in a registry.
+
+    Args:
+        registry_root: Registry root to look under for approved_method.json.
+            Defaults to the resolved default root.
+
+    Returns:
+        A fresh dict of parameter name -> value (safe to modify).
+    """
+    data = _approved_method_file(registry_root)
+    if data is None:
+        return dict(DEFAULT_METHOD)
+    if _per_analysis_table(data) is not None:
+        return dict(data.get("default") or DEFAULT_METHOD)
+    return dict(data)
+
+
+def approved_method_for(
+    analysis_name: str,
+    registry_root: Optional[Union[str, Path]] = None,
+    follows_approved_method: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """The approved method ONE analysis is judged by, or None if it has none.
+
+    WHY per analysis: the shared approved method (get_approved_method) holds
+    the slice-analysis parameters. Analyses that record their OWN parameters
+    -- the 3D region counts and orientation checks register the atlas, ball
+    sizes, model, check version... they actually ran with -- can never match
+    it, so comparing them with it reported every one of their entries as
+    "stale vs approved", which made the stale count meaningless. Now:
+
+    1. If the approved-method file is in the per-analysis form and names
+       *analysis_name*, that entry is its approved method (null = it has
+       none).
+    2. Otherwise an analysis that follows the shared approved method
+       (*follows_approved_method*, declared by the code that registers it)
+       is judged by get_approved_method().
+    3. Otherwise it has no approved method: None. Its entries are never
+       counted as stale; the manifest header says so (hash null).
+    """
+    data = _approved_method_file(registry_root)
+    if data is not None:
+        table = _per_analysis_table(data)
+        if table is not None and analysis_name in table:
+            method = table[analysis_name]
+            return dict(method) if method is not None else None
+    if follows_approved_method:
+        return get_approved_method(registry_root)
+    return None
 
 
 # =============================================================================
@@ -405,6 +488,14 @@ class AnalysisRegistry:
             default_registry_root(); raises RuntimeError when nothing resolves.
         db_root: Deprecated alias of *registry_root*, kept so older callers
             keep working. Ignored when *registry_root* is given.
+        follows_approved_method: Whether this analysis is judged by the
+            SHARED approved method (get_approved_method). The code that
+            registers an analysis declares it: True for analyses run with
+            the shared parameters, False for analyses that record their own
+            (see approved_method_for). The declaration is written into the
+            manifest header, so a reader that does not declare it (None, as
+            the CLI does) keeps whatever the producer declared; a manifest
+            that never recorded one follows the shared method, as before.
     """
 
     # Current schema version for the registry JSON
@@ -415,8 +506,10 @@ class AnalysisRegistry:
         analysis_name: str,
         registry_root: Optional[Union[str, Path]] = None,
         db_root: Optional[Union[str, Path]] = None,
+        follows_approved_method: Optional[bool] = None,
     ):
         self.analysis_name = analysis_name
+        self._follows_approved_method = follows_approved_method
         if registry_root is None and db_root is not None:
             registry_root = db_root
         resolved = Path(registry_root) if registry_root else default_registry_root()
@@ -558,15 +651,45 @@ class AnalysisRegistry:
 
     def _empty_registry(self) -> Dict[str, Any]:
         """Return an empty registry skeleton."""
-        approved = get_approved_method(self.registry_root)
-        return {
+        data = {
             "analysis_name": self.analysis_name,
             "version": self.SCHEMA_VERSION,
-            "approved_method": approved,
-            "approved_method_hash": self.get_method_hash(approved),
             "entries": {},
             "last_updated": datetime.now().isoformat(),
         }
+        self._set_approved_header(data)
+        return data
+
+    def follows_approved_method(self, data: Optional[Dict[str, Any]] = None) -> bool:
+        """This analysis's declaration (see the constructor): the instance's
+        own if it was given one, else the manifest's, else True."""
+        if self._follows_approved_method is not None:
+            return bool(self._follows_approved_method)
+        if data is None:
+            data = self._read_registry()
+        return bool(data.get("follows_approved_method", True))
+
+    def approved_method(self, data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """The approved method this analysis is judged by, or None when it
+        has none (see approved_method_for)."""
+        return approved_method_for(self.analysis_name, self.registry_root,
+                                   self.follows_approved_method(data))
+
+    def _set_approved_header(self, data: Dict[str, Any]) -> None:
+        """Write the approved-method fields of the manifest header.
+
+        ``approved_method_hash`` is what an integrator compares each entry's
+        ``method_hash`` with to count "stale vs approved". It is null when the
+        analysis has no approved method: such an analysis has nothing to be
+        stale against, and a reader must report "no approved method", never
+        count its entries as stale.
+        """
+        follows = self.follows_approved_method(data)
+        approved = approved_method_for(self.analysis_name, self.registry_root, follows)
+        data["follows_approved_method"] = follows
+        data["approved_method"] = approved
+        data["approved_method_hash"] = (
+            self.get_method_hash(approved) if approved is not None else None)
 
     # -----------------------------------------------------------------
     # Method hashing
@@ -1198,9 +1321,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.stale:
         print("\n--- Staleness check (vs approved method) ---")
-        approved = get_approved_method(registry.registry_root)
-        stale_list = registry.check_staleness(approved)
-        if stale_list:
+        approved = registry.approved_method(data)
+        stale_list = [] if approved is None else registry.check_staleness(approved)
+        if approved is None:
+            print("  No approved method is declared for this analysis, so none of")
+            print("  its entries is compared or counted as stale.")
+        elif stale_list:
             print(f"  {len(stale_list)} stale entries:")
             for s in stale_list:
                 diff = ", ".join(s["diff_keys"]) if s["diff_keys"] else "hash mismatch"

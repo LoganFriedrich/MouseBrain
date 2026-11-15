@@ -209,7 +209,12 @@ def register_check(brain: str, summary: Dict, stack_folder) -> None:
     registration run; it is printed."""
     try:
         from mousebrain.analysis_registry import AnalysisRegistry
-        AnalysisRegistry(analysis_name=REGISTRY_ANALYSIS).register_output(
+        # follows_approved_method=False: this check records its own method
+        # (check version, orientation, atlas); the shared approved method is
+        # the slice-analysis parameters and does not describe it, so judging
+        # it by that would report every check as stale.
+        AnalysisRegistry(analysis_name=REGISTRY_ANALYSIS,
+                         follows_approved_method=False).register_output(
             sample=brain, category="qc",
             files={"qc_figure": summary["png"]},
             results={k: summary[k] for k in ("declared_orientation", "atlas", "atlas_orientation",

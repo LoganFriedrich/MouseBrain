@@ -541,3 +541,102 @@ def test_each_invalidated_entry_is_recorded_before_the_next_is_moved(tmp_path, m
         assert not path.exists()
     on_disk = json.loads(reg.registry_path.read_text(encoding="utf-8"))["entries"]
     assert on_disk["E01_01_S01_DCN"]["is_current"] is False
+
+
+# ---------------------------------------------------------------------------
+# An approved method per analysis; analyses with none are never "stale"
+# ---------------------------------------------------------------------------
+
+STEP6 = Path(__file__).resolve().parents[1] / "scripts" / "pipeline" / "6_count_regions.py"
+
+
+def _stale_report(root, name, capsys):
+    capsys.readouterr()
+    assert ar.main(["--name", name, "--root", str(root), "--stale"]) == 0
+    return capsys.readouterr().out
+
+
+def test_a_3d_region_count_is_not_reported_stale_against_the_slice_method(
+        tmp_path, monkeypatch, capsys):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("count_step_for_registry", STEP6)
+    step6 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(step6)
+
+    root = tmp_path / "Registry"
+    monkeypatch.setenv("MOUSEBRAIN_REGISTRY_ROOT", str(root))
+    brain = tmp_path / "101_PROJ_01_02_2p5x_z5"
+    out = brain / "6_Region_Analysis" / "cell_counts_by_region.csv"
+    out.parent.mkdir(parents=True)
+    out.write_text("region,count\nAAA,1\n")
+    step6.register_counts(brain, out, 1, {"atlas": "atlas_x", "ball_xy": "6"},
+                          {"exp_id": "det_1", "classification_exp_id": "cla_1", "model": "m"},
+                          brain / "5_Classified_Cells" / "cells.xml",
+                          brain / "3_Registered_Atlas")
+
+    manifest = json.loads((root / "exports" / step6.REGISTRY_ANALYSIS / "registry.json")
+                          .read_text(encoding="utf-8"))
+    assert brain.name in manifest["entries"]
+    assert manifest["approved_method_hash"] is None  # nothing to be stale against
+    report = _stale_report(root, step6.REGISTRY_ANALYSIS, capsys)
+    assert "stale entries" not in report
+    assert "No approved method is declared" in report
+
+
+def test_an_orientation_check_is_not_reported_stale_against_the_slice_method(
+        tmp_path, monkeypatch, capsys):
+    from mousebrain import orientation_check as oc
+
+    root = tmp_path / "Registry"
+    monkeypatch.setenv("MOUSEBRAIN_REGISTRY_ROOT", str(root))
+    png = tmp_path / "QC_orientation_check.png"
+    png.write_bytes(b"png")
+    summary = {"png": str(png), "declared_orientation": "iar", "atlas": "atlas_x",
+               "atlas_orientation": "asr", "brain_extent_mm": [1, 2, 3],
+               "atlas_extent_mm": [1, 2, 3], "sampled_resolution_um": 25}
+    oc.register_check("101_PROJ_01_02_2p5x_z5", summary, tmp_path / "ch0")
+
+    report = _stale_report(root, oc.REGISTRY_ANALYSIS, capsys)
+    assert "Total entries: 1" in report
+    assert "stale entries" not in report
+
+
+def test_an_analysis_named_in_the_approved_file_is_judged_by_its_own_method(
+        tmp_path, capsys):
+    own = {"atlas": "atlas_x", "ball_xy": 6, "threshold": 10}
+    (tmp_path / "approved_method.json").write_text(
+        json.dumps({"analyses": {"B": own, "C": None}}), encoding="utf-8")
+    csv_file, _ = _make_source_files(tmp_path)
+
+    reg = AnalysisRegistry(analysis_name="B", registry_root=tmp_path)
+    reg.register_output(sample=SAMPLE, category="region_counts",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=own)
+    assert reg._read_registry()["approved_method_hash"] == AnalysisRegistry.get_method_hash(own)
+    assert "All entries are current." in _stale_report(tmp_path, "B", capsys)
+
+    reg.register_output(sample="E01_01_S14_DCN", category="region_counts",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=dict(own, threshold=12))
+    assert "1 stale entries" in _stale_report(tmp_path, "B", capsys)
+
+    # null in the file: this analysis has no approved method at all.
+    reg_c = AnalysisRegistry(analysis_name="C", registry_root=tmp_path)
+    reg_c.register_output(sample=SAMPLE, category="detection",
+                          files={"measurements": str(csv_file)}, results={},
+                          method_params=DEFAULT_METHOD)
+    assert reg_c._read_registry()["approved_method_hash"] is None
+    assert "No approved method is declared" in _stale_report(tmp_path, "C", capsys)
+
+    # An analysis the file does not name follows the shared method, which
+    # is the built-in default when the file gives no "default".
+    assert get_approved_method(tmp_path) == DEFAULT_METHOD
+    assert ar.approved_method_for("D", tmp_path) == DEFAULT_METHOD
+    assert ar.approved_method_for("D", tmp_path, follows_approved_method=False) is None
+
+
+def test_a_malformed_per_analysis_table_is_refused(tmp_path):
+    (tmp_path / "approved_method.json").write_text(
+        json.dumps({"analyses": {"B": []}}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="pproved-method"):
+        ar.approved_method_for("B", tmp_path)
