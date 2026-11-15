@@ -75,7 +75,7 @@ integrator may pull from `Registry/`.
         │
         ├── 2_Cropped_For_Registration/    # Cropped to remove empty space
         │   ├── ch0/
-        │   ├── ch0.zarr/                  # Zarr for fast loading
+        │   ├── ch0.zarr/                  # Zarr for fast loading (used only with ch0.zarr.complete.json)
         │   ├── ch1/
         │   ├── ch1.zarr/
         │   └── crop_info.json
@@ -172,6 +172,27 @@ tracker.mark_as_best(run_id)
 5. Approve or reject registration. The approval covers this registration only:
    registering the brain again needs a new approval (see docs/pipeline/README.md,
    "Registration QC & Approval").
+
+### The Zarr fast-load caches (`ch0.zarr`, `ch1.zarr`)
+
+Loading a brain from its TIFFs takes minutes; the widget therefore keeps a Zarr
+copy of each channel beside its TIFF folder and loads that in seconds. After a
+load from TIFFs it builds the copies in the background (or press "Convert to
+Zarr").
+
+A copy is used only when it is **complete and current**: it is written as
+`ch0.zarr.partial`, renamed to `ch0.zarr` when every plane is in, and then
+`ch0.zarr.complete.json` is written last. A load uses the Zarr copies only if
+both channels have that record, the plane count matches the TIFFs in the folder,
+and no TIFF is newer than the copy. Otherwise the terminal says
+`Not using the Zarr cache (<why>); loading the TIFFs`, the brain loads from its
+TIFFs (slower, always right), and the widget builds a new copy, removing the
+unusable one first (the TIFFs are never touched).
+
+Caches made before this rule have no completion record, so each is rebuilt once,
+in the background, the next time its brain is loaded. Before the rule, an
+interrupted or failed conversion left a cache that loaded as a partly blank
+brain, and a new crop left the old crop's cache in use.
 
 ### Switching brains in Setup & Tuning
 

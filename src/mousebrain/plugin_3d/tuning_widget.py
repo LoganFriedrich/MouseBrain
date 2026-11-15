@@ -81,11 +81,21 @@ class BrainLoaderWorker(QThread):
             signal_stack = None
             bg_stack = None
 
-            # Check for Zarr first (instant loading!)
-            zarr_signal = self.signal_path.parent / f"{self.signal_path.name}.zarr"
-            zarr_bg = self.background_path.parent / f"{self.background_path.name}.zarr" if self.background_path else None
+            # Zarr first (instant loading) -- but only a cache that is
+            # COMPLETE and current (mousebrain.zarr_cache): an interrupted or
+            # empty one used to load as a partly blank brain. Both channels
+            # must be usable; otherwise both come from the TIFFs.
+            from mousebrain.zarr_cache import cache_state, zarr_path_for
+            zarr_signal = zarr_path_for(self.signal_path)
+            zarr_bg = zarr_path_for(self.background_path) if self.background_path else None
+            sig_ok, sig_why = cache_state(self.signal_path, zarr_signal)
+            bg_ok, bg_why = (cache_state(self.background_path, zarr_bg) if zarr_bg
+                             else (True, "no background"))
+            if zarr_signal.exists() and not (sig_ok and bg_ok):
+                print(f"[Connectome] Not using the Zarr cache "
+                      f"({sig_why if not sig_ok else bg_why}); loading the TIFFs")
 
-            if zarr_signal.exists():
+            if sig_ok and bg_ok:
                 try:
                     import zarr
                     import dask.array as da
@@ -99,7 +109,7 @@ class BrainLoaderWorker(QThread):
                         signal_stack = z[:]
                     print(f"[Connectome] Loaded signal from Zarr: {signal_stack.shape}")
 
-                    if zarr_bg and zarr_bg.exists():
+                    if zarr_bg is not None:
                         self.progress.emit("Loading background from Zarr (fast!)...")
                         z = zarr.open_array(str(zarr_bg), mode='r')
                         if self.use_dask:
@@ -110,8 +120,9 @@ class BrainLoaderWorker(QThread):
                     self.finished.emit(True, "Loaded from Zarr (instant!)", signal_stack, bg_stack)
                     return
                 except Exception as e:
-                    # Zarr v3 format not compatible with zarr 2.x - fall through to TIFF
+                    # e.g. a cache in a Zarr format this zarr version cannot read
                     print(f"[Connectome] Zarr load failed ({e}), falling back to TIFF...")
+                    signal_stack = bg_stack = None
 
             # Fall back to TIFF loading with Dask for lazy loading
             import tifffile
@@ -188,28 +199,18 @@ class ZarrConverterWorker(QThread):
                 self.finished.emit(False, "No TIFF files found")
                 return
 
-            # Get shape from first file
-            first = tifffile.imread(str(tiff_files[0]))
-            shape = (len(tiff_files), *first.shape)
-            dtype = first.dtype
+            # Written under a partial name and renamed, with the completion
+            # record written last, only when every plane is in
+            # (mousebrain.zarr_cache): an interrupted conversion is never
+            # mistaken for a cache. 10 Z slices per chunk for 3D viewing.
+            from mousebrain.zarr_cache import build
 
-            self.progress.emit(f"Creating Zarr array {shape}...", 0)
+            def report(done, total):
+                if done % 50 == 0 or done == total:
+                    self.progress.emit(f"Converting {done}/{total}...", int(100 * done / total))
 
-            # Create Zarr array with good chunking for 3D viewing
-            z_store = zarr.open(
-                str(self.zarr_path),
-                mode='w',
-                shape=shape,
-                dtype=dtype,
-                chunks=(10, shape[1], shape[2]),  # 10 Z slices per chunk
-            )
-
-            # Copy data
-            for i, tiff_file in enumerate(tiff_files):
-                z_store[i] = tifffile.imread(str(tiff_file))
-                if i % 50 == 0:
-                    pct = int(100 * i / len(tiff_files))
-                    self.progress.emit(f"Converting {i}/{len(tiff_files)}...", pct)
+            self.progress.emit(f"Creating Zarr array ({len(tiff_files)} planes)...", 0)
+            build(self.tiff_folder, self.zarr_path, progress=report)
 
             self.progress.emit("Done!", 100)
             self.finished.emit(True, f"Converted to {self.zarr_path}")
@@ -8033,7 +8034,12 @@ class TuningWidget(QWidget):
         # Check if already converted
         zarr_ch0 = data_folder / "ch0.zarr"
         zarr_ch1 = data_folder / "ch1.zarr"
-        if zarr_ch0.exists() and zarr_ch1.exists():
+        # Converted = a COMPLETE, current cache of each channel present
+        # (mousebrain.zarr_cache), not merely its folder: an empty or
+        # interrupted cache is rebuilt.
+        from mousebrain.zarr_cache import cache_state
+        if all(cache_state(data_folder / ch)[0] for ch in ("ch0", "ch1")
+               if (data_folder / ch).is_dir()):
             QMessageBox.information(self, "Already Converted",
                 "This brain is already converted to Zarr!\n"
                 "Future loads will be instant.")
@@ -8134,7 +8140,12 @@ class TuningWidget(QWidget):
         # Check if zarr already exists
         zarr_ch0 = data_folder / "ch0.zarr"
         zarr_ch1 = data_folder / "ch1.zarr"
-        if zarr_ch0.exists() and zarr_ch1.exists():
+        # Converted = a COMPLETE, current cache of each channel present
+        # (mousebrain.zarr_cache), not merely its folder: an empty or
+        # interrupted cache is rebuilt.
+        from mousebrain.zarr_cache import cache_state
+        if all(cache_state(data_folder / ch)[0] for ch in ("ch0", "ch1")
+               if (data_folder / ch).is_dir()):
             print(f"[Connectome] Zarr already exists, skipping auto-conversion")
             return
 

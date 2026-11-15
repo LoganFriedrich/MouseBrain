@@ -149,14 +149,17 @@ def apply_crop(source_folder: Path, output_folder: Path, y_crop: int,
             if (i + 1) % 200 == 0:
                 print(f"    {i+1}/{len(tiff_files)} slices...")
 
-        # Create zarr for fast loading
+        # Create zarr for fast loading -- under a partial name, completion
+        # record written last (mousebrain.zarr_cache), so a failed save can no
+        # longer leave an empty cache that the widget loads as the brain.
         try:
-            import zarr
+            from mousebrain.zarr_cache import write_array
             volume = np.stack(cropped_slices)
-            zarr.save(str(zarr_output), volume)
+            write_array(volume, ch_output, zarr_output)
             print(f"  Created {ch_name}.zarr")
         except Exception as e:
-            print(f"  Warning: Could not create zarr: {e}")
+            print(f"  Warning: Could not create zarr (the TIFFs are complete; the widget "
+                  f"will build the cache itself): {e}")
 
     # Save metadata
     metadata['crop_y_end'] = y_crop
