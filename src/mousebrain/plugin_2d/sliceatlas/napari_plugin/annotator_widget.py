@@ -12,6 +12,7 @@ Usage:
     Plugins -> Slice Annotator
 """
 
+from functools import partial
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import numpy as np
@@ -34,6 +35,55 @@ from mousebrain.plugin_2d.sliceatlas.core.channel_model import ChannelSettings, 
 from mousebrain.plugin_2d.sliceatlas.core.image_utils import auto_contrast, COLORMAPS
 
 
+# Layers made by the Annotate tab carry this metadata key. Rotate and flip move
+# exactly these layers with the image; layers this widget did not make (another
+# tool's points, a layer the person added through napari itself) are left alone.
+ANNOTATION_TAG = "slice_annotator_annotation"
+
+# The display settings of a channel layer that rotate/flip carries over when it
+# has to rebuild the channel layers (see _show_reoriented_data).
+DISPLAY_SETTINGS = ("contrast_limits", "colormap", "gamma", "opacity",
+                    "visible", "blending")
+
+
+def rotate_yx(coords, k: int, shape_yx):
+    """Where pixel coordinates land after np.rot90(image, k, axes=(-2, -1)).
+
+    `coords` is an (N, D) array whose last two columns are (y, x) in the
+    image's pixel space (napari puts pixel centers on whole numbers);
+    leading columns (a section index) are kept as they are. `shape_yx` is
+    the image's (height, width) BEFORE the rotation. k follows np.rot90:
+    1 = 90 degrees counter-clockwise, -1 = clockwise, 2 = 180 degrees.
+    """
+    out = np.array(coords, dtype=float, copy=True)
+    if out.size == 0:
+        return out
+    h, w = shape_yx
+    y, x = out[:, -2].copy(), out[:, -1].copy()
+    k %= 4
+    if k == 1:      # counter-clockwise: new[i, j] = old[j, w-1-i]
+        out[:, -2], out[:, -1] = (w - 1) - x, y
+    elif k == 2:
+        out[:, -2], out[:, -1] = (h - 1) - y, (w - 1) - x
+    elif k == 3:    # clockwise: new[i, j] = old[h-1-j, i]
+        out[:, -2], out[:, -1] = x, (h - 1) - y
+    return out
+
+
+def flip_yx(coords, axis: int, shape_yx):
+    """Where pixel coordinates land after np.flip(image, axis) with axis -1
+    (left-right) or -2 (up-down). Same conventions as rotate_yx."""
+    out = np.array(coords, dtype=float, copy=True)
+    if out.size == 0:
+        return out
+    h, w = shape_yx
+    if axis == -1:
+        out[:, -1] = (w - 1) - out[:, -1]
+    elif axis == -2:
+        out[:, -2] = (h - 1) - out[:, -2]
+    return out
+
+
 class SliceAnnotatorWidget(QWidget):
     """
     Main widget for Slice Annotator napari plugin.
@@ -52,6 +102,9 @@ class SliceAnnotatorWidget(QWidget):
         self.channel_settings: List[ChannelSettings] = []
         self.channel_layers: List[napari.layers.Image] = []
         self.loader_worker: Optional[ND2LoaderWorker] = None
+        # True once the person has typed or browsed an export folder; until
+        # then the folder follows whichever file or folder was loaded last.
+        self._output_folder_chosen = False
 
         # Setup UI
         self._setup_ui()
@@ -458,6 +511,9 @@ class SliceAnnotatorWidget(QWidget):
         folder_layout = QHBoxLayout()
         self.output_folder_edit = QLineEdit()
         self.output_folder_edit.setPlaceholderText("Select output folder...")
+        # textEdited fires only for the person's own typing, never for
+        # setText, so it tells a chosen folder from one filled in for them.
+        self.output_folder_edit.textEdited.connect(self._on_output_folder_typed)
         folder_layout.addWidget(self.output_folder_edit)
 
         self.browse_output_btn = QPushButton("Browse...")
@@ -518,12 +574,52 @@ class SliceAnnotatorWidget(QWidget):
         if path.exists():
             self._load_file(path)
 
+    def _abandon_current_load(self):
+        """Stop listening to the load in progress, then cancel it.
+
+        WHY: a cancelled worker still reports back -- it emits
+        finished(False, "Loading cancelled") -- and Qt delivers that report
+        after the new load has already started. Handled as an ordinary
+        result it popped up a "Load Error" box for a load the person
+        replaced on purpose and re-enabled the load buttons while the new
+        file was still loading. The old worker's signals are disconnected
+        first, and every handler also checks that the report comes from the
+        current worker (a report already queued before the disconnect is
+        dropped there).
+        """
+        old = self.loader_worker
+        if old is None:
+            return
+        for signal in (old.progress, old.finished):
+            try:
+                signal.disconnect()
+            except (TypeError, RuntimeError):
+                pass  # nothing connected
+        if old.isRunning():
+            old.cancel()
+            old.wait()
+
+    def _start_worker(self, worker, progress_handler):
+        """Make `worker` the current load and start it.
+
+        Each signal is bound to the worker that sent it, so a report from a
+        worker that is no longer current is recognized and ignored.
+        """
+        self.loader_worker = worker
+        worker.progress.connect(partial(self._from_current_worker, worker, progress_handler))
+        worker.finished.connect(partial(self._from_current_worker, worker, self._on_load_finished))
+        worker.start()
+
+    def _from_current_worker(self, worker, handler, *args):
+        """Pass a worker's report on only if that worker is the current load."""
+        if worker is not self.loader_worker:
+            return
+        handler(*args)
+
     def _load_file(self, file_path: Path):
         """Load an ND2 file."""
-        # Cancel any existing load
-        if self.loader_worker and self.loader_worker.isRunning():
-            self.loader_worker.cancel()
-            self.loader_worker.wait()
+        # Cancel any existing load without hearing back from it
+        self._abandon_current_load()
 
         # Get options
         lazy = self.lazy_checkbox.isChecked()
@@ -543,10 +639,10 @@ class SliceAnnotatorWidget(QWidget):
         self.status_label.setText(f"Loading {file_path.name}...")
 
         # Start worker
-        self.loader_worker = ND2LoaderWorker(file_path, lazy=lazy, z_projection=z_projection)
-        self.loader_worker.progress.connect(self._on_load_progress)
-        self.loader_worker.finished.connect(self._on_load_finished)
-        self.loader_worker.start()
+        self._start_worker(
+            ND2LoaderWorker(file_path, lazy=lazy, z_projection=z_projection),
+            self._on_load_progress,
+        )
 
     def _load_folder(self, folder_path: Path):
         """Load all ND2 files from a folder as stacked tissue sections.
@@ -556,10 +652,8 @@ class SliceAnnotatorWidget(QWidget):
         """
         from mousebrain.plugin_2d.sliceatlas.napari_plugin.annotator_worker import FolderLoaderWorker
 
-        # Cancel any existing load
-        if self.loader_worker and self.loader_worker.isRunning():
-            self.loader_worker.cancel()
-            self.loader_worker.wait()
+        # Cancel any existing load without hearing back from it
+        self._abandon_current_load()
 
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)
@@ -567,10 +661,10 @@ class SliceAnnotatorWidget(QWidget):
         self.status_label.setText(f"Loading folder {folder_path.name}...")
 
         # Use max projection by default for folder loading
-        self.loader_worker = FolderLoaderWorker(folder_path, z_projection='max')
-        self.loader_worker.progress.connect(self._on_folder_load_progress)
-        self.loader_worker.finished.connect(self._on_load_finished)
-        self.loader_worker.start()
+        self._start_worker(
+            FolderLoaderWorker(folder_path, z_projection='max'),
+            self._on_folder_load_progress,
+        )
 
     def _on_load_progress(self, message: str):
         """Handle load progress update."""
@@ -629,8 +723,13 @@ class SliceAnnotatorWidget(QWidget):
         # Update channels tab
         self._update_channels_ui()
 
-        # Set default output folder
-        if not self.output_folder_edit.text():
+        # Point the export folder at what was just loaded.
+        # WHY: it used to be filled in only while empty, so after the first
+        # file every later file exported into the FIRST file's folder, beside
+        # images it does not belong with. It now follows each load, unless the
+        # person has typed or browsed a folder themselves -- that choice is
+        # kept until they clear the box.
+        if not self._output_folder_chosen:
             output_folder = self.current_file.parent if 'file_path' in metadata else self.current_file
             self.output_folder_edit.setText(str(output_folder))
 
@@ -707,14 +806,16 @@ class SliceAnnotatorWidget(QWidget):
         # Rotate on the last two axes (Y, X) regardless of data dimensions
         # Data shapes: (C, Y, X), (N_slices, C, Y, X), etc.
         axes = (-2, -1)  # Always rotate Y, X plane
+        shape_yx = self.current_data.shape[-2:]
         self.current_data = np.rot90(self.current_data, k=k, axes=axes)
 
         # Update metadata shape
         self.metadata['shape'] = self.current_data.shape
 
-        # Recreate layers with rotated data
-        self._create_channel_layers()
-        self._update_channels_ui()
+        # Move the annotations with the image, and keep every channel's
+        # display settings (see _show_reoriented_data for why).
+        self._transform_annotations(lambda c: rotate_yx(c, k, shape_yx))
+        self._show_reoriented_data()
         self._update_file_info()
 
         self.status_label.setText(f"Rotated {angle}°")
@@ -736,18 +837,105 @@ class SliceAnnotatorWidget(QWidget):
         # Y is second-to-last axis (-2), X is last axis (-1)
         if direction == 'horizontal':
             # Flip left-right = flip along X axis (last axis)
-            self.current_data = np.flip(self.current_data, axis=-1)
+            axis = -1
         elif direction == 'vertical':
             # Flip up-down = flip along Y axis (second-to-last axis)
-            self.current_data = np.flip(self.current_data, axis=-2)
+            axis = -2
         else:
             return
+        shape_yx = self.current_data.shape[-2:]
+        self.current_data = np.flip(self.current_data, axis=axis)
 
-        # Recreate layers with flipped data
-        self._create_channel_layers()
-        self._update_channels_ui()
+        # Move the annotations with the image, and keep every channel's
+        # display settings (see _show_reoriented_data for why).
+        self._transform_annotations(lambda c: flip_yx(c, axis, shape_yx))
+        self._show_reoriented_data()
 
         self.status_label.setText(f"Flipped {direction}")
+
+    def _annotation_layers(self):
+        """The Shapes/Points layers the Annotate tab made, still in the viewer."""
+        return [
+            layer for layer in self.viewer.layers
+            if isinstance(layer, (napari.layers.Shapes, napari.layers.Points))
+            and layer.metadata.get(ANNOTATION_TAG)
+        ]
+
+    def _transform_annotations(self, transform):
+        """Apply a coordinate transform to every annotation the Annotate tab made.
+
+        WHY: rotate and flip turn the image's pixels. Annotations are drawn on
+        features of the tissue; left where they were, every box, arrow and
+        label would point at the wrong place after the turn.
+        """
+        for layer in self._annotation_layers():
+            if not len(layer.data):
+                continue
+            if isinstance(layer, napari.layers.Shapes):
+                layer.data = [transform(shape) for shape in layer.data]
+            else:
+                layer.data = transform(layer.data)
+
+    def _show_reoriented_data(self):
+        """Show the rotated/flipped current_data in the EXISTING channel layers.
+
+        WHY: an orientation change does not change any pixel value, so the
+        contrast, color, gamma, opacity and visibility the person has set --
+        in the Channels tab or in napari's own layer controls -- still apply.
+        Rebuilding the layers reset all of that to defaults on every click.
+        When some channel layers are gone (closed by hand, or cleared by
+        another tool) the layers are rebuilt, but every channel whose layer
+        survived gets its own settings back; only the channels that were
+        closed come back with defaults.
+        """
+        arrays = list(self._channel_arrays())
+        layers = self.channel_layers
+        if layers and len(layers) == len(arrays) and all(
+                layer in self.viewer.layers for layer in layers):
+            for layer, array in zip(layers, arrays):
+                layer.data = array
+            return
+
+        # Rebuild path: remember what each surviving channel looked like.
+        # channel_layers[i] is channel i (they are appended in channel order).
+        kept = {}
+        for index, layer in enumerate(layers):
+            if layer in self.viewer.layers:
+                old_settings = (self.channel_settings[index]
+                                if index < len(self.channel_settings) else None)
+                kept[index] = (
+                    {name: getattr(layer, name) for name in DISPLAY_SETTINGS},
+                    old_settings,
+                )
+        self._create_channel_layers()
+        for index, (display, old_settings) in kept.items():
+            if index >= len(self.channel_layers):
+                continue
+            layer = self.channel_layers[index]
+            for name, value in display.items():
+                setattr(layer, name, value)
+            if old_settings is not None and index < len(self.channel_settings):
+                self.channel_settings[index] = old_settings
+        self._update_channels_ui()
+
+    def _channel_arrays(self):
+        """Yield one array per channel layer of current_data.
+
+        Data shapes:
+        - 4D (N_slices or Z, C, Y, X): one (N, Y, X) array per channel
+        - 3D (C, Y, X): one (Y, X) array per channel
+        - 2D (Y, X): a single channel
+        """
+        data = self.current_data
+        n_channels = self.metadata.get('n_channels', 1)
+        if data.ndim == 4:
+            for i in range(n_channels):
+                yield data[:, i, :, :]
+        elif data.ndim == 3:
+            for i in range(n_channels):
+                yield data[i, :, :]
+        else:
+            yield data
 
     # =========================================================================
     # Channel layer management
@@ -1074,6 +1262,7 @@ class SliceAnnotatorWidget(QWidget):
             face_color=face_color,
             ndim=ndim,
         )
+        layer.metadata[ANNOTATION_TAG] = True  # moves with rotate/flip
 
         # Set the mode for the shape type
         layer.mode = 'add_' + shape_type if shape_type in ['rectangle', 'ellipse', 'polygon', 'line', 'path'] else 'add_rectangle'
@@ -1151,6 +1340,8 @@ class SliceAnnotatorWidget(QWidget):
             },
         )
 
+        layer.metadata[ANNOTATION_TAG] = True  # moves with rotate/flip
+
         # Set to add rectangles
         layer.mode = 'add_rectangle'
 
@@ -1223,6 +1414,8 @@ class SliceAnnotatorWidget(QWidget):
             },
         )
 
+        layer.metadata[ANNOTATION_TAG] = True  # moves with rotate/flip
+
         # Set mode to add points
         layer.mode = 'add'
 
@@ -1281,6 +1474,16 @@ class SliceAnnotatorWidget(QWidget):
         folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
         if folder:
             self.output_folder_edit.setText(folder)
+            self._output_folder_chosen = True
+
+    def _on_output_folder_typed(self, text: str):
+        """The person typed in the export folder box.
+
+        A typed folder is their choice and is kept across loads; clearing the
+        box hands the folder back to the automatic choice (the loaded file's
+        folder, filled in at the next load).
+        """
+        self._output_folder_chosen = bool(text.strip())
 
     def _on_export(self):
         """Handle export button click."""

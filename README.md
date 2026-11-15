@@ -65,6 +65,48 @@ that produced it. The registry lives inside the pipeline data folder:
   what is there, how it was produced and whether it is still current.
 - Inspect a registry: `mousebrain-registry --name <analysis> --stale --summary`.
 
+## Annotating ND2 slices (2D: BrainSlice, tab "7. Annotate")
+
+Open **Plugins → BrainTools → 2D: 1. BrainSlice** and go to the **7. Annotate**
+tab. It has its own tabs: Load, Channels, Annotate, Export.
+
+**Loading.** Click **Load ND2 File...** (one file) or **Load Folder...** (every
+`.nd2` in a folder, one tissue section per file). While a file loads, the load
+button is grayed out and a progress bar runs.
+
+- *Changing your mind mid-load:* starting another load (for example by
+  double-clicking a file under Recent Files) cancels the one that is running.
+  The cancelled load is dropped silently: no error box appears, and the load
+  button stays grayed out until the NEW file has finished loading. The window
+  may pause briefly while the old load stops.
+- *A file that really fails to load* still shows a "Load Error" box with the
+  reason, and the buttons come back on so you can try another file.
+
+**Turning the image (Load tab, Transform: Rotate / Flip).** The rotate and
+flip buttons turn every channel of every section. Anything you drew with the
+**Annotate** tab's buttons (shapes, arrows, text boxes, text labels) turns
+with the image, so each annotation stays on the feature it marks. Your
+channel settings are kept: contrast, color, gamma, opacity and which
+channels are hidden do not change when you rotate or flip, whether you set
+them in the Channels tab or in napari's own layer controls.
+
+- If you closed one of the channel layers, rotate/flip brings it back. The
+  channels you did not close keep their settings; the one you closed comes
+  back with the default settings.
+- Only layers made with the Annotate tab's buttons move. A shapes or points
+  layer you added through napari's own "new layer" buttons is not touched;
+  draw annotations with the Annotate tab if they must follow the image.
+
+**Where exports go (Export tab, Output).** Each time you load a file, the
+output folder is set to that file's own folder (for **Load Folder...**, the
+folder you loaded). Loading another file moves it to that file's folder, so
+pictures never land beside a different file's images.
+
+- To export somewhere else, type a folder into the box or click
+  **Browse...**. Your folder is then kept for every later load.
+- To go back to "the loaded file's folder", empty the box; the next load
+  fills it in again.
+
 ## Troubleshooting
 
 If something breaks, re-run the installer:
