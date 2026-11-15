@@ -996,11 +996,58 @@ def test_invalidate_leaves_a_damaged_manifest_where_it_is(tmp_path):
 # An approved method per analysis; analyses with none are never "stale"
 # ---------------------------------------------------------------------------
 
+STEP6 = Path(__file__).resolve().parents[1] / "scripts" / "pipeline" / "6_count_regions.py"
+
 
 def _stale_report(root, name, capsys):
     capsys.readouterr()
     assert ar.main(["--name", name, "--root", str(root), "--stale"]) == 0
     return capsys.readouterr().out
+
+
+def test_a_3d_region_count_is_not_reported_stale_against_the_slice_method(
+        tmp_path, monkeypatch, capsys):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("count_step_for_registry", STEP6)
+    step6 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(step6)
+
+    root = tmp_path / "Registry"
+    monkeypatch.setenv("MOUSEBRAIN_REGISTRY_ROOT", str(root))
+    brain = tmp_path / "101_PROJ_01_02_2p5x_z5"
+    out = brain / "6_Region_Analysis" / "cell_counts_by_region.csv"
+    out.parent.mkdir(parents=True)
+    out.write_text("region,count\nAAA,1\n")
+    step6.register_counts(brain, out, 1, {"atlas": "atlas_x", "ball_xy": "6"},
+                          {"exp_id": "det_1", "classification_exp_id": "cla_1", "model": "m"},
+                          brain / "5_Classified_Cells" / "cells.xml",
+                          brain / "3_Registered_Atlas")
+
+    manifest = json.loads((root / "exports" / step6.REGISTRY_ANALYSIS / "registry.json")
+                          .read_text(encoding="utf-8"))
+    assert brain.name in manifest["entries"]
+    assert manifest["approved_method_hash"] is None  # nothing to be stale against
+    report = _stale_report(root, step6.REGISTRY_ANALYSIS, capsys)
+    assert "stale entries" not in report
+    assert "No approved method is declared" in report
+
+
+def test_an_orientation_check_is_not_reported_stale_against_the_slice_method(
+        tmp_path, monkeypatch, capsys):
+    from mousebrain import orientation_check as oc
+
+    root = tmp_path / "Registry"
+    monkeypatch.setenv("MOUSEBRAIN_REGISTRY_ROOT", str(root))
+    png = tmp_path / "QC_orientation_check.png"
+    png.write_bytes(b"png")
+    summary = {"png": str(png), "declared_orientation": "iar", "atlas": "atlas_x",
+               "atlas_orientation": "asr", "brain_extent_mm": [1, 2, 3],
+               "atlas_extent_mm": [1, 2, 3], "sampled_resolution_um": 25}
+    oc.register_check("101_PROJ_01_02_2p5x_z5", summary, tmp_path / "ch0")
+
+    report = _stale_report(root, oc.REGISTRY_ANALYSIS, capsys)
+    assert "Total entries: 1" in report
+    assert "stale entries" not in report
 
 
 def test_an_analysis_named_in_the_approved_file_is_judged_by_its_own_method(

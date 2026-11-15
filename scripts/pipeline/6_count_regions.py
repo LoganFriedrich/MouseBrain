@@ -749,7 +749,12 @@ def register_counts(pipeline_folder: Path, output_csv: Path, total_cells: int,
                        "classification_exp_id": (prov or {}).get("classification_exp_id", ""),
                        "model": (prov or {}).get("model", ""),
                        "script_version": SCRIPT_VERSION})
-        AnalysisRegistry(analysis_name=REGISTRY_ANALYSIS).register_output(
+        # follows_approved_method=False: the counts record the detection and
+        # classification settings they were made with; the shared approved
+        # method is the slice-analysis parameters and does not describe them,
+        # so judging them by it would report every brain as stale.
+        AnalysisRegistry(analysis_name=REGISTRY_ANALYSIS,
+                         follows_approved_method=False).register_output(
             sample=pipeline_folder.name, category="region_counts", files=files,
             results={"total_cells": int(total_cells or 0)},
             method_params=method,

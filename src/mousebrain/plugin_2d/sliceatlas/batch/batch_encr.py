@@ -563,7 +563,10 @@ def main():
     # Instantiate AnalysisRegistry once for the batch run
     try:
         from mousebrain.analysis_registry import AnalysisRegistry, get_approved_method
-        registry = AnalysisRegistry(analysis_name="ENCR_Detection")
+        # Declared as following the shared approved method: its entries are
+        # judged by it unless approved_method.json names this analysis.
+        registry = AnalysisRegistry(analysis_name="ENCR_Detection",
+                                    follows_approved_method=True)
     except Exception as _reg_init_err:
         registry = None
         print(f"  Registry warning: {_reg_init_err}")
@@ -609,7 +612,12 @@ def main():
                         'positive_fraction': result.get('positive_fraction', 0),
                         'background': result.get('background', 0),
                     },
-                    method_params=get_approved_method(),
+                    # The method THIS analysis is judged by (its own entry in
+                    # approved_method.json if the lab gave it one): recording
+                    # the shared method here while the header holds a
+                    # per-analysis one would leave every entry stale forever.
+                    method_params=(registry.approved_method()
+                                   or get_approved_method(registry.registry_root)),
                     source_files={'nd2': str(nd2_path)},
                 )
             except Exception as _reg_err:
