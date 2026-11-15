@@ -58,7 +58,12 @@ MouseBrain_Pipeline/                      # data only: <CONNECTOME_ROOT>/Tissue/
 `Registry/` is where this tool records what it produced and how (method
 parameters, source files, timestamp, staleness). Its location can be overridden
 with `MOUSEBRAIN_REGISTRY_ROOT`. The tool never pushes results out; an
-integrator may pull from `Registry/`.
+integrator may pull from `Registry/`. Each manifest's header carries the
+approved method the analysis is judged by, refreshed on every write
+(`approved_method_hash` is null for an analysis with none, such as the 3D
+counts and orientation checks); writes hold `registry.json.lock`; a damaged
+manifest is set aside, never emptied. See
+[ANALYSIS_REGISTRY.md](ANALYSIS_REGISTRY.md).
 
 ---
 

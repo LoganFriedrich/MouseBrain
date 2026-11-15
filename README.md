@@ -52,7 +52,14 @@ that produced it. The registry lives inside the pipeline data folder:
   `MOUSEBRAIN_REGISTRY_ROOT` to put the registry somewhere else. If neither
   resolves, nothing is written and the tool stops with a message naming them.
 - `MOUSEBRAIN_APPROVED_METHOD` may point to a JSON file of method parameters
-  instead of `approved_method.json` under the registry root.
+  instead of `approved_method.json` under the registry root. The file may give
+  each analysis its own approved method; analyses that record their own
+  parameters (3D region counts, orientation checks) have none unless it names
+  them, and are never reported stale. After changing it, run
+  `mousebrain-registry --name <analysis> --refresh-approved` for each analysis.
+- Two machines may register at once (a lock file serialises the writes); a
+  damaged manifest is set aside as `registry.json.unreadable-<time>`, never
+  emptied. Full guide: [docs/pipeline/ANALYSIS_REGISTRY.md](docs/pipeline/ANALYSIS_REGISTRY.md).
 - MouseBrain never pushes results anywhere. An integrator (a lab database such
   as mousedb, for example) may pull from this folder; the manifest tells it
   what is there, how it was produced and whether it is still current.

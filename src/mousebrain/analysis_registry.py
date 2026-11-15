@@ -27,7 +27,13 @@ Layout (rooted at the registry root, by default <pipeline root>/Registry/)
     +-- figures/{analysis_name}/       Figures, organised by animal/region
     |   +-- {animal}/{region}/         (created on the first figure write)
     +-- logs/{analysis_name}.log       Audit trail, one line per event
-    +-- approved_method.json           Optional: a lab's approved parameters
+    +-- approved_method.json           Optional: a lab's approved parameters,
+                                       flat or per analysis (approved_method_for)
+
+    Each manifest's header records the approved method its analysis is judged
+    by, refreshed on every write; every write holds registry.json.lock; a
+    manifest that cannot be parsed is set aside, never emptied. Operator guide:
+    docs/pipeline/ANALYSIS_REGISTRY.md.
 
     Invalidated outputs are moved to <their folder>/_archived/<timestamp>/.
     Paths recorded in registry.json are RELATIVE to the registry root, so the
@@ -1301,6 +1307,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             "  mousebrain-registry --name ENCR_Detection --stale\n"
             "  mousebrain-registry --name ENCR_Detection --summary\n"
             "  mousebrain-registry --name ENCR_Detection --root /path/to/Registry\n"
+            "  mousebrain-registry --name ENCR_Detection --refresh-approved --stale\n"
+            "\n"
+            "Guide: docs/pipeline/ANALYSIS_REGISTRY.md\n"
         ),
     )
     parser.add_argument(
