@@ -23,7 +23,7 @@ from mousebrain.analysis_registry import (
 )
 
 
-SAMPLE = "E02_01_S13_DCN"
+SAMPLE = "E01_01_S13_DCN"
 
 
 @pytest.fixture(autouse=True)
@@ -128,7 +128,7 @@ def test_register_output_data_file_goes_to_exports_sample_dir(tmp_path):
     assert data["analysis_name"] == "A"
     entry = data["entries"][SAMPLE]
     assert entry["is_current"] is True
-    assert entry["animal"] == "E02_01"
+    assert entry["animal"] == "E01_01"
     assert entry["region"] == "DCN"
     assert entry["method_hash"] == AnalysisRegistry.get_method_hash(DEFAULT_METHOD)
     rel = entry["outputs"]["measurements"]
@@ -150,7 +150,7 @@ def test_register_output_figure_goes_to_figures_animal_region_dir(tmp_path):
         method_params=DEFAULT_METHOD,
     )
 
-    expected = root / "figures" / "A" / "E02_01" / "DCN" / fig_file.name
+    expected = root / "figures" / "A" / "E01_01" / "DCN" / fig_file.name
     assert dest["figure"] == expected
     assert expected.is_file()
 
@@ -233,13 +233,13 @@ def test_invalidate_archives_files_and_flags_entry(tmp_path):
 def test_invalidate_all(tmp_path):
     csv_file, _ = _make_source_files(tmp_path)
     reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
-    for sample in ("E02_01_S13_DCN", "E02_01_S14_DCN"):
+    for sample in ("E01_01_S13_DCN", "E01_01_S14_DCN"):
         reg.register_output(
             sample=sample, category="detection",
             files={"measurements": str(csv_file)}, results={},
             method_params=DEFAULT_METHOD,
         )
-    assert sorted(reg.invalidate()) == ["E02_01_S13_DCN", "E02_01_S14_DCN"]
+    assert sorted(reg.invalidate()) == ["E01_01_S13_DCN", "E01_01_S14_DCN"]
     assert all(not e["is_current"] for e in reg.get_all_entries().values())
 
 
@@ -333,7 +333,7 @@ def test_register_roi_counts_accepts_row_list(tmp_path):
         source_files={"nd2": str(tmp_path / f"{SAMPLE}.nd2")},
     )
 
-    assert counts_path == tmp_path / "exports" / "A" / "E02_01" / "DCN" / f"{SAMPLE}_roi_counts.csv"
+    assert counts_path == tmp_path / "exports" / "A" / "E01_01" / "DCN" / f"{SAMPLE}_roi_counts.csv"
     lines = counts_path.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "roi,total,positive,negative,fraction"
     assert lines[1] == "Left,12,11,1,0.9167"

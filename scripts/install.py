@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Connectome-Tools Installer
+MouseBrain Installer
 
 Automated installation script that sets up the complete pipeline environment.
 
@@ -296,7 +296,7 @@ def create_config():
 # =============================================================================
 
 def main():
-    print_header("Connectome-Tools Installer")
+    print_header("MouseBrain Installer")
     print("\nThis will install the complete BrainGlobe pipeline environment.")
     print(f"Environment name: {ENV_NAME}")
     print(f"Python version: {PYTHON_VERSION}")

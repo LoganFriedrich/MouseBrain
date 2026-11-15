@@ -40,7 +40,7 @@ def main():
     parser.add_argument(
         "--crop",
         metavar="BRAIN",
-        help="Launch manual crop tool for specified brain (e.g., 349_CNT_01_02_1p625x_z4)"
+        help="Launch manual crop tool for specified brain (e.g., 001_CNT_01_01_1p625x_z4)"
     )
 
     # Subcommands
@@ -389,7 +389,7 @@ def launch_manual_crop(brain_name):
         from pathlib import Path
         debug("napari imported")
 
-        # Use config-detected BRAINS_ROOT (handles Y: drive preference internally)
+        # Use config-detected BRAINS_ROOT (resolves the configured root internally)
         from mousebrain import BRAINS_ROOT
         debug(f"BRAINS_ROOT from config: {BRAINS_ROOT}")
 

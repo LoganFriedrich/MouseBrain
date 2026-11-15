@@ -21,13 +21,13 @@ Usage as a module:
     from mousebrain.tracker import ExperimentTracker
 
     tracker = ExperimentTracker()
-    exp_id = tracker.log_detection(brain="349_CNT_01_02_1p625x_z4", ...)
+    exp_id = tracker.log_detection(brain="001_CNT_01_01_1p625x_z4", ...)
     tracker.update_status(exp_id, status="completed", cells_found=1234)
     tracker.rate_experiment(exp_id, rating=4, notes="Good results")
 
 Usage as CLI:
     python -m mousebrain.tracker                    # Show recent runs
-    python -m mousebrain.tracker --search "349"     # Search by brain
+    python -m mousebrain.tracker --search "001"     # Search by brain
     python -m mousebrain.tracker --stats            # Show statistics
 """
 
@@ -63,9 +63,8 @@ CSV_COLUMNS = [
     "created_at",
 
     # Data Hierarchy (auto-filled from brain name)
-    # See 2_Data_Summary/DATA_HIERARCHY.md for documentation
-    "brain_id",       # e.g., "349" - individual tissue sample
-    "subject",        # e.g., "CNT_01_02" - the animal/unit of study
+    "brain_id",       # e.g., "001" - individual tissue sample
+    "subject",        # e.g., "CNT_01_01" - the animal/unit of study
     "cohort",         # e.g., "CNT_01" - group processed together
     "project_code",   # e.g., "CNT" - umbrella project code
     "project_name",   # e.g., "Connectome" - human-readable project name
@@ -168,9 +167,9 @@ CSV_COLUMNS = [
     # The rest of the detection settings (added 2026-10-29). A detection method
     # is eight settings, not the four above: before these columns existed, a
     # Paradigm Best run carried only half its method, and step 4 filled the rest
-    # with cellfinder's defaults -- a different method (re-detecting 100 planes
-    # of the settled run that way found 533 of its 1466 cells at the same
-    # positions; with these four restored, all 1466). They sit at the END so a
+    # with cellfinder's defaults -- a different method (re-detecting part of a
+    # settled run that way found only about a third of its cells at the same
+    # positions; with these four restored, all of them). They sit at the END so a
     # file written before them gains them without any existing column moving.
     "det_ball_overlap",  # ball_overlap_fraction
     "det_soma_spread",   # soma_spread_factor
@@ -245,11 +244,11 @@ class ExperimentTracker:
         REFUSES to create a new one at an unconfigured location. The tracker is the
         record of every calibration run ever done, and a second empty copy is the
         worst possible failure here: it looks exactly like a working tracker, later
-        runs append to it, and the real file -- 186 runs on this machine -- is
+        runs append to it, and the real file is
         quietly orphaned while everything appears to work. Reading an unconfigured
         path just finds nothing, which is obvious; writing one is not.
 
-        Found on 2026-10-07, when an unconfigured run created a fresh empty tracker
+        This guards against an unconfigured run creating a fresh empty tracker
         in the working directory (see mousebrain.config._get_root_path). The path
         sentinel is now harmless on its own; this is the second line of defence,
         because the tracker is the file that must never be silently forked.
@@ -414,8 +413,8 @@ class ExperimentTracker:
 
         Rows are APPENDED with the current column list, so appending to a file
         whose header is shorter would shift every later row against its header
-        -- values landing under the wrong names, which happened to this file
-        once already (2026-10-23, the row-realign repair). The header is brought
+        -- values landing under the wrong names, which has happened to a tracker
+        before and needed a repair. The header is brought
         up to date, every existing value kept under its own name, before any
         row is written. Written to a temporary file and swapped in, so a failure
         part-way leaves the original untouched.
@@ -451,9 +450,9 @@ class ExperimentTracker:
         """
         Auto-populate hierarchy fields from brain name.
 
-        Parses brain names like "349_CNT_01_02_1p625x_z4" into:
-          - brain_id: 349
-          - subject: CNT_01_02
+        Parses brain names like "001_CNT_01_01_1p625x_z4" into:
+          - brain_id: 001
+          - subject: CNT_01_01
           - cohort: CNT_01
           - project_code: CNT
           - project_name: Connectome
@@ -1478,7 +1477,7 @@ For PRODUCTION results, see region_counts.csv.
 
 Examples:
     python -m mousebrain.tracker                    # Show recent runs
-    python -m mousebrain.tracker --search "349"     # Search by brain
+    python -m mousebrain.tracker --search "001"     # Search by brain
     python -m mousebrain.tracker --type detection   # Filter by type
     python -m mousebrain.tracker --stats            # Show statistics
     python -m mousebrain.tracker --best detection   # Best detection runs

@@ -118,7 +118,7 @@ class DeepSliceWrapper:
             Extract section number from various filename formats.
 
             Handles:
-              - E02_01_S1.png -> 1
+              - E01_01_S1.png -> 1
               - slice_s001.png -> 1
               - image_S03.tif -> 3
               - brain_section_12.nd2 -> 12
@@ -126,7 +126,7 @@ class DeepSliceWrapper:
             import re
             stem = Path(filename).stem
 
-            # Pattern 1: S{N} or s{N} (e.g., E02_01_S1, slice_s001)
+            # Pattern 1: S{N} or s{N} (e.g., E01_01_S1, slice_s001)
             match = re.search(r'[Ss](\d+)', stem)
             if match:
                 return int(match.group(1))

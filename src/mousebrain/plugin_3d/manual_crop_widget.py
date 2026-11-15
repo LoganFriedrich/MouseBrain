@@ -389,7 +389,7 @@ class ManualCropWidget(QWidget):
 
         brains_found = []
 
-        # Use config-detected BRAINS_ROOT (handles Y: drive preference internally)
+        # Use config-detected BRAINS_ROOT (resolves the configured root internally)
         scan_path = DEFAULT_BRAINGLOBE_ROOT
 
         print(f"[{time.time()-t0:.2f}s] Scanning brains in: {scan_path}")

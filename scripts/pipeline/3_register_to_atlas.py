@@ -28,7 +28,7 @@ HOW TO RUN
 Open Anaconda Prompt, then:
 
     conda activate brainglobe-env
-    cd <your-repo-path>/3_Nuclei_Detection/util_Scripts
+    cd <path to this repository>/scripts/pipeline
     python 3_register_to_atlas.py
 
 The script will show an interactive menu of available brains.
@@ -39,11 +39,11 @@ INTERACTIVE MENU
 When you run the script, you'll see something like:
 
     [READY TO REGISTER]
-      1. 349_CNT_01_02/349_CNT_01_02_1p625x_z4
-      2. 350_SCI_02_05/350_SCI_02_05_1p9x_z3p37
+      1. 001_CNT_01_01/001_CNT_01_01_1p625x_z4
+      2. 004_SCI_02_05/004_SCI_02_05_1p9x_z3p37
 
     [ALREADY REGISTERED]
-      3. 348_CNT_01_01/348_CNT_01_01_1p625x_z4
+      3. 003_CNT_01_03/003_CNT_01_03_1p625x_z4
 
     Options:
       - Enter numbers to process (e.g., '1' or '1,2')
@@ -171,7 +171,7 @@ def check_brainreg_available():
         print("    python 3_register_to_atlas.py")
         print()
         print("Option 2 - Run directly with brainglobe Python:")
-        print("    G:\\Program_Files\\Conda\\envs\\brainglobe-env\\python.exe 3_register_to_atlas.py")
+        print("    <conda root>\\envs\\brainglobe-env\\python.exe 3_register_to_atlas.py")
         print()
         print(f"Current Python: {sys.executable}")
         print()
@@ -205,7 +205,7 @@ DEFAULT_ATLAS = "allen_mouse_10um"
 
 # CPUs to leave free (for servers with many cores)
 # IMPORTANT: Windows limits ProcessPoolExecutor to 61 workers max
-# On a 104-core machine, we need at least 43 cores free (104-61=43)
+# On a machine with more than 61 cores, at least (cores - 61) must stay free
 # Using 50 to be safe and leave resources for other processes
 DEFAULT_N_FREE_CPUS = 50  # Leave 50 cores free to stay under Windows 61-worker limit
 

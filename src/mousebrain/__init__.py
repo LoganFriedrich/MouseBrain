@@ -1,5 +1,5 @@
 """
-BrainTools - Connectome Tissue Analysis Tools
+BrainTools - Tissue Analysis Tools
 
 A unified package for BrainGlobe-based cell detection, registration,
 and analysis workflows.

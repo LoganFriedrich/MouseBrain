@@ -84,7 +84,7 @@ class SetupWizard(QWizard):
         <h3>What you need:</h3>
         <ul>
             <li>An <b>.ims file</b> from Imaris with your brain data</li>
-            <li>The file should be named like: <code>349_CNT_01_02_1.625x_z4.ims</code></li>
+            <li>The file should be named like: <code>001_CNT_01_01_1.625x_z4.ims</code></li>
         </ul>
 
         <h3>Naming convention:</h3>
@@ -147,7 +147,7 @@ class SetupWizard(QWizard):
             self.file_info.setText(f"Filename: {name}")
 
             # Try to extract brain name
-            # Expected: 349_CNT_01_02_1.625x_z4
+            # Expected: 001_CNT_01_01_1.625x_z4
             self.brain_name = name.replace(".", "p")  # dots to p for folders
 
     def create_naming_page(self):
@@ -159,12 +159,12 @@ class SetupWizard(QWizard):
 
         layout.addWidget(QLabel("Mouse folder name:"))
         self.mouse_edit = QLineEdit()
-        self.mouse_edit.setPlaceholderText("e.g., 349_CNT_01_02")
+        self.mouse_edit.setPlaceholderText("e.g., 001_CNT_01_01")
         layout.addWidget(self.mouse_edit)
 
         layout.addWidget(QLabel("Pipeline folder name:"))
         self.pipeline_edit = QLineEdit()
-        self.pipeline_edit.setPlaceholderText("e.g., 349_CNT_01_02_1p625x_z4")
+        self.pipeline_edit.setPlaceholderText("e.g., 001_CNT_01_01_1p625x_z4")
         layout.addWidget(self.pipeline_edit)
 
         layout.addWidget(QLabel(""))
@@ -895,7 +895,7 @@ class PipelineDashboard(QWidget):
                 except:
                     pass
 
-        # Try to parse from brain name (e.g., 349_CNT_01_02_1p625x_z4)
+        # Try to parse from brain name (e.g., 001_CNT_01_01_1p625x_z4)
         name = self.current_brain.name
         parts = name.split("_")
 
@@ -942,7 +942,7 @@ class PipelineDashboard(QWidget):
                 brainreg_w.y_pixel_um.value = metadata['voxel_xy']
                 brainreg_w.x_pixel_um.value = metadata['voxel_xy']
 
-            # Set default orientation (posterior-superior-left for our data)
+            # Set default orientation (posterior-superior-left)
             brainreg_w.data_orientation.value = "psl"
 
             # Set output folder if brain is selected

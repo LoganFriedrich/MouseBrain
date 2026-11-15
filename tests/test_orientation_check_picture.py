@@ -64,7 +64,7 @@ def test_the_stack_is_read_at_about_the_atlas_resolution(tmp_path):
 
 
 def _brain(tmp_path, orientation="iar"):
-    p = tmp_path / "401_PROJ_01_02_1p625x_z4"
+    p = tmp_path / "101_PROJ_01_02_1p625x_z4"
     stack(p / "1_Extracted_Full" / "ch1")
     stack(p / "1_Extracted_Full" / "ch0")
     (p / "1_Extracted_Full" / "metadata.json").write_text(json.dumps({

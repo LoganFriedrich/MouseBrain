@@ -167,7 +167,7 @@ cellfinder uses a 3D ball (sphere) filter approach:
 
 Detection always uses the **settled method** for the brain's imaging setup: the
 run a person marked **Paradigm Best** in Setup & Tuning for brains with the same
-magnification and Z-step (`349_CNT_01_02_1p625x_z4` -> setup `1p625x_z4`). The
+magnification and Z-step (`001_CNT_01_01_1p625x_z4` -> setup `1p625x_z4`). The
 tracker stores all eight settings of that run, and step 4, the Pipeline
 Dashboard and Setup & Tuning all read them from there
 (`ExperimentTracker.get_paradigm_detection_settings`). With no Paradigm Best run
@@ -329,7 +329,7 @@ Brain names encode experimental hierarchy:
 
 | Format | Example | Parsed As |
 |--------|---------|-----------|
-| Standard | `349_CNT_01_02_1p625x_z4` | brain=349, project=CNT, cohort=01, subject=02, mag=1.625x, zstep=4µm |
+| Standard | `001_CNT_01_01_1p625x_z4` | brain=349, project=CNT, cohort=01, subject=02, mag=1.625x, zstep=4µm |
 | Paradigm | `1p625x_z4` | Imaging paradigm (magnification + Z-step) |
 
 The paradigm is used to retrieve best settings across brains with identical imaging parameters.

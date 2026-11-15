@@ -1,6 +1,6 @@
 # MouseBrain
 
-Unified package for Connectome tissue analysis tools.
+Unified package for whole-brain (3D cleared) and slice (2D) tissue analysis tools.
 
 ## Installation
 

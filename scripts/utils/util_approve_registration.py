@@ -10,8 +10,8 @@ registering the brain again needs a new approval, and an approval written
 before approvals recorded their registration does not count.
 
 Usage:
-    python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4
-    python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4 --view
+    python util_approve_registration.py --brain 001_CNT_01_01_1p625x_z4
+    python util_approve_registration.py --brain 001_CNT_01_01_1p625x_z4 --view
 
 The script will:
 1. Show you the QC images
@@ -126,13 +126,13 @@ def main():
         epilog="""
 Examples:
   # Review QC and approve
-  python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4
+  python util_approve_registration.py --brain 001_CNT_01_01_1p625x_z4
 
   # Just view QC images without approving
-  python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4 --view
+  python util_approve_registration.py --brain 001_CNT_01_01_1p625x_z4 --view
 
   # Check approval status
-  python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4 --status
+  python util_approve_registration.py --brain 001_CNT_01_01_1p625x_z4 --status
         """
     )
 

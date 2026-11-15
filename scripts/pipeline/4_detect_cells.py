@@ -428,7 +428,7 @@ def run_cellfinder_detect(
         Windows WaitForMultipleObjects allows max 63 handles. If
         (cpu_count - n_free_cpus) > 63, cellfinder crashes with:
             "ValueError: need at most 63 handles, got a sequence of length N"
-        On machines with many CPUs (e.g. 104), n_free_cpus MUST be set high
+        On machines with many CPUs (more than 63), n_free_cpus MUST be set high
         enough to keep the worker pool under 63. This is enforced below.
     """
     # Import cellfinder Python API

@@ -5,7 +5,7 @@ util_create_training_cubes.py - Extract training cubes from curated XML coordina
 Creates BrainGlobe/cellfinder training data from curated cell/non-cell coordinates.
 
 Usage:
-    python util_create_training_cubes.py --brain 349_CNT_01_02_1p625x_z4 \
+    python util_create_training_cubes.py --brain 001_CNT_01_01_1p625x_z4 \
         --cells curated_cells_20260109_232332.xml \
         --non-cells curated_non_cells_20260109_232247.xml
 
@@ -311,10 +311,10 @@ def main():
         epilog="""
 Examples:
   # Using default paths (looks for curated XMLs in 5_Classified_Cells)
-  python util_create_training_cubes.py --brain 349_CNT_01_02_1p625x_z4
+  python util_create_training_cubes.py --brain 001_CNT_01_01_1p625x_z4
 
   # With explicit XML paths
-  python util_create_training_cubes.py --brain 349_CNT_01_02_1p625x_z4 \\
+  python util_create_training_cubes.py --brain 001_CNT_01_01_1p625x_z4 \\
       --cells curated_cells_20260109_232332.xml \\
       --non-cells curated_non_cells_20260109_232247.xml
 """

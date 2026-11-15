@@ -127,7 +127,7 @@ widget's buttons (registration QC, crop optimisation, pipeline comparison,
 region counting) and `batch_process.py` find each script by name beside the
 installed code, so they always run the version that is installed. To run one
 by hand, run it from its folder, e.g.
-`python scripts/utils/util_registration_qc.py --brain 349_CNT_01_02_1p625x_z4`.
+`python scripts/utils/util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4`.
 
 (Before the reorganisation the scripts were copied into the pipeline's
 `3D_Cleared/util_Scripts/`. That folder is data, is empty now, and nothing runs
@@ -177,7 +177,7 @@ in the archive. A run that fails leaves the previous file where it was.
 python 5_classify_cells.py
 
 # With specific model
-python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4 --model path/to/model.h5
+python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --model path/to/model.h5
 ```
 
 **The pre-filter (on unless `--no-prefilter`).** Before classifying, step 5
@@ -202,7 +202,7 @@ classification made before that date went through that wrong pre-filter.
 python 6_count_regions.py
 
 # Process specific brain
-python 6_count_regions.py --brain 349_CNT_01_02_1p625x_z4
+python 6_count_regions.py --brain 001_CNT_01_01_1p625x_z4
 
 # Process all pending
 python 6_count_regions.py --all
@@ -244,7 +244,7 @@ python util_experiments.py
 
 # Quick commands
 python util_experiments.py recent 20
-python util_experiments.py search "349"
+python util_experiments.py search "001"
 python util_experiments.py best detection
 python util_experiments.py stats
 ```
@@ -252,7 +252,7 @@ python util_experiments.py stats
 ### Utility: Manual Crop
 ```bash
 # Launch napari with brain loaded and crop tool ready
-python util_manual_crop.py --brain 349_CNT_01_02_1p625x_z4
+python util_manual_crop.py --brain 001_CNT_01_01_1p625x_z4
 
 # Or use the napari GUI:
 # 1. Launch napari
@@ -285,8 +285,8 @@ question.
 To draw it for any brain, or to try another orientation before re-registering:
 
 ```bash
-mousebrain-orientation-check 349_CNT_01_02_1p625x_z4
-mousebrain-orientation-check 349_CNT_01_02_1p625x_z4 --orientation sar
+mousebrain-orientation-check 001_CNT_01_01_1p625x_z4
+mousebrain-orientation-check 001_CNT_01_01_1p625x_z4 --orientation sar
 ```
 
 A trial orientation is written as `QC_orientation_check_<orientation>.png`, so the
@@ -299,16 +299,16 @@ the brain's `metadata.json` and run registration again.
 ### Utility: Registration QC & Approval
 ```bash
 # Generate QC images for existing registration
-python util_registration_qc.py --brain 349_CNT_01_02_1p625x_z4
+python util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4
 
 # Review and approve registration (REQUIRED before cell detection)
-python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4
+python util_approve_registration.py --brain 001_CNT_01_01_1p625x_z4
 
 # Just view QC without approving
-python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4 --view
+python util_approve_registration.py --brain 001_CNT_01_01_1p625x_z4 --view
 
 # Check approval status
-python util_approve_registration.py --brain 349_CNT_01_02_1p625x_z4 --status
+python util_approve_registration.py --brain 001_CNT_01_01_1p625x_z4 --status
 ```
 
 **An approval belongs to ONE registration.** Approving writes
@@ -361,10 +361,10 @@ leaves outlines with nothing under them. Neither is a registration fault.
 ### Utility: Optimize Crop
 ```bash
 # Test 0%, 10%, 20%, 30%, 40%, 50% crops
-python util_optimize_crop.py --brain 349_CNT_01_02_1p625x_z4
+python util_optimize_crop.py --brain 001_CNT_01_01_1p625x_z4
 
 # Quick mode (0%, 25%, 50%)
-python util_optimize_crop.py --brain 349_CNT_01_02_1p625x_z4 --quick
+python util_optimize_crop.py --brain 001_CNT_01_01_1p625x_z4 --quick
 ```
 
 ## Running detection before registration
@@ -536,8 +536,8 @@ run type), and each imaging setup at most one Paradigm Best:
 
 ```
 1_Brains/
-└── 349_CNT_01_02/
-    └── 349_CNT_01_02_1p625x_z4/
+└── 001_CNT_01_01/
+    └── 001_CNT_01_01_1p625x_z4/
         ├── 0_Raw_IMS/
         ├── 1_Extracted_Full/
         │   └── QC_area_profile.png       ← Auto-crop detection visualization

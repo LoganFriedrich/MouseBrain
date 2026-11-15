@@ -66,8 +66,8 @@ def parse_sample_name(sample_name: str) -> Dict[str, Any]:
     Parse sample ID into components.
 
     Expected formats:
-    - {P}{CC}_{SS}_S{N}: e.g., "E02_01_S12" (ENCR cohort 02, subject 01, slice 12)
-    - {PROJECT}_{COHORT}_{SUBJECT}_S{N}: e.g., "ENCR_02_01_S12"
+    - {P}{CC}_{SS}_S{N}: e.g., "E01_01_S12" (ENCR cohort 01, subject 01, slice 12)
+    - {PROJECT}_{COHORT}_{SUBJECT}_S{N}: e.g., "ENCR_01_01_S12"
     - {PROJECT}_{COHORT}_{SLICE}: e.g., "ENCR_001_slice_12"
     - Or any custom format (returns as-is if can't parse)
 
@@ -96,7 +96,7 @@ def parse_sample_name(sample_name: str) -> Dict[str, Any]:
         "slice_num": "",
     }
 
-    # Pattern 1: Compact format - E02_01_S12 or E02_01_S12_inset
+    # Pattern 1: Compact format - E01_01_S12 or E01_01_S12_inset
     # {P}{CC}_{SS}_S{N} where P=project letter, CC=cohort, SS=subject, N=slice
     compact_match = re.match(
         r'^([A-Z])(\d{2})_(\d{2})_S(\d+)(?:_(.+))?$',
@@ -113,7 +113,7 @@ def parse_sample_name(sample_name: str) -> Dict[str, Any]:
             result["suffix"] = compact_match.group(5)
         return result
 
-    # Pattern 2: Full format - ENCR_02_01_S12
+    # Pattern 2: Full format - ENCR_01_01_S12
     full_match = re.match(
         r'^([A-Z]+)_(\d{2})_(\d{2})_S(\d+)(?:_(.+))?$',
         sample_name
@@ -155,7 +155,7 @@ def parse_filename(filepath: str) -> Dict[str, Any]:
     Parse a filename (with or without path) into sample components.
 
     Args:
-        filepath: Path or filename (e.g., "<folder>/E02_01_S12.nd2")
+        filepath: Path or filename (e.g., "<folder>/E01_01_S12.nd2")
 
     Returns:
         Same dict as parse_sample_name, with additional 'extension' key
@@ -187,8 +187,8 @@ def get_sample_dir(sample_id: str) -> Path:
     """
     Get the data directory for a specific sample, organized by project/subject.
 
-    For a sample like "E02_01_S12_DCN", resolves to:
-        DATA_DIR / ENCR / ENCR_02_01 /
+    For a sample like "E01_01_S12_DCN", resolves to:
+        DATA_DIR / ENCR / ENCR_01_01 /
 
     Args:
         sample_id: Sample identifier (filename stem)

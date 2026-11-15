@@ -8,7 +8,7 @@ Utility: Interactive CLI for browsing, searching, comparing, and rating experime
 HOW TO USE
 ================================================================================
     python util_experiments.py                   # Interactive mode
-    python util_experiments.py search "349"      # Search by brain
+    python util_experiments.py search "001"      # Search by brain
     python util_experiments.py recent            # Show recent experiments
     python util_experiments.py best detection    # Best detection runs
     python util_experiments.py compare det_xxx det_yyy  # Compare experiments

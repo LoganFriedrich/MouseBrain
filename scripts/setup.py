@@ -1,5 +1,5 @@
 """
-Connectome Pipeline - Napari Plugin Installer
+MouseBrain Pipeline - Napari Plugin Installer
 
 Installs the napari plugin for the BrainGlobe cell detection pipeline.
 
@@ -28,11 +28,11 @@ def main():
     plugin_dir = Path(__file__).parent.parent / "src" / "mousebrain" / "plugin_3d"
 
     print("\n" + "=" * 60)
-    print("Connectome Pipeline - Napari Plugin Installer")
+    print("MouseBrain Pipeline - Napari Plugin Installer")
     print("=" * 60)
 
     if plugin_dir.exists():
-        print("\nInstalling Connectome Pipeline...")
+        print("\nInstalling MouseBrain Pipeline...")
         subprocess.run([
             sys.executable, "-m", "pip", "install", "-e", str(plugin_dir)
         ], check=True)

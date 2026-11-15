@@ -12,7 +12,7 @@ HOW TO USE
 ================================================================================
     # Monitor and run classification when done
     python util_monitor_training.py --training-dir path/to/model_output --epochs 100 \
-        --then "python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4 --model {training_dir}"
+        --then "python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --model {training_dir}"
 
     # Monitor with folder cleanup actions (one-time maintenance)
     python util_monitor_training.py --training-dir path/to/model_output --epochs 100 \
@@ -125,7 +125,7 @@ def move_flat_to_nested(brain_id: str, dry_run: bool = False) -> bool:
     If nested already exists, merges training_data (flat may have more cubes).
     Then removes the flat stub.
 
-    Example: 1_Brains/349_CNT_01_02_1p625x_z4/ → 1_Brains/349_CNT_01_02/349_CNT_01_02_1p625x_z4/
+    Example: 1_Brains/001_CNT_01_01_1p625x_z4/ → 1_Brains/001_CNT_01_01/001_CNT_01_01_1p625x_z4/
 
     Returns True if moved (or already nested), False on error.
     """
@@ -254,7 +254,7 @@ def update_tracker_csv(brain_ids: list, dry_run: bool = False) -> bool:
 
         mouse_name = '_'.join(parts[:mag_idx])
 
-        # Fix: 1_Brains\349_CNT_01_02_1p625x_z4\ → 1_Brains\349_CNT_01_02\349_CNT_01_02_1p625x_z4\
+        # Fix: 1_Brains\001_CNT_01_01_1p625x_z4\ → 1_Brains\001_CNT_01_01\001_CNT_01_01_1p625x_z4\
         old = f"1_Brains\\{brain_id}\\"
         new = f"1_Brains\\{mouse_name}\\{brain_id}\\"
         if old in content:
@@ -300,7 +300,7 @@ def main():
 Examples:
     # Monitor and auto-classify when done
     python util_monitor_training.py --training-dir path/to/output --epochs 100 \\
-        --then "python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4 --model {training_dir}"
+        --then "python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --model {training_dir}"
 
     # Monitor with folder cleanup
     python util_monitor_training.py --training-dir path/to/output --epochs 100 --cleanup-folders

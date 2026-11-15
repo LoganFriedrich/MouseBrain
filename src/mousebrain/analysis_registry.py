@@ -45,12 +45,12 @@ Usage:
 
     # Register a processed sample
     out_paths = registry.register_output(
-        sample="E02_01_S13_DCN",
+        sample="E01_01_S13_DCN",
         category="roi_analysis",
         files={"figure": "/path/to/fig.png", "roi_counts": "/path/to/counts.csv"},
         results={"n_nuclei": 13, "n_positive": 12, "positive_fraction": 0.923},
         method_params=get_approved_method(),
-        source_files={"nd2": "/path/to/E02_01_S13_DCN.nd2"},
+        source_files={"nd2": "/path/to/E01_01_S13_DCN.nd2"},
     )
 
     # Check which samples are stale after a method change
@@ -176,10 +176,10 @@ def parse_sample_id(sample: str) -> Tuple[str, str]:
     """Extract animal ID and region from a sample name.
 
     Handles formats like:
-        "E02_01_S13_DCN"     -> ("E02_01", "DCN")
-        "E02_01_S13_DCNv2"   -> ("E02_01", "DCNv2")
-        "E02_01_S17_DCN001"  -> ("E02_01", "DCN001")
-        "E02_01_S1_R3"       -> ("E02_01", "R3")
+        "E01_01_S13_DCN"     -> ("E01_01", "DCN")
+        "E01_01_S13_DCNv2"   -> ("E01_01", "DCNv2")
+        "E01_01_S17_DCN001"  -> ("E01_01", "DCN001")
+        "E01_01_S1_R3"       -> ("E01_01", "R3")
 
     The convention is: {animal_prefix}_{animal_num}_S{slice}_{region_suffix}
     where animal = first two underscore-separated parts, and region = everything
@@ -195,7 +195,7 @@ def parse_sample_id(sample: str) -> Tuple[str, str]:
     if len(parts) < 3:
         return (sample, "")
 
-    # Animal is always the first two parts (e.g. E02_01)
+    # Animal is always the first two parts (e.g. E01_01)
     animal = f"{parts[0]}_{parts[1]}"
 
     # Find the slice token (S followed by digits)
@@ -282,8 +282,8 @@ def get_database_path(
     Args:
         registry_root: Root of the registry folder.
         category: "detection" or "roi_analysis".
-        sample: Full sample ID (e.g. "E02_01_S13_DCN").
-        animal: Animal ID (e.g. "E02_01").
+        sample: Full sample ID (e.g. "E01_01_S13_DCN").
+        animal: Animal ID (e.g. "E01_01").
         region: Region string (e.g. "DCN", "DCNv2").
         analysis_name: Name of the analysis (e.g. "ENCR_ROI_Analysis").
 
@@ -537,7 +537,7 @@ class AnalysisRegistry:
         the destination paths.
 
         Args:
-            sample: Sample identifier (e.g. "E02_01_S13_DCN").
+            sample: Sample identifier (e.g. "E01_01_S13_DCN").
             category: "detection" or "roi_analysis".
             files: Dict mapping output type to source file path.
                    e.g. {"figure": "/path/to/fig.png",
@@ -630,7 +630,7 @@ class AnalysisRegistry:
         """Register ROI-level counts and update the per-region summary CSV.
 
         Args:
-            sample: Sample identifier (e.g. "E02_01_S13_DCN").
+            sample: Sample identifier (e.g. "E01_01_S13_DCN").
             region: Brain region (e.g. "DCN"). Used for the summary CSV name.
             roi_results: Dict mapping ROI name -> count dict.
                          e.g. {"Left": {"total": 12, "positive": 11,

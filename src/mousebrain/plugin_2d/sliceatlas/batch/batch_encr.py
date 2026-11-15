@@ -36,7 +36,7 @@ How background_mean works:
 The parameters a lab has approved for a project are recorded with the analysis
 registry (mousebrain.analysis_registry.get_approved_method) and by marking a
 tracker run as best; this script reads those unless --ignore-tracker is given.
-Keep the reasoning for a method change in the lab's own method log, not here.
+Keep the reasoning for a method change in your own method log, not here.
 """
 
 import argparse
@@ -299,7 +299,7 @@ def process_single(
     coloc_run_id = None
 
     try:
-        # Parse animal and region from filename (e.g., E02_01_S13_DCN.nd2)
+        # Parse animal and region from filename (e.g., E01_01_S13_DCN.nd2)
         stem = nd2_path.stem
         parts = stem.split('_')
         if len(parts) >= 3:

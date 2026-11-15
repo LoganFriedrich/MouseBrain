@@ -27,9 +27,9 @@ in the "non-cell" training class poison the classifier. This filter removes
 surface junk before it enters the training pipeline.
 
 Usage (CLI):
-    python -m mousebrain.prefilter --brain 357_CNT_02_08_1p625x_z4
-    python -m mousebrain.prefilter --brain 357_CNT_02_08_1p625x_z4 --surface-depth 150
-    python -m mousebrain.prefilter --brain 357_CNT_02_08_1p625x_z4 --method peripheral
+    python -m mousebrain.prefilter --brain 005_CNT_02_01_1p625x_z4
+    python -m mousebrain.prefilter --brain 005_CNT_02_01_1p625x_z4 --surface-depth 150
+    python -m mousebrain.prefilter --brain 005_CNT_02_01_1p625x_z4 --method peripheral
 """
 
 import argparse
@@ -715,16 +715,16 @@ def main():
         epilog="""
 Examples:
   # Filter candidates for a brain (auto-finds latest detection)
-  python -m mousebrain.prefilter --brain 357_CNT_02_08_1p625x_z4
+  python -m mousebrain.prefilter --brain 005_CNT_02_01_1p625x_z4
 
   # Adjust surface depth (default 100um) and extreme OOB (default 500um)
-  python -m mousebrain.prefilter --brain 357_CNT_02_08_1p625x_z4 --surface-depth 150
+  python -m mousebrain.prefilter --brain 005_CNT_02_01_1p625x_z4 --surface-depth 150
 
   # Use peripheral withdrawal method
-  python -m mousebrain.prefilter --brain 357_CNT_02_08_1p625x_z4 --method peripheral
+  python -m mousebrain.prefilter --brain 005_CNT_02_01_1p625x_z4 --method peripheral
 
   # Specify detection XML explicitly
-  python -m mousebrain.prefilter --brain 357_CNT_02_08_1p625x_z4 \\
+  python -m mousebrain.prefilter --brain 005_CNT_02_01_1p625x_z4 \\
       --candidates 4_Cell_Candidates/Detected_20260109_143022.xml
 """
     )

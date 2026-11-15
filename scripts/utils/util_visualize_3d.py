@@ -12,19 +12,19 @@ Also supports region heatmaps via brainglobe-heatmap.
 USAGE
 ================================================================================
     # Show all detected cells (default mode)
-    python util_visualize_3d.py --brain 349_CNT_01_02_1p625x_z4
+    python util_visualize_3d.py --brain 001_CNT_01_01_1p625x_z4
 
     # Heatmap of cell density by region
-    python util_visualize_3d.py --brain 349_CNT_01_02_1p625x_z4 --mode heatmap
+    python util_visualize_3d.py --brain 001_CNT_01_01_1p625x_z4 --mode heatmap
 
     # Highlight top 10 regions by cell count
-    python util_visualize_3d.py --brain 349_CNT_01_02_1p625x_z4 --mode regions --top-n 10
+    python util_visualize_3d.py --brain 001_CNT_01_01_1p625x_z4 --mode regions --top-n 10
 
     # Combined: points + top region meshes
-    python util_visualize_3d.py --brain 349_CNT_01_02_1p625x_z4 --mode combined --top-n 5
+    python util_visualize_3d.py --brain 001_CNT_01_01_1p625x_z4 --mode combined --top-n 5
 
     # Left hemisphere only, save screenshot
-    python util_visualize_3d.py --brain 349_CNT_01_02_1p625x_z4 --hemisphere left --screenshot
+    python util_visualize_3d.py --brain 001_CNT_01_01_1p625x_z4 --hemisphere left --screenshot
 
 ================================================================================
 REQUIREMENTS
@@ -734,28 +734,28 @@ def main():
         epilog="""
 Examples:
     # Interactive 3D view of all detected cells (colored by eLife group)
-    python util_visualize_3d.py --brain 349_CNT_01_02_1p625x_z4
+    python util_visualize_3d.py --brain 001_CNT_01_01_1p625x_z4
 
     # Heatmap of cell density by region
-    python util_visualize_3d.py --brain 349_CNT_01_02_1p625x_z4 --mode heatmap
+    python util_visualize_3d.py --brain 001_CNT_01_01_1p625x_z4 --mode heatmap
 
     # Show top 10 regions as transparent meshes
-    python util_visualize_3d.py --brain 349_CNT_01_02_1p625x_z4 --mode regions --top-n 10
+    python util_visualize_3d.py --brain 001_CNT_01_01_1p625x_z4 --mode regions --top-n 10
 
     # Combined: cell points + top region meshes
-    python util_visualize_3d.py --brain 349_CNT_01_02_1p625x_z4 --mode combined --top-n 5
+    python util_visualize_3d.py --brain 001_CNT_01_01_1p625x_z4 --mode combined --top-n 5
 
     # Left hemisphere only, save screenshot
-    python util_visualize_3d.py --brain 349_CNT_01_02_1p625x_z4 --hemisphere left --screenshot
+    python util_visualize_3d.py --brain 001_CNT_01_01_1p625x_z4 --hemisphere left --screenshot
 
     # Specific regions highlighted
-    python util_visualize_3d.py --brain 349_CNT_01_02_1p625x_z4 --mode regions --regions GRN RN PAG MOp5
+    python util_visualize_3d.py --brain 001_CNT_01_01_1p625x_z4 --mode regions --regions GRN RN PAG MOp5
         """
     )
 
     # Required
     parser.add_argument('--brain', '-b', required=True,
-                        help='Brain name or partial match (e.g. 349_CNT_01_02_1p625x_z4)')
+                        help='Brain name or partial match (e.g. 001_CNT_01_01_1p625x_z4)')
 
     # Mode
     parser.add_argument('--mode', '-m', default='points',

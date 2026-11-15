@@ -1,17 +1,17 @@
 """A brain must be placed where this script's own scanner then looks for it.
 
 The bug: a newly delivered .ims dropped into the brains root -- the normal way a brain
-arrives -- was placed FLAT, as <brains root>/403_CNT_05_03_1p625x_z4/, because the code
+arrives -- was placed FLAT, as <brains root>/008_CNT_04_01_1p625x_z4/, because the code
 assumed its parent directory was already the mouse folder. The scanner looks for
 mouse/pipeline/0_Raw_IMS, so the brain then vanished from the listing entirely: not
-"ready", not "needs work, just absent. A 50 GB delivery sat in the pipeline invisible
-to every later step (2026-10-07), and the flat name also collides with the
+"ready", not "needs work, just absent. The delivery sat in the pipeline invisible
+to every later step, and the flat name also collides with the
 training_data folders, which use that shape already.
 
-PANOs are a separate case: preliminary ~8 um overview scans that the pipeline does not
-use. Refusing them is correct; what was wrong was telling the operator to rename one
-into the production form, which would have pulled an 8 um volume into a pipeline
-calibrated at 4 um.
+PANOs are a separate case: preliminary low-resolution overview scans that the pipeline
+does not use. Refusing them is correct; what was wrong was telling the operator to rename
+one into the production form, which would have pulled a volume at roughly double the
+voxel size into a pipeline calibrated for production scans.
 """
 import importlib.util
 import sys
@@ -39,37 +39,37 @@ def _drop(root, name, body=b"not really an ims"):
 
 
 def test_a_newly_delivered_brain_is_nested_under_its_mouse_folder(organizer, tmp_path):
-    f = _drop(tmp_path, "403_CNT_05_03_1.625x_z4.ims")
+    f = _drop(tmp_path, "008_CNT_04_01_1.625x_z4.ims")
     ok, msg, _ = organizer.organize_ims_file(f)
     assert ok, msg
-    expected = (tmp_path / "403_CNT_05_03" / "403_CNT_05_03_1p625x_z4"
-                / "0_Raw_IMS" / "403_CNT_05_03_1.625x_z4.ims")
+    expected = (tmp_path / "008_CNT_04_01" / "008_CNT_04_01_1p625x_z4"
+                / "0_Raw_IMS" / "008_CNT_04_01_1.625x_z4.ims")
     assert expected.is_file(), "placed at %s instead" % list(tmp_path.rglob("*.ims"))
-    assert not (tmp_path / "403_CNT_05_03_1p625x_z4").exists(), (
+    assert not (tmp_path / "008_CNT_04_01_1p625x_z4").exists(), (
         "a flat pipeline folder in the brains root is the bug: the scanner cannot see "
         "it, and the name already means training_data")
 
 
 def test_the_scanner_then_finds_what_was_just_placed(organizer, tmp_path):
     """The actual regression: placing and finding must agree."""
-    f = _drop(tmp_path, "403_CNT_05_03_1.625x_z4.ims")
+    f = _drop(tmp_path, "008_CNT_04_01_1.625x_z4.ims")
     organizer.organize_ims_file(f)
     results = organizer.scan_and_report(tmp_path)
     found = [p for p, *_ in results["organized"]] + [p for p, *_ in results.get("needs_work", [])]
-    assert any("403_CNT_05_03" in str(p) for p in found), (
+    assert any("008_CNT_04_01" in str(p) for p in found), (
         "the brain disappeared from the scan after being organized: %r" % results)
 
 
 def test_a_brain_already_in_place_is_left_alone(organizer, tmp_path):
-    raw = tmp_path / "403_CNT_05_03" / "403_CNT_05_03_1p625x_z4" / "0_Raw_IMS"
-    f = _drop(raw, "403_CNT_05_03_1.625x_z4.ims")
+    raw = tmp_path / "008_CNT_04_01" / "008_CNT_04_01_1p625x_z4" / "0_Raw_IMS"
+    f = _drop(raw, "008_CNT_04_01_1.625x_z4.ims")
     ok, msg, _ = organizer.organize_ims_file(f)
     assert ok and "already" in msg.lower(), msg
     assert f.is_file()
 
 
 def test_a_pano_is_refused_without_advising_a_rename(organizer):
-    ok, reason = organizer.validate_filename("404_CNT_05_05_PANO.ims")
+    ok, reason = organizer.validate_filename("009_CNT_04_02_PANO.ims")
     assert ok is False
     assert "PANO" in reason
     assert "rename" in reason.lower(), "it should say explicitly NOT to rename it"
@@ -77,7 +77,7 @@ def test_a_pano_is_refused_without_advising_a_rename(organizer):
 
 
 def test_a_production_name_still_validates(organizer):
-    ok, _ = organizer.validate_filename("403_CNT_05_03_1.625x_z4.ims")
+    ok, _ = organizer.validate_filename("008_CNT_04_01_1.625x_z4.ims")
     assert ok is True
 
 

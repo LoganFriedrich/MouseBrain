@@ -1432,7 +1432,7 @@ class BrainSliceWidget(QWidget):
             "Dilate each nucleus ROI to include the surrounding soma.\n"
             "Signal (eYFP, etc.) is cytoplasmic, not nuclear -- measure\n"
             "intensity in this dilated region instead of the nucleus alone.\n"
-            "6 = validated default for ENCR retrograde tracer.\n"
+            "6 = default (validate it for your tracer).\n"
             "0 = measure only within nucleus (misses cytoplasmic signal)."
         )
         soma_dil_row.addWidget(self.soma_dilation_spin)

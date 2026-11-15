@@ -23,7 +23,7 @@ Integrators (e.g. a lab database pulling eLife counts) read elife_counts.csv,
 so keeping it current is part of the tool's job.
 
 Old rows of elife_counts.csv are appended to elife_counts_archive.csv with an
-archived_at stamp before the file is rewritten (the lab archives, never deletes).
+archived_at stamp before the file is rewritten (archived, never deleted).
 
 Usage:
     python regenerate_derived_counts.py            # rebuild both tables

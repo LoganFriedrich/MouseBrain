@@ -45,7 +45,7 @@ class TracingType(Enum):
 # - Autofluorescence or channel bleed-through
 # - Detection artifacts (oversplitting, noise)
 #
-# Based on analysis of CNT brain data vs eLife cervical reference (2026-01)
+# Based on comparing detected counts with the eLife cervical reference
 #
 # IMPORTANT: This is ONLY for retrograde tracing from spinal cord!
 # For ATLAS (ascending) tracing, these regions may be completely legitimate.

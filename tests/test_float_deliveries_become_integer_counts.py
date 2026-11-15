@@ -7,8 +7,8 @@ fractions. Cell detection refuses a floating-point image outright -- which is th
 good case, since the alternative would be detecting on something it cannot
 interpret.
 
-Observed 2026-10-13: a re-delivered brain was extracted and cached over ninety
-minutes, and detection then declined it in under a second with
+Observed in practice: a re-delivered brain was extracted and cached at length,
+and detection then declined it in under a second with
 "signal_array must be integer datatype, but has datatype float32".
 
 The underlying quantity is a photon count, so rounding recovers the integer the

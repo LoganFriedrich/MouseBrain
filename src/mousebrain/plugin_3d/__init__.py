@@ -1,5 +1,5 @@
 """
-Connectome Pipeline Tools for napari.
+MouseBrain Pipeline Tools for napari.
 
 This plugin provides GUI tools for the BrainGlobe cell detection pipeline:
 

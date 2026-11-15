@@ -100,14 +100,14 @@ class BrainLoaderWorker(QThread):
                     import zarr
                     import dask.array as da
                     self.progress.emit("Loading signal from Zarr (fast!)...")
-                    print(f"[Connectome] Zarr path: {zarr_signal}")
+                    print(f"[MouseBrain] Zarr path: {zarr_signal}")
                     # Open zarr array and wrap with dask
                     z = zarr.open_array(str(zarr_signal), mode='r')
                     if self.use_dask:
                         signal_stack = da.from_array(z, chunks=z.chunks)
                     else:
                         signal_stack = z[:]
-                    print(f"[Connectome] Loaded signal from Zarr: {signal_stack.shape}")
+                    print(f"[MouseBrain] Loaded signal from Zarr: {signal_stack.shape}")
 
                     if zarr_bg is not None:
                         self.progress.emit("Loading background from Zarr (fast!)...")
@@ -121,7 +121,7 @@ class BrainLoaderWorker(QThread):
                     return
                 except Exception as e:
                     # e.g. a cache in a Zarr format this zarr version cannot read
-                    print(f"[Connectome] Zarr load failed ({e}), falling back to TIFF...")
+                    print(f"[MouseBrain] Zarr load failed ({e}), falling back to TIFF...")
                     signal_stack = bg_stack = None
 
             # Fall back to TIFF loading with Dask for lazy loading
@@ -144,9 +144,9 @@ class BrainLoaderWorker(QThread):
                         # Actually, simpler approach - use tifffile's built-in lazy loading
                         signal_stack = tifffile.imread([str(f) for f in signal_files], aszarr=True)
                         signal_stack = da.from_zarr(signal_stack)
-                        print(f"[Connectome] Lazy-loaded signal: {signal_stack.shape}")
+                        print(f"[MouseBrain] Lazy-loaded signal: {signal_stack.shape}")
                     except Exception as e:
-                        print(f"[Connectome] Dask loading failed, falling back to full load: {e}")
+                        print(f"[MouseBrain] Dask loading failed, falling back to full load: {e}")
                         self.progress.emit(f"Loading signal ({len(signal_files)} slices)...")
                         signal_stack = tifffile.imread([str(f) for f in signal_files])
                 else:
@@ -239,7 +239,7 @@ class DetectionWorker(QThread):
             from cellfinder.core.main import main as cellfinder_main
 
             self.progress.emit("Running cell detection (Python API)...")
-            print(f"\n[Connectome] Starting detection with cellfinder Python API")
+            print(f"\n[MouseBrain] Starting detection with cellfinder Python API")
             print(f"  Signal shape: {self.signal_array.shape}")
             print(f"  Background shape: {self.background_array.shape}")
             print(f"  Voxel sizes (ZYX): {self.voxel_sizes}")
@@ -257,7 +257,7 @@ class DetectionWorker(QThread):
             workers = total_cpus - n_free
             if workers > 60:  # Leave headroom for Windows limit
                 n_free = total_cpus - 60
-                print(f"[Connectome] Capping workers to 60 (Windows limit), n_free_cpus={n_free}")
+                print(f"[MouseBrain] Capping workers to 60 (Windows limit), n_free_cpus={n_free}")
 
             detected_cells = cellfinder_main(
                 signal_array=self.signal_array,
@@ -282,7 +282,7 @@ class DetectionWorker(QThread):
             )
 
             cell_count = len(detected_cells) if detected_cells else 0
-            print(f"[Connectome] Detection complete: {cell_count} candidates found")
+            print(f"[MouseBrain] Detection complete: {cell_count} candidates found")
 
             self.finished.emit(True, f"Detection complete: {cell_count} candidates found", cell_count, detected_cells)
 
@@ -318,7 +318,7 @@ class ClassificationWorker(QThread):
             from brainglobe_utils.cells.cells import Cell
             from brainglobe_utils.IO.cells import save_cells
 
-            print(f"\n[Connectome] Starting classification with Python API...")
+            print(f"\n[MouseBrain] Starting classification with Python API...")
             print(f"  Signal shape: {self.signal_array.shape}")
             print(f"  Candidates: {len(self.points)}")
             print(f"  Model: {self.model_path}")
@@ -382,7 +382,7 @@ class ClassificationWorker(QThread):
             cells_found = len(cells)
             rejected_count = len(rejected)
 
-            print(f"[Connectome] Classification complete: {cells_found} cells, {rejected_count} rejected")
+            print(f"[MouseBrain] Classification complete: {cells_found} cells, {rejected_count} rejected")
 
             # Save results
             if cells:
@@ -1716,7 +1716,7 @@ class TuningWidget(QWidget):
                     xml_path, layer_name, cell_type='prefilter_removed'
                 )
                 if loaded:
-                    print(f"[Connectome] Loaded pre-filtered-out candidates from {xml_path.name}")
+                    print(f"[MouseBrain] Loaded pre-filtered-out candidates from {xml_path.name}")
                     return True
 
         return False
@@ -1738,7 +1738,7 @@ class TuningWidget(QWidget):
 
         output_path = class_run.get('output_path')
         if not output_path:
-            print(f"[Connectome] Classification has no output_path")
+            print(f"[MouseBrain] Classification has no output_path")
             return
 
         output_path = Path(output_path)
@@ -1746,7 +1746,7 @@ class TuningWidget(QWidget):
         rejected_xml = output_path / "rejected.xml"
 
         if not cells_xml.exists():
-            print(f"[Connectome] cells.xml not found at {cells_xml}")
+            print(f"[MouseBrain] cells.xml not found at {cells_xml}")
             return
 
         # Load cells
@@ -1762,7 +1762,7 @@ class TuningWidget(QWidget):
                 self._add_points_layer(np.empty((0, 3)), "Classified Cells (0)", cell_type='cells')
 
         except Exception as e:
-            print(f"[Connectome] Error loading cells.xml: {e}")
+            print(f"[MouseBrain] Error loading cells.xml: {e}")
             return
 
         # Load rejected (only if rejected.xml exists and has content)
@@ -1776,7 +1776,7 @@ class TuningWidget(QWidget):
                     self._add_points_layer(points, f"Rejected ({rejected_count})", cell_type='rejected')
 
         except Exception as e:
-            print(f"[Connectome] Error loading rejected.xml: {e}")
+            print(f"[MouseBrain] Error loading rejected.xml: {e}")
 
         # Store metadata linking to detection
         for layer in self.viewer.layers:
@@ -1785,7 +1785,7 @@ class TuningWidget(QWidget):
                     layer.metadata['exp_id'] = detection_exp_id
                     layer.metadata['class_exp_id'] = class_run.get('exp_id')
 
-        print(f"[Connectome] Loaded classification: {cells_count} cells, {rejected_count} rejected")
+        print(f"[MouseBrain] Loaded classification: {cells_count} cells, {rejected_count} rejected")
 
         # Load pre-filtered-out candidates if a prefilter was run
         prefilter_folder = self._find_prefilter_for_classification(class_run)
@@ -1830,14 +1830,14 @@ class TuningWidget(QWidget):
             xml_path = output_path / "detected_cells.xml"
             if xml_path.exists():
                 output_path = xml_path
-                print(f"[Connectome] Found XML file: {output_path}")
+                print(f"[MouseBrain] Found XML file: {output_path}")
             else:
                 # Fall back to any XML file
                 xml_files = list(output_path.glob("*.xml"))
                 if not xml_files:
                     # This run was logged but XML was never saved (common for old/failed runs)
-                    print(f"[Connectome] No XML files in: {output_path}")
-                    print(f"[Connectome] This run may have been logged but detection results were not saved.")
+                    print(f"[MouseBrain] No XML files in: {output_path}")
+                    print(f"[MouseBrain] This run may have been logged but detection results were not saved.")
                     QMessageBox.warning(
                         self, "Missing Data",
                         f"Detection results not found for this run.\n\n"
@@ -1847,7 +1847,7 @@ class TuningWidget(QWidget):
                     return
                 # Use the most recent XML file
                 output_path = sorted(xml_files, key=lambda x: x.stat().st_mtime, reverse=True)[0]
-                print(f"[Connectome] Found XML file: {output_path}")
+                print(f"[MouseBrain] Found XML file: {output_path}")
 
         # Load points from XML
         try:
@@ -1914,7 +1914,7 @@ class TuningWidget(QWidget):
             layer.metadata['is_best'] = is_best
             layer.metadata['cell_type'] = actual_cell_type
 
-            print(f"[Connectome] Loaded run {exp_id}: {len(cells)} cells")
+            print(f"[MouseBrain] Loaded run {exp_id}: {len(cells)} cells")
 
         except Exception as e:
             import traceback
@@ -1952,7 +1952,7 @@ class TuningWidget(QWidget):
 
         # Mark as best in tracker
         self.tracker.mark_as_best(exp_id)
-        print(f"[Connectome] Marked run {exp_id} as best")
+        print(f"[MouseBrain] Marked run {exp_id} as best")
 
         # Update any existing layers in napari with this exp_id
         for layer in self.viewer.layers:
@@ -2013,7 +2013,7 @@ class TuningWidget(QWidget):
         # Mark as paradigm best in tracker
         success = self.tracker.mark_paradigm_best(exp_id)
         if success:
-            print(f"[Connectome] Marked run {exp_id} as paradigm best for '{paradigm}'")
+            print(f"[MouseBrain] Marked run {exp_id} as paradigm best for '{paradigm}'")
             self.paradigm_status_label.setText(f"Paradigm: {paradigm} ✓")
 
             # Update any existing layers
@@ -2126,7 +2126,7 @@ class TuningWidget(QWidget):
             self.max_cluster_size.setValue(int(settings['max_cluster']))
 
         source = settings.get('source_brain', 'paradigm best')
-        print(f"[Connectome] Applied paradigm settings from {source}")
+        print(f"[MouseBrain] Applied paradigm settings from {source}")
 
     def load_settled_method(self):
         """Fill the detection settings with the settled method for this brain."""
@@ -2176,9 +2176,9 @@ class TuningWidget(QWidget):
                 self.test_z_start.setValue(z_start)
                 self.test_z_end.setValue(z_end)
 
-                print(f"[Connectome] Z range set from viewer: {z_start} to {z_end} (centered on Z={int(current_z)})")
+                print(f"[MouseBrain] Z range set from viewer: {z_start} to {z_end} (centered on Z={int(current_z)})")
         except Exception as e:
-            print(f"[Connectome] Could not get viewer position: {e}")
+            print(f"[MouseBrain] Could not get viewer position: {e}")
             QMessageBox.warning(self, "Error", f"Could not get current frame position: {e}")
 
     def update_z_range_label(self):
@@ -2226,14 +2226,14 @@ class TuningWidget(QWidget):
             from mousebrain.config import registered_input
             _source, data_folder, _meta = registered_input(
                 self.current_brain, fallback=("manual", "cropped"))
-            print(f"[Connectome] Using {data_folder.name} (the registered images)")
+            print(f"[MouseBrain] Using {data_folder.name} (the registered images)")
             input_path = str(data_folder)
 
             swap = getattr(self, 'swap_channels', None)
             if swap is None or swap.isChecked():
                 signal_path = data_folder / "ch1"
                 background_path = data_folder / "ch0"
-                print("[Connectome] Using swapped channels: signal=ch1, background=ch0")
+                print("[MouseBrain] Using swapped channels: signal=ch1, background=ch0")
             else:
                 signal_path = data_folder / "ch0"
                 background_path = data_folder / "ch1"
@@ -2258,7 +2258,7 @@ class TuningWidget(QWidget):
 
                 signal_array = tifffile.imread([str(f) for f in signal_files])
                 background_array = tifffile.imread([str(f) for f in bg_files])
-                print(f"[Connectome] Loaded from disk: signal {signal_array.shape}, bg {background_array.shape}")
+                print(f"[MouseBrain] Loaded from disk: signal {signal_array.shape}, bg {background_array.shape}")
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Failed to load images: {e}")
                 self.test_detection_btn.setEnabled(True)
@@ -2267,7 +2267,7 @@ class TuningWidget(QWidget):
         else:
             signal_array = signal_layer.data
             background_array = background_layer.data
-            print(f"[Connectome] Using loaded layers: signal {signal_array.shape}, bg {background_array.shape}")
+            print(f"[MouseBrain] Using loaded layers: signal {signal_array.shape}, bg {background_array.shape}")
 
         # Get Z range based on scope selection
         total_z = signal_array.shape[0]
@@ -2278,7 +2278,7 @@ class TuningWidget(QWidget):
             current_z = int(current_step[0]) if len(current_step) >= 1 else total_z // 2
             z_start = max(0, current_z - 25)
             z_end = min(total_z, current_z + 25)
-            print(f"[Connectome] Scope: current slice +/-25 (Z {z_start}-{z_end}, centered on {current_z})")
+            print(f"[MouseBrain] Scope: current slice +/-25 (Z {z_start}-{z_end}, centered on {current_z})")
         elif self.scope_range.isChecked():
             # User-specified range
             z_start = self.test_z_start.value()
@@ -2286,18 +2286,18 @@ class TuningWidget(QWidget):
             if z_end <= z_start:
                 QMessageBox.warning(self, "Error", "Z end must be greater than Z start")
                 return
-            print(f"[Connectome] Scope: user range Z {z_start}-{z_end}")
+            print(f"[MouseBrain] Scope: user range Z {z_start}-{z_end}")
         else:  # scope_all
             # Entire brain
             z_start = 0
             z_end = total_z
-            print(f"[Connectome] Scope: entire brain (Z 0-{total_z})")
+            print(f"[MouseBrain] Scope: entire brain (Z 0-{total_z})")
 
         # Slice arrays if not using entire brain
         if z_start != 0 or z_end != total_z:
             signal_array = signal_array[z_start:z_end]
             background_array = background_array[z_start:z_end]
-        print(f"[Connectome] Running detection on: {signal_array.shape}")
+        print(f"[MouseBrain] Running detection on: {signal_array.shape}")
 
         # Get voxel sizes from metadata
         voxel = self.metadata.get('voxel_size_um', {'x': 4, 'y': 4, 'z': 4})
@@ -2370,7 +2370,7 @@ class TuningWidget(QWidget):
             )
 
         # Print all params to terminal
-        print(f"\n[Connectome] Starting detection with parameters:")
+        print(f"\n[MouseBrain] Starting detection with parameters:")
         print(f"  Ball filter: XY={params['ball_xy_size']}, Z={params['ball_z_size']}, overlap={params['ball_overlap_fraction']}")
         print(f"  Soma: diameter={params['soma_diameter']}, spread={params['soma_spread_factor']}")
         print(f"  Threshold: {params['threshold']} SDs, sigma={params['log_sigma_size']}")
@@ -2408,9 +2408,9 @@ class TuningWidget(QWidget):
                     from brainglobe_utils.IO.cells import save_cells
                     xml_path = self._last_output_path / "detected_cells.xml"
                     save_cells(detected_cells, xml_path)
-                    print(f"[Connectome] Saved {len(detected_cells)} cells to: {xml_path}")
+                    print(f"[MouseBrain] Saved {len(detected_cells)} cells to: {xml_path}")
                 except Exception as e:
-                    print(f"[Connectome] Warning: Could not save cells to XML: {e}")
+                    print(f"[MouseBrain] Warning: Could not save cells to XML: {e}")
 
             # Update tracker
             if self.tracker and self.last_run_id:
@@ -2466,7 +2466,7 @@ class TuningWidget(QWidget):
                 # Apply Z offset for the slice range we analyzed
                 coords[:, 0] += z_offset
 
-                print(f"[Connectome] Point coordinates (after Z offset={z_offset}):")
+                print(f"[MouseBrain] Point coordinates (after Z offset={z_offset}):")
                 print(f"  Z range: {coords[:, 0].min():.0f} - {coords[:, 0].max():.0f}")
                 print(f"  Y range: {coords[:, 1].min():.0f} - {coords[:, 1].max():.0f}")
                 print(f"  X range: {coords[:, 2].min():.0f} - {coords[:, 2].max():.0f}")
@@ -2496,8 +2496,8 @@ class TuningWidget(QWidget):
                     layer.metadata['exp_id'] = self.last_run_id
                     layer.metadata['is_best'] = False
 
-                print(f"[Connectome] Added {len(coords)} cells to napari (white circle outline = new detection)")
-                print(f"[Connectome] Layer style: size={style['size']}, symbol={style['symbol']}, border_width={border_width}")
+                print(f"[MouseBrain] Added {len(coords)} cells to napari (white circle outline = new detection)")
+                print(f"[MouseBrain] Layer style: size={style['size']}, symbol={style['symbol']}, border_width={border_width}")
 
                 # Auto-generate QC image for this detection run
                 self._generate_detection_qc_image()
@@ -2644,14 +2644,14 @@ class TuningWidget(QWidget):
             qc_path = qc_dir / qc_filename
             combined.save(str(qc_path))
 
-            print(f"[Connectome] QC image saved: {qc_path}")
+            print(f"[MouseBrain] QC image saved: {qc_path}")
 
             # Log to session documenter
             if self.session_doc:
                 self.session_doc.log_export(str(qc_path), export_type="qc_image")
 
         except Exception as e:
-            print(f"[Connectome] QC image generation failed: {e}")
+            print(f"[MouseBrain] QC image generation failed: {e}")
             import traceback
             traceback.print_exc()
 
@@ -3287,7 +3287,7 @@ class TuningWidget(QWidget):
             # Also refresh pre-filter history
             self._refresh_prefilter_history()
         except Exception as e:
-            print(f"[Connectome] Error refreshing prefilter runs: {e}")
+            print(f"[MouseBrain] Error refreshing prefilter runs: {e}")
 
     def _refresh_prefilter_history(self):
         """Populate previous pre-filter runs list."""
@@ -3312,7 +3312,7 @@ class TuningWidget(QWidget):
                 item.setData(Qt.UserRole, exp_id)
                 self.prefilter_history_list.addItem(item)
         except Exception as e:
-            print(f"[Connectome] Error refreshing prefilter history: {e}")
+            print(f"[MouseBrain] Error refreshing prefilter history: {e}")
 
     def _prefilter_load_best(self):
         """Load the best detection run for pre-filtering."""
@@ -3525,7 +3525,7 @@ class TuningWidget(QWidget):
                     )
                     self._last_prefilter_exp_id = pf_exp_id
                 except Exception as e:
-                    print(f"[Connectome] Could not log prefilter to tracker: {e}")
+                    print(f"[MouseBrain] Could not log prefilter to tracker: {e}")
 
         except Exception as e:
             import traceback
@@ -4627,7 +4627,7 @@ class TuningWidget(QWidget):
                 layer.out_of_slice_display = show_all
 
         status = "showing ALL Z levels" if show_all else "showing current slice only"
-        print(f"[Connectome] Points layers: {status}")
+        print(f"[MouseBrain] Points layers: {status}")
 
     def generate_detection_difference(self):
         """Generate difference layers comparing best vs recent detection.
@@ -4738,7 +4738,7 @@ class TuningWidget(QWidget):
                 only_recent=len(only_in_recent),
             )
 
-        print(f"[Connectome] Detection difference generated:")
+        print(f"[MouseBrain] Detection difference generated:")
         print(f"  Tolerance: {tolerance_voxels} voxels")
         print(f"  Best: {len(best_coords)}, Recent: {len(recent_coords)}")
         print(f"  Overlap: {overlap_count}, Only-Best: {len(only_in_best)}, Only-Recent: {len(only_in_recent)}")
@@ -4893,7 +4893,7 @@ class TuningWidget(QWidget):
             if label_widget:
                 label_widget.setText(layer_name)
 
-            print(f"[Connectome] Loaded classification {exp_id}: {cell_count} cells")
+            print(f"[MouseBrain] Loaded classification {exp_id}: {cell_count} cells")
 
         except Exception as e:
             import traceback
@@ -4924,10 +4924,10 @@ class TuningWidget(QWidget):
                 rejected_name = f"{prefix}: {created} ({rejected_count} rejected)"
 
             self._add_points_layer(rejected_points, rejected_name, rejected_type)
-            print(f"[Connectome] Loaded rejected: {rejected_count}")
+            print(f"[MouseBrain] Loaded rejected: {rejected_count}")
 
         except Exception as e:
-            print(f"[Connectome] Note: Could not load rejected.xml: {e}")
+            print(f"[MouseBrain] Note: Could not load rejected.xml: {e}")
             # Create empty rejected layer anyway
             if as_previous:
                 self._add_points_layer(np.empty((0, 3)), f"{prefix}: (0 rejected)", 'class_prev_rejected')
@@ -4970,7 +4970,7 @@ class TuningWidget(QWidget):
                 'cell_count': len(layer.data),
             })
 
-        print(f"[Connectome] Marked as previous classification: {layer.name}")
+        print(f"[MouseBrain] Marked as previous classification: {layer.name}")
 
     def mark_layer_as_new_classification(self):
         """Mark selected layer as new classification cells."""
@@ -5008,7 +5008,7 @@ class TuningWidget(QWidget):
                 'cell_count': len(layer.data),
             })
 
-        print(f"[Connectome] Marked as new classification: {layer.name}")
+        print(f"[MouseBrain] Marked as new classification: {layer.name}")
 
     def generate_classification_difference(self):
         """Generate difference layers comparing two classification results.
@@ -5131,7 +5131,7 @@ class TuningWidget(QWidget):
                 only_recent=len(gained_coords),
             )
 
-        print(f"[Connectome] Classification difference generated:")
+        print(f"[MouseBrain] Classification difference generated:")
         print(f"  Tolerance: {tolerance_voxels} voxels")
         print(f"  Previous: {len(prev_coords)}, New: {len(new_coords)}")
         print(f"  Overlap: {overlap_count}, Gained: {len(gained_coords)}, Lost: {len(lost_coords)}")
@@ -5159,19 +5159,19 @@ class TuningWidget(QWidget):
 
         # Get the actual coordinates from the curation widget
         if not hasattr(self, 'curation_widget') or self.curation_widget is None:
-            print(f"[Connectome] Candidate confirmed (index {index}) - no curation widget available")
+            print(f"[MouseBrain] Candidate confirmed (index {index}) - no curation widget available")
             return
 
         if self.curation_widget.candidates is None:
-            print(f"[Connectome] Candidate confirmed (index {index}) - no candidates loaded")
+            print(f"[MouseBrain] Candidate confirmed (index {index}) - no candidates loaded")
             return
 
         if index < 0 or index >= len(self.curation_widget.candidates):
-            print(f"[Connectome] Candidate confirmed - index {index} out of range")
+            print(f"[MouseBrain] Candidate confirmed - index {index} out of range")
             return
 
         coords = np.array([self.curation_widget.candidates[index]])
-        print(f"[Connectome] Candidate confirmed: index {index}, coords {coords[0]}")
+        print(f"[MouseBrain] Candidate confirmed: index {index}, coords {coords[0]}")
 
         # Find or create training cells bucket
         train_layer = self._get_layer_by_type('train_cells')
@@ -5211,19 +5211,19 @@ class TuningWidget(QWidget):
 
         # Get the actual coordinates from the curation widget
         if not hasattr(self, 'curation_widget') or self.curation_widget is None:
-            print(f"[Connectome] Candidate rejected (index {index}) - no curation widget available")
+            print(f"[MouseBrain] Candidate rejected (index {index}) - no curation widget available")
             return
 
         if self.curation_widget.candidates is None:
-            print(f"[Connectome] Candidate rejected (index {index}) - no candidates loaded")
+            print(f"[MouseBrain] Candidate rejected (index {index}) - no candidates loaded")
             return
 
         if index < 0 or index >= len(self.curation_widget.candidates):
-            print(f"[Connectome] Candidate rejected - index {index} out of range")
+            print(f"[MouseBrain] Candidate rejected - index {index} out of range")
             return
 
         coords = np.array([self.curation_widget.candidates[index]])
-        print(f"[Connectome] Candidate rejected: index {index}, coords {coords[0]}")
+        print(f"[MouseBrain] Candidate rejected: index {index}, coords {coords[0]}")
 
         # Find or create training non-cells bucket
         train_layer = self._get_layer_by_type('train_non_cells')
@@ -5316,7 +5316,7 @@ class TuningWidget(QWidget):
                 'total_in_bucket': len(train_layer.data),
             })
 
-        print(f"[Connectome] Added {len(coords_to_add)} points to training cells bucket")
+        print(f"[MouseBrain] Added {len(coords_to_add)} points to training cells bucket")
 
     def add_rejected_to_training(self):
         """Add rejected cells to training non-cells bucket.
@@ -5381,7 +5381,7 @@ class TuningWidget(QWidget):
                 'total_in_bucket': len(train_layer.data),
             })
 
-        print(f"[Connectome] Added {len(coords_to_add)} points to training non-cells bucket")
+        print(f"[MouseBrain] Added {len(coords_to_add)} points to training non-cells bucket")
 
     def visualize_training_data(self):
         """Visualize existing training data from cellfinder training folders.
@@ -5495,13 +5495,13 @@ class TuningWidget(QWidget):
 
         if not imaging_paradigm:
             imaging_paradigm = 'default'
-            print(f"[Connectome] Warning: Could not parse imaging params from '{brain_name}', using 'default'")
+            print(f"[MouseBrain] Warning: Could not parse imaging params from '{brain_name}', using 'default'")
 
         # Set up training data directory in MODELS_DIR, organized by imaging paradigm
         # This allows pooling training data across all brains with same imaging settings
         self.training_data_dir = MODELS_DIR / imaging_paradigm / "training_data"
         self.training_data_dir.mkdir(parents=True, exist_ok=True)
-        print(f"[Connectome] Training data location: {self.training_data_dir}")
+        print(f"[MouseBrain] Training data location: {self.training_data_dir}")
 
         # Set up auto-save XML files
         self._cells_xml = self.training_data_dir / "curated_cells.xml"
@@ -5549,9 +5549,9 @@ class TuningWidget(QWidget):
 
         self.refresh_training_data_counts()
 
-        print(f"[Connectome] Training layers created. Auto-save to: {self.training_data_dir}")
+        print(f"[MouseBrain] Training layers created. Auto-save to: {self.training_data_dir}")
         if cells_count > 0 or non_cells_count > 0:
-            print(f"[Connectome] Loaded existing curated data: {cells_count} cells, {non_cells_count} non-cells")
+            print(f"[MouseBrain] Loaded existing curated data: {cells_count} cells, {non_cells_count} non-cells")
 
     def _load_xml_coordinates(self, xml_path):
         """Load coordinates from an XML file."""
@@ -5572,7 +5572,7 @@ class TuningWidget(QWidget):
                     z = int(z_el.text)
                     coords.append([z, y, x])  # napari uses ZYX order
         except Exception as e:
-            print(f"[Connectome] Could not load {xml_path}: {e}")
+            print(f"[MouseBrain] Could not load {xml_path}: {e}")
 
         return np.array(coords) if coords else np.array([]).reshape(0, 3)
 
@@ -5672,7 +5672,7 @@ class TuningWidget(QWidget):
         with open(yaml_path, 'w') as f:
             yaml.dump(yaml_content, f, default_flow_style=False)
 
-        print(f"[Connectome] Created {yaml_path}")
+        print(f"[MouseBrain] Created {yaml_path}")
 
     def export_training_data(self):
         """Export training bucket layers to BrainGlobe/cellfinder training format.
@@ -5748,7 +5748,7 @@ class TuningWidget(QWidget):
         if has_bg:
             bg_data = np.asarray(bg_layer.data)
         else:
-            print("[Connectome] Warning: No background layer found, will only export signal channel")
+            print("[MouseBrain] Warning: No background layer found, will only export signal channel")
             bg_data = None
 
         # Set up training data directory - always use shared pool by paradigm
@@ -5759,7 +5759,7 @@ class TuningWidget(QWidget):
             imaging_paradigm = parsed.get('imaging_params', 'default') or 'default'
             self.training_data_dir = MODELS_DIR / imaging_paradigm / "training_data"
             self.training_data_dir.mkdir(parents=True, exist_ok=True)
-            print(f"[Connectome] Training data auto-set to shared pool: {self.training_data_dir}")
+            print(f"[MouseBrain] Training data auto-set to shared pool: {self.training_data_dir}")
 
         cells_dir = self.training_data_dir / "cells"
         non_cells_dir = self.training_data_dir / "non_cells"
@@ -5839,7 +5839,7 @@ class TuningWidget(QWidget):
                     status="data_exported"
                 )
             except Exception as e:
-                print(f"[Connectome] Could not log export to tracker: {e}")
+                print(f"[MouseBrain] Could not log export to tracker: {e}")
 
         # Log to session
         if self.session_doc:
@@ -5867,7 +5867,7 @@ class TuningWidget(QWidget):
             f"{f'Skipped (out of bounds): {skipped}' if skipped > 0 else ''}\n\n"
             f"Click 'Train' to start training with this data.")
 
-        print(f"[Connectome] Training dataset exported to {self.training_data_dir}")
+        print(f"[MouseBrain] Training dataset exported to {self.training_data_dir}")
 
     def create_training_tab(self):
         """Tab for classification and network training."""
@@ -6170,7 +6170,7 @@ class TuningWidget(QWidget):
             total_non += n_non
 
         self._update_xml_batch_summary()
-        print(f"[Connectome] Found {len(batches)} XML batch(es): {total_cells} cells, {total_non} non-cells")
+        print(f"[MouseBrain] Found {len(batches)} XML batch(es): {total_cells} cells, {total_non} non-cells")
 
     def _update_xml_batch_summary(self):
         """Update the XML batch summary label based on checked rows."""
@@ -6285,7 +6285,7 @@ class TuningWidget(QWidget):
             f"Next step: Click 'Create Training Dataset' to export TIFFs,\n"
             f"then 'Start Training' to train the network."
         )
-        print(f"[Connectome] Merged {n_batches} XML batches: "
+        print(f"[MouseBrain] Merged {n_batches} XML batches: "
               f"{len(merged_cells)} cells, {len(merged_non_cells)} non-cells")
 
     # =================================================================
@@ -6394,7 +6394,7 @@ class TuningWidget(QWidget):
 
         # Update summary
         self._update_training_summary()
-        print(f"[Connectome] Found {len(sources)} training sources")
+        print(f"[MouseBrain] Found {len(sources)} training sources")
 
     def _update_training_summary(self):
         """Update the training summary label based on checked sources."""
@@ -6446,7 +6446,7 @@ class TuningWidget(QWidget):
             if yaml_path.exists():
                 yaml_paths.append(yaml_path)
             else:
-                print(f"[Connectome] Warning: No training.yml at {td_path}")
+                print(f"[MouseBrain] Warning: No training.yml at {td_path}")
 
         return yaml_paths
 
@@ -6475,7 +6475,7 @@ class TuningWidget(QWidget):
 
         with open(yaml_path, 'w') as f:
             f.write(yaml_content)
-        print(f"[Connectome] Created {yaml_path}")
+        print(f"[MouseBrain] Created {yaml_path}")
 
     def _merge_to_shared_pool(self):
         """Copy training cubes from selected per-brain sources to the shared pool.
@@ -6557,7 +6557,7 @@ class TuningWidget(QWidget):
             f"Non-cells copied: {copied_non}\n"
             f"Skipped (already exist): {skipped}"
         )
-        print(f"[Connectome] Merged training data: {copied_cells} cells, {copied_non} non-cells to {shared_dir}")
+        print(f"[MouseBrain] Merged training data: {copied_cells} cells, {copied_non} non-cells to {shared_dir}")
 
     def _start_training_fresh(self):
         """Clear all training cubes from the shared pool for current paradigm.
@@ -6633,7 +6633,7 @@ class TuningWidget(QWidget):
             f"Deleted: {n_cells} cell cubes, {n_non} non-cell cubes.\n"
             f"You can now curate fresh training data or re-merge from per-brain sources."
         )
-        print(f"[Connectome] Cleared shared pool: {n_cells} cells, {n_non} non-cells deleted from {shared_dir}")
+        print(f"[MouseBrain] Cleared shared pool: {n_cells} cells, {n_non} non-cells deleted from {shared_dir}")
 
     def start_training(self):
         """Start network training with multi-source YAML support.
@@ -6752,7 +6752,7 @@ class TuningWidget(QWidget):
         auto_classify = getattr(self, 'auto_classify_after_training', None)
         if auto_classify and auto_classify.isChecked():
             self._training_detection_exp_id = getattr(self, 'last_run_id', None)
-            print(f"[Connectome] Training started. Will auto-classify detection: {self._training_detection_exp_id}")
+            print(f"[MouseBrain] Training started. Will auto-classify detection: {self._training_detection_exp_id}")
 
             self._training_process = subprocess.Popen(cmd)
 
@@ -6779,7 +6779,7 @@ class TuningWidget(QWidget):
                 f"Check the console for progress."
             )
 
-        print(f"[Connectome] Training started: {data_note}")
+        print(f"[MouseBrain] Training started: {data_note}")
 
     def _find_most_recent_model(self):
         """Find the most recent model file to continue training from."""
@@ -6832,7 +6832,7 @@ class TuningWidget(QWidget):
                 # New model detected!
                 newest_model = self._get_newest_model()
                 model_name = Path(newest_model).parent.name + "/" + Path(newest_model).name if newest_model else "unknown"
-                print(f"[Connectome] Training complete! New model: {model_name}")
+                print(f"[MouseBrain] Training complete! New model: {model_name}")
                 self.refresh_models()
 
                 # Auto-classify if checkbox is enabled and we have a detection
@@ -6841,13 +6841,13 @@ class TuningWidget(QWidget):
 
                 if auto_classify_enabled and auto_classify_enabled.isChecked() and detection_exp_id:
                     # Run classification automatically (no confirmation dialog)
-                    print(f"[Connectome] Auto-classifying detection {detection_exp_id}...")
+                    print(f"[MouseBrain] Auto-classifying detection {detection_exp_id}...")
                     self._auto_classify_with_new_model()
                 elif detection_exp_id:
                     # Checkbox unchecked but we have a detection - just notify
-                    print(f"[Connectome] Training complete. Auto-classify disabled, skipping classification.")
+                    print(f"[MouseBrain] Training complete. Auto-classify disabled, skipping classification.")
                 else:
-                    print(f"[Connectome] Training complete. No detection loaded to classify.")
+                    print(f"[MouseBrain] Training complete. No detection loaded to classify.")
             else:
                 QMessageBox.warning(
                     self, "Training Issue",
@@ -6859,7 +6859,7 @@ class TuningWidget(QWidget):
     def _auto_classify_with_new_model(self):
         """Run classification with the newest model on the stored detection."""
         if not hasattr(self, '_training_detection_exp_id') or not self._training_detection_exp_id:
-            print("[Connectome] No detection exp_id stored for auto-classification")
+            print("[MouseBrain] No detection exp_id stored for auto-classification")
             return
 
         # Get the newest model
@@ -6880,7 +6880,7 @@ class TuningWidget(QWidget):
         self._auto_classify_triggered = True
 
         # Run classification
-        print(f"[Connectome] Auto-classifying with model: {newest_model}")
+        print(f"[MouseBrain] Auto-classifying with model: {newest_model}")
         self._run_classification_worker()
 
     def _get_newest_model(self) -> str:
@@ -7087,7 +7087,7 @@ class TuningWidget(QWidget):
         try:
             from brainglobe_utils.IO.cells import get_cells
             points = get_cells(str(candidates_xml))
-            print(f"[Connectome] Loaded {len(points)} candidates from {candidates_xml.name}")
+            print(f"[MouseBrain] Loaded {len(points)} candidates from {candidates_xml.name}")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load candidates: {e}")
             return
@@ -7239,7 +7239,7 @@ class TuningWidget(QWidget):
         import numpy as np
 
         if not self.tracker or not self.current_brain:
-            print("[Connectome] Cannot compare: no tracker or brain loaded")
+            print("[MouseBrain] Cannot compare: no tracker or brain loaded")
             return
 
         brain_name = self.current_brain.name if hasattr(self.current_brain, 'name') else str(self.current_brain)
@@ -7266,8 +7266,8 @@ class TuningWidget(QWidget):
                     prev_run = run
 
         if not prev_run:
-            print(f"[Connectome] No previous classification found for comparison")
-            print(f"[Connectome] Training & Classification Complete!")
+            print(f"[MouseBrain] No previous classification found for comparison")
+            print(f"[MouseBrain] Training & Classification Complete!")
             print(f"  Model: {model_name}")
             print(f"  Cells: {cells_found} | Rejected: {rejected}")
             return
@@ -7276,7 +7276,7 @@ class TuningWidget(QWidget):
         prev_cells = prev_run.get('class_cells_found', 0)
         prev_rejected = prev_run.get('class_rejected', 0)
 
-        print(f"\n[Connectome] === AUTO-COMPARE RESULTS ===")
+        print(f"\n[MouseBrain] === AUTO-COMPARE RESULTS ===")
         print(f"  Model: {model_name}")
         print(f"  New classification: {cells_found} cells ({rejected} rejected)")
         print(f"  Previous ({prev_exp_id[:20]}...): {prev_cells} cells ({prev_rejected} rejected)")
@@ -7304,11 +7304,11 @@ class TuningWidget(QWidget):
                         layer.name = f"New: {cells_found} cells"
 
             # Run visual difference generation
-            print(f"[Connectome] Generating visual difference layers...")
+            print(f"[MouseBrain] Generating visual difference layers...")
             self.generate_classification_difference()
 
         except Exception as e:
-            print(f"[Connectome] Could not load previous for visual comparison: {e}")
+            print(f"[MouseBrain] Could not load previous for visual comparison: {e}")
 
         # Update tracker with comparison metrics
         try:
@@ -7330,9 +7330,9 @@ class TuningWidget(QWidget):
             print(f"  Spatial diff: +{diff_gained} gained, -{diff_lost} lost")
 
         except Exception as e:
-            print(f"[Connectome] Could not update tracker with diff: {e}")
+            print(f"[MouseBrain] Could not update tracker with diff: {e}")
 
-        print(f"[Connectome] === COMPARISON COMPLETE ===\n")
+        print(f"[MouseBrain] === COMPARISON COMPLETE ===\n")
 
     def _promote_last_classification(self):
         """Make the last GUI classification run this brain's production one,
@@ -7406,7 +7406,7 @@ class TuningWidget(QWidget):
                 "Classified Cells (0)",
                 cell_type='cells'
             )
-            print("[Connectome] No cells.xml found - created empty Classified Cells layer")
+            print("[MouseBrain] No cells.xml found - created empty Classified Cells layer")
 
         # Load rejected (non-cells) - magenta crosses, hidden by default
         if rejected_path.exists():
@@ -7777,7 +7777,7 @@ class TuningWidget(QWidget):
             qc_path = qc_dir / qc_filename
             combined.save(str(qc_path), quality=95)
 
-            print(f"[Connectome] Classification QC image saved: {qc_path}")
+            print(f"[MouseBrain] Classification QC image saved: {qc_path}")
 
             # Log to session documenter
             if self.session_doc:
@@ -7788,7 +7788,7 @@ class TuningWidget(QWidget):
                 self.tracker.update_status(exp_id, qc_image_path=str(qc_path))
 
         except Exception as e:
-            print(f"[Connectome] Classification QC image generation failed: {e}")
+            print(f"[MouseBrain] Classification QC image generation failed: {e}")
             import traceback
             traceback.print_exc()
 
@@ -7823,10 +7823,10 @@ class TuningWidget(QWidget):
         """Handle workflow mode change."""
         if self.mode_cell_detection.isChecked():
             self.view_mode = "cell_detection"
-            print(f"[Connectome] Switched to Cell Detection & Tuning mode")
+            print(f"[MouseBrain] Switched to Cell Detection & Tuning mode")
         elif self.mode_registration.isChecked():
             self.view_mode = "registration_qc"
-            print(f"[Connectome] Switched to Registration QC & Approval mode")
+            print(f"[MouseBrain] Switched to Registration QC & Approval mode")
 
     def _find_manual_crop(self, brain_folder):
         """Check if manual crop exists, return path if found."""
@@ -7999,7 +7999,7 @@ class TuningWidget(QWidget):
         self.load_brain_btn.setText("Loading...")
 
         # Print to terminal
-        print(f"\n[Connectome] Loading brain: {self.current_brain.name}")
+        print(f"\n[MouseBrain] Loading brain: {self.current_brain.name}")
         print(f"  Source: {source}")
         print(f"  Signal: {signal_path}")
 
@@ -8116,7 +8116,7 @@ class TuningWidget(QWidget):
                 "Future loads will be nearly instant (seconds instead of minutes).")
         else:
             self._auto_zarr_conversion = False
-            print(f"[Connectome] Auto-zarr conversion complete!")
+            print(f"[MouseBrain] Auto-zarr conversion complete!")
 
     def _auto_start_zarr_conversion(self):
         """Auto-start zarr conversion in background after brain loads (if not already done)."""
@@ -8146,11 +8146,11 @@ class TuningWidget(QWidget):
         from mousebrain.zarr_cache import cache_state
         if all(cache_state(data_folder / ch)[0] for ch in ("ch0", "ch1")
                if (data_folder / ch).is_dir()):
-            print(f"[Connectome] Zarr already exists, skipping auto-conversion")
+            print(f"[MouseBrain] Zarr already exists, skipping auto-conversion")
             return
 
         # Start conversion in background (no confirmation needed for auto)
-        print(f"[Connectome] Auto-starting Zarr conversion in background...")
+        print(f"[MouseBrain] Auto-starting Zarr conversion in background...")
         print(f"  Data folder: {data_folder}")
 
         # Mark that this is an auto-conversion (suppress completion dialog)
@@ -8250,7 +8250,7 @@ class TuningWidget(QWidget):
 
         # Update status
         swap_state = "swapped" if self.swap_channels.isChecked() else "normal"
-        print(f"[Connectome] Layers swapped! Channels now: {swap_state}")
+        print(f"[MouseBrain] Layers swapped! Channels now: {swap_state}")
         self.brain_status_label.setText(f"Channels {swap_state}")
         self.brain_status_label.setStyleSheet("color: green; font-weight: bold;")
 
@@ -8352,7 +8352,7 @@ class TuningWidget(QWidget):
 
             self.brain_status_label.setText(status_msg)
             self.brain_status_label.setStyleSheet("color: green; font-weight: bold;")
-            print(f"[Connectome] Brain loaded successfully!\n")
+            print(f"[MouseBrain] Brain loaded successfully!\n")
 
             # Log to session documenter
             if self.session_doc:
@@ -8364,7 +8364,7 @@ class TuningWidget(QWidget):
         else:
             self.brain_status_label.setText("Error loading brain")
             self.brain_status_label.setStyleSheet("color: red;")
-            print(f"[Connectome] ERROR: {message}\n")
+            print(f"[MouseBrain] ERROR: {message}\n")
             QMessageBox.warning(self, "Load Error", f"Failed to load brain:\n{message}")
 
     def _calculate_contrast_limits(self, stack):
@@ -8450,7 +8450,7 @@ class TuningWidget(QWidget):
             import tifffile
             import json
 
-            print(f"\n[Connectome] Loading Registration QC view for {self.current_brain.name}")
+            print(f"\n[MouseBrain] Loading Registration QC view for {self.current_brain.name}")
 
             # Load metadata to calculate scale
             scale = (1.0, 1.0, 1.0)  # Default - both files already match
@@ -8718,7 +8718,7 @@ class TuningWidget(QWidget):
                         if cells_loaded or rejected_loaded:
                             n_cells = target_run.get('class_cells_kept', '?')
                             n_rejected = target_run.get('class_cells_rejected', '?')
-                            print(f"[Connectome] Loaded classification {label_suffix}: {n_cells} cells, {n_rejected} rejected")
+                            print(f"[MouseBrain] Loaded classification {label_suffix}: {n_cells} cells, {n_rejected} rejected")
 
                             # Load pre-filtered-out candidates if a prefilter was run
                             prefilter_folder = self._find_prefilter_for_classification(target_run)
@@ -8751,7 +8751,7 @@ class TuningWidget(QWidget):
                 )
 
             if cells_loaded or rejected_loaded:
-                print(f"[Connectome] Loaded classification from filesystem {label_suffix}")
+                print(f"[MouseBrain] Loaded classification from filesystem {label_suffix}")
 
                 # Load pre-filtered-out candidates if a prefilter was run
                 prefilter_folder = self._find_prefilter_for_classification(None)
@@ -9017,7 +9017,7 @@ class TuningWidget(QWidget):
         """
         style = self.CELL_COLORS.get(cell_type)
         if not style:
-            print(f"[Connectome] Warning: Unknown cell_type '{cell_type}'")
+            print(f"[MouseBrain] Warning: Unknown cell_type '{cell_type}'")
             return
 
         layer.face_color = style['face']
@@ -9091,7 +9091,7 @@ class TuningWidget(QWidget):
         layer.metadata['archived_by'] = archived_by or 'unknown'
         layer.metadata['original_cell_type'] = layer.metadata.get('cell_type', 'unknown')
 
-        print(f"[Connectome] Archived layer: {layer.name}")
+        print(f"[MouseBrain] Archived layer: {layer.name}")
 
     def _load_points_from_xml(self, xml_path: Path, layer_name: str, cell_type: str = 'best') -> bool:
         """
@@ -9235,7 +9235,7 @@ class TuningWidget(QWidget):
                     if 'channels_swapped' in self.metadata:
                         self.swap_channels.setChecked(self.metadata['channels_swapped'])
                         if self.metadata['channels_swapped']:
-                            print(f"[Connectome] Metadata says channels are swapped (signal=ch1)")
+                            print(f"[MouseBrain] Metadata says channels are swapped (signal=ch1)")
 
                     return
                 except Exception as e:
@@ -9405,12 +9405,12 @@ class TuningWidget(QWidget):
         if slices_mode:
             cmd.append("--slices")
 
-        print(f"[Connectome] Running: {' '.join(cmd)}")
+        print(f"[MouseBrain] Running: {' '.join(cmd)}")
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             if result.returncode == 0:
-                print(f"[Connectome] QC generation output:\n{result.stdout}")
+                print(f"[MouseBrain] QC generation output:\n{result.stdout}")
                 if slices_mode:
                     QMessageBox.information(self, "QC Generated",
                         "Individual slice QC images saved to 3_Registered_Atlas/")
@@ -9418,7 +9418,7 @@ class TuningWidget(QWidget):
                     QMessageBox.information(self, "QC Generated",
                         "QC_registration_detailed.png saved to 3_Registered_Atlas/")
             else:
-                print(f"[Connectome] QC generation error:\n{result.stderr}")
+                print(f"[MouseBrain] QC generation error:\n{result.stderr}")
                 QMessageBox.warning(self, "Error", f"QC generation failed:\n{result.stderr[:300]}")
         except subprocess.TimeoutExpired:
             QMessageBox.warning(self, "Timeout", "QC generation timed out")
@@ -10069,7 +10069,7 @@ class TuningWidget(QWidget):
                         item.setData(Qt.UserRole, brain_dir)
                         self.cross_brain_list.addItem(item)
         except Exception as e:
-            print(f"[Connectome] Error loading brains: {e}")
+            print(f"[MouseBrain] Error loading brains: {e}")
 
     def _run_cross_brain_comparison(self):
         """Compare selected brains."""
@@ -10500,11 +10500,11 @@ class TuningWidget(QWidget):
                 "--format", "both"
             ]
 
-            print(f"[Connectome] Running: {' '.join(cmd)}")
+            print(f"[MouseBrain] Running: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
             if result.returncode == 0:
-                print(f"[Connectome] Report output:\n{result.stdout}")
+                print(f"[MouseBrain] Report output:\n{result.stdout}")
 
                 # Find the generated files
                 reports_dir = DATA_SUMMARY_DIR / "reports"
@@ -10536,7 +10536,7 @@ class TuningWidget(QWidget):
             else:
                 self.export_status.setText("Report generation failed")
                 self.export_status.setStyleSheet("color: red;")
-                print(f"[Connectome] Report error:\n{result.stderr}")
+                print(f"[MouseBrain] Report error:\n{result.stderr}")
                 QMessageBox.warning(self, "Error", f"Report generation failed:\n{result.stderr[:500]}")
 
         except subprocess.TimeoutExpired:
@@ -10545,7 +10545,7 @@ class TuningWidget(QWidget):
         except Exception as e:
             self.export_status.setText(f"Error: {str(e)[:30]}")
             self.export_status.setStyleSheet("color: red;")
-            print(f"[Connectome] Report error: {e}")
+            print(f"[MouseBrain] Report error: {e}")
 
     def export_results(self):
         """Export current results with sensible auto-generated names."""
@@ -10677,15 +10677,15 @@ class TuningWidget(QWidget):
                 "--brain", self.current_brain.name,
             ]
 
-            print(f"[Connectome] Running region counting on CLASSIFIED cells ({n_cells})")
-            print(f"[Connectome] Source: {cells_xml}")
-            print(f"[Connectome] Command: {' '.join(cmd)}")
+            print(f"[MouseBrain] Running region counting on CLASSIFIED cells ({n_cells})")
+            print(f"[MouseBrain] Source: {cells_xml}")
+            print(f"[MouseBrain] Command: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
             if result.returncode == 0:
                 self.region_count_status.setText("Status: Complete! Loading results...")
                 self.region_count_status.setStyleSheet("color: green;")
-                print(f"[Connectome] Region counting output:\n{result.stdout}")
+                print(f"[MouseBrain] Region counting output:\n{result.stdout}")
 
                 # Load results and update comparison table
                 self._load_region_comparison()
@@ -10696,7 +10696,7 @@ class TuningWidget(QWidget):
             else:
                 self.region_count_status.setText("Status: Failed - check console")
                 self.region_count_status.setStyleSheet("color: red;")
-                print(f"[Connectome] Region counting STDERR:\n{result.stderr}")
+                print(f"[MouseBrain] Region counting STDERR:\n{result.stderr}")
                 QMessageBox.warning(
                     self, "Region Counting Failed",
                     f"Error running region counting:\n{result.stderr[:500]}"
@@ -10708,7 +10708,7 @@ class TuningWidget(QWidget):
         except Exception as e:
             self.region_count_status.setText(f"Status: Error - {str(e)[:50]}")
             self.region_count_status.setStyleSheet("color: red;")
-            print(f"[Connectome] Region counting error: {e}")
+            print(f"[MouseBrain] Region counting error: {e}")
         finally:
             self.run_regions_btn.setEnabled(True)
 
@@ -10737,7 +10737,7 @@ class TuningWidget(QWidget):
                         except ValueError:
                             pass
         except Exception as e:
-            print(f"[Connectome] Error reading CSV: {e}")
+            print(f"[MouseBrain] Error reading CSV: {e}")
             return
 
         # Map to eLife regions and populate table
@@ -10928,7 +10928,7 @@ class TuningWidget(QWidget):
             if hasattr(self.session_doc, 'documenter') and self.session_doc.documenter:
                 self.session_doc.documenter.log_param_change(param_name, old_value, new_value)
                 self.session_doc.documenter.save_checkpoint()
-                print(f"[Connectome] Tracked: {param_name} changed from {old_value} to {new_value}")
+                print(f"[MouseBrain] Tracked: {param_name} changed from {old_value} to {new_value}")
 
     def view_session_log(self):
         """Open the live session log file in the default text editor."""
@@ -10962,7 +10962,7 @@ class TuningWidget(QWidget):
             else:
                 subprocess.run(['xdg-open', str(log_path)])
 
-            print(f"[Connectome] Opened log file: {log_path}")
+            print(f"[MouseBrain] Opened log file: {log_path}")
         else:
             QMessageBox.warning(self, "No Log", f"Log file not found:\n{log_path}")
 

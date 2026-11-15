@@ -12,7 +12,7 @@ Run this AFTER Script 5 (5_classify_cells.py).
 ================================================================================
 HOW TO USE
 ================================================================================
-    python 6_count_regions.py --brain 349_CNT_01_02_1p625x_z4
+    python 6_count_regions.py --brain 001_CNT_01_01_1p625x_z4
     python 6_count_regions.py  # Interactive mode
 
 ================================================================================
@@ -64,7 +64,7 @@ def check_brainglobe_env():
         print("    python 6_count_regions.py")
         print()
         print("Or run directly with the brainglobe Python:")
-        print("    G:\\Program_Files\\Conda\\envs\\brainglobe-env\\python.exe 6_count_regions.py")
+        print("    <conda root>\\envs\\brainglobe-env\\python.exe 6_count_regions.py")
         print()
         print("(The script will use a fallback method, but results may be less accurate)")
         return False
@@ -775,7 +775,7 @@ def update_region_counts_csv(
     and replaced with the new data.
 
     Args:
-        brain_name: Full brain name (e.g., "349_CNT_01_02_1p625x_z4")
+        brain_name: Full brain name (e.g., "001_CNT_01_01_1p625x_z4")
         region_counts: Dict of {region_acronym: cell_count}
         detection_params: Dict of detection parameters used
         run_date: ISO timestamp (defaults to now)
@@ -908,7 +908,7 @@ def update_elife_counts_csv(
     Archives old data before replacing.
 
     Args:
-        brain_name: Full brain name (e.g., "349_CNT_01_02_1p625x_z4")
+        brain_name: Full brain name (e.g., "001_CNT_01_01_1p625x_z4")
         region_counts: Dict of {region_acronym: cell_count} (raw Allen data)
         detection_params: Dict of detection parameters used
         run_date: ISO timestamp (defaults to now)
@@ -1953,7 +1953,7 @@ def main():
         epilog="""
 Examples:
     python 6_count_regions.py                                    # Interactive
-    python 6_count_regions.py --brain 349_CNT_01_02_1p625x_z4
+    python 6_count_regions.py --brain 001_CNT_01_01_1p625x_z4
     python 6_count_regions.py --all                              # All pending
         """
     )
@@ -2184,7 +2184,7 @@ Examples:
         print("\nTo compare brains:")
         print("   python util_compare_to_published.py --brain <name>")
         print("\n" + "-" * 60)
-        print("OR use napari: Plugins > SCI-Connectome > Setup & Tuning > Results tab")
+        print("OR use napari: Plugins > BrainTools > 3D: 2. Setup & Tuning > Results tab")
         print("=" * 60)
 
 

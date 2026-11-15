@@ -16,7 +16,7 @@ Usage:
     python util_generate_elife_report.py
 
     # Generate for specific brains
-    python util_generate_elife_report.py --brains 349 357 367 368
+    python util_generate_elife_report.py --brains 001 005 006 007
 
     # For ATLAS tracing (no filtering)
     python util_generate_elife_report.py --ascending

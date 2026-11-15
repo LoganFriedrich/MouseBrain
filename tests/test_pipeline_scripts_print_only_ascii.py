@@ -4,8 +4,8 @@ A Windows console is cp1252. One non-ASCII character in a print() raises
 UnicodeEncodeError and takes the whole script down -- not at the end, but at the
 moment it tries to say something, which is usually in the middle of work.
 
-This is not hypothetical. On 2026-10-13 a tick character in a progress line
-stopped the extraction of a 37 GB brain before it read a single slice, and the
+This is not hypothetical. A tick character in a progress line once
+stopped the extraction of a brain before it read a single slice, and the
 two steps queued behind it then failed for a second, unrelated-looking reason.
 The project has stated this rule for a long time; the scripts drifted anyway,
 because a rule nobody checks is a suggestion.

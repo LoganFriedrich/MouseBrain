@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mousebrain"
 version = "0.2.0"
-description = "Connectome tissue analysis tools — 3D cleared brain and 2D slice pipelines"
+description = "Tissue analysis tools — 3D cleared brain and 2D slice pipelines"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
@@ -112,7 +112,7 @@ mousebrain = ["napari.yaml"]
 # -p no:cacheprovider: pytest's cache plugin makes a pytest-cache-files-*
 # temporary folder and renames it to .pytest_cache. When the repo sits on a
 # network share the rename can fail, leaving the folder behind with permissions
-# only an administrator can clear (dozens accumulated). The suite needs no cache.
+# only an administrator can clear. The suite needs no cache.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # --ignore-glob: leftover pytest-cache-files-* folders must be skipped BEFORE pytest

@@ -5,8 +5,7 @@ is safe for code which checks `exists()` before reading -- and ten places in thi
 package instead call `mkdir(parents=True, exist_ok=True)`, which checks nothing. So an
 unconfigured run created
 `<cwd>/CONNECTOME_ROOT_NOT_CONFIGURED/3_Nuclei_Detection/2_Data_Summary/` containing a
-brand-new empty calibration_runs.csv. On 2026-10-07 that landed at the root of the lab's
-share.
+brand-new empty calibration_runs.csv, which can land at the root of a shared drive.
 
 The stray folder was never the real danger. A SECOND empty tracker is: it looks like a
 working one, later runs append to it, and the actual record of every calibration run is

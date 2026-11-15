@@ -311,8 +311,8 @@ Sample IDs are automatically parsed to extract hierarchy fields:
 
 | Format | Example | Parsed As |
 |--------|---------|-----------|
-| Compact | `E02_01_S12` | project=ENCR, cohort=02, subject=01, slice=12 |
-| Full | `ENCR_02_01_S12` | project=ENCR, cohort=02, subject=01, slice=12 |
+| Compact | `E01_01_S12` | project=ENCR, cohort=01, subject=01, slice=12 |
+| Full | `ENCR_01_01_S12` | project=ENCR, cohort=01, subject=01, slice=12 |
 | Generic | `anything_else` | Underscore-split with pattern matching |
 
 ---

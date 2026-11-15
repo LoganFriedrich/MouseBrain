@@ -10,9 +10,9 @@ with Y network, and counted regions, I got Z results. How does that compare to
 other runs and to the eLife reference?"
 
 Usage:
-    python util_pipeline_comparison.py --brain 349_CNT_01_02_1p625x_z4
-    python util_pipeline_comparison.py --brain 349_CNT_01_02_1p625x_z4 --output report.md
-    python util_pipeline_comparison.py --brain 349_CNT_01_02_1p625x_z4 --format csv
+    python util_pipeline_comparison.py --brain 001_CNT_01_01_1p625x_z4
+    python util_pipeline_comparison.py --brain 001_CNT_01_01_1p625x_z4 --output report.md
+    python util_pipeline_comparison.py --brain 001_CNT_01_01_1p625x_z4 --format csv
 
 Output:
     - Markdown report with full pipeline comparison
@@ -507,9 +507,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python util_pipeline_comparison.py --brain 349_CNT_01_02_1p625x_z4
-    python util_pipeline_comparison.py --brain 349_CNT_01_02_1p625x_z4 --output report.md
-    python util_pipeline_comparison.py --brain 349_CNT_01_02_1p625x_z4 --format csv
+    python util_pipeline_comparison.py --brain 001_CNT_01_01_1p625x_z4
+    python util_pipeline_comparison.py --brain 001_CNT_01_01_1p625x_z4 --output report.md
+    python util_pipeline_comparison.py --brain 001_CNT_01_01_1p625x_z4 --format csv
         """
     )
 

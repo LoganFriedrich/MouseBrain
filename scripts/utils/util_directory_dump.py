@@ -6,7 +6,7 @@ Dump directory structure for sharing/debugging.
 
 Usage:
     python util_directory_dump.py                     # Dump parent of script location
-    python util_directory_dump.py Y:\\path\\to\\dir   # Dump specific directory
+    python util_directory_dump.py D:\\path\\to\\dir   # Dump specific directory
     python util_directory_dump.py . --depth 4         # Current dir, deeper scan
 
 Output saved to: DIRECTORY_DUMP.txt (in the target directory)

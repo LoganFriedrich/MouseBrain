@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-overnight_batch.py - Overnight Batch Processing for SCI-Connectome Pipeline
+overnight_batch.py - Overnight Batch Processing for the MouseBrain Pipeline
 
 Processes all cropped brains through the full pipeline (registration -> detection ->
-classification -> counting) using brain 349's calibrated parameters, then generates
+classification -> counting) using the settled detection method, then generates
 comparison reports and representative images.
 
 Usage:
     python overnight_batch.py                  # Process all pending brains
     python overnight_batch.py --dry-run        # Show what would run
-    python overnight_batch.py --brain 357      # Process specific brain only
+    python overnight_batch.py --brain 005      # Process specific brain only
     python overnight_batch.py --skip-complete  # Skip already completed steps
 
 The script will:
 1. Find all brains with completed cropping (2_Cropped_For_Registration/)
-2. Use brain 349's calibrated detection parameters
+2. Use the settled detection method for each brain's imaging setup
 3. Run each pipeline step with automatic retry on failure
 4. Generate comparison report when complete
 5. Generate representative images for each brain
@@ -786,7 +786,7 @@ def parse_cells_from_xml(xml_path: Path) -> List[Dict]:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Overnight batch processing for SCI-Connectome pipeline",
+        description="Overnight batch processing for the MouseBrain pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument('--dry-run', '-n', action='store_true',

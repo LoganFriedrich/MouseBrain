@@ -6,7 +6,7 @@ beside a brain: an archive of a superseded delivery, a scratch copy, a folder
 kept while something is checked. Give one of those a 0_Raw_IMS and every step
 scans it, finds it complete, and reports the real brain as already done.
 
-Observed 2026-10-13. A brain was re-delivered with a better stitch, its previous
+Observed in practice: a brain was re-delivered with a better stitch, its previous
 outputs were archived into a folder inside the brain folder, and the next
 extraction found the ARCHIVE, announced "all extractions complete", and did
 nothing. The two steps queued behind it then failed for reasons that pointed
@@ -32,7 +32,7 @@ def test_a_real_brain_folder_is_scanned(tmp_path):
 
 
 @pytest.mark.parametrize("name", [
-    "_superseded_2026-10-13_replaced_by_better_stitch",
+    "_superseded_2026-01-01_replaced_by_better_stitch",
     "_incoming",
     "_scratch",
     "_old",

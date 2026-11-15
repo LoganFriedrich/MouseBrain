@@ -60,7 +60,7 @@ def _step3():
 
 def test_registration_draws_its_qc_picture(tmp_path):
     """What step 3 does after brainreg finishes, on a small stand-in registration."""
-    reg = tmp_path / "401_PROJ_01_02_1p625x_z4" / "3_Registered_Atlas"
+    reg = tmp_path / "101_PROJ_01_02_1p625x_z4" / "3_Registered_Atlas"
     reg.mkdir(parents=True)
     brain = np.random.default_rng(0).integers(0, 1000, (40, 30, 36)).astype(np.uint16)
     atlas = np.zeros(brain.shape, np.uint32)

@@ -5,7 +5,7 @@ util_manual_crop.py
 CLI launcher for the manual crop tool - loads brain into napari and opens plugin.
 
 Usage:
-    python util_manual_crop.py --brain 349_CNT_01_02_1p625x_z4
+    python util_manual_crop.py --brain 001_CNT_01_01_1p625x_z4
 
 This will:
     1. Load the full brain volume into napari
@@ -123,8 +123,8 @@ This script:
   3. Sets up everything ready for cropping
 
 Examples:
-  python util_manual_crop.py --brain 349_CNT_01_02_1p625x_z4
-  python util_manual_crop.py --brain 349_CNT_01_02_1p625x_z4 --channel 1
+  python util_manual_crop.py --brain 001_CNT_01_01_1p625x_z4
+  python util_manual_crop.py --brain 001_CNT_01_01_1p625x_z4 --channel 1
         """
     )
 

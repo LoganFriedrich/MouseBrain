@@ -30,10 +30,10 @@ NDH6SA~M
 *.log
 test_output.txt
 
-# Agent/personal notes -- never published. See CLAUDE.md on notes placement.
+# Agent/personal notes -- never published.
 .notes/
 
-# Data never belongs in a tool repo (see CLAUDE.md: code and data live apart).
+# Data never belongs in a tool repo (code and data live apart).
 # Data lives in MouseBrain_Pipeline/.
 *.csv
 *.xlsx

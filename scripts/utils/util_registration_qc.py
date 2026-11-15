@@ -8,9 +8,9 @@ Shows slices through your registered brain, front to back, beside the atlas
 regions registration placed on them, with the region outlines overlaid.
 
 Usage:
-    python util_registration_qc.py --brain 349_CNT_01_02_1p625x_z4
-    python util_registration_qc.py --brain 349_CNT_01_02_1p625x_z4 --levels 5
-    python util_registration_qc.py --brain 349_CNT_01_02_1p625x_z4 --output custom_qc.png
+    python util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4
+    python util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4 --levels 5
+    python util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4 --output custom_qc.png
 
 Output:
     Creates QC_registration_detailed.png in the registration folder showing:
@@ -393,10 +393,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python util_registration_qc.py --brain 349_CNT_01_02_1p625x_z4
-  python util_registration_qc.py --brain 349_CNT_01_02_1p625x_z4 --levels 7
-  python util_registration_qc.py --brain 349_CNT_01_02_1p625x_z4 --slices
-  python util_registration_qc.py --brain 349_CNT_01_02_1p625x_z4 --slices --slice-indices 100,250,400,600
+  python util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4
+  python util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4 --levels 7
+  python util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4 --slices
+  python util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4 --slices --slice-indices 100,250,400,600
         """
     )
 

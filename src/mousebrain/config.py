@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-config.py - Central configuration for Connectome pipeline paths (mousebrain package).
+config.py - Central configuration for MouseBrain pipeline paths (mousebrain package).
 
 This module provides portable path detection so the pipeline works on any system,
-not just the lab's Y: drive setup.
+not just one lab's drive layout.
 
 Path Resolution Order:
 1. Environment variable CONNECTOME_ROOT (if set)
@@ -15,22 +15,22 @@ Usage in other scripts:
     from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR, MODELS_DIR, DATA_SUMMARY_DIR
 
     # These paths are now portable:
-    brain_folder = BRAINS_ROOT / "349_CNT_01_02"
+    brain_folder = BRAINS_ROOT / "001_CNT_01_01"
 
 Environment Variable Override:
     Set CONNECTOME_ROOT to the root of your installation:
 
     Windows (cmd):
-        set CONNECTOME_ROOT=C:\\Projects\\Connectome
+        set CONNECTOME_ROOT=C:\\path\\to\\root
 
     Windows (PowerShell):
-        $env:CONNECTOME_ROOT = "C:\\Projects\\Connectome"
+        $env:CONNECTOME_ROOT = "C:\\path\\to\\root"
 
     Linux/Mac:
-        export CONNECTOME_ROOT=/home/user/Connectome
+        export CONNECTOME_ROOT=/path/to/root
 
     Legacy (still supported):
-        set SCI_CONNECTOME_ROOT=C:\\Projects\\Connectome
+        set SCI_CONNECTOME_ROOT=C:\\path\\to\\root
 """
 
 import importlib
@@ -131,10 +131,10 @@ def is_configured() -> bool:
 
 def _get_root_path() -> Path:
     """
-    Get the root path for the Connectome installation.
+    Get the root path for the MouseBrain installation.
 
     Resolution order:
-    1. CONNECTOME_ROOT environment variable (preferred; the lab sets it in the
+    1. CONNECTOME_ROOT environment variable (preferred; typically set in the
        conda environment's activation script so every tool agrees on the root)
     2. SCI_CONNECTOME_ROOT environment variable (legacy, still supported)
     3. Auto-detect from this file's location (pipeline layout above it)
@@ -154,8 +154,8 @@ def _get_root_path() -> Path:
     relative sentinel therefore resolved against whatever the working directory
     happened to be, and the tracker created
     ``<cwd>/CONNECTOME_ROOT_NOT_CONFIGURED/3_Nuclei_Detection/2_Data_Summary/``
-    with a brand-new empty calibration_runs.csv in it. On 2026-10-07 that landed
-    at the root of the lab's share, and the danger was never the stray folder:
+    with a brand-new empty calibration_runs.csv in it. That can land at the
+    root of a shared drive, and the danger was never the stray folder:
     it was a SECOND, empty tracker that later runs could have appended to,
     silently orphaning the real record of every calibration run.
 
@@ -351,7 +351,7 @@ def validate_paths(verbose: bool = False) -> bool:
 def print_config():
     """Print current configuration for debugging."""
     print("=" * 60)
-    print("Connectome Configuration")
+    print("MouseBrain Configuration")
     print("=" * 60)
 
     env_var = os.environ.get("CONNECTOME_ROOT") or os.environ.get("SCI_CONNECTOME_ROOT") or "(not set)"
@@ -382,13 +382,11 @@ def print_config():
 # BRAIN NAME PARSING - Data Hierarchy
 # =============================================================================
 
-# See 2_Data_Summary/DATA_HIERARCHY.md for full documentation
-#
 # Hierarchy (smallest to largest):
-#   Brain (374) -> Subject (CNT_01_01) -> Cohort (CNT_01) -> Experiment -> Project (CNT)
+#   Brain (001) -> Subject (CNT_01_01) -> Cohort (CNT_01) -> Experiment -> Project (CNT)
 #
 # Naming convention: {BRAIN#}_{PROJECT}_{COHORT#}_{SUBJECT#}
-# Example: 349_CNT_01_02 = Brain 349, Connectome project, Cohort 01, Subject 02
+# Example: 001_CNT_01_01 = Brain 001, project CNT, Cohort 01, Subject 01
 
 # Known project codes
 PROJECT_CODES = {
@@ -408,7 +406,7 @@ def is_pipeline_candidate(folder) -> bool:
     checked. Give one of those a ``0_Raw_IMS`` inside it and every step will scan
     it, find it complete, and report the real brain as already done.
 
-    That is not hypothetical. On 2026-10-13 a brain was re-delivered with a better
+    That is not hypothetical. A brain was re-delivered with a better
     stitch; its previous outputs were archived into a folder beside it, inside the
     brain folder; and the next extraction found the ARCHIVE, announced "all
     extractions complete", and did nothing -- leaving the two steps behind it to
@@ -581,24 +579,24 @@ def parse_brain_name(brain_name: str) -> dict:
     Parse a brain/folder name into its hierarchical components.
 
     Args:
-        brain_name: Name like "349_CNT_01_02" or "349_CNT_01_02_1p625x_z4"
+        brain_name: Name like "001_CNT_01_01" or "001_CNT_01_01_1p625x_z4"
 
     Returns:
         dict with keys: brain_id, project_code, project_name, cohort, subject,
                         subject_full, cohort_full, imaging_params (if present)
 
     Example:
-        >>> parse_brain_name("349_CNT_01_02_1p625x_z4")
+        >>> parse_brain_name("001_CNT_01_01_1p625x_z4")
         {
-            'brain_id': '349',
+            'brain_id': '001',
             'project_code': 'CNT',
             'project_name': 'Connectome',
             'cohort': '01',
-            'subject': '02',
-            'subject_full': 'CNT_01_02',
+            'subject': '01',
+            'subject_full': 'CNT_01_01',
             'cohort_full': 'CNT_01',
             'imaging_params': '1p625x_z4',
-            'raw': '349_CNT_01_02_1p625x_z4'
+            'raw': '001_CNT_01_01_1p625x_z4'
         }
     """
     result = {
@@ -617,11 +615,11 @@ def parse_brain_name(brain_name: str) -> dict:
         return result
 
     # Parse the brain's own folder name. Callers pass "<mouse>/<brain>" paths
-    # too (e.g. "349_CNT_01_02/349_CNT_01_02_1p625x_z4"), and splitting that
+    # too (e.g. "001_CNT_01_01/001_CNT_01_01_1p625x_z4"), and splitting that
     # on '_' across the slash made the subject "CNT_01_02/349" and the imaging
-    # paradigm "CNT_01_02_1p625x_z4" -- one paradigm per brain, so "best
-    # settings for this paradigm" never matched another brain (found
-    # 2026-10-22 in the calibration-run tracker, still happening in October).
+    # paradigm "CNT_01_01_1p625x_z4" -- one paradigm per brain, so "best
+    # settings for this paradigm" never matched another brain (found in the
+    # calibration-run tracker).
     # 'raw' keeps the text as given.
     brain_name = brain_name.replace('\\', '/').rstrip('/').rsplit('/', 1)[-1]
 
@@ -664,8 +662,8 @@ def get_brain_hierarchy(brain_name: str) -> str:
     Get a human-readable hierarchy string for a brain.
 
     Example:
-        >>> get_brain_hierarchy("349_CNT_01_02")
-        "Brain 349 | Subject CNT_01_02 | Cohort CNT_01 | Project Connectome"
+        >>> get_brain_hierarchy("001_CNT_01_01")
+        "Brain 001 | Subject CNT_01_01 | Cohort CNT_01 | Project Connectome"
     """
     parsed = parse_brain_name(brain_name)
 

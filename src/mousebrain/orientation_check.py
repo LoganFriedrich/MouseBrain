@@ -278,7 +278,7 @@ def main(argv=None) -> int:
                     "3_Registered_Atlas folder as QC_orientation_check.png (a trial "
                     "orientation as QC_orientation_check_<orientation>.png) and entered in "
                     "MouseBrain's analysis registry. Registration runs it by itself.")
-    ap.add_argument("brain", help="brain pipeline folder name (e.g. 349_CNT_01_02_1p625x_z4) or path")
+    ap.add_argument("brain", help="brain pipeline folder name (e.g. 001_CNT_01_01_1p625x_z4) or path")
     ap.add_argument("--orientation", help="try this orientation instead of the declared one "
                                           "(three letters, e.g. sar)")
     ap.add_argument("--atlas", default=DEFAULT_ATLAS, help="registration atlas (default %(default)s)")

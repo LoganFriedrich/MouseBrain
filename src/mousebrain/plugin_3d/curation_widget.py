@@ -344,7 +344,7 @@ class CurationWidget(QWidget):
                 len(self.candidates), size=n_sample, replace=False
             )
             self.review_indices = np.sort(self.review_indices)  # Keep in order
-            print(f"[Connectome] Sampling {n_sample} candidates ({self.sample_spin.value()}%) for QC review")
+            print(f"[MouseBrain] Sampling {n_sample} candidates ({self.sample_spin.value()}%) for QC review")
         else:
             self.review_indices = np.arange(len(self.candidates))
 
@@ -734,11 +734,11 @@ class CurationWidget(QWidget):
             ET.indent(tree, space="  ")
             tree.write(str(save_path), encoding="UTF-8", xml_declaration=True)
 
-            print(f"[Connectome] Saved {len(points)} {cell_type} to {save_path}")
+            print(f"[MouseBrain] Saved {len(points)} {cell_type} to {save_path}")
             return save_path
 
         except Exception as e:
-            print(f"[Connectome] Error saving to XML: {e}")
+            print(f"[MouseBrain] Error saving to XML: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -761,10 +761,10 @@ class CurationWidget(QWidget):
                         # Also log the export/save
                         if hasattr(w.session_doc, 'log_export'):
                             w.session_doc.log_export(str(save_path), f"curated_{curation_type}")
-                        print(f"[Connectome] Logged curation to session documenter")
+                        print(f"[MouseBrain] Logged curation to session documenter")
                         return
         except Exception as e:
-            print(f"[Connectome] Could not log to session: {e}")
+            print(f"[MouseBrain] Could not log to session: {e}")
 
     def get_curation_results(self):
         """Get the curation results."""

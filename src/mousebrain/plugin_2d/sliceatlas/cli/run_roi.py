@@ -565,7 +565,7 @@ def _registry_root():
 def _parse_sample_name(sample_name):
     """Parse sample name into (mouse, base_region).
 
-    E02_01_S13_DCNv2 -> ('E02_01', 'DCN')
+    E01_01_S13_DCNv2 -> ('E01_01', 'DCN')
     """
     parts = sample_name.split('_')
     mouse = f'{parts[0]}_{parts[1]}' if len(parts) >= 2 else 'unknown'

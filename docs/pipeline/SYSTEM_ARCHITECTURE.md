@@ -1,6 +1,6 @@
-# Connectome System Architecture
+# MouseBrain System Architecture
 
-> **Note**: You are reading documentation inside a **data directory** (`MouseBrain_Pipeline/`). The canonical source code is in `Tissue/MouseBrain/src/mousebrain/`. Do not create or modify code here — see the root `CLAUDE.md` for the architecture rule.
+> **Note**: Code and data live apart. The source code is this repository (`src/mousebrain/`); the pipeline folder (`MouseBrain_Pipeline/`) holds data only. Do not put code in the pipeline folder.
 
 ## Overview
 
@@ -21,7 +21,7 @@ The system has two main workflows:
 | Term | Definition | Use Context |
 |------|------------|-------------|
 | **Cohort** | A group of brains in same experimental condition (e.g., ENCR_02, CNT_02) | Organization |
-| **Brain** | A single sample (e.g., 349_CNT_01_02_1p625x_z4) | Unit of processing |
+| **Brain** | A single sample (e.g., 001_CNT_01_01_1p625x_z4) | Unit of processing |
 | **Calibration Run** | A single detection attempt during parameter tuning | Tracked by tracker |
 | **Best** | User-marked preferred calibration run for a brain | Marked with ★ |
 | **Tracker** | Records ALL calibration runs with settings, parameters, results | Essential for reproducibility |
@@ -66,8 +66,8 @@ integrator may pull from `Registry/`.
 
 ```
 1_Brains/
-└── {mouse_id}/                           # e.g., 349_CNT_01_02
-    └── {brain_id}/                        # e.g., 349_CNT_01_02_1p625x_z4
+└── {mouse_id}/                           # e.g., 001_CNT_01_01
+    └── {brain_id}/                        # e.g., 001_CNT_01_01_1p625x_z4
         ├── 1_Extracted_Full/              # Raw extracted channels from IMS
         │   ├── ch0/                       # Background channel (typically)
         │   ├── ch1/                       # Signal channel (typically)
@@ -126,7 +126,7 @@ The **Tracker** is the backbone of the calibration workflow. It records:
 tracker.log_detection(brain=..., ball_xy=..., threshold=..., output_path=...)
 
 # Search for runs
-tracker.search(brain="349_CNT_01_02_1p625x_z4", exp_type="detection")
+tracker.search(brain="001_CNT_01_01_1p625x_z4", exp_type="detection")
 
 # Update run status
 tracker.update_status(run_id, status="completed")

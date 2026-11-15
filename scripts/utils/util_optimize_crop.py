@@ -46,9 +46,9 @@ The optimal crop is the minimum that produces GOOD shapes for all key regions.
 ================================================================================
 HOW TO USE
 ================================================================================
-    python util_optimize_crop.py --brain 349_CNT_01_02_1p625x_z4
-    python util_optimize_crop.py --brain 349_CNT_01_02_1p625x_z4 --crops 0,10,20,30
-    python util_optimize_crop.py --brain 349_CNT_01_02_1p625x_z4 --quick  # Only 0,25,50%
+    python util_optimize_crop.py --brain 001_CNT_01_01_1p625x_z4
+    python util_optimize_crop.py --brain 001_CNT_01_01_1p625x_z4 --crops 0,10,20,30
+    python util_optimize_crop.py --brain 001_CNT_01_01_1p625x_z4 --quick  # Only 0,25,50%
 
 ================================================================================
 OUTPUT
@@ -672,9 +672,9 @@ This script tests multiple crop levels to find the minimum crop that
 produces good registration quality for brainstem regions.
 
 Examples:
-    python util_optimize_crop.py --brain 349_CNT_01_02_1p625x_z4
-    python util_optimize_crop.py --brain 349_CNT_01_02_1p625x_z4 --quick
-    python util_optimize_crop.py --brain 349_CNT_01_02_1p625x_z4 --crops 0,15,30,45
+    python util_optimize_crop.py --brain 001_CNT_01_01_1p625x_z4
+    python util_optimize_crop.py --brain 001_CNT_01_01_1p625x_z4 --quick
+    python util_optimize_crop.py --brain 001_CNT_01_01_1p625x_z4 --crops 0,15,30,45
 
 Output:
     Creates _crop_optimization/ folder with all test registrations

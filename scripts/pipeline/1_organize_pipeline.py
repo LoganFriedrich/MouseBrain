@@ -42,15 +42,15 @@ FOLDER STRUCTURE CREATED
 ================================================================================
 Before running:
     1_Brains/
-    \---- 349_CNT_01_02/
-        \---- 349_CNT_01_02_1.625x_z4.ims     <- Sitting in mouse folder
+    \---- 001_CNT_01_01/
+        \---- 001_CNT_01_01_1.625x_z4.ims     <- Sitting in mouse folder
 
 After running:
     1_Brains/
-    \---- 349_CNT_01_02/
-        \---- 349_CNT_01_02_1p625x_z4/        <- Pipeline folder (. -> p in name)
+    \---- 001_CNT_01_01/
+        \---- 001_CNT_01_01_1p625x_z4/        <- Pipeline folder (. -> p in name)
             +---- 0_Raw_IMS/
-            |   \---- 349_CNT_01_02_1.625x_z4.ims   <- Moved here
+            |   \---- 001_CNT_01_01_1.625x_z4.ims   <- Moved here
             +---- 1_Extracted_Full/            <- Script 2 output (full)
             +---- 2_Cropped_For_Registration/  <- Script 2 output (cropped)
             +---- 3_Registered_Atlas/          <- Script 3 output
@@ -69,8 +69,8 @@ Your .ims files MUST be named like this:
     NUMBER_PROJECT_COHORT_ANIMAL_MAGx_zSTEP.ims
 
 Examples:
-    349_CNT_01_02_1.625x_z4.ims
-    350_SCI_02_05_1.9x_z3.37.ims
+    001_CNT_01_01_1.625x_z4.ims
+    004_SCI_02_05_1.9x_z3.37.ims
 
 What each part means:
     349         = Brain/sample number
@@ -239,7 +239,7 @@ def parse_filename(filename):
     Parse an IMS filename to extract components.
     
     Expected format: NUMBER_PROJECT_COHORT_ANIMAL_MAGx_zSTEP.ims
-    Example: 349_CNT_01_02_1.625x_z4.ims
+    Example: 001_CNT_01_01_1.625x_z4.ims
     
     Returns dict with parsed values or None if invalid.
     """
@@ -439,8 +439,8 @@ def get_mouse_folder_for_ims(ims_path, parsed=None):
     Determine the mouse folder for an IMS file based on its current location.
 
     A brain lives at <brains root>/<mouse folder>/<pipeline folder>/0_Raw_IMS/, where
-    the mouse folder is the parsed mouse_id (e.g. 403_CNT_05_03) and the pipeline
-    folder adds the imaging parameters (403_CNT_05_03_1p625x_z4).
+    the mouse folder is the parsed mouse_id (e.g. 008_CNT_04_01) and the pipeline
+    folder adds the imaging parameters (008_CNT_04_01_1p625x_z4).
 
     WHY THE NAME IS PARSED INSTEAD OF ASSUMED FROM THE LOCATION
     ----------------------------------------------------------
@@ -448,10 +448,10 @@ def get_mouse_folder_for_ims(ims_path, parsed=None):
     return the parent. For a newly delivered file dropped into the brains root -- the
     normal way a brain arrives -- the parent IS the brains root, so the mouse folder
     was skipped entirely and the brain was built flat as
-    <brains root>/403_CNT_05_03_1p625x_z4/. That shape is worse than wrong: this
+    <brains root>/008_CNT_04_01_1p625x_z4/. That shape is worse than wrong: this
     script's own scanner looks for mouse/pipeline/0_Raw_IMS, so the brain then
-    disappeared from its listing -- neither "ready" nor "needs work" -- and a 50 GB
-    delivery sat in the pipeline invisible to every later step (2026-10-07). The
+    disappeared from its listing -- neither "ready" nor "needs work" -- and the
+    delivery sat in the pipeline invisible to every later step. The
     flat name also collides with the training_data folders, which use it already.
 
     The file name already says which mouse it belongs to, so that is what decides.
@@ -682,7 +682,7 @@ This script organizes your folder structure. Run it before Script 2.
 
 Folder Structure Created:
   MouseFolder/
-  \---- 349_CNT_01_02_1p625x_z4/
+  \---- 001_CNT_01_01_1p625x_z4/
       +---- 0_Raw_IMS/
       +---- 1_Extracted_Full/
       +---- 2_Cropped_For_Registration/

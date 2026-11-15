@@ -12,7 +12,7 @@ uninjured animals - the appropriate reference for cervical spinal cord studies.
 HOW TO USE
 ================================================================================
     # Compare a single brain's counts
-    python util_compare_to_published.py --brain 349_CNT_01_02_1p625x_z4
+    python util_compare_to_published.py --brain 001_CNT_01_01_1p625x_z4
 
     # Compare a specific CSV file
     python util_compare_to_published.py --csv path/to/cell_counts_by_region.csv
@@ -21,7 +21,7 @@ HOW TO USE
     python util_compare_to_published.py --show-reference
 
     # Compare to lumbar (L1) reference instead of cervical
-    python util_compare_to_published.py --brain 349_CNT_01_02_1p625x_z4 --lumbar
+    python util_compare_to_published.py --brain 001_CNT_01_01_1p625x_z4 --lumbar
 
 ================================================================================
 REFERENCE DATA
@@ -389,13 +389,13 @@ def main():
         epilog="""
 Examples:
     # Compare retrograde cervical tracing (default)
-    python util_compare_to_published.py --brain 349_CNT_01_02_1p625x_z4
+    python util_compare_to_published.py --brain 001_CNT_01_01_1p625x_z4
 
     # Compare ATLAS (ascending) tracing - no suspicious filtering
-    python util_compare_to_published.py --brain 349_CNT_01_02_1p625x_z4 --ascending
+    python util_compare_to_published.py --brain 001_CNT_01_01_1p625x_z4 --ascending
 
     # Use lumbar reference instead of cervical
-    python util_compare_to_published.py --brain 349_CNT_01_02_1p625x_z4 --lumbar
+    python util_compare_to_published.py --brain 001_CNT_01_01_1p625x_z4 --lumbar
         """
     )
     parser.add_argument("--brain", help="Brain name to compare")

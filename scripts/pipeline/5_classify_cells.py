@@ -12,8 +12,8 @@ Run this AFTER Script 4 (4_detect_cells.py).
 ================================================================================
 HOW TO USE
 ================================================================================
-    python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4 --model path/to/model.h5
-    python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4  # Uses default model
+    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --model path/to/model.h5
+    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4  # Uses default model
     python 5_classify_cells.py  # Interactive mode
 
 ================================================================================
@@ -423,10 +423,10 @@ def main():
         epilog="""
 Examples:
     python 5_classify_cells.py                               # Interactive
-    python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4 --model model.h5
-    python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4  # Uses default model
-    python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4 --no-prefilter  # Skip pre-filter (not recommended)
-    python 5_classify_cells.py --brain 349_CNT_01_02_1p625x_z4 --routine       # Auto pre-filter + paradigm model
+    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --model model.h5
+    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4  # Uses default model
+    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --no-prefilter  # Skip pre-filter (not recommended)
+    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --routine       # Auto pre-filter + paradigm model
         """
     )
     

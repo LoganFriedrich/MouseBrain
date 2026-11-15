@@ -10,16 +10,16 @@ Uses either:
 
 Usage:
     # Apply 349's crop to new brains (proportional)
-    python util_apply_crop_from_reference.py --reference 349_CNT_01_02_1p625x_z4 --target 367_CNT_03_07_1p625x_z4
+    python util_apply_crop_from_reference.py --reference 001_CNT_01_01_1p625x_z4 --target 006_CNT_03_01_1p625x_z4
 
     # Apply to multiple brains
-    python util_apply_crop_from_reference.py --reference 349_CNT_01_02_1p625x_z4 --target 367_CNT_03_07_1p625x_z4 368_CNT_03_08_1p625x_z4
+    python util_apply_crop_from_reference.py --reference 001_CNT_01_01_1p625x_z4 --target 006_CNT_03_01_1p625x_z4 007_CNT_03_02_1p625x_z4
 
     # Use absolute Y value instead of proportional
-    python util_apply_crop_from_reference.py --reference 349_CNT_01_02_1p625x_z4 --target 367_CNT_03_07_1p625x_z4 --absolute
+    python util_apply_crop_from_reference.py --reference 001_CNT_01_01_1p625x_z4 --target 006_CNT_03_01_1p625x_z4 --absolute
 
     # Dry run (show what would happen)
-    python util_apply_crop_from_reference.py --reference 349_CNT_01_02_1p625x_z4 --target 367_CNT_03_07_1p625x_z4 --dry-run
+    python util_apply_crop_from_reference.py --reference 001_CNT_01_01_1p625x_z4 --target 006_CNT_03_01_1p625x_z4 --dry-run
 """
 
 import argparse
@@ -180,7 +180,7 @@ def main():
         description="Apply crop settings from a reference brain to other brains"
     )
     parser.add_argument('--reference', '-r', required=True,
-                        help="Reference brain name (e.g., 349_CNT_01_02_1p625x_z4)")
+                        help="Reference brain name (e.g., 001_CNT_01_01_1p625x_z4)")
     parser.add_argument('--target', '-t', nargs='+', required=True,
                         help="Target brain name(s) to apply crop to")
     parser.add_argument('--absolute', '-a', action='store_true',

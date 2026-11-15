@@ -368,7 +368,7 @@ def setup_brain_from_ims(ims_path: Path) -> Tuple[Optional[Path], str]:
         return None, f"IMS file not found: {ims_path}"
 
     # Parse brain name from filename
-    # Expected format: 349_CNT_01_02_1p625x_z4.ims
+    # Expected format: 001_CNT_01_01_1p625x_z4.ims
     stem = ims_path.stem
     parsed = parse_brain_name(stem)
 
