@@ -35,6 +35,50 @@ from mousebrain.plugin_2d.sliceatlas.core.channel_model import ChannelSettings, 
 from mousebrain.plugin_2d.sliceatlas.core.image_utils import auto_contrast, COLORMAPS
 
 
+# Layers made by the Annotate tab carry this metadata key. Rotate and flip move
+# exactly these layers with the image; layers this widget did not make (another
+# tool's points, a layer the person added through napari itself) are left alone.
+ANNOTATION_TAG = "slice_annotator_annotation"
+
+
+def rotate_yx(coords, k: int, shape_yx):
+    """Where pixel coordinates land after np.rot90(image, k, axes=(-2, -1)).
+
+    `coords` is an (N, D) array whose last two columns are (y, x) in the
+    image's pixel space (napari puts pixel centers on whole numbers);
+    leading columns (a section index) are kept as they are. `shape_yx` is
+    the image's (height, width) BEFORE the rotation. k follows np.rot90:
+    1 = 90 degrees counter-clockwise, -1 = clockwise, 2 = 180 degrees.
+    """
+    out = np.array(coords, dtype=float, copy=True)
+    if out.size == 0:
+        return out
+    h, w = shape_yx
+    y, x = out[:, -2].copy(), out[:, -1].copy()
+    k %= 4
+    if k == 1:      # counter-clockwise: new[i, j] = old[j, w-1-i]
+        out[:, -2], out[:, -1] = (w - 1) - x, y
+    elif k == 2:
+        out[:, -2], out[:, -1] = (h - 1) - y, (w - 1) - x
+    elif k == 3:    # clockwise: new[i, j] = old[h-1-j, i]
+        out[:, -2], out[:, -1] = x, (h - 1) - y
+    return out
+
+
+def flip_yx(coords, axis: int, shape_yx):
+    """Where pixel coordinates land after np.flip(image, axis) with axis -1
+    (left-right) or -2 (up-down). Same conventions as rotate_yx."""
+    out = np.array(coords, dtype=float, copy=True)
+    if out.size == 0:
+        return out
+    h, w = shape_yx
+    if axis == -1:
+        out[:, -1] = (w - 1) - out[:, -1]
+    elif axis == -2:
+        out[:, -2] = (h - 1) - out[:, -2]
+    return out
+
+
 class SliceAnnotatorWidget(QWidget):
     """
     Main widget for Slice Annotator napari plugin.
@@ -746,14 +790,16 @@ class SliceAnnotatorWidget(QWidget):
         # Rotate on the last two axes (Y, X) regardless of data dimensions
         # Data shapes: (C, Y, X), (N_slices, C, Y, X), etc.
         axes = (-2, -1)  # Always rotate Y, X plane
+        shape_yx = self.current_data.shape[-2:]
         self.current_data = np.rot90(self.current_data, k=k, axes=axes)
 
         # Update metadata shape
         self.metadata['shape'] = self.current_data.shape
 
-        # Recreate layers with rotated data
-        self._create_channel_layers()
-        self._update_channels_ui()
+        # Move the annotations with the image, and keep every channel's
+        # display settings (see _show_reoriented_data for why).
+        self._transform_annotations(lambda c: rotate_yx(c, k, shape_yx))
+        self._show_reoriented_data()
         self._update_file_info()
 
         self.status_label.setText(f"Rotated {angle}°")
@@ -775,18 +821,83 @@ class SliceAnnotatorWidget(QWidget):
         # Y is second-to-last axis (-2), X is last axis (-1)
         if direction == 'horizontal':
             # Flip left-right = flip along X axis (last axis)
-            self.current_data = np.flip(self.current_data, axis=-1)
+            axis = -1
         elif direction == 'vertical':
             # Flip up-down = flip along Y axis (second-to-last axis)
-            self.current_data = np.flip(self.current_data, axis=-2)
+            axis = -2
         else:
             return
+        shape_yx = self.current_data.shape[-2:]
+        self.current_data = np.flip(self.current_data, axis=axis)
 
-        # Recreate layers with flipped data
+        # Move the annotations with the image, and keep every channel's
+        # display settings (see _show_reoriented_data for why).
+        self._transform_annotations(lambda c: flip_yx(c, axis, shape_yx))
+        self._show_reoriented_data()
+
+        self.status_label.setText(f"Flipped {direction}")
+
+    def _annotation_layers(self):
+        """The Shapes/Points layers the Annotate tab made, still in the viewer."""
+        return [
+            layer for layer in self.viewer.layers
+            if isinstance(layer, (napari.layers.Shapes, napari.layers.Points))
+            and layer.metadata.get(ANNOTATION_TAG)
+        ]
+
+    def _transform_annotations(self, transform):
+        """Apply a coordinate transform to every annotation the Annotate tab made.
+
+        WHY: rotate and flip turn the image's pixels. Annotations are drawn on
+        features of the tissue; left where they were, every box, arrow and
+        label would point at the wrong place after the turn.
+        """
+        for layer in self._annotation_layers():
+            if not len(layer.data):
+                continue
+            if isinstance(layer, napari.layers.Shapes):
+                layer.data = [transform(shape) for shape in layer.data]
+            else:
+                layer.data = transform(layer.data)
+
+    def _show_reoriented_data(self):
+        """Show the rotated/flipped current_data in the EXISTING channel layers.
+
+        WHY: an orientation change does not change any pixel value, so the
+        contrast, color, gamma, opacity and visibility the person has set --
+        in the Channels tab or in napari's own layer controls -- still apply.
+        Rebuilding the layers reset all of that to defaults on every click.
+        Only when the channel layers are gone (closed by hand, or cleared by
+        another tool) are they rebuilt from scratch.
+        """
+        arrays = list(self._channel_arrays())
+        layers = self.channel_layers
+        if layers and len(layers) == len(arrays) and all(
+                layer in self.viewer.layers for layer in layers):
+            for layer, array in zip(layers, arrays):
+                layer.data = array
+            return
         self._create_channel_layers()
         self._update_channels_ui()
 
-        self.status_label.setText(f"Flipped {direction}")
+    def _channel_arrays(self):
+        """Yield one array per channel layer of current_data.
+
+        Data shapes:
+        - 4D (N_slices or Z, C, Y, X): one (N, Y, X) array per channel
+        - 3D (C, Y, X): one (Y, X) array per channel
+        - 2D (Y, X): a single channel
+        """
+        data = self.current_data
+        n_channels = self.metadata.get('n_channels', 1)
+        if data.ndim == 4:
+            for i in range(n_channels):
+                yield data[:, i, :, :]
+        elif data.ndim == 3:
+            for i in range(n_channels):
+                yield data[i, :, :]
+        else:
+            yield data
 
     # =========================================================================
     # Channel layer management
@@ -1113,6 +1224,7 @@ class SliceAnnotatorWidget(QWidget):
             face_color=face_color,
             ndim=ndim,
         )
+        layer.metadata[ANNOTATION_TAG] = True  # moves with rotate/flip
 
         # Set the mode for the shape type
         layer.mode = 'add_' + shape_type if shape_type in ['rectangle', 'ellipse', 'polygon', 'line', 'path'] else 'add_rectangle'
@@ -1190,6 +1302,8 @@ class SliceAnnotatorWidget(QWidget):
             },
         )
 
+        layer.metadata[ANNOTATION_TAG] = True  # moves with rotate/flip
+
         # Set to add rectangles
         layer.mode = 'add_rectangle'
 
@@ -1261,6 +1375,8 @@ class SliceAnnotatorWidget(QWidget):
                 'anchor': 'upper_left',
             },
         )
+
+        layer.metadata[ANNOTATION_TAG] = True  # moves with rotate/flip
 
         # Set mode to add points
         layer.mode = 'add'

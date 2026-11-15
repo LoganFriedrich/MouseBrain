@@ -65,15 +65,27 @@ tab. It has its own tabs: Load, Channels, Annotate, Export.
 
 **Loading.** Click **Load ND2 File...** (one file) or **Load Folder...** (every
 `.nd2` in a folder, one tissue section per file). While a file loads, the load
-button is greyed out and a progress bar runs.
+button is grayed out and a progress bar runs.
 
 - *Changing your mind mid-load:* starting another load (for example by
   double-clicking a file under Recent Files) cancels the one that is running.
   The cancelled load is dropped silently: no error box appears, and the load
-  button stays greyed out until the NEW file has finished loading. The window
+  button stays grayed out until the NEW file has finished loading. The window
   may pause briefly while the old load stops.
 - *A file that really fails to load* still shows a "Load Error" box with the
   reason, and the buttons come back on so you can try another file.
+
+**Turning the image (Load tab, Transform: Rotate / Flip).** The rotate and
+flip buttons turn every channel of every section. Anything you drew with the
+**Annotate** tab's buttons (shapes, arrows, text boxes, text labels) turns
+with the image, so each annotation stays on the feature it marks. Your
+channel settings are kept: contrast, color, gamma, opacity and which
+channels are hidden do not change when you rotate or flip, whether you set
+them in the Channels tab or in napari's own layer controls.
+
+- Only layers made with the Annotate tab's buttons move. A shapes or points
+  layer you added through napari's own "new layer" buttons is not touched;
+  draw annotations with the Annotate tab if they must follow the image.
 
 ## Troubleshooting
 
