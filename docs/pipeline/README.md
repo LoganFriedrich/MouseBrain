@@ -447,6 +447,24 @@ and were not, so they were removed.)
 **Changing one setting for a trial.** Give it to step 4 on the command line,
 e.g. `--threshold 9`. The run is logged as `custom`, never as the settled method.
 
+**How the Best marks behave.** Each brain has at most one run marked Best (per
+run type), and each imaging setup at most one Paradigm Best:
+
+- *Mark as Best* moves the brain's Best mark to the selected run; other brains'
+  marks are not touched.
+- *Mark as Paradigm Best* makes the run the imaging setup's settled method AND
+  its brain's Best; the brain's previous Best is cleared (a brain never has two),
+  and the previous Paradigm Best of that imaging setup loses that mark.
+- *Archiving* a run (when a new run replaces the Best in the comparison view)
+  clears both its Best and its Paradigm Best. An archived run is never used as
+  the settled method, even if an old tracker row still carries the mark.
+- Each change is one locked write of the tracker, so a mark is never left half
+  moved.
+- *Load best detection* (the check box when loading a brain in Setup & Tuning)
+  loads the run MARKED Best for the brain. If none is marked, it loads the
+  highest-rated run that has not been archived and labels it "highest rated --
+  none is marked best"; if there is none of those either, it loads nothing.
+
 ## Folder Structure (Updated)
 
 ```

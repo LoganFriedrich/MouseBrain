@@ -1154,29 +1154,24 @@ class ExperimentTracker:
         Returns:
             True if successful
         """
-        # Get the experiment to find its brain
-        exp = self.get_experiment(exp_id)
-        if not exp:
-            return False
-
-        brain = exp.get('brain', '')
-        exp_type = exp.get('exp_type', '')
-
-        # Clear previous best for this brain+type
-        rows = self._read_all()
-        for row in rows:
-            if (row.get('brain') == brain and
-                row.get('exp_type') == exp_type and
-                row.get('marked_best') == 'True' and
-                row['exp_id'] != exp_id):
-                # Clear the previous best
-                self._update_row(row['exp_id'], {'marked_best': ''})
-
-        # Mark this one as best
-        return self._update_row(exp_id, {
-            'marked_best': 'True',
-            'rating': 5,
-        })
+        # Clear and set in ONE locked rewrite. They used to be separate
+        # whole-file rewrites, so a crash or another machine's write in between
+        # could leave the brain with no best, or two (and readers take the
+        # first in file order -- the older one).
+        def mutate(rows):
+            target = next((r for r in rows if r.get('exp_id') == exp_id), None)
+            if target is None:
+                return False
+            for row in rows:
+                if (row is not target
+                        and row.get('brain') == target.get('brain')
+                        and row.get('exp_type') == target.get('exp_type')
+                        and row.get('marked_best') == 'True'):
+                    row['marked_best'] = ''
+            target['marked_best'] = 'True'
+            target['rating'] = '5'
+            return True
+        return self._rewrite(mutate)
 
     def archive_experiment(self, exp_id: str, archived_by: Optional[str] = None) -> bool:
         """
@@ -1195,6 +1190,10 @@ class ExperimentTracker:
             'archived_by': archived_by or '',
             'archived_at': datetime.now().isoformat(),
             'marked_best': '',  # Clear best status
+            # And its Paradigm Best: an archived (superseded) run used to stay
+            # the settled detection method for every brain of its imaging
+            # setup, because only the brain-level mark was cleared.
+            'paradigm_best': '',
         })
 
     # =========================================================================
@@ -1215,32 +1214,32 @@ class ExperimentTracker:
         Returns:
             True if successful
         """
-        exp = self.get_experiment(exp_id)
-        if not exp:
-            return False
-
-        paradigm = exp.get('imaging_paradigm', '')
-        exp_type = exp.get('exp_type', '')
-
-        if not paradigm:
+        # One locked rewrite: clear the paradigm's other Paradigm Best, clear
+        # THIS BRAIN's other best (the run also becomes the brain's best, and a
+        # brain must never have two), and set this one. Other brains' bests are
+        # theirs and are left alone.
+        def mutate(rows):
+            target = next((r for r in rows if r.get('exp_id') == exp_id), None)
+            if target is None:
+                return "missing"
+            paradigm = target.get('imaging_paradigm') or ''
+            if not paradigm:
+                return "no_paradigm"
+            for row in rows:
+                if row is target or row.get('exp_type') != target.get('exp_type'):
+                    continue
+                if row.get('imaging_paradigm') == paradigm and row.get('paradigm_best') == 'True':
+                    row['paradigm_best'] = ''
+                if row.get('brain') == target.get('brain') and row.get('marked_best') == 'True':
+                    row['marked_best'] = ''
+            target['paradigm_best'] = 'True'
+            target['marked_best'] = 'True'
+            target['rating'] = '5'
+            return "ok"
+        outcome = self._rewrite(mutate)
+        if outcome == "no_paradigm":
             print(f"[Tracker] Cannot mark paradigm best: no imaging_paradigm for {exp_id}")
-            return False
-
-        # Clear previous paradigm_best for this paradigm+type
-        rows = self._read_all()
-        for row in rows:
-            if (row.get('imaging_paradigm') == paradigm and
-                row.get('exp_type') == exp_type and
-                row.get('paradigm_best') == 'True' and
-                row['exp_id'] != exp_id):
-                self._update_row(row['exp_id'], {'paradigm_best': ''})
-
-        # Mark this one as paradigm best
-        return self._update_row(exp_id, {
-            'paradigm_best': 'True',
-            'marked_best': 'True',  # Also mark as best for its brain
-            'rating': 5,
-        })
+        return outcome == "ok"
 
     def get_best_for_paradigm(
         self,
@@ -1259,7 +1258,8 @@ class ExperimentTracker:
         Returns:
             The paradigm-best experiment dict, or None
         """
-        rows = self._read_all()
+        # An archived run has been superseded and is never the settled method.
+        rows = [r for r in self._read_all() if not (r.get('archived_at') or '').strip()]
 
         # Look for paradigm_best first
         for row in rows:
@@ -1390,16 +1390,26 @@ class ExperimentTracker:
         Returns:
             The best experiment dict, or None if not found
         """
-        rows = self._read_all()
+        # The brain is matched as a whole name: scripts log "<mouse>/<brain>",
+        # the napari widget "<brain>". (A substring match would also take a
+        # brain whose name merely contains this one.)
+        def same_brain(row):
+            name = row.get('brain') or ''
+            return name == brain or name.endswith('/' + brain)
+
+        rows = [r for r in self._read_all()
+                if same_brain(r) and r.get('exp_type') == exp_type]
         for row in rows:
-            if (row.get('brain') == brain and
-                row.get('exp_type') == exp_type and
-                row.get('marked_best') == 'True'):
+            if row.get('marked_best') == 'True':
                 return row
 
-        # Fall back to highest-rated if no marked best
-        best_rows = self.get_best(exp_type=exp_type, brain=brain, limit=1)
-        return best_rows[0] if best_rows else None
+        # Fall back to the highest-rated run that has not been archived (a
+        # former best keeps its rating after it is superseded).
+        rated = [r for r in rows
+                 if (r.get('rating') or '').strip().isdigit()
+                 and not (r.get('archived_at') or '').strip()]
+        rated.sort(key=lambda r: (int(r['rating']), r.get('created_at', '')), reverse=True)
+        return rated[0] if rated else None
 
 
 # =============================================================================

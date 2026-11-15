@@ -8461,9 +8461,18 @@ class TuningWidget(QWidget):
                     completed.sort(key=lambda x: x.get('created_at', ''), reverse=True)
 
                     if best:
-                        # Load most recent run (your best current attempt)
-                        target_run = completed[0]
-                        label_suffix = "(best attempt)"
+                        # The run MARKED best for this brain. This used to load
+                        # the newest run and call it "(best attempt)" -- and the
+                        # next Mark as Best then archived that run as if it had
+                        # been the best.
+                        target_run = self.tracker.get_best_for_brain(brain_name, 'detection')
+                        if not target_run:
+                            print(f"  No detection run is marked best for {brain_name}")
+                            return False
+                        if target_run.get('marked_best') == 'True':
+                            label_suffix = "(best)"
+                        else:
+                            label_suffix = "(highest rated -- none is marked best)"
                         cell_type = 'best'
                     else:
                         # Load second most recent for comparison
@@ -8487,29 +8496,24 @@ class TuningWidget(QWidget):
                         if points_loaded:
                             return True
 
-        # Fallback: Load directly from 4_Cell_Candidates folder
+        # Fallback: Load directly from 4_Cell_Candidates folder. Only for the
+        # comparison slot: a file's age says nothing about which run is best.
         candidates_folder = self.current_brain / "4_Cell_Candidates"
-        if candidates_folder.exists():
+        if not best and candidates_folder.exists():
             # Find all Detected_*.xml files
             detected_files = list(candidates_folder.glob("Detected_*.xml"))
             if detected_files:
                 # Sort by modification time (newest first)
                 detected_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
 
-                if best:
-                    # Load most recent
-                    xml_file = detected_files[0]
-                    label_suffix = "(best attempt)"
-                    cell_type = 'best'
+                # Second most recent for comparison
+                if len(detected_files) > 1:
+                    xml_file = detected_files[1]
+                    label_suffix = "(previous)"
                 else:
-                    # Load second most recent for comparison
-                    if len(detected_files) > 1:
-                        xml_file = detected_files[1]
-                        label_suffix = "(previous)"
-                    else:
-                        xml_file = detected_files[0]
-                        label_suffix = "(only result)"
-                    cell_type = 'recent'
+                    xml_file = detected_files[0]
+                    label_suffix = "(only result)"
+                cell_type = 'recent'
 
                 return self._load_points_from_xml(
                     xml_file,
