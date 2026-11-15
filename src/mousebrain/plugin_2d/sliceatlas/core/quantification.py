@@ -13,6 +13,8 @@ Usage:
     quantifier.export_results(cell_data, region_counts, output_dir, sample_id)
 """
 
+import os
+import uuid
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 import numpy as np
@@ -216,30 +218,67 @@ class RegionQuantifier:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        outputs = {}
-
-        # Per-cell measurements
-        cell_path = output_dir / f"{sample_id}_cells.csv"
-        cell_data.to_csv(cell_path, index=False)
-        outputs['cells'] = cell_path
-
-        # Per-region counts
-        region_path = output_dir / f"{sample_id}_regions.csv"
-        region_counts.to_csv(region_path, index=False)
-        outputs['regions'] = region_path
-
-        # Summary statistics
+        # All-or-nothing. WHY: the three files used to be overwritten one
+        # after another, so a failure on the second (for example the regions
+        # CSV open in a spreadsheet program) left a NEW cells.csv beside the
+        # OLD regions.csv and summary -- a folder mixing two runs, beside an
+        # atlas fit file that described only one of them. Now every file is
+        # first written to a temporary name; the old files are then moved
+        # aside (a file locked by another program fails HERE, and everything
+        # moved so far is put back, so the folder is exactly as before); only
+        # then are the new files moved in and the old ones deleted.
         summary = self.get_summary(cell_data, region_counts)
-        summary_path = output_dir / f"{sample_id}_summary.txt"
-        with open(summary_path, 'w') as f:
-            f.write(f"BrainSlice Quantification Summary\n")
-            f.write(f"Sample: {sample_id}\n")
-            f.write(f"=" * 40 + "\n\n")
-            for key, value in summary.items():
-                f.write(f"{key}: {value}\n")
-        outputs['summary'] = summary_path
+        targets = {
+            'cells': output_dir / f"{sample_id}_cells.csv",
+            'regions': output_dir / f"{sample_id}_regions.csv",
+            'summary': output_dir / f"{sample_id}_summary.txt",
+        }
+        token = f".{os.getpid()}.{uuid.uuid4().hex[:8]}"
+        staged = {k: p.with_name(p.name + token + ".tmp") for k, p in targets.items()}
+        backups = {k: p.with_name(p.name + token + ".old") for k, p in targets.items()}
+        moved_aside = []
+        moved_in = []
+        try:
+            cell_data.to_csv(staged['cells'], index=False)
+            region_counts.to_csv(staged['regions'], index=False)
+            with open(staged['summary'], 'w') as f:
+                f.write(f"BrainSlice Quantification Summary\n")
+                f.write(f"Sample: {sample_id}\n")
+                f.write(f"=" * 40 + "\n\n")
+                for key, value in summary.items():
+                    f.write(f"{key}: {value}\n")
+            for k, target in targets.items():
+                if target.exists():
+                    os.replace(target, backups[k])
+                    moved_aside.append(k)
+            for k, target in targets.items():
+                os.replace(staged[k], target)
+                moved_in.append(k)
+        except BaseException:
+            # Put the folder back exactly as it was.
+            for k in moved_in:
+                try:
+                    os.unlink(targets[k])
+                except OSError:
+                    pass
+            for k in moved_aside:
+                try:
+                    os.replace(backups[k], targets[k])
+                except OSError:
+                    pass
+            for p in staged.values():
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+            raise
+        for k in moved_aside:
+            try:
+                os.unlink(backups[k])
+            except OSError:
+                pass
 
-        return outputs
+        return dict(targets)
 
     def get_summary(
         self,
