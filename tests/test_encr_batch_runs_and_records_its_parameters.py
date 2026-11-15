@@ -250,3 +250,28 @@ def test_banner_says_a_marked_run_does_not_change_the_approved_method(
     assert "sigma_threshold: this run 1.0, approved 0" in out
     assert "does not change the approved method" in out
 
+
+# --- the QC figures draw the cutoff the cells were split at --------------------
+
+def test_qc_figures_draw_the_background_mean_cutoff_as_a_fold_change(env, monkeypatch):
+    t, tmp_path = env
+    _fake_loader(monkeypatch, *_synthetic_image())
+    drawn = []
+    monkeypatch.setattr(vis_mod, "save_all_qc_figures",
+                        lambda **k: drawn.append(k) or [])
+    from mousebrain.plugin_2d.sliceatlas.core import colocalization as coloc_mod
+    seen = {}
+    real = coloc_mod.ColocalizationAnalyzer.classify_positive_negative
+
+    def spy(self, *a, **k):
+        out = real(self, *a, **k)
+        seen.update(self.adaptive_diagnostics)
+        return out
+
+    monkeypatch.setattr(coloc_mod.ColocalizationAnalyzer, "classify_positive_negative", spy)
+    result = be.process_single(_nd2(tmp_path), tmp_path / "out",
+                               threshold=1.5, sigma_threshold=1.5)
+    assert result["status"] == "completed", result
+    expected = seen["positive_cutoff"] / seen["background_mean"]
+    assert drawn and all(abs(k["threshold"] - expected) < 1e-3 for k in drawn)
+    assert all(k["threshold"] != 1.5 for k in drawn)

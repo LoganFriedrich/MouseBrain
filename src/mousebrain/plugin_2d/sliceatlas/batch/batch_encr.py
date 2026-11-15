@@ -500,6 +500,21 @@ def discover_nd2_files(roots, project: str = None) -> tuple:
     return [], None, None
 
 
+def _qc_fold_change_cutoff(analyzer, sigma_threshold: float) -> float:
+    """background_mean's positive cutoff expressed as a fold change.
+
+    classify_positive_negative records the cutoff it applied (background mean
+    + sigma * std) and the background mean in analyzer.adaptive_diagnostics;
+    the QC figures need it as cutoff / background. Falls back to 1.0 (the
+    background itself, i.e. sigma 0) only when those are not recorded.
+    """
+    diag = getattr(analyzer, 'adaptive_diagnostics', None) or {}
+    cutoff, bg = diag.get('positive_cutoff'), diag.get('background_mean')
+    if cutoff is None or not bg:
+        return 1.0
+    return round(float(cutoff) / float(bg), 4)
+
+
 def process_single(
     nd2_path: Path,
     output_dir: Path,
@@ -527,6 +542,9 @@ def process_single(
     use), so the record could not be trusted.
 
     Parameters:
+        threshold: not used for classification or for the QC figures; kept
+            so older callers that pass it keep working (see the QC figure
+            call below for the line the figures draw).
         soma_dilation: Dilation radius (px) to create soma ROIs around nuclei.
             Retrograde tracer signal is cytoplasmic, so we must measure green
             in the dilated disk around each nucleus.
@@ -712,6 +730,15 @@ def process_single(
         classified.to_csv(quant_dir / f"{sample_id}_measurements.csv", index=False)
         classified.to_csv(sample_dir / "measurements.csv", index=False)
 
+        # The QC figures (fold-change histogram, intensity scatter) draw their
+        # threshold line as a FOLD CHANGE over background. background_mean
+        # classifies at background + sigma * std, so the line that shows
+        # where cells were split is that cutoff divided by the background.
+        # WHY: the sigma itself used to be passed, so with sigma 0 the line
+        # sat at fold change 0 and with sigma 1.5 at 1.5x -- neither of which
+        # is where any cell was classified.
+        qc_threshold = _qc_fold_change_cutoff(analyzer, sigma_threshold)
+
         # Save QC figures to detection directory (primary) and fallback
         print(f"  Saving QC images...")
         save_all_qc_figures(
@@ -720,7 +747,7 @@ def process_single(
             nuclei_labels=labels,
             measurements_df=classified,
             tissue_mask=tissue_mask,
-            threshold=threshold,
+            threshold=qc_threshold,
             background=background,
             prefix=sample_id,
         )
@@ -731,7 +758,7 @@ def process_single(
             nuclei_labels=labels,
             measurements_df=classified,
             tissue_mask=tissue_mask,
-            threshold=threshold,
+            threshold=qc_threshold,
             background=background,
             prefix=sample_id,
         )
