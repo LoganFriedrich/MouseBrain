@@ -137,3 +137,14 @@ PARTICLE_ANALYSIS_COLUMNS = [
     "pa_particles_found", "pa_particles_raw", "pa_bg_method", "pa_bg_value",
     "pa_mean_intensity"
 ]
+
+# script_version written on colocalization rows whose coloc_threshold_value is
+# the value classification actually used. For the background_mean method that is
+# the SIGMA threshold (positive if signal > background mean + sigma * std).
+# WHY a version marker: rows written before it by the napari widget stored the
+# fold-change spin box in coloc_threshold_value even when background_mean was
+# chosen, so the number in an old row cannot be trusted as a sigma. The batch
+# (batch_encr.get_tuned_parameters) only takes a threshold from a row carrying
+# this version; an older row is refused with a message saying to re-run it.
+COLOC_SIGMA_RECORDED_VERSION = "1.1.0"
+

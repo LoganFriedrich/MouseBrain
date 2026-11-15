@@ -1,4 +1,4 @@
-"""The slice batch tool records the approved method its analysis is judged by.
+"""The slice batch tool is judged by, and matches, its own analysis's approved method.
 
 WHY: approved_method.json may give one analysis its own approved method. The
 manifest header then holds that method, so a producer that kept recording the
@@ -20,7 +20,12 @@ def test_batch_detection_records_its_own_approved_method(tmp_path, monkeypatch, 
     root = tmp_path / "Registry"
     root.mkdir()
     monkeypatch.setenv("MOUSEBRAIN_REGISTRY_ROOT", str(root))
-    own = dict(DEFAULT_METHOD, threshold_fraction=0.3)
+    # The batch records the numbers it RAN with; its nucleus size range is
+    # fixed by the code (batch_encr.BATCH_NUCLEUS_DIAMETER_UM), so an approved
+    # method it can match must name that range. threshold_fraction=0.3 shows
+    # the batch took its untyped numbers from this analysis's own entry.
+    own = dict(DEFAULT_METHOD, threshold_fraction=0.3,
+               size_filter_um=list(be.BATCH_NUCLEUS_DIAMETER_UM))
     (root / "approved_method.json").write_text(
         json.dumps({"analyses": {"ENCR_Detection": own}}), encoding="utf-8")
 

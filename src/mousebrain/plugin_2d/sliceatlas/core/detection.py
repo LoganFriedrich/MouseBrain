@@ -479,6 +479,19 @@ def _watershed_split(
 # LOG-AUGMENTED DETECTION (threshold + LoG union)
 # ══════════════════════════════════════════════════════════════════════════
 
+def diameter_range_to_area_px(min_diameter_um: float, max_diameter_um: float,
+                              pixel_um: float) -> Tuple[int, int]:
+    """Pixel-area range of round nuclei with the given diameter range.
+
+    One function for the conversion so the detector and anything that records
+    its settings (the batch's tracker rows) state the same areas.
+    """
+    import math
+    min_area = int(math.pi * (min_diameter_um / 2 / pixel_um) ** 2)
+    max_area = int(math.pi * (max_diameter_um / 2 / pixel_um) ** 2)
+    return min_area, max_area
+
+
 def detect_with_log_augmentation(
     image: np.ndarray,
     pixel_um: float,
@@ -543,8 +556,7 @@ def detect_with_log_augmentation(
         raise ValueError(f"Expected 2D image, got {image.ndim}D")
 
     # Convert size filter from physical to pixel units (diameter-based)
-    min_area = int(math.pi * (min_diameter_um / 2 / pixel_um) ** 2)
-    max_area = int(math.pi * (max_diameter_um / 2 / pixel_um) ** 2)
+    min_area, max_area = diameter_range_to_area_px(min_diameter_um, max_diameter_um, pixel_um)
 
     # --- Step 0: Artifact masking and percentile clipping ---
     # Bright artifacts (ventricles, tissue folds, saturated blobs) corrupt

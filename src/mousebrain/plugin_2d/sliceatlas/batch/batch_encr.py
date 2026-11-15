@@ -18,24 +18,38 @@ Where the files are searched, in order (the first root holding ND2 files wins):
 given as the MOUSEBRAIN_2D_PROJECT environment variable. When no root holds
 any ND2 file the script names the roots it searched and exits 1.
 
-METHOD
-  DETECTION:       threshold, method=otsu, physical size 8-25 um diameter
-                   (auto-converted to pixel area per ND2 metadata)
-  COLOCALIZATION:  background_mean, sigma_threshold=0 (bg mean IS the threshold)
-  BACKGROUND:      gmm, percentile=10
-  SOMA DILATION:   6 px (measure cytoplasmic signal, not just nuclear)
-  SOMA EXCLUSION:  dilation >= 50 iterations for background estimation
+METHOD (fixed by the code)
+  DETECTION:       threshold+LoG, nucleus diameter BATCH_NUCLEUS_DIAMETER_UM
+                   (10-25 um; converted to pixel area per image from its pixel size)
+  COLOCALIZATION:  background_mean with a sigma threshold
+  BACKGROUND:      gmm (with a percentile fallback)
+
+PARAMETERS (chosen per run; the banner shows each value and where it came from)
+  sigma threshold, background percentile, soma dilation (px), background
+  exclusion dilation (iterations), detector threshold_fraction / log_threshold.
+  Each is taken from, in order:
+    1. the command line (--threshold, --bg-percentile, --soma-dilation, --dilation)
+    2. a colocalization run of this project marked best in the tracker (sigma
+       threshold and background percentile only; see get_tuned_parameters for
+       which runs count)
+    3. the approved method the registry judges ENCR_Detection by
+       (batch_approved_method: its own entry in a per-analysis
+       approved-method file, else the shared approved method)
+    4. BUILTIN_PARAMETERS
+  --ignore-tracker skips step 2.
+  Marking a run best CHOOSES the batch's numbers; it does not change the
+  approved method. The registry judges every entry against the approved method
+  only, so numbers taken from a marked run that differ from it are registered
+  as stale until the same numbers are written into the approved method.
 
 How background_mean works:
-  1. Detect nuclei in the nuclear channel (Otsu threshold, 8-25 um diameter).
-  2. Dilate each nucleus by 6px to measure cytoplasmic signal (soma_dilation).
-  3. Dilate all nuclei generously (50 iter) to create background exclusion zones.
+  1. Detect nuclei in the nuclear channel (threshold + LoG, diameter range above).
+  2. Dilate each nucleus (soma dilation) to measure cytoplasmic signal.
+  3. Dilate all nuclei generously (exclusion dilation) to create background
+     exclusion zones.
   4. Background = mean of the signal channel in tissue OUTSIDE exclusion zones.
-  5. Cell is positive if: soma signal > background_mean (sigma_threshold=0).
+  5. Cell is positive if: soma signal > background_mean + sigma * std.
 
-The parameters a lab has approved for a project are recorded with the analysis
-registry (mousebrain.analysis_registry.get_approved_method) and by marking a
-tracker run as best; this script reads those unless --ignore-tracker is given.
 Keep the reasoning for a method change in your own method log, not here.
 """
 
@@ -73,73 +87,310 @@ DEFAULT_OUTPUT = (Path(DATA_DIR).parent / "2_Data_Summary" / "batch_results") if
 RED_IDX = 1
 GREEN_IDX = 0
 
+# Nucleus diameter range (micrometres) the batch detects with. It is passed to
+# the detector explicitly and recorded with every output.
+# OPEN QUESTION, deliberately not settled in code: the approved-method default
+# (analysis_registry.DEFAULT_METHOD['size_filter_um']) says 8-25 um, while the
+# batch has always detected 10-25 um (the detector's default). Which range is
+# approved is for the lab to decide; until then the batch keeps detecting what
+# it always has, says so in its banner, and records 10-25 um, so its registry
+# entries show as not matching an approved method that says otherwise.
+BATCH_NUCLEUS_DIAMETER_UM = (10, 25)
 
-def get_tuned_parameters() -> dict:
-    """Look up tuned detection/colocalization parameters from the tracker.
+# The registry analysis the batch registers its outputs under.
+ANALYSIS_NAME = "ENCR_Detection"
 
-    Searches for marked-best detection runs. If found, extracts the parameters
-    that were used. This ensures interactive tuning in the napari widget
-    automatically carries forward to batch processing.
 
-    Returns dict with keys: det_model, min_area, max_area, bg_method,
-    threshold, or empty dict if no best run found.
+def batch_approved_method():
+    """The approved method the batch's registry entries are judged by.
+
+    Exactly what AnalysisRegistry(ANALYSIS_NAME, follows_approved_method=True)
+    .approved_method() returns: this analysis's own entry when the
+    approved-method file is in the per-analysis form and names it, else the
+    shared approved method; None when the file gives this analysis no approved
+    method (its entry is null).
+
+    WHY the batch reads it this way and not get_approved_method(): the
+    registry header judges ENCR_Detection's entries by THIS method. A batch
+    that took its numbers from (and compared itself with) the shared method
+    while the lab had given ENCR_Detection its own would run the wrong
+    numbers, print the wrong differences, and register entries the header
+    calls stale. Read without constructing the registry so --dry-run
+    creates no registry folders. Raises RuntimeError when an approved-method
+    file is configured but unreadable.
+    """
+    from mousebrain.analysis_registry import approved_method_for, default_registry_root
+    return approved_method_for(ANALYSIS_NAME, default_registry_root(),
+                               follows_approved_method=True)
+
+
+# The method the batch runs. These are fixed by the code; they are recorded in
+# each registry entry so an approved method naming something else shows the
+# entry as not produced with it.
+BATCH_FIXED_METHOD = {
+    "detection": "threshold+log",
+    "log_decision_tree": True,
+    "colocalization": "background_mean",
+    "background": "gmm",
+}
+
+# Last-resort values, used only when neither the command line, a marked-best
+# run nor the approved method gives one. Equal to the detector's and the
+# registry's built-in defaults.
+BUILTIN_PARAMETERS = {
+    "sigma_threshold": 0,
+    "soma_dilation": 6,
+    "bg_exclusion_dilation": 50,
+    "background_percentile": 10,
+    "threshold_fraction": 0.20,
+    "log_threshold": 0.005,
+}
+
+# command-line option (argparse dest) -> approved-method key
+_CLI_TO_METHOD_KEY = {
+    "threshold": "sigma_threshold",
+    "soma_dilation": "soma_dilation",
+    "dilation": "bg_exclusion_dilation",
+    "bg_percentile": "background_percentile",
+}
+# marked-best run (get_tuned_parameters key) -> approved-method key
+_TUNED_TO_METHOD_KEY = {
+    "threshold": "sigma_threshold",
+    "bg_percentile": "background_percentile",
+}
+
+
+def resolve_parameters(cli: dict, tuned: dict, approved: dict) -> tuple:
+    """Decide each batch parameter and where it came from.
+
+    Precedence, per parameter: a value typed on the command line, then a
+    marked-best run (sigma threshold and background percentile only), then
+    the approved method, then BUILTIN_PARAMETERS.
+
+    WHY "typed" means "not None": the options used to default to a number and
+    a tracker value replaced the option whenever it EQUALLED that number, so
+    typing the default on purpose (e.g. --threshold 0) was overridden.
+
+    Args:
+        cli: argparse values keyed by dest (threshold, soma_dilation,
+            dilation, bg_percentile); None = not given.
+        tuned: get_tuned_parameters() result ({} when none).
+        approved: batch_approved_method() result ({} when there is none).
+
+    Returns:
+        (values, sources): both keyed by approved-method key (sigma_threshold,
+        soma_dilation, bg_exclusion_dilation, background_percentile,
+        threshold_fraction, log_threshold).
+    """
+    values, sources = {}, {}
+    from_cli = {_CLI_TO_METHOD_KEY[k]: v for k, v in cli.items()
+                if k in _CLI_TO_METHOD_KEY and v is not None}
+    from_tuned = {_TUNED_TO_METHOD_KEY[k]: v for k, v in tuned.items()
+                  if k in _TUNED_TO_METHOD_KEY}
+    runs = ", ".join(tuned.get("source_runs", []))
+    for key, builtin in BUILTIN_PARAMETERS.items():
+        if key in from_cli:
+            values[key], sources[key] = from_cli[key], "command line"
+        elif key in from_tuned:
+            values[key], sources[key] = from_tuned[key], f"marked-best run {runs}"
+        elif key in approved:
+            values[key], sources[key] = approved[key], "approved method"
+        else:
+            values[key], sources[key] = builtin, "built-in default"
+    return values, sources
+
+
+def batch_method_params(approved: dict, values: dict) -> dict:
+    """The method parameters a batch run actually used, for the registry.
+
+    Starts from the approved method so keys the batch does not touch keep
+    their approved value, then overwrites everything the batch decides: the
+    resolved values, the fixed method names and the diameter range.
+
+    WHY: entries used to record the approved method whatever the run used, so
+    a run with --threshold 1.5 hashed like an approved run and could never be
+    found stale. A value equal to the approved one keeps the approved
+    spelling (10 vs 10.0) so an approved run hashes exactly like the approved
+    method.
+    """
+    used = dict(BATCH_FIXED_METHOD)
+    used.update(values)
+    used["size_filter_um"] = list(BATCH_NUCLEUS_DIAMETER_UM)
+    params = dict(approved)
+    for key, value in used.items():
+        if key in params and params[key] == value:
+            continue
+        params[key] = value
+    return params
+
+
+class TunedParameterConflict(Exception):
+    """Two or more marked-best runs of this batch's project give different numbers.
+
+    WHY this stops the batch instead of taking the newest: choosing one of two
+    marked runs silently is a guess about which one the person meant. The
+    message names the runs (and their samples) so the person can clear the
+    marks they did not mean with the Run History panel's "Unmark Best" button
+    -- marking another run only clears marks of the SAME sample -- or type
+    both values.
+    """
+
+
+def _recorded_soma_dilation(row: dict):
+    """The soma dilation (px) written in a run's notes, or None."""
+    import re
+    m = re.search(r'soma_dilation=(-?\d+)', row.get('notes', '') or '')
+    return int(m.group(1)) if m else None
+
+
+def batch_approval_problem(row: dict):
+    """Why a marked colocalization run cannot supply the batch's numbers, or None.
+
+    The batch runs one fixed method: green signal channel, GMM background,
+    background_mean classification with a sigma threshold. A marked-best run
+    gives the batch its numbers only when it was run with that same
+    classification, finished, and recorded the sigma it used -- otherwise its
+    number means something else (a fold change, a dual-channel threshold) and
+    would become the batch's sigma threshold unnoticed.
+
+    NOT the same measurement: the napari widget measures each cell's signal in
+    a dilated disk around the nucleus (measure_soma_intensities; disks of
+    neighbouring cells may overlap), the batch in a non-overlapping ring that
+    leaves out the nucleus (measure_cytoplasm_intensities), and the widget
+    detects nuclei with its own detection settings. A sigma chosen on the
+    widget is therefore applied to a related, not identical, measurement. A run
+    with soma dilation 0 measured the NUCLEUS itself (measure_nuclei_intensities),
+    which has nothing in common with the batch's ring, so it is refused.
+
+    Shared with the napari widget's "Mark Selected as Best" button, so a person
+    marking a run is told at once when the batch will not use it.
+    """
+    from ..tracker.schema import COLOC_SIGMA_RECORDED_VERSION
+
+    if row.get('run_type') != 'colocalization':
+        return "it is not a colocalization run"
+    if row.get('status') != 'completed':
+        return f"it did not complete (status '{row.get('status', '')}')"
+    if row.get('coloc_signal_channel') != 'green':
+        return (f"it measured signal channel '{row.get('coloc_signal_channel', '')}'; "
+                "the batch measures the green channel only")
+    if row.get('coloc_threshold_method') != 'background_mean':
+        return (f"it classified with '{row.get('coloc_threshold_method', '')}'; "
+                "the batch classifies with background_mean")
+    if row.get('coloc_background_method') != 'gmm':
+        return (f"it estimated background with '{row.get('coloc_background_method', '')}'; "
+                "the batch uses gmm")
+    if row.get('script_version') != COLOC_SIGMA_RECORDED_VERSION:
+        return ("it was logged before runs recorded their sigma threshold; "
+                "re-run it and mark the new run")
+    soma = _recorded_soma_dilation(row)
+    if soma is None:
+        return "its soma dilation is not recorded"
+    if soma <= 0:
+        return ("it measured the nucleus itself (soma dilation 0); the batch "
+                "measures a ring around each nucleus")
+    try:
+        float(row.get('coloc_threshold_value', ''))
+    except (TypeError, ValueError):
+        return "it has no sigma threshold recorded"
+    return None
+
+
+def _run_belongs_to_batch(row: dict, project, sample_ids) -> bool:
+    """True when a tracker row is about this batch's project.
+
+    A row counts when its sample is one of the files the batch is about to
+    process, or when the tracker filed it under the batch's project (its
+    'project' column, parsed from the sample name). WHY both: the tracker's
+    project comes from parsing the sample name, which for a compact name gives
+    the parsed code rather than the folder the batch was started on; the file
+    list catches those.
+    """
+    if project is None and sample_ids is None:
+        return True
+    if sample_ids is not None and row.get('sample_id', '') in sample_ids:
+        return True
+    return project is not None and row.get('project', '') == project
+
+
+def get_tuned_parameters(verbose: bool = True, project=None, sample_ids=None) -> dict:
+    """Parameters chosen by marking a colocalization run best in the tracker.
+
+    Only runs of THIS batch's project count (see _run_belongs_to_batch).
+    WHY: the 2D tracker is shared by every project, and a run marked best for
+    one project's slices used to set another project's batch (or stop it with
+    a conflict). main() passes the project and its file stems; called with
+    neither, every marked run counts.
+
+    Only runs a person has marked best count. WHY: the batch used to fall back
+    to the newest completed run of any kind when nothing was marked -- which
+    was usually the previous batch's own row -- so "tuned" parameters were
+    whatever ran last, approved by nobody.
+
+    A marked-best run supplies the sigma threshold and the background
+    percentile, and only when batch_approval_problem() finds nothing wrong with
+    it (a refused run is printed with its reason when *verbose*). Soma dilation
+    and background-exclusion dilation are not recorded per run, so they always
+    come from the command line or the approved method.
+
+    mark_as_best keeps one best run PER SAMPLE, so several samples can each have
+    one. When the qualifying runs agree they are used; when they disagree,
+    TunedParameterConflict is raised (see its docstring for why).
+
+    Returns:
+        {} when no qualifying run is marked best, else
+        {'threshold': float, 'bg_percentile': float (when recorded),
+         'source_runs': [run ids]}.
     """
     try:
         from ..tracker import SliceTracker
         tracker = SliceTracker()
-    except Exception:
+    except Exception as e:
+        if verbose:
+            print(f"[!] tracker unavailable, no marked-best run can be used: {e}")
         return {}
 
-    # Search all detection runs for any marked-best
-    rows = tracker.search(run_type='detection', status='completed')
+    # limit=None: search() keeps only the 50 newest rows by default, and an
+    # approval made weeks ago must not drop out of sight as new runs are logged.
+    rows = tracker.search(run_type='colocalization', limit=None)
     best_rows = [r for r in rows if r.get('marked_best') == 'True']
+    elsewhere = [r for r in best_rows
+                 if not _run_belongs_to_batch(r, project, sample_ids)]
+    best_rows = [r for r in best_rows
+                 if _run_belongs_to_batch(r, project, sample_ids)]
+    if elsewhere and verbose:
+        print(f"  {len(elsewhere)} marked-best run(s) of other projects not used")
 
-    if not best_rows:
-        # Fallback: use the most recent completed detection run
-        if rows:
-            best_rows = sorted(rows, key=lambda r: r.get('created_at', ''), reverse=True)[:1]
-        else:
-            return {}
-
-    best = best_rows[0]
-    params = {}
-
-    model = best.get('det_model', '')
-    if model:
-        params['det_model'] = model
-
-    min_a = best.get('det_min_area', '')
-    if min_a:
+    approvals = {}
+    for row in best_rows:
+        problem = batch_approval_problem(row)
+        if problem:
+            if verbose:
+                print(f"[!] marked-best run {row.get('run_id', '')} "
+                      f"({row.get('sample_id', '')}) not used: {problem}")
+            continue
+        sigma = float(row['coloc_threshold_value'])
+        pct = row.get('coloc_background_percentile', '')
         try:
-            params['min_area'] = int(float(min_a))
-        except (ValueError, TypeError):
-            pass
+            pct = float(pct)
+        except (TypeError, ValueError):
+            pct = None
+        approvals.setdefault((sigma, pct), []).append(
+            f"{row.get('run_id', '')} ({row.get('sample_id', '')})")
 
-    max_a = best.get('det_max_area', '')
-    if max_a:
-        try:
-            params['max_area'] = int(float(max_a))
-        except (ValueError, TypeError):
-            pass
+    if not approvals:
+        return {}
+    if len(approvals) > 1:
+        lines = [f"  sigma={s}, background percentile={p}: {', '.join(ids)}"
+                 for (s, p), ids in sorted(approvals.items(), key=lambda kv: str(kv[0]))]
+        raise TunedParameterConflict(
+            "marked-best runs give different parameters:\n" + "\n".join(lines))
 
-    # Check linked colocalization run for background method
-    coloc_rows = tracker.search(run_type='colocalization')
-    if coloc_rows:
-        # Find colocalization linked to this detection or most recent
-        linked = [r for r in coloc_rows if r.get('parent_run') == best.get('run_id')]
-        if not linked:
-            linked = sorted(coloc_rows, key=lambda r: r.get('created_at', ''), reverse=True)[:1]
-        if linked:
-            bg = linked[0].get('coloc_background_method', '')
-            if bg:
-                params['bg_method'] = bg
-            thresh = linked[0].get('coloc_threshold_value', '')
-            if thresh:
-                try:
-                    params['threshold'] = float(thresh)
-                except (ValueError, TypeError):
-                    pass
-
+    (sigma, pct), ids = next(iter(approvals.items()))
+    params = {'threshold': sigma,
+              'source_runs': sorted(i.split(' (')[0] for i in ids)}
+    if pct is not None:
+        params['bg_percentile'] = pct
     return params
 
 
@@ -252,33 +503,43 @@ def discover_nd2_files(roots, project: str = None) -> tuple:
 def process_single(
     nd2_path: Path,
     output_dir: Path,
-    threshold: float = 1.5,
-    dilation: int = 50,
-    min_area: int = 3,
-    max_area: int = 114,
-    bg_percentile: float = 10.0,
-    soma_dilation: int = 6,
-    sigma_threshold: float = 0,
+    threshold: float = 0,
+    dilation: int = BUILTIN_PARAMETERS['bg_exclusion_dilation'],
+    bg_percentile: float = BUILTIN_PARAMETERS['background_percentile'],
+    soma_dilation: int = BUILTIN_PARAMETERS['soma_dilation'],
+    sigma_threshold: float = BUILTIN_PARAMETERS['sigma_threshold'],
+    min_diameter_um: float = BATCH_NUCLEUS_DIAMETER_UM[0],
+    max_diameter_um: float = BATCH_NUCLEUS_DIAMETER_UM[1],
+    threshold_fraction: float = BUILTIN_PARAMETERS['threshold_fraction'],
+    log_threshold: float = BUILTIN_PARAMETERS['log_threshold'],
 ) -> dict:
     """
     Process a single ND2 file through detection + colocalization.
 
     Detection uses threshold method (tuned for sparse retrograde-labeled
-    neurons). Colocalization uses background_mean (PI's method) with
-    soma dilation to measure cytoplasmic signal.
+    neurons). Colocalization uses background_mean with soma dilation to
+    measure cytoplasmic signal.
+
+    Every detection parameter is passed to the detector explicitly, and the
+    same values are written to the tracker rows. WHY: the detector used to run
+    on its own defaults while the banner, tracker and registry stated other
+    values (pixel areas that were never passed, a diameter range it did not
+    use), so the record could not be trusted.
 
     Parameters:
         soma_dilation: Dilation radius (px) to create soma ROIs around nuclei.
             Retrograde tracer signal is cytoplasmic, so we must measure green
-            in the dilated disk around each nucleus. Default 6 matches Feb 17
-            validated runs.
+            in the dilated disk around each nucleus.
         sigma_threshold: Number of std devs above background mean for positive
-            classification. Default 0 = background mean IS the threshold.
+            classification. 0 = background mean IS the threshold.
+        min_diameter_um, max_diameter_um: accepted nucleus diameter range.
+        threshold_fraction, log_threshold: detector settings (see
+            core.detection.detect_with_log_augmentation).
 
     Returns dict with summary stats, or dict with 'error' key on failure.
     """
     from ..core.io import load_image, extract_channels
-    from ..core.detection import detect_by_threshold, detect_with_log_augmentation
+    from ..core.detection import detect_with_log_augmentation, diameter_range_to_area_px
     from ..core.colocalization import ColocalizationAnalyzer
     from ..core.visualization import save_all_qc_figures
 
@@ -288,6 +549,7 @@ def process_single(
         tracker = SliceTracker()
     except Exception:
         tracker = None
+    from ..tracker.schema import COLOC_SIGMA_RECORDED_VERSION
 
     result = {
         'file': nd2_path.name,
@@ -319,6 +581,11 @@ def process_single(
         pixel_um = voxel.get('x', 1.0) if isinstance(voxel, dict) else voxel[0]
         print(f"  Pixel size: {pixel_um:.2f} um/px")
 
+        # The pixel-area range the detector derives from the diameters, so the
+        # tracker row states the areas actually applied to this image.
+        min_area_px, max_area_px = diameter_range_to_area_px(
+            min_diameter_um, max_diameter_um, pixel_um)
+
         # Log detection run to tracker
         det_run_id = None
         if tracker:
@@ -328,14 +595,24 @@ def process_single(
                 model="threshold+log",
                 prob_thresh=0.0,
                 nms_thresh=0.0,
+                min_area=min_area_px,
+                max_area=max_area_px,
                 input_path=str(nd2_path),
+                notes=(f"diameter {min_diameter_um}-{max_diameter_um} um; "
+                       f"pixel {pixel_um} um; threshold_fraction={threshold_fraction}; "
+                       f"log_threshold={log_threshold}"),
                 status="started",
             )
 
         # Detect using threshold + LoG augmentation with decision tree
-        print(f"  Detecting nuclei (threshold+LoG, 8-25 um, {pixel_um:.2f} um/px)...")
+        print(f"  Detecting nuclei (threshold+LoG, {min_diameter_um}-{max_diameter_um} um "
+              f"= {min_area_px}-{max_area_px} px area, {pixel_um:.2f} um/px)...")
         labels, details = detect_with_log_augmentation(
             red, pixel_um=pixel_um,
+            min_diameter_um=min_diameter_um,
+            max_diameter_um=max_diameter_um,
+            threshold_fraction=threshold_fraction,
+            log_threshold=log_threshold,
         )
         n_nuclei = details['filtered_count']
         result['n_nuclei'] = n_nuclei
@@ -361,10 +638,17 @@ def process_single(
                 background_method="gmm",
                 background_percentile=bg_percentile,
                 threshold_method="background_mean",
-                threshold_value=threshold,
+                # The sigma is what background_mean classification uses; the
+                # version marker says this row's value can be trusted as one
+                # (see tracker.schema.COLOC_SIGMA_RECORDED_VERSION).
+                threshold_value=sigma_threshold,
                 parent_run=det_run_id,
                 input_path=str(nd2_path),
                 status="started",
+                script_version=COLOC_SIGMA_RECORDED_VERSION,
+                # No column holds these two; the note keeps them with the run.
+                notes=(f"soma_dilation={soma_dilation}; "
+                       f"bg_exclusion_dilation={dilation}"),
             )
 
         # Colocalize using background_mean (PI's method):
@@ -479,42 +763,41 @@ def main():
                         help='Project root directory (default: <2D data dir>/<project>)')
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT,
                         help=f'Output directory (default: {DEFAULT_OUTPUT})')
-    parser.add_argument('--threshold', type=float, default=0,
-                        help='Sigma threshold: positive if green > bg_mean + N*std. 0 = bg mean IS the threshold (default: 0)')
-    parser.add_argument('--soma-dilation', type=int, default=6,
-                        help='Soma dilation radius (px) for cytoplasmic signal measurement (default: 6)')
-    parser.add_argument('--dilation', type=int, default=50,
-                        help='Nuclei exclusion dilation iterations for background (default: 50)')
-    parser.add_argument('--bg-percentile', type=float, default=10.0,
-                        help='Background percentile fallback (default: 10.0)')
-    parser.add_argument('--min-area', type=int, default=3,
-                        help='Minimum nucleus area in pixels (default: 3)')
-    parser.add_argument('--max-area', type=int, default=114,
-                        help='Maximum nucleus area in pixels (default: 114)')
+    # The four options below default to None = "not typed". Each unset one is
+    # filled from a marked-best run, then the approved method, then the
+    # built-in default (resolve_parameters). There are no --min-area /
+    # --max-area options: the detector never received them, and its size
+    # range is the diameter range BATCH_NUCLEUS_DIAMETER_UM.
+    parser.add_argument('--threshold', type=float, default=None,
+                        help='Sigma threshold: positive if green > bg_mean + N*std; '
+                             '0 = bg mean IS the threshold (default: marked-best run, '
+                             'else approved method)')
+    parser.add_argument('--soma-dilation', type=int, default=None,
+                        help='Soma dilation radius (px) for cytoplasmic signal '
+                             'measurement (default: approved method)')
+    parser.add_argument('--dilation', type=int, default=None,
+                        help='Nuclei exclusion dilation iterations for background '
+                             '(default: approved method)')
+    parser.add_argument('--bg-percentile', type=float, default=None,
+                        help='Background percentile fallback (default: marked-best run, '
+                             'else approved method)')
     parser.add_argument('--dry-run', action='store_true',
                         help='List files without processing')
     parser.add_argument('--ignore-tracker', action='store_true',
-                        help='Ignore tracker parameters and use CLI defaults')
+                        help='Do not use marked-best runs; unset options come from '
+                             'the approved method')
     args = parser.parse_args()
 
-    # Consult tracker for tuned parameters (unless CLI explicitly overrode)
-    param_source = "defaults"
-    if not args.ignore_tracker:
-        tuned = get_tuned_parameters()
-        if tuned:
-            param_source = "tracker (from interactive tuning)"
-            # Apply tuned params as defaults (CLI args still override)
-            if 'min_area' in tuned and args.min_area == 3:
-                args.min_area = tuned['min_area']
-            if 'max_area' in tuned and args.max_area == 114:
-                args.max_area = tuned['max_area']
-            if 'threshold' in tuned and args.threshold == 0:
-                args.threshold = tuned['threshold']
-        else:
-            print("[!] WARNING: No tuned parameters found in tracker.")
-            print("    Batch will use hardcoded defaults.")
-            print("    To tune: run brainslice-detect interactively first.")
-            print()
+    try:
+        approved = batch_approved_method()
+    except ImportError:
+        approved = {}
+    except RuntimeError as e:   # an approved-method file is set but unreadable
+        parser.error(str(e))
+    # None: the approved-method file gives this analysis no approved method.
+    # Its entries are then never stale; unset values come from the built-ins.
+    has_approved = approved is not None
+    approved = approved or {}
 
     # Resolve the input BEFORE the banner so the banner reports what will
     # actually be read. WHY: it used to print 'Input: None' because the
@@ -528,6 +811,31 @@ def main():
     nd2_files, root_used, layout = discover_nd2_files(roots, args.project)
     searched = "; ".join(str(r) for r in roots)
 
+    tuned = {}
+    if not args.ignore_tracker:
+        try:
+            tuned = get_tuned_parameters(
+                project=args.project, sample_ids={f.stem for f in nd2_files})
+        except TunedParameterConflict as e:
+            # Typing both numbers a marked run could supply settles the
+            # question; otherwise the person has to choose.
+            if args.threshold is None or args.bg_percentile is None:
+                parser.error(
+                    f"{e}\nTo choose: in BrainSlice open the sample of each run "
+                    "you did NOT mean, select the run in Run History and click "
+                    "'Unmark Best'. Or type both --threshold and --bg-percentile, "
+                    "or use --ignore-tracker.")
+            print(f"[!] {e}\n    Not used: --threshold and --bg-percentile were typed.")
+    values, sources = resolve_parameters(
+        {'threshold': args.threshold, 'soma_dilation': args.soma_dilation,
+         'dilation': args.dilation, 'bg_percentile': args.bg_percentile},
+        tuned, approved)
+    # What this run will record in the registry, and where it parts from the
+    # approved method (those entries are reported stale by check_staleness).
+    method_params = batch_method_params(approved, values)
+    differs = sorted(k for k in set(method_params) | set(approved)
+                     if method_params.get(k) != approved.get(k)) if has_approved else []
+
     print("=" * 60)
     print("ENCR Batch Colocalization Analysis")
     print(f"Project:   {args.project}")
@@ -537,12 +845,40 @@ def main():
         print("Input:     (no ND2 files found)")
     print(f"Searched:  {searched}")
     print(f"Output:    {args.output}")
-    print(f"Params:    {param_source}")
-    print(f"Detection: threshold (otsu), area {args.min_area}-{args.max_area} px")
-    print(f"Background: GMM (percentile={args.bg_percentile})")
-    print(f"Coloc:     background_mean, sigma_threshold={args.threshold}")
-    print(f"Soma dil:  {args.soma_dilation} px (cytoplasmic signal measurement)")
-    print(f"BG excl:   {args.dilation} dilation iterations")
+    d_min, d_max = BATCH_NUCLEUS_DIAMETER_UM
+    print(f"Detection: threshold+LoG, nucleus diameter {d_min}-{d_max} um "
+          f"(pixel area per image from its pixel size)")
+    print(f"           threshold_fraction={values['threshold_fraction']} "
+          f"[{sources['threshold_fraction']}], "
+          f"log_threshold={values['log_threshold']} [{sources['log_threshold']}]")
+    print(f"Background: GMM (percentile={values['background_percentile']}) "
+          f"[{sources['background_percentile']}]")
+    print(f"Coloc:     background_mean, sigma_threshold={values['sigma_threshold']} "
+          f"[{sources['sigma_threshold']}]")
+    print(f"Soma dil:  {values['soma_dilation']} px [{sources['soma_dilation']}]")
+    print(f"BG excl:   {values['bg_exclusion_dilation']} dilation iterations "
+          f"[{sources['bg_exclusion_dilation']}]")
+    if not tuned and not args.ignore_tracker:
+        print("Tracker:   no run of this project is marked best for the batch's "
+              "method; mark one in the BrainSlice Run History panel to have the "
+              "batch use its sigma and percentile")
+    if not has_approved:
+        print(f"Approved:  none -- the approved-method file gives {ANALYSIS_NAME} "
+              "no approved method, so its entries are never reported stale")
+    if differs:
+        print("[!] NOT the approved method -- these outputs will be registered as "
+              "stale against it:")
+        for k in differs:
+            print(f"      {k}: this run {method_params.get(k)!r}, "
+                  f"approved {approved.get(k)!r}")
+        # WHY spelled out: marking a run best looks like approving it, but
+        # the registry only knows the approved method; without this line a
+        # person who marked a run gets stale entries and no reason.
+        if any(sources[k].startswith("marked-best") for k in sources):
+            print("    A marked-best run chooses the batch's numbers; it does not "
+                  "change the approved method. To make these numbers approved, "
+                  "write them into the approved-method file (see "
+                  "plugin_2d/ALGORITHM_REFERENCE.md, section 6).")
     print("=" * 60)
 
     print(f"\nFound {len(nd2_files)} ND2 files")
@@ -562,10 +898,11 @@ def main():
 
     # Instantiate AnalysisRegistry once for the batch run
     try:
-        from mousebrain.analysis_registry import AnalysisRegistry, get_approved_method
+        from mousebrain.analysis_registry import AnalysisRegistry
         # Declared as following the shared approved method: its entries are
-        # judged by it unless approved_method.json names this analysis.
-        registry = AnalysisRegistry(analysis_name="ENCR_Detection",
+        # judged by it unless approved_method.json names this analysis
+        # (batch_approved_method reads the same declaration).
+        registry = AnalysisRegistry(analysis_name=ANALYSIS_NAME,
                                     follows_approved_method=True)
     except Exception as _reg_init_err:
         registry = None
@@ -580,13 +917,15 @@ def main():
         result = process_single(
             nd2_path,
             args.output,
-            threshold=args.threshold,
-            dilation=args.dilation,
-            min_area=args.min_area,
-            max_area=args.max_area,
-            bg_percentile=args.bg_percentile,
-            soma_dilation=args.soma_dilation,
-            sigma_threshold=args.threshold,
+            threshold=values['sigma_threshold'],
+            dilation=values['bg_exclusion_dilation'],
+            bg_percentile=values['background_percentile'],
+            soma_dilation=values['soma_dilation'],
+            sigma_threshold=values['sigma_threshold'],
+            min_diameter_um=BATCH_NUCLEUS_DIAMETER_UM[0],
+            max_diameter_um=BATCH_NUCLEUS_DIAMETER_UM[1],
+            threshold_fraction=values['threshold_fraction'],
+            log_threshold=values['log_threshold'],
         )
         all_results.append(result)
 
@@ -612,12 +951,9 @@ def main():
                         'positive_fraction': result.get('positive_fraction', 0),
                         'background': result.get('background', 0),
                     },
-                    # The method THIS analysis is judged by (its own entry in
-                    # approved_method.json if the lab gave it one): recording
-                    # the shared method here while the header holds a
-                    # per-analysis one would leave every entry stale forever.
-                    method_params=(registry.approved_method()
-                                   or get_approved_method(registry.registry_root)),
+                    # What this run used, not the approved method: see
+                    # batch_method_params for why.
+                    method_params=method_params,
                     source_files={'nd2': str(nd2_path)},
                 )
             except Exception as _reg_err:
