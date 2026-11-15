@@ -489,6 +489,17 @@ class SliceTracker:
             'rating': 5,
         })
 
+    def unmark_best(self, run_id: str) -> bool:
+        """Clear a run's marked-best flag (its rating is left as it is).
+
+        WHY: mark_as_best only clears the previous best of the SAME sample, so
+        without this a mark on another sample could never be taken back -- and
+        the 2D batch stops when marked runs of one project disagree.
+        """
+        if not self.get_run(run_id):
+            return False
+        return self._update_row(run_id, {'marked_best': ''})
+
     def get_statistics(self) -> Dict[str, Any]:
         """Get summary statistics."""
         rows = self._read_all()
