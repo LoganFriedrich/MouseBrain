@@ -37,7 +37,9 @@ class FakeLoader(QThread):
         if self._cancelled:
             self.finished.emit(False, "Loading cancelled", None, None)
             return
-        data = np.zeros((2, 8, 8), dtype=np.uint16)
+        # Not constant: a flat image would not survive the layer set-up, and
+        # the test must see the replacement load finish all the way through.
+        data = np.arange(2 * 8 * 8, dtype=np.uint16).reshape(2, 8, 8)
         meta = {"file_path": str(self.file_path), "n_channels": 2,
                 "channel_names": ["A", "B"], "shape": data.shape}
         self.finished.emit(True, "loaded", data, meta)
@@ -67,6 +69,9 @@ def test_replacing_a_load_shows_no_error_and_keeps_the_buttons_off(monkeypatch, 
 
     assert RecordingMessageBox.shown == []
     assert widget.current_file == second
+    assert widget.current_data is not None, "the new load finished"
+    assert len(widget.channel_layers) == 2, "both channels of the new file are shown"
+    assert all(layer in widget.viewer.layers for layer in widget.channel_layers)
     assert widget.load_file_btn.isEnabled()
     assert widget.load_folder_btn.isEnabled()
 

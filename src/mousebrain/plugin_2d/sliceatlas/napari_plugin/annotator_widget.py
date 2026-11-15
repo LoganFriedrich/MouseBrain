@@ -598,7 +598,7 @@ class SliceAnnotatorWidget(QWidget):
         """Make `worker` the current load and start it.
 
         Each signal is bound to the worker that sent it, so a report from a
-        worker that is no longer current is recognised and ignored.
+        worker that is no longer current is recognized and ignored.
         """
         self.loader_worker = worker
         worker.progress.connect(partial(self._from_current_worker, worker, progress_handler))
