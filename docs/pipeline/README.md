@@ -235,7 +235,13 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   (`mousebrain.analysis_registry`): the counts CSV, the total, the detection
   settings, the detection and classification run ids, the model, and the source
   `cells.xml` and registration. A registry problem is printed and does not undo
-  the count.
+  the count. These entries are not judged by the slice-analysis approved
+  method, so `mousebrain-registry` does not list them as stale unless your
+  `approved_method.json` names `3D_Region_Counts` -- once the manifest records
+  that declaration. A manifest written by an earlier version gets it on the
+  next count of any brain, or at once with `--no-approved-method`;
+  `--refresh-approved` alone does not change it (see
+  [ANALYSIS_REGISTRY.md](ANALYSIS_REGISTRY.md), "Not every analysis has one").
 
 ### Utility: Browse Experiments
 ```bash
@@ -291,7 +297,9 @@ mousebrain-orientation-check 001_CNT_01_01_1p625x_z4 --orientation sar
 
 A trial orientation is written as `QC_orientation_check_<orientation>.png`, so the
 declared one's picture is never overwritten. Each picture is entered in
-MouseBrain's analysis registry (analysis `3D_Orientation_Check`) and on the
+MouseBrain's analysis registry (analysis `3D_Orientation_Check`; like the
+region counts, not judged by the slice-analysis approved method once its
+manifest records that -- see ANALYSIS_REGISTRY.md) and on the
 registration's tracker row. It takes about two minutes (it reads every sixth
 slice and pixel). To register with a different orientation, set `orientation` in
 the brain's `metadata.json` and run registration again.
