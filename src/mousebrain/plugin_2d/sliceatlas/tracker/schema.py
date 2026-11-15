@@ -36,7 +36,7 @@ CSV_COLUMNS = [
     # Registration parameters
     "reg_atlas",  # allen_mouse_10um, allen_spinal_cord_20um, etc.
     "reg_orientation",  # coronal, sagittal, horizontal
-    "reg_method",  # abba_manual, abba_auto, deepslice
+    "reg_method",  # align_tab_affine (written by Run Quantification); abba_manual, abba_auto, deepslice are listed but nothing writes them
     "reg_ap_position",  # Anterior-posterior position in atlas (um)
     "reg_transform_path",  # Path to saved transform
     "reg_quality_score",  # Manual QC rating 1-5
