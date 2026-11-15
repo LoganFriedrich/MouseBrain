@@ -414,7 +414,9 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     # --batch: no question to answer; --brain: this brain only. (This passed a
     # --yes that step 2 does not accept, so argparse stopped it and every
     # brain failed here.)
-    success, msg = run_step('2_extract_and_analyze.py', ['--batch', '--brain', brain_name])
+    # The brain FOLDER name: batch brain names are "<mouse>/<brain>", which
+    # steps 2 and 3 do not match (steps 4-6 accept either form).
+    success, msg = run_step('2_extract_and_analyze.py', ['--batch', '--brain', brain_path.name])
     if not success:
         results['qc_extract'] = f"FAIL: {msg}"
         results['status'] = QCStatus.FAIL
@@ -451,7 +453,7 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     # Step 3: Register
     print("\n[3/6] Registering to atlas...")
     # Same for step 3: --batch replaces the --yes it never accepted.
-    success, msg = run_step('3_register_to_atlas.py', ['--batch', '--brain', brain_name])
+    success, msg = run_step('3_register_to_atlas.py', ['--batch', '--brain', brain_path.name])
     if not success:
         results['qc_register'] = f"FAIL: {msg}"
         results['status'] = QCStatus.FAIL

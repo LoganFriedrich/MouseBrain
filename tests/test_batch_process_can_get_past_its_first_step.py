@@ -71,3 +71,20 @@ def test_an_uncropped_brain_still_stops_for_a_crop(tmp_path):
     b = _brain(tmp_path)
     (b / "2_Cropped_For_Registration" / "metadata.json").unlink()
     assert bp.qc_check_crop(b)[0] == bp.QCStatus.FAIL
+
+
+def test_steps_2_and_3_get_the_brain_folder_name(tmp_path, monkeypatch):
+    # Batch brain names are "<mouse>/<brain>"; steps 2 and 3 match the folder
+    # name only, so the batch must hand them that.
+    bp = _bp()
+    monkeypatch.setattr(bp, "PIPELINE_STATUS_CSV", tmp_path / "pipeline_status.csv")
+    calls = []
+
+    def fake_step(script, args, timeout=7200):
+        calls.append((script, args))
+        return False, "stop here"
+    monkeypatch.setattr(bp, "run_step", fake_step)
+    brain = tmp_path / "MOUSE_A" / "101_PROJ_01_02_2p5x_z5"
+    brain.mkdir(parents=True)
+    bp.process_brain(brain, "MOUSE_A/101_PROJ_01_02_2p5x_z5")
+    assert calls[0] == ("2_extract_and_analyze.py", ["--batch", "--brain", brain.name])
