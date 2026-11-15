@@ -600,9 +600,11 @@ class AnalysisRegistry:
         self.set_aside_dir.mkdir(parents=True, exist_ok=True)
         aside = self.set_aside_dir / ("%s%s" % (
             self.set_aside_prefix, datetime.now().strftime(_SET_ASIDE_TIME_FORMAT)))
-        # shutil.move: a rename on the same drive (the usual case), a copy
-        # and delete otherwise.
-        shutil.move(str(self.registry_path), str(aside))
+        # A rename only (logs/ is on the registry's drive): a copy-then-delete
+        # fallback would, for a manifest held open by another program, leave
+        # a copy here reported as set aside while the damaged file stayed in
+        # place (see _rename_only). A refused rename raises and moves nothing.
+        _rename_only(self.registry_path, aside)
         try:
             # A new, empty manifest in its place at once (see WHY above). Its
             # header lists the set-aside file (_set_approved_header).
@@ -611,7 +613,7 @@ class AnalysisRegistry:
             # Never leave the folder without a manifest: put the damaged one
             # back where it was. Nothing else has changed.
             try:
-                shutil.move(str(aside), str(self.registry_path))
+                _rename_only(aside, self.registry_path)
                 where = "it was left where it was, unchanged"
             except OSError as back:
                 where = ("it is kept, unchanged, as %s and could not be put back "
@@ -1265,25 +1267,59 @@ class AnalysisRegistry:
     # -----------------------------------------------------------------
 
     def invalidate(self, sample: Optional[str] = None) -> List[str]:
-        """Mark entries as stale and archive their output files.
+        """Archive entries' output files and mark those entries invalidated.
 
         If *sample* is given, only that sample's entries are invalidated.
-        If None, ALL entries are invalidated.
+        If None, ALL current entries are invalidated.
 
         Archived files are moved to an ``_archived/{timestamp}/`` subdirectory
         beside where they were, so they are preserved but no longer in the
-        active output path. The whole pass holds the registry lock.
+        active output path.
+
+        WHY one entry at a time, and only when every file moved:
+        an entry marked invalidated whose file is still in the active folder
+        tells every reader (and an integrator mirroring this folder) that a
+        result is gone when it is not; and moving every file first and
+        writing the manifest once at the end meant a crash part-way left files
+        in _archived/ while the manifest still called their entries current.
+        So:
+
+        * for each entry: move its files; if any move fails, put back the
+          ones already moved, leave the entry CURRENT, print a [!] line and
+          record it in the audit log, and go on to the next entry;
+        * if all moved (or were already absent), mark it invalidated and
+          write the manifest straight away. If THAT write fails (a share
+          dropping out, the file held open past the retry time), the entry
+          is marked current again, its files are put back, the failure is
+          printed and logged, and the error is raised -- the pass stops,
+          because the next write would most likely fail the same way.
+
+        Anything else that stops the pass part-way through an entry's files
+        (Ctrl+C, an unexpected error) also puts that entry's moved files back
+        before it is raised, so the entry stays current with all its files in
+        place. A damaged manifest stops the pass before anything moves; it is
+        left where it is (only a registration sets one aside).
+
+        The one window that remains is a hard stop of the process (power
+        loss, the process killed) between an entry's last move and the write
+        that records it: that entry's files are then in _archived/ while the
+        manifest still calls it current, and the audit log has no
+        "invalidate" line for it. The whole pass holds the registry lock,
+        refreshed after each entry so a long pass is never mistaken for a
+        crashed writer.
 
         Args:
             sample: Optional sample name to invalidate. None = invalidate all.
 
         Returns:
-            List of entry keys that were invalidated.
+            List of entry keys that were invalidated. An entry whose files
+            could not all be moved is NOT in it (see the printed warnings).
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        invalidated = []
+        invalidated: List[str] = []
+        failed: List[str] = []
 
-        with self._locked():
+        with self._locked() as lock:
             # A damaged manifest is NOT set aside here: invalidate has nothing
             # of its own to record, and everything it would do concerns the
             # entries in that very file, so it raises RegistryUnreadableError
@@ -1294,26 +1330,70 @@ class AnalysisRegistry:
                 if sample is not None and entry.get("sample") != sample:
                     continue
                 if not entry.get("is_current", True):
-                    continue  # already stale
+                    continue  # already invalidated
 
-                # Archive output files
-                for output_type, rel_path in entry.get("outputs", {}).items():
-                    src = self.registry_root / rel_path
-                    if src.exists():
-                        archive_dir = src.parent / "_archived" / timestamp
-                        archive_dir.mkdir(parents=True, exist_ok=True)
-                        dest = archive_dir / src.name
+                moved: List[Tuple[Path, Path]] = []
+                problem = None
+                try:
+                    for _output_type, rel_path in entry.get("outputs", {}).items():
+                        src = self.registry_root / rel_path
+                        if not src.exists():
+                            continue  # nothing left in the active path to archive
+                        dest = src.parent / "_archived" / timestamp / src.name
                         try:
-                            shutil.move(str(src), str(dest))
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            _rename_only(src, dest)
+                            moved.append((src, dest))
                         except OSError as e:
-                            print(f"  [!] WARNING: Could not archive {src}: {e}")
+                            problem = "could not archive %s: %s" % (src, e)
+                            break
+                except BaseException as e:
+                    # Anything else stopping the pass between two files of one
+                    # entry (Ctrl+C, an unexpected error): put back what this
+                    # entry already moved, so the files match the manifest,
+                    # which still calls the entry current; then stop.
+                    problem = ("interrupted (%s: %s)" % (type(e).__name__, e)
+                               + self._put_back(moved))
+                    print("  [!] %s NOT invalidated, still current: %s" % (key, problem))
+                    self._log_event("invalidate_failed", entry.get("sample", key),
+                                    key, problem)
+                    if invalidated:
+                        self._log_event("invalidate", sample or "ALL",
+                                        f"{len(invalidated)} entries", timestamp)
+                    raise
+
+                if problem is not None:
+                    problem += self._put_back(moved)
+                    print("  [!] %s NOT invalidated, still current: %s" % (key, problem))
+                    self._log_event("invalidate_failed", entry.get("sample", key),
+                                    key, problem)
+                    failed.append(key)
+                    continue
 
                 entry["is_current"] = False
                 entry["invalidated_at"] = datetime.now().isoformat()
+                try:
+                    self._write_registry(registry)
+                except BaseException as e:
+                    # The manifest on disk still calls this entry current:
+                    # make the files and the in-memory entry say so too.
+                    entry["is_current"] = True
+                    entry.pop("invalidated_at", None)
+                    problem = ("the manifest could not be written (%s: %s)"
+                               % (type(e).__name__, e)) + self._put_back(moved)
+                    print("  [!] %s NOT invalidated, still current: %s" % (key, problem))
+                    print("  [!] Invalidation stopped; %d earlier entr%s invalidated."
+                          % (len(invalidated), "y was" if len(invalidated) == 1 else "ies were"))
+                    self._log_event("invalidate_failed", entry.get("sample", key),
+                                    key, problem)
+                    if invalidated:
+                        self._log_event("invalidate", sample or "ALL",
+                                        f"{len(invalidated)} entries", timestamp)
+                    raise
+                lock.touch()
                 invalidated.append(key)
 
             if invalidated:
-                self._write_registry(registry)
                 self._log_event(
                     "invalidate",
                     sample or "ALL",
@@ -1321,7 +1401,25 @@ class AnalysisRegistry:
                     timestamp,
                 )
 
+        if failed:
+            print("  [!] %d entr%s could not be invalidated (files could not be moved); "
+                  "they stay current. Free the files and run invalidate again."
+                  % (len(failed), "y" if len(failed) == 1 else "ies"))
         return invalidated
+
+    @staticmethod
+    def _put_back(moved: List[Tuple[Path, Path]]) -> str:
+        """Move archived files back to where they were (newest first).
+
+        Returns "" when all went back, else text naming each file that could
+        not be put back and where it is now, for the [!] line and the log."""
+        problem = ""
+        for src, dest in reversed(moved):
+            try:
+                _rename_only(dest, src)
+            except OSError as e:
+                problem += "; and could not put back %s (it is at %s): %s" % (src, dest, e)
+        return problem
 
     # -----------------------------------------------------------------
     # Logging
@@ -1366,6 +1464,35 @@ def _move_file(src: Path, dest: Path) -> None:
             shutil.copy2(str(src), str(dest))
             src.unlink()
             return
+
+
+def _rename_only(src: Path, dest: Path) -> None:
+    """Rename *src* to *dest* (same drive), never copying; refuse if *dest*
+    exists. A rename Windows refuses because another program has the file
+    open is retried for REPLACE_RETRY_SECONDS, then raised.
+
+    WHY never a copy: every move the registry makes within itself -- a
+    file archived into _archived/ beside it by invalidate (and put back by
+    _put_back), a damaged manifest set aside into logs/ -- stays on one
+    drive. shutil.move falls back to copy-then-delete when the rename fails;
+    for a file another program holds open the copy succeeds and the delete
+    fails, so the original stays in place AND a stray copy is left behind:
+    in _archived/, where nothing cleans it up and an integrator mirrors it
+    as an archived result, or in logs/, where it is reported as a set-aside
+    manifest while the damaged file is still in use. A failed rename leaves
+    nothing behind.
+    """
+    deadline = time.monotonic() + AnalysisRegistry.REPLACE_RETRY_SECONDS
+    while True:
+        try:
+            os.rename(str(src), str(dest))
+            return
+        except FileExistsError:
+            raise
+        except PermissionError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.2)
 
 
 def _same_file(a: Path, b: Path) -> bool:
