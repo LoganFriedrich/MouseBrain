@@ -189,6 +189,8 @@ INPUT_PRIORITY = ("manual", "cropped", "full")
 DEFAULT_SOURCES_IN_REGISTERED_SPACE = ("manual", "cropped")
 
 
+from mousebrain.candidates_io import (CANDIDATES_NAME, archive_previous, restore,
+                                      write_provenance)
 from mousebrain.registration_approval import (APPROVED, approval_state,
                                               is_approved as is_registration_approved)
 
@@ -844,15 +846,35 @@ Examples:
     # If this stops part-way (an error, Ctrl-C, a crash inside the tool),
     # the tracker row is set to failed instead of staying 'started' forever.
     with tracker.finish_or_fail(exp_id):
-        # Run detection
-        success, duration, cells_found = run_cellfinder_detect(
-            signal_path=signal_path,
-            background_path=background_path,
-            output_path=det_folder,
-            voxel_sizes=voxel_sizes,
-            params=params,
-            n_free_cpus=args.n_free_cpus,
-        )
+        # The previous candidates are archived, not overwritten, and the new
+        # file is tied to this run (mousebrain.candidates_io says why). A run
+        # that fails puts the previous file back.
+        archived, prev_id = archive_previous(det_folder)
+        if archived:
+            print(f"    Previous candidates archived to {archived.parent}")
+        try:
+            # Run detection
+            success, duration, cells_found = run_cellfinder_detect(
+                signal_path=signal_path,
+                background_path=background_path,
+                output_path=det_folder,
+                voxel_sizes=voxel_sizes,
+                params=params,
+                n_free_cpus=args.n_free_cpus,
+            )
+        except BaseException:
+            restore(archived, det_folder)
+            raise
+        cells_xml = det_folder / CANDIDATES_NAME
+        if success and cells_xml.exists():
+            write_provenance(cells_xml, exp_id, params, archived)
+            # This run's row names the file it wrote; the previous writer's
+            # row follows its file into the archive.
+            tracker.update_status(exp_id, output_path=str(cells_xml))
+            if prev_id:
+                tracker.update_status(prev_id, output_path=str(archived))
+        else:
+            restore(archived, det_folder)
     
         # Update tracker
         tracker.update_status(

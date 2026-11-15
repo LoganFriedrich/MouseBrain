@@ -152,6 +152,15 @@ folder name), so nobody has to remember them or type them. If there is no such
 run, or it does not record all eight, step 4 stops and says what to do -- see
 "The Settled Detection Method" below.
 
+**Earlier candidates are kept.** Step 4 writes `detected_cells.xml` (at the top of
+`4_Cell_Candidates`, or in `from_<folder>` for a run on images that are not the
+registered ones). When a run succeeds, the file that was there moves to
+`_archive/<date>_<time>/` in the same folder first -- step 5 never looks there --
+and beside the new file `detected_cells.provenance.json` names the tracker run
+that wrote it and its settings. In the tracker, that run's `output_path` is the
+file itself, and the previous run's `output_path` is updated to its file's place
+in the archive. A run that fails leaves the previous file where it was.
+
 ### Script 5: Classification
 ```bash
 # Interactive mode
@@ -529,6 +538,8 @@ run type), and each imaging setup at most one Paradigm Best:
         │   ├── .registration_approved        ← A person's approval of THIS registration
         │   └── _archive/<time>/              ← Earlier registrations, each with its approval
         ├── 4_Cell_Candidates/            ← 4_detect_cells.py output
+        │   ├── detected_cells.provenance.json ← which run wrote detected_cells.xml
+        │   ├── _archive/<time>/          ← earlier detected_cells.xml, each with its record
         │   └── from_1_Extracted_Full/    ← trial runs made before registration
         ├── 5_Classified_Cells/           ← 5_classify_cells.py output
         ├── 6_Region_Analysis/            ← 6_count_regions.py output
