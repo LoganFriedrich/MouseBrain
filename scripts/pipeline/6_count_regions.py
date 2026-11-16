@@ -207,10 +207,17 @@ def run_brainglobe_counts(
     start_time = time.time()
 
     # Try the proper BrainGlobe method first
+    from mousebrain.config import RegisteredImagesMissing
     try:
         return run_counts_brainglobe_transform(
             cells_path, registration_path, output_path, output_csv, atlas, start_time
         )
+    except RegisteredImagesMissing:
+        # NOT a reason to fall back: the images the atlas was fitted to are
+        # gone, so no count of this brain can be trusted -- the direct lookup
+        # would write counts all the same. main() reports the brain and goes
+        # on with the next one.
+        raise
     except ImportError as e:
         print(f"    BrainGlobe utils not available: {e}")
         print(f"    Falling back to direct atlas lookup...")
@@ -2030,13 +2037,25 @@ Examples:
     success_count = 0
     failed_count = 0
     
+    from mousebrain.config import RegisteredImagesMissing, registered_input
     for i, brain in enumerate(to_process):
         print(f"\n[{i+1}/{len(to_process)}] {brain['name']}")
         print("-" * 50)
-        
+
         pipeline_folder = brain['pipeline']
         reg_folder = pipeline_folder / FOLDER_REGISTRATION
         output_path = pipeline_folder / FOLDER_ANALYSIS
+
+        # The images the atlas was fitted to must still be there: cell
+        # positions only mean something in them. If they are gone this brain
+        # is NOT counted (no fallback to another folder, no direct lookup) and
+        # the others still are -- one brain must not stop a whole batch.
+        try:
+            registered_input(pipeline_folder)
+        except RegisteredImagesMissing as e:
+            failed_count += 1
+            print(f"    [FAILED] Not counted: {e}")
+            continue
         
         exp_id = tracker.log_counts(
             brain=brain['name'],
@@ -2051,22 +2070,30 @@ Examples:
         
         # If this stops part-way (an error, Ctrl-C, a crash inside the tool),
         # the tracker row is set to failed instead of staying 'started' forever.
-        with tracker.finish_or_fail(exp_id):
-            success, duration, total_cells, output_csv = run_brainglobe_counts(
-                cells_path=brain['cells_xml'],
-                registration_path=reg_folder,
-                output_path=output_path,
-                atlas=args.atlas,
-            )
-        
-            tracker.update_status(
-                exp_id,
-                status="completed" if success else "failed",
-                duration_seconds=round(duration, 1),
-                count_total_cells=total_cells,
-                count_output_csv=str(output_csv) if output_csv else None,
-            )
-        
+        try:
+            with tracker.finish_or_fail(exp_id):
+                success, duration, total_cells, output_csv = run_brainglobe_counts(
+                    cells_path=brain['cells_xml'],
+                    registration_path=reg_folder,
+                    output_path=output_path,
+                    atlas=args.atlas,
+                )
+                # The count's result goes on its tracker row INSIDE the block:
+                # a row the block leaves without a result is marked failed.
+                tracker.update_status(
+                    exp_id,
+                    status="completed" if success else "failed",
+                    duration_seconds=round(duration, 1),
+                    count_total_cells=total_cells,
+                    count_output_csv=str(output_csv) if output_csv else None,
+                )
+        except RegisteredImagesMissing as e:
+            # The images went between the check above and the count: this
+            # brain is not counted (its tracker row says failed); go on.
+            failed_count += 1
+            print(f"    [FAILED] Not counted: {e}")
+            continue
+
         if success:
             success_count += 1
             print(f"\n    [OK] Completed - {total_cells} cells counted")
@@ -2102,8 +2129,13 @@ Examples:
                     if not detection_params.get('voxel_xy'):
                         # The voxel size is a property of the images, recorded
                         # with them, whatever run found the cells.
-                        from mousebrain.config import registered_input
-                        _src, _folder, meta = registered_input(pipeline_folder)
+                        try:
+                            _src, _folder, meta = registered_input(pipeline_folder)
+                        except RegisteredImagesMissing as e:
+                            # Gone since this brain was counted: the voxel
+                            # columns stay empty (said so); the batch goes on.
+                            print(f"    [!] Voxel size not recorded: {e}")
+                            meta = None
                         voxel = (meta or {}).get('voxel_size_um') or {}
                         detection_params['voxel_xy'] = voxel.get('x', '')
                         detection_params['voxel_z'] = voxel.get('z', '')

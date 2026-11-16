@@ -893,11 +893,15 @@ or re-running. A brain whose registration has no `registered_from.json`
 `registered_from.json` is written only when registration FINISHED (all its
 output files are there); a failed run writes none. If the folder it names no
 longer holds any images (moved, deleted, emptied), nothing reads another folder
-in its place: steps 5 and 6, the pre-filter and Setup & Tuning stop with
-"the registration of <brain> was fitted to the images in <folder>, and that
-folder holds no images", because cell positions only mean something in the
-images the atlas was fitted to. Put the images back, or register the brain
-again on the images that are there now.
+in its place, because cell positions only mean something in the images the
+atlas was fitted to. The message is "the registration of <brain> was fitted to
+the images in <folder>, and that folder holds no images". What each tool does:
+step 5, the pre-filter and Setup & Tuning stop with it. Step 6 does NOT count
+that brain -- it prints `[FAILED] Not counted:` with the message, writes no
+counts for it (it does not fall back to the less accurate direct atlas
+lookup either), and goes on with the other brains; its summary line counts
+the brain as failed. Put the images back, or register the brain again on the
+images that are there now.
 
 **Where the results go**
 
