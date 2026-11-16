@@ -202,9 +202,14 @@ and which folder a utility acts on when you give it a brain by name
 (the scripts named above). Before this, those lists offered an archive kept beside a brain
 as if it were a brain, and a utility could act on it instead of the real one.
 
-**Giving a brain by name.** The exact brain folder name always works (and
-`<mouse folder>/<brain folder>` works everywhere except step 2). What a PART of
-a name does depends on the tool:
+**Giving a brain by name.** The exact brain folder name always works. The
+form `<mouse folder>/<brain folder>` (the way steps 3 to 6 print a brain) works
+in steps 3 to 6, the pre-filter, `mousebrain --crop`, the orientation check and
+the `util_*.py` scripts listed above as printing why a brain is not found;
+write it with a forward slash (`/`). It does NOT work in two places, which
+compare what you give with the brain folder name alone: step 2 (`2_extract_and_analyze.py --brain`), and
+`overnight_batch.py --brain`. Give those the brain folder name without the
+mouse folder. What a PART of a name does depends on the tool:
 
 - `util_registration_qc.py`, `util_manual_crop.py`, `util_approve_registration.py`,
   `util_apply_crop_from_reference.py`, `util_compare_to_published.py`,
@@ -217,7 +222,10 @@ a name does depends on the tool:
   `util_optimize_crop.py` and `util_create_training_cubes.py` take the exact
   name only; a part of a name is "not found". Give the full folder name.
 - Step 3 (`3_register_to_atlas.py --brain`) registers the exact brain when the
-  name is exact, and otherwise every brain whose name contains the part.
+  name is exact (the brain folder name, or `<mouse folder>/<brain folder>`),
+  and otherwise every brain whose folder name contains the part.
+- `overnight_batch.py --brain` keeps every brain whose folder name contains
+  what you give.
 
 `mousebrain --crop <brain>` behaves like the first group: it opens only a brain (never a
 `_` folder or a copy in a backup mouse folder), refuses a part of a name that

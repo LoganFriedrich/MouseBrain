@@ -250,6 +250,27 @@ def find_extracted_pipelines(root_path):
     return pipelines
 
 
+def brain_filter_matches(brain, pipelines):
+    """Which of ``pipelines`` (indexes) a ``--brain`` value asks for.
+
+    An exact brain folder name, or ``<mouse folder>/<brain folder>``, means
+    that brain only. Anything else is taken as a part of a brain folder name
+    and fits every brain whose folder name contains it.
+
+    WHY THE MOUSE-FOLDER FORM: steps 4 to 6 print and accept
+    ``<mouse folder>/<brain folder>``, so an operator copies that form from
+    their output. This step compared the value with the brain folder name
+    alone, so the copied form fitted nothing and a brain waiting to be
+    registered was reported as "No pending registration found".
+    """
+    name = str(brain).replace("\\", "/").strip("/")
+    exact = [i for i, p in enumerate(pipelines)
+             if name in (p[0].name, "%s/%s" % (p[1].name, p[0].name))]
+    if exact:
+        return exact
+    return [i for i, p in enumerate(pipelines) if name and name in p[0].name]
+
+
 def check_registration_status(pipeline_folder):
     """
     Check if registration has been done.
@@ -704,7 +725,7 @@ Examples:
     # A brain asked for by name that no brain's name contains: say why when the
     # reason is the folder rule (it sits in a mouse folder with a skip word, or
     # in a folder starting with '_'), instead of only "nothing found".
-    if args.brain and not any(args.brain in p[0].name for p in pipelines):
+    if args.brain and not brain_filter_matches(args.brain, pipelines):
         from mousebrain.config import explain_brain_not_found
         why = explain_brain_not_found(args.brain, root_path)
         if why:
@@ -735,25 +756,21 @@ Examples:
         to_process = [i for i, (status, _) in enumerate(statuses)
                       if status in ["needs_registration", "incomplete"]]
 
-        # Filter by brain name if specified. An exact folder name means that
-        # brain only: a part of a name also fits every brain whose name
-        # contains it, and registering those too is not what was asked (the
-        # napari dashboard passes the selected brain's exact name).
+        # Filter by brain name if specified. An exact folder name (or
+        # <mouse folder>/<brain folder>) means that brain only: a part of a
+        # name also fits every brain whose name contains it, and registering
+        # those too is not what was asked (the napari dashboard passes the
+        # selected brain's exact name). See brain_filter_matches.
         if args.brain:
-            exact = [i for i, p in enumerate(pipelines) if p[0].name == args.brain]
-            if exact:
-                to_process = [i for i in to_process if i in exact]
-            else:
-                to_process = [i for i in to_process
-                              if args.brain in pipelines[i][0].name]
+            asked = brain_filter_matches(args.brain, pipelines)
+            to_process = [i for i in to_process if i in asked]
             if not to_process:
                 # Also check if already complete and just needs to be reported
-                for i, (pipeline_folder, mouse_folder, metadata) in enumerate(pipelines):
-                    if (i in exact) if exact else (args.brain in pipeline_folder.name):
-                        status, _ = statuses[i]
-                        if status == "complete":
-                            print(f"\nBrain '{args.brain}' is already registered.")
-                            return
+                for i in asked:
+                    status, _ = statuses[i]
+                    if status == "complete":
+                        print(f"\nBrain '{args.brain}' is already registered.")
+                        return
                 print(f"\nNo pending registration found for brain matching '{args.brain}'")
                 return
 
