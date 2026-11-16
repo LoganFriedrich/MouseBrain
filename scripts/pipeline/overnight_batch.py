@@ -767,35 +767,29 @@ def generate_regional_heatmap(pipeline_dir: Path, output_dir: Path) -> Optional[
 
 
 def parse_cells_from_xml(xml_path: Path) -> List[Dict]:
-    """Parse cell coordinates from XML file."""
+    """Cell positions (x, y, z in image planes) from a cellfinder .xml.
+
+    Read as XML, one <Marker> element per cell. This used to scan the text for
+    a LINE holding MarkerX, MarkerY and MarkerZ together, but cellfinder writes
+    each of them on its own line, so no cell was ever found and the overnight
+    pictures always showed none. A file that cannot be read gives no cells
+    (the picture is still made, and says 0 cells).
+    """
+    import xml.etree.ElementTree as ET
+
     cells = []
-
     try:
-        with open(xml_path, 'r') as f:
-            content = f.read()
-
-        # Simple regex-free parsing
-        for line in content.split('\n'):
-            if '<Marker>' in line:
-                continue
-            if '<MarkerX>' in line and '<MarkerY>' in line and '<MarkerZ>' in line:
-                try:
-                    # Extract coordinates (simplified parsing)
-                    parts = line.split('>')
-                    x = y = z = 0
-                    for i, p in enumerate(parts):
-                        if p.endswith('<MarkerX'):
-                            x = float(parts[i+1].split('<')[0])
-                        elif p.endswith('<MarkerY'):
-                            y = float(parts[i+1].split('<')[0])
-                        elif p.endswith('<MarkerZ'):
-                            z = float(parts[i+1].split('<')[0])
-                    cells.append({'x': x, 'y': y, 'z': int(z)})
-                except:
-                    pass
-    except:
-        pass
-
+        root = ET.parse(str(xml_path)).getroot()
+    except (OSError, ET.ParseError):
+        return cells
+    for marker in root.iter("Marker"):
+        try:
+            x = float(marker.findtext("MarkerX"))
+            y = float(marker.findtext("MarkerY"))
+            z = float(marker.findtext("MarkerZ"))
+        except (TypeError, ValueError):
+            continue  # a marker without all three coordinates is not a cell
+        cells.append({'x': x, 'y': y, 'z': int(z)})
     return cells
 
 
