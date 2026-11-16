@@ -343,6 +343,17 @@ console napari was started from **only when the step fails**; after a step that
 succeeds nothing of its output is shown anywhere, so to follow a long step as it
 runs, run the same command from a terminal instead.
 
+**The "Registration" button under BrainGlobe Tools** opens brainreg's own
+registration widget with the brain's voxel sizes filled in -- for trying
+settings, nothing more. It does NOT fill in an output folder or an orientation:
+choose both yourself, and choose an output folder OUTSIDE the brain's folder.
+A registration made with that widget is not the brain's pipeline registration
+(nothing archives the old one or its approval, nothing records which images it
+used, the tracker has no row of it). The brain's registration is made only by
+**Run Next Step** (step 3). (It used to point the widget at the brain's
+`3_Registered_Atlas` with a fixed orientation, so a run there replaced the
+pipeline registration without any of that.)
+
 (Before this, Extract started step 2 in its interactive form, which waits for
 an answer the dashboard cannot give, and then extracted every brain waiting;
 Register registered every brain waiting, not the selected one. Step 3 given an

@@ -497,7 +497,11 @@ class PipelineDashboard(QWidget):
         self.brainreg_btn = QPushButton("Registration")
         self.brainreg_btn.clicked.connect(self.launch_brainreg)
         self.brainreg_btn.setEnabled(BRAINREG_AVAILABLE)
-        self.brainreg_btn.setToolTip("Launch brainreg with your voxel settings")
+        self.brainreg_btn.setToolTip(
+            "Open brainreg's own registration widget with this brain's voxel sizes,\n"
+            "for trying settings. What it registers is NOT the brain's pipeline\n"
+            "registration: choose an output folder outside the brain folder.\n"
+            "To register the brain for the pipeline, use Run Next Step (step 3).")
         bg_btn_layout.addWidget(self.brainreg_btn)
 
         self.cellfinder_btn = QPushButton("Cell Detection")
@@ -950,7 +954,19 @@ class PipelineDashboard(QWidget):
         return metadata
 
     def launch_brainreg(self):
-        """Launch brainreg widget with pre-filled settings."""
+        """Open brainreg's own widget with this brain's voxel sizes.
+
+        WHY NO OUTPUT FOLDER AND NO ORIENTATION ARE FILLED IN
+        This used to set the output folder to the brain's
+        3_Registered_Atlas and the orientation to a fixed "psl". A
+        registration run there bypassed everything step 3 does: the previous
+        registration and its approval were not archived, registered_from.json
+        was not written (so later steps read whatever images an earlier run
+        recorded), and the tracker had no row -- and the fixed orientation was
+        not the brain's own. The native widget is for trying settings; the
+        brain's pipeline registration is made only by step 3 (Run Next Step).
+        So the person chooses where the widget writes, and its orientation.
+        """
         if not BRAINREG_AVAILABLE:
             QMessageBox.warning(self, "Not Available", "brainreg is not installed")
             return
@@ -968,14 +984,6 @@ class PipelineDashboard(QWidget):
                 brainreg_w.y_pixel_um.value = metadata['voxel_xy']
                 brainreg_w.x_pixel_um.value = metadata['voxel_xy']
 
-            # Set default orientation (posterior-superior-left)
-            brainreg_w.data_orientation.value = "psl"
-
-            # Set output folder if brain is selected
-            if self.current_brain:
-                output_dir = self.current_brain / "3_Registered_Atlas"
-                brainreg_w.registration_output_folder.value = output_dir
-
             # Set reasonable defaults for registration
             brainreg_w.n_free_cpus.value = 2
 
@@ -984,7 +992,9 @@ class PipelineDashboard(QWidget):
                 brainreg_w, area='right', name='Brain Registration'
             )
 
-            self.message_label.setText("Opened brainreg widget")
+            self.message_label.setText(
+                "Opened brainreg's widget: set its orientation and an output folder "
+                "OUTSIDE the brain folder. The pipeline registration is Run Next Step.")
 
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to launch brainreg:\n{e}")
