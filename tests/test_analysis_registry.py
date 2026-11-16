@@ -448,6 +448,39 @@ def test_reading_an_unreadable_manifest_raises_and_moves_nothing(tmp_path, capsy
     assert reg.set_aside_files() == []
 
 
+def test_a_valid_manifest_with_a_byte_order_mark_is_read_and_never_set_aside(tmp_path):
+    # A manifest repaired by hand may be saved by an editor or shell that
+    # writes a UTF-8 byte-order mark. It is still a valid manifest: it must be
+    # read normally, never set aside as damaged (which would empty the
+    # registry until a person merged its entries back).
+    csv_file, _ = _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    reg.register_output(sample="E01_01_S01_DCN", category="detection",
+                        files={"measurements": str(csv_file)}, results={},
+                        method_params=DEFAULT_METHOD)
+    text = reg.registry_path.read_text(encoding="utf-8")
+    reg.registry_path.write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
+
+    fresh = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
+    assert list(fresh.get_all_entries()) == ["E01_01_S01_DCN"]
+    fresh.register_output(sample=SAMPLE, category="detection",
+                          files={"measurements": str(csv_file)}, results={},
+                          method_params=DEFAULT_METHOD)
+
+    assert fresh.set_aside_files() == []
+    assert sorted(fresh.get_all_entries()) == sorted(["E01_01_S01_DCN", SAMPLE])
+    # The rewritten manifest carries no byte-order mark (an integrator that
+    # reads plain utf-8 keeps working).
+    assert not reg.registry_path.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+def test_an_approved_method_file_with_a_byte_order_mark_is_read(tmp_path):
+    override = dict(DEFAULT_METHOD, threshold_fraction=0.25)
+    (tmp_path / "approved_method.json").write_bytes(
+        b"\xef\xbb\xbf" + json.dumps(override).encode("utf-8"))
+    assert get_approved_method(tmp_path) == override
+
+
 @pytest.mark.parametrize("flag", ["--refresh-approved", "--no-approved-method",
                                   "--follows-approved-method"])
 def test_refreshing_the_header_of_an_unreadable_manifest_moves_nothing(tmp_path, capsys, flag):

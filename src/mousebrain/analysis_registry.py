@@ -163,7 +163,10 @@ def _load_method_file(path: Path, origin: str) -> Dict[str, Any]:
     would report "current" for results produced with parameters nobody chose.
     """
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        # utf-8-sig: this file is written by hand, and an editor or shell
+        # that adds a UTF-8 byte-order mark must not turn a valid file into
+        # a "could not be read" error.
+        with open(path, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
     except (OSError, ValueError) as e:
         raise RuntimeError(
@@ -716,7 +719,13 @@ class AnalysisRegistry:
             return self._empty_registry()
 
         try:
-            with open(self.registry_path, "r", encoding="utf-8") as f:
+            # utf-8-sig, not utf-8: a person repairing a set-aside manifest by
+            # hand (see the guide) may save it from an editor or shell that
+            # writes a UTF-8 byte-order mark. Read as plain utf-8, that valid
+            # file fails json.loads and would itself be set aside. utf-8-sig
+            # reads BOM and no-BOM files alike; _write_registry still writes
+            # without one, so the next write drops it.
+            with open(self.registry_path, "r", encoding="utf-8-sig") as f:
                 text = f.read()
         except OSError as e:
             raise RegistryUnreadableError(
@@ -800,7 +809,8 @@ class AnalysisRegistry:
             except ValueError:
                 set_aside_at = None
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
+                # utf-8-sig for the same reason as _read_registry.
+                text = path.read_text(encoding="utf-8-sig", errors="replace")
                 size, estimate = path.stat().st_size, text.count('"registered_at"')
             except OSError:
                 size, estimate = None, None

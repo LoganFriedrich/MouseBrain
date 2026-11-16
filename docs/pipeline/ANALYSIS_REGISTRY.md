@@ -87,6 +87,9 @@ this order:
 2. `Registry/approved_method.json`;
 3. the tool's built-in slice-analysis parameters, when neither exists.
 
+Either file is plain JSON written in a text editor; a UTF-8 byte-order mark
+(added by some editors and by Windows PowerShell) is accepted.
+
 ### Not every analysis has one
 
 The built-in parameters (and a plain `approved_method.json`) describe the
@@ -370,7 +373,11 @@ changed no file. A sample registered AGAIN since then has newer files, and
 its entry in the new manifest describes them -- keep that one, and do not
 copy the old entry for that sample back. Then
 run `mousebrain-registry --name <analysis> --refresh-approved --summary` to
-check it reads. Finally delete (or move out of `logs/`) the
+check it reads. The repaired file must be plain JSON (a text editor, not a
+word processor). A UTF-8 byte-order mark, which some editors and Windows
+PowerShell add when saving, is accepted: the registry reads the file normally
+and that refresh rewrites it without the mark, so a lab database pulling the
+registry reads it too. Finally delete (or move out of `logs/`) the
 `.unreadable-<time>` file: the `[!]` lines stop, and the next write drops
 `set_aside_manifests` from the header.
 
