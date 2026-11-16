@@ -27,7 +27,8 @@ def _bp():
 
 def _flags_passed(script):
     text = (PIPELINE / "batch_process.py").read_text(encoding="utf-8")
-    calls = re.findall(r"run_step\('%s', \[([^\]]*)\]\)" % re.escape(script), text)
+    # run_step('<script>', [...]) or run_unless_done(..., '<script>', [...])
+    calls = re.findall(r"'%s',\s*\[([^\]]*)\]" % re.escape(script), text)
     assert calls, script
     return {f for call in calls for f in re.findall(r"'(--[a-z-]+)'", call)}
 

@@ -237,12 +237,45 @@ cut short, and two batches running at once do not drop each other's rows.
 **Resuming.** Before each step starts, the brain's row in `pipeline_status.csv`
 is saved as `PENDING` with the step in `current_step`. If the batch is stopped
 part-way (window closed, restart, task ended), `python batch_process.py --resume`
-finds those brains and runs them again from the start; steps already done are
-skipped by the steps themselves (extraction and registration do not redo a
-finished brain). `--resume` also picks up a brain that stopped at "needs
-registration approval" once a person has approved its current registration;
-until then it only lists it. Add `--retry-failed` to retry brains that failed.
-Each new attempt clears the previous attempt's failure fields.
+finds those brains and takes them through the steps again, **skipping the steps
+the brain had already finished** -- a step is skipped when its output is there
+and current, by the same "done" and "stale" rules as "Which step is a brain
+at?" above. What always runs again on a resume:
+
+- **the step the batch was stopped in**, and every step after it. A step
+  stopped part-way may have written some of its files and not the rest
+  (counting writes the brain's own CSV before the summary `region_counts.csv`
+  and the registry entry that the database pulls), so its files are never
+  trusted. A brain stopped during counting runs counting again, not detection
+  and classification;
+- **a step whose output is stale**, by the rules in **Stale outputs** under
+  "Which step is a brain at?" above (and anything made from a stale output is
+  stale too). A re-run extraction or crop does **not** by itself make the
+  registration stale -- re-register such a brain by hand.
+
+The skipped steps are listed in the brain's `skipped_steps` column, and the
+batch prints `Already done (output there and current) -- not run again` for
+each. The QC check after each step still runs, done or not.
+
+**Only `--resume` skips anything.** A run started with `--input` runs every step
+for every brain it is given, whatever is already there (extraction and
+registration still pass over a brain that has their output, as they always
+have). That is the way to process a brain again on purpose. The rules above
+cannot see a change of method: candidates made with an earlier detection
+method, or a classification made with an earlier model, are "current" as far
+as the files go, so `--resume` keeps them. **To make a step run again**, either
+run the brain with `--input <its .ims file>`, or run that step's script for
+the brain by hand (for example `python 4_detect_cells.py --brain <brain>`) and
+then each later step's script the same way. (`--resume` does not pick up a
+brain whose row says it is complete, so it will not run those later steps for
+you.)
+
+`--resume` also picks up a brain that stopped at "needs registration approval"
+once a person has approved its current registration; until then it only lists
+it. Add `--retry-failed` to retry brains that failed: the step the brain failed
+at, and every step after it, are run again even when their files are there (the
+failed step's output is what failed). Each new attempt clears the previous
+attempt's failure fields.
 
 ## Where the scripts live
 

@@ -447,9 +447,68 @@ def mark_step_started(brain_name: str, brain_path: Path, step: str) -> None:
     })
 
 
-def process_brain(brain_path: Path, brain_name: str) -> dict:
+# Which brain_status flag says a step's output is there and current.
+_STEP_DONE_FLAG = {'extract': 'extracted', 'register': 'registered', 'detect': 'detected',
+                   'classify': 'classified', 'count': 'counted'}
+_STEP_ORDER = ['extract', 'crop', 'register', 'detect', 'classify', 'count']
+
+
+def step_already_done(brain_path: Path, step: str, redo_from: str = '') -> bool:
+    """Whether a step can be skipped on a resumed brain: its output exists and
+    is not stale.
+
+    WHY: every resumed attempt used to run every step from extraction on.
+    Steps 2 and 3 skip a finished brain themselves, but detection does not:
+    resuming a brain stopped at counting re-ran hours of detection (archiving
+    the finished candidates) and classification. The answer comes from
+    mousebrain.pipeline_status, the rules every status reader and step use,
+    and it is asked again before each step, so a step that has just run can
+    make a later output stale -- but only by the rules stale_outputs has:
+    newer candidates make the classification and the counts stale, a newer
+    classification or registration makes the counts stale. A re-run
+    extraction or crop does NOT by itself make the registration stale.
+
+    ``redo_from``: the step a previous attempt FAILED at or was STOPPED in.
+    That step and every step after it run again even when their files are
+    there: a failed step's output is what failed, and a step stopped part-way
+    can have written its first files but not the rest (step 6 writes the
+    per-brain CSV before the summary CSVs and the registry entry; brainreg
+    writes brainreg.json before it registers), which the file rules would
+    take for finished work.
+    """
+    if step not in _STEP_DONE_FLAG:
+        return False
+    if redo_from in _STEP_ORDER and _STEP_ORDER.index(step) >= _STEP_ORDER.index(redo_from):
+        return False
+    from mousebrain.pipeline_status import brain_status
+    return bool(brain_status(brain_path)[_STEP_DONE_FLAG[step]])
+
+
+def run_unless_done(results: dict, brain_path: Path, step: str, redo_from: str,
+                    script_name: str, args: List[str],
+                    skip_finished: bool = False) -> Tuple[bool, str]:
+    """run_step, or -- only when ``skip_finished`` (a --resume run) -- skip it
+    (recorded in results['skipped_steps']) when step_already_done says its
+    output is there and current. The step's QC check still runs either way.
+
+    A run started with --input does not skip: someone who processes a brain
+    again usually means it (for example to apply a newly settled detection
+    method, which the file rules cannot see), so every step runs as it always
+    has."""
+    if skip_finished and step_already_done(brain_path, step, redo_from):
+        print("    Already done (output there and current) -- not run again")
+        done = [s for s in results.get('skipped_steps', '').split(',') if s]
+        results['skipped_steps'] = ','.join(done + [step])
+        return True, "already done"
+    return run_step(script_name, args)
+
+
+def process_brain(brain_path: Path, brain_name: str, skip_finished: bool = False) -> dict:
     """
     Process a single brain through the pipeline with QC gates.
+
+    ``skip_finished``: True for a resumed brain (--resume): steps whose output
+    is there and current are not run again (see run_unless_done).
 
     Returns dict with results for each step.
     """
@@ -464,12 +523,25 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     print(f"Processing: {brain_name}")
     print(f"{'='*60}")
 
+    # The step a previous attempt failed at -- or was stopped in, which leaves
+    # the row PENDING at that step (mark_step_started) -- is run again even if
+    # its output is there (see step_already_done); read it before it is
+    # cleared below.
+    previous = load_pipeline_status().get(brain_name, {})
+    if previous.get('status') == QCStatus.FAIL:
+        redo_from = previous.get('failed_step', '')
+    elif previous.get('status') == QCStatus.PENDING:
+        redo_from = previous.get('current_step', '')
+    else:
+        redo_from = ''
+
     # A new attempt: clear the previous attempt's verdict, which a merge into
     # the row would otherwise carry into this one (a PASS row still saying
     # "needs registration approval").
     update_brain_status(brain_name, {
         'failed_step': '', 'error': '', 'needs_registration_approval': '',
         'needs_manual_crop': '', 'completed': '', 'started': results['started'],
+        'skipped_steps': '',
     })
 
     # Step 1: Extract
@@ -480,7 +552,9 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     # The brain FOLDER name: batch brain names are "<mouse>/<brain>", which
     # steps 2 and 3 do not match (steps 4-6 accept either form).
     mark_step_started(brain_name, brain_path, 'extract')
-    success, msg = run_step('2_extract_and_analyze.py', ['--batch', '--brain', brain_path.name])
+    success, msg = run_unless_done(results, brain_path, 'extract', redo_from,
+                                   '2_extract_and_analyze.py', ['--batch', '--brain', brain_path.name],
+                                   skip_finished=skip_finished)
     if not success:
         results['qc_extract'] = f"FAIL: {msg}"
         results['status'] = QCStatus.FAIL
@@ -519,7 +593,9 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     print("\n[3/6] Registering to atlas...")
     # Same for step 3: --batch replaces the --yes it never accepted.
     mark_step_started(brain_name, brain_path, 'register')
-    success, msg = run_step('3_register_to_atlas.py', ['--batch', '--brain', brain_path.name])
+    success, msg = run_unless_done(results, brain_path, 'register', redo_from,
+                                   '3_register_to_atlas.py', ['--batch', '--brain', brain_path.name],
+                                   skip_finished=skip_finished)
     if not success:
         results['qc_register'] = f"FAIL: {msg}"
         results['status'] = QCStatus.FAIL
@@ -560,7 +636,9 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     # Step 4 uses the settled method for the brain's imaging setup (the tracker's
     # Paradigm Best run) and fails, with the reason, when there is none.
     mark_step_started(brain_name, brain_path, 'detect')
-    success, msg = run_step('4_detect_cells.py', ['--brain', brain_name])
+    success, msg = run_unless_done(results, brain_path, 'detect', redo_from,
+                                   '4_detect_cells.py', ['--brain', brain_name],
+                                   skip_finished=skip_finished)
     if not success:
         results['qc_detect'] = f"FAIL: {msg}"
         results['status'] = QCStatus.FAIL
@@ -580,7 +658,9 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     # Step 5: Classify cells
     print("\n[5/6] Classifying cells...")
     mark_step_started(brain_name, brain_path, 'classify')
-    success, msg = run_step('5_classify_cells.py', ['--brain', brain_name])
+    success, msg = run_unless_done(results, brain_path, 'classify', redo_from,
+                                   '5_classify_cells.py', ['--brain', brain_name],
+                                   skip_finished=skip_finished)
     if not success:
         results['qc_classify'] = f"FAIL: {msg}"
         results['status'] = QCStatus.FAIL
@@ -600,7 +680,9 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     # Step 6: Count regions
     print("\n[6/6] Counting cells by region...")
     mark_step_started(brain_name, brain_path, 'count')
-    success, msg = run_step('6_count_regions.py', ['--brain', brain_name])
+    success, msg = run_unless_done(results, brain_path, 'count', redo_from,
+                                   '6_count_regions.py', ['--brain', brain_name],
+                                   skip_finished=skip_finished)
     if not success:
         results['qc_count'] = f"FAIL: {msg}"
         results['status'] = QCStatus.FAIL
@@ -737,6 +819,7 @@ def main():
             return
 
         print(f"\nResuming {len(to_process)} brain(s)...")
+        skip_finished = True
 
     elif args.input:
         # Process input files/folders
@@ -754,7 +837,8 @@ def main():
 
         print(f"\nFound {len(ims_files)} IMS files to process")
 
-        # Setup each brain
+        # Setup each brain. Every step runs (see run_unless_done).
+        skip_finished = False
         to_process = []
         for ims_file in ims_files:
             brain_path, msg = setup_brain_from_ims(ims_file)
@@ -775,7 +859,7 @@ def main():
     results = []
     for brain_name, brain_path in to_process:
         try:
-            result = process_brain(brain_path, brain_name)
+            result = process_brain(brain_path, brain_name, skip_finished=skip_finished)
             results.append(result)
         except Exception as e:
             print(f"\n  ERROR: {e}")

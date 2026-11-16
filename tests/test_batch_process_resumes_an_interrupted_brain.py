@@ -48,7 +48,7 @@ def test_resume_picks_up_the_interrupted_brain(bp, tmp_path, monkeypatch):
     bp.mark_step_started(NAME, brain, "register")
     seen = []
     monkeypatch.setattr(bp, "process_brain",
-                        lambda path, name: seen.append((name, path)) or {"status": bp.QCStatus.PASS,
+                        lambda path, name, **_: seen.append((name, path)) or {"status": bp.QCStatus.PASS,
                                                                          "brain_name": name})
     monkeypatch.setattr(sys, "argv", ["batch_process.py", "--resume"])
     bp.main()
