@@ -221,6 +221,27 @@ def create_thumbs_decoy(folder):
         return False
 
 
+def _remove_tree(folder):
+    """Remove a folder this script has checked holds nothing but decoys.
+
+    The decoy Thumbs.db files are read-only on purpose, and a plain rmtree
+    stops at them; clear the read-only flag and retry.
+    """
+    import stat
+
+    def _clear_and_retry(func, path, _exc):
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+
+    shutil.rmtree(str(folder), onerror=_clear_and_retry)
+
+
+def _holds_nothing(folder):
+    """True when a folder holds only decoy / desktop.ini files, or nothing."""
+    return not any(f for f in Path(folder).iterdir()
+                   if f.name not in ['Thumbs.db', 'desktop.ini'])
+
+
 # =============================================================================
 # FILENAME PARSING
 # =============================================================================
@@ -591,14 +612,42 @@ def migrate_old_folders(mouse_folder, pipeline_name, dry_run=False):
         old_short = mouse_folder / mag_only
         if old_short.exists() and old_short.is_dir():
             if pipeline.exists():
-                # Merge contents
+                # Merge contents. NOTHING is deleted that was not moved.
+                #
+                # WHY: this used to move what had no counterpart and then
+                # remove the old folder whatever was left in it. The new
+                # pipeline folder's numbered subfolders are created (empty)
+                # before this runs, so the old folder's 0_Raw_IMS -- the
+                # brain's raw file -- always "had a counterpart", was never
+                # moved, and was deleted with the folder. Now an empty
+                # counterpart is replaced by the old item, and the old folder
+                # is removed only when nothing is left in it; otherwise it is
+                # kept and what was not merged is named, for a person to sort.
                 if not dry_run:
-                    for item in old_short.iterdir():
+                    for item in sorted(old_short.iterdir()):
+                        if item.name in ['Thumbs.db', 'desktop.ini']:
+                            continue
                         dest = pipeline / item.name
+                        if dest.is_dir() and _holds_nothing(dest):
+                            _remove_tree(dest)  # only decoys in it: nothing is lost
                         if not dest.exists():
                             shutil.move(str(item), str(dest))
-                    shutil.rmtree(str(old_short))
-                actions.append(f"Merged old short-name {mag_only}/ into {pipeline_name}/")
+                            if dest.is_dir():
+                                create_thumbs_decoy(dest)
+                    remaining = [f for f in old_short.iterdir()
+                                 if f.name not in ['Thumbs.db', 'desktop.ini']]
+                    if remaining:
+                        actions.append(f"Merged part of old short-name {mag_only}/ into {pipeline_name}/")
+                        actions.append(
+                            f"[!] Kept old short-name {mag_only}/: these were not merged because "
+                            f"{pipeline_name}/ already has something by the same name -- compare "
+                            f"them and merge by hand: " + ", ".join(sorted(f.name for f in remaining)))
+                    else:
+                        _remove_tree(old_short)
+                        actions.append(f"Merged old short-name {mag_only}/ into {pipeline_name}/")
+                else:
+                    actions.append(f"Would merge old short-name {mag_only}/ into {pipeline_name}/ "
+                                   f"(anything that cannot be merged is kept)")
             else:
                 if not dry_run:
                     shutil.move(str(old_short), str(pipeline))
