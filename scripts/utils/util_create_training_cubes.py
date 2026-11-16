@@ -288,18 +288,28 @@ def create_training_yaml(output_dir: Path):
 
 
 def find_brain_path(brain_name: str) -> Optional[Path]:
-    """Find the full path to a brain folder."""
-    # Try direct path first
-    direct_path = BRAINS_ROOT / brain_name
-    if direct_path.exists():
-        return direct_path
-
-    # Then the brains, by the one rule every step uses (config.iter_brains):
-    # an archive kept beside a brain is never taken for it.
-    from mousebrain.config import iter_brains
-    for _mouse_dir, brain_path in iter_brains(BRAINS_ROOT):
-        if brain_path.name == brain_name:
+    """Find the full path to a brain folder, by its folder name or
+    ``<mouse folder>/<brain folder>``."""
+    # The brains, by the one rule every step uses (config.iter_brains): an
+    # archive kept beside a brain is never taken for it.
+    from mousebrain.config import iter_brains, is_pipeline_candidate
+    name = str(brain_name).replace("\\", "/").strip("/")
+    for mouse_dir, brain_path in iter_brains(BRAINS_ROOT):
+        if name in (brain_path.name, "%s/%s" % (mouse_dir.name, brain_path.name)):
             return brain_path
+
+    # A brain folder placed directly in the brains root (old layout). Only a
+    # ONE-level name the folder rule does not hide. This used to come first
+    # and join ANY name to the root, so "<mouse>/_superseded_x" or
+    # "<backup mouse>/<brain>" -- folders the rule says are not brains --
+    # was returned with no message and cubes were cut from an archive.
+    direct_path = BRAINS_ROOT / name
+    if ("/" not in name and name not in ("", ".", "..")
+            and is_pipeline_candidate(direct_path)
+            and any((direct_path / d).is_dir() for d in
+                    ("1_Extracted_Full", "2_Cropped_For_Registration",
+                     "4_Cell_Candidates", "5_Classified_Cells"))):
+        return direct_path
 
     # Say why, when the brain is there but in a folder the rule passes over
     # (a mouse folder with a skip word, or a name starting with '_'): a bare

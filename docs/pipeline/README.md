@@ -148,7 +148,10 @@ always agree on which brains exist. A brain is a folder two levels down,
 **To keep something beside a brain without it being treated as one, start its
 name with an underscore** -- for example `_superseded_<date>` for the outputs of
 an earlier delivery. Such a folder is never listed, never processed and never
-found by name.
+found by name -- not by its own name and not by its full
+`<mouse folder>/<folder>` path either. The same holds for a brain inside a
+backup or archive copy of a mouse: asking for it by `<backup folder>/<brain>`
+prints why it is not a brain and does nothing.
 
 **The exception: training data.** The places that gather labelled training
 cubes for the classifier do not use this rule: Setup & Tuning's list of training

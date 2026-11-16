@@ -668,9 +668,15 @@ def find_brain_path(brain_name: str) -> Optional[Path]:
         if _is_brain_pipeline(candidate):
             return candidate
 
-    # A brain folder placed directly in the brains root (old layout)
+    # A brain folder placed directly in the brains root (old layout). Only a
+    # ONE-level name that the folder rule does not hide: joining any name to
+    # the root also opened "<mouse>/_superseded_x" and "<backup mouse>/<brain>"
+    # -- folders the rule says are not brains -- with no message, and the
+    # pre-filter then wrote its output into that archive.
+    from mousebrain.config import is_pipeline_candidate
     direct = BRAINS_ROOT / name
-    if direct.is_dir() and _is_brain_pipeline(direct):
+    if ("/" not in name and name not in ("", ".", "..")
+            and is_pipeline_candidate(direct) and _is_brain_pipeline(direct)):
         return direct
 
     if matches:
