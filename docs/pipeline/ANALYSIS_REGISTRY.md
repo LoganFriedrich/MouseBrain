@@ -310,6 +310,17 @@ invalidated. It works one entry at a time and writes the manifest after each:
   before it stops; you see the same `[!] ... NOT invalidated` line. Entries
   done before it stay invalidated.
 
+`invalidate(sample=..., include_own_folder=True)` also moves every OTHER
+file in the entry's own sample folder (a folder named after the sample alone,
+such as `exports/<analysis>/<sample>/` for a detection entry; its `_archived/`
+folder is left alone) into the same `_archived/<time>/`, under the same
+rule: if any one of them will not move, everything already moved is put
+back and the entry stays current. WHY: a folder can hold files of the same
+run that the entry never listed, and archiving only the listed ones left
+them in the active folder looking current. A folder shared by several
+samples (an ROI analysis files by animal and region) is never swept. The
+2D batch (`batch_encr`) always retires entries this way.
+
 In every case, fix the cause and run it again; entries already invalidated
 are skipped. Each failure is also written to `logs/<analysis>.log` as an
 `invalidate_failed` line.

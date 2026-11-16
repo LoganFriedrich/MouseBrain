@@ -1501,7 +1501,56 @@ class AnalysisRegistry:
     # Invalidation / archival
     # -----------------------------------------------------------------
 
-    def invalidate(self, sample: Optional[str] = None) -> List[str]:
+    def own_folders(self, entry: Dict[str, Any]) -> List[Path]:
+        """The folder(s) that belong to *entry*'s sample alone.
+
+        An entry has its own folder when its category files it under a
+        folder named after the sample alone -- ``exports/<analysis>/<sample>/``
+        (a "detection" entry keeps its figures there too). Entries whose
+        folder is shared with other samples (an ROI analysis files by animal
+        and region) have none: what is in a shared folder cannot be told
+        apart by sample, so nothing there is ever swept.
+        """
+        sample = entry.get("sample") or ""
+        if not sample:
+            return []
+        paths = get_database_path(
+            self.registry_root, entry.get("category", ""), sample,
+            entry.get("animal", ""), entry.get("region", ""), self.analysis_name)
+        folders: List[Path] = []
+        for folder, top in ((paths["export_dir"], self.registry_root / "exports"),
+                            (paths["figure_dir"], self.registry_root / "figures")):
+            # Only a folder named after the sample, directly under the
+            # analysis folder -- never the analysis folder itself (it holds
+            # registry.json) nor a folder shared with other samples.
+            if (folder.name == sample
+                    and folder.parent == top / self.analysis_name
+                    and folder not in folders and folder.is_dir()):
+                folders.append(folder)
+        return folders
+
+    def own_folder_files(self, entry: Dict[str, Any]) -> List[Tuple[Path, Path]]:
+        """Every file in *entry*'s own folder(s) (see own_folders), outside
+        their _archived/ subfolder, as (folder, file) pairs.
+
+        WHY this exists: such a folder can hold files of the same run that
+        the entry does not list among its outputs (an earlier version of a
+        producer copied more figures than it registered). They stay there
+        when only the listed outputs are archived, and something that
+        mirrors the folder then shows an earlier run's figures beside a
+        newer entry, or beside no current entry at all.
+        """
+        found: List[Tuple[Path, Path]] = []
+        for folder in self.own_folders(entry):
+            for f in sorted(folder.rglob("*")):
+                if f.relative_to(folder).parts[0] == "_archived":
+                    continue
+                if f.is_file():
+                    found.append((folder, f))
+        return found
+
+    def invalidate(self, sample: Optional[str] = None,
+                   include_own_folder: bool = False) -> List[str]:
         """Archive entries' output files and mark those entries invalidated.
 
         If *sample* is given, only that sample's entries are invalidated.
@@ -1510,6 +1559,14 @@ class AnalysisRegistry:
         Archived files are moved to an ``_archived/{timestamp}/`` subdirectory
         beside where they were, so they are preserved but no longer in the
         active output path.
+
+        With *include_own_folder*, every other file in the entry's own sample
+        folder (see own_folder_files) is archived as well, into the same
+        ``_archived/{timestamp}/`` (keeping its place below the folder), and
+        under the same all-or-nothing rule: if any one of them will not move,
+        everything already moved is put back and the entry stays current.
+        WHY: retiring an entry must not leave files of an earlier run in the
+        active folder that no current entry names.
 
         WHY one entry at a time, and only when every file moved:
         an entry marked invalidated whose file is still in the active folder
@@ -1588,6 +1645,19 @@ class AnalysisRegistry:
                         except OSError as e:
                             problem = "could not archive %s: %s" % (src, e)
                             break
+                    if problem is None and include_own_folder:
+                        for folder, src in self.own_folder_files(entry):
+                            # Keeps its place below the sample folder, in the
+                            # same _archived/<timestamp>/ as the listed outputs.
+                            dest = (folder / "_archived" / timestamp
+                                    / src.relative_to(folder))
+                            try:
+                                dest.parent.mkdir(parents=True, exist_ok=True)
+                                _rename_only(src, dest)
+                                moved.append((src, dest))
+                            except OSError as e:
+                                problem = "could not archive %s: %s" % (src, e)
+                                break
                 except BaseException as e:
                     # Anything else stopping the pass between two files of one
                     # entry (Ctrl+C, an unexpected error): put back what this
