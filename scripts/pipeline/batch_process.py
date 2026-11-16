@@ -30,8 +30,11 @@ The pipeline_status.csv file tracks all brains and their QC status.
 import argparse
 import csv
 import json
+import os
 import sys
 import subprocess
+import time
+import uuid
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -44,11 +47,18 @@ from mousebrain.config import (
     BRAINS_ROOT, DATA_SUMMARY_DIR, find_script,
     parse_brain_name
 )
+from mousebrain.file_lock import exclusive_file_lock
 
 SCRIPT_VERSION = "1.0.0"
 
 # Pipeline status tracking file
 PIPELINE_STATUS_CSV = DATA_SUMMARY_DIR / "pipeline_status.csv"
+
+# How long the swap of the new status file into place is retried. On Windows a
+# file that another program has open (a person looking at it, a second batch
+# reading it) cannot be replaced until that program closes it; readers hold it
+# for a moment only.
+REPLACE_RETRY_SECONDS = 30
 
 # QC thresholds
 QC_THRESHOLDS = {
@@ -89,7 +99,12 @@ def load_pipeline_status() -> Dict[str, dict]:
 
 
 def save_pipeline_status(status: Dict[str, dict]):
-    """Save pipeline status to CSV."""
+    """Save pipeline status to CSV: a temporary file beside it, swapped in.
+
+    Call it holding the status file's lock (update_brain_status does). The
+    file was written in place, so a crash or a full disk part-way left it cut
+    short and every brain after the cut lost its row.
+    """
     if not status:
         return
 
@@ -105,21 +120,45 @@ def save_pipeline_status(status: Dict[str, dict]):
     ordered_cols.extend(sorted(c for c in columns if c not in key_cols))
 
     PIPELINE_STATUS_CSV.parent.mkdir(parents=True, exist_ok=True)
-    with open(PIPELINE_STATUS_CSV, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=ordered_cols)
-        writer.writeheader()
-        for row in status.values():
-            writer.writerow({k: row.get(k, '') for k in ordered_cols})
+    tmp = PIPELINE_STATUS_CSV.with_name("%s.tmp-%d-%s" % (
+        PIPELINE_STATUS_CSV.name, os.getpid(), uuid.uuid4().hex[:6]))
+    try:
+        with open(tmp, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=ordered_cols)
+            writer.writeheader()
+            for row in status.values():
+                writer.writerow({k: row.get(k, '') for k in ordered_cols})
+        deadline = time.monotonic() + REPLACE_RETRY_SECONDS
+        while True:
+            try:
+                os.replace(str(tmp), str(PIPELINE_STATUS_CSV))
+                break
+            except PermissionError:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.2)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def update_brain_status(brain_name: str, updates: dict):
-    """Update status for a single brain."""
-    status = load_pipeline_status()
-    if brain_name not in status:
-        status[brain_name] = {'brain_name': brain_name}
-    status[brain_name].update(updates)
-    status[brain_name]['last_updated'] = datetime.now().isoformat()
-    save_pipeline_status(status)
+    """Update status for a single brain.
+
+    Read, change and write back under the status file's lock
+    (mousebrain.file_lock). Without it, two batches -- or a batch and a second
+    window -- each read the file, changed their own brain's row and wrote it
+    back, and the second write silently dropped the first one's change. It is
+    written before every step, so the window was wide.
+    """
+    PIPELINE_STATUS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with exclusive_file_lock(PIPELINE_STATUS_CSV, "pipeline_status"):
+        status = load_pipeline_status()
+        if brain_name not in status:
+            status[brain_name] = {'brain_name': brain_name}
+        status[brain_name].update(updates)
+        status[brain_name]['last_updated'] = datetime.now().isoformat()
+        save_pipeline_status(status)
 
 
 # =============================================================================
@@ -728,10 +767,16 @@ def main():
         except Exception as e:
             print(f"\n  ERROR: {e}")
             traceback.print_exc()
-            update_brain_status(brain_name, {
-                'status': QCStatus.FAIL,
-                'error': str(e),
-            })
+            # Recording the failure can itself fail (the status file locked
+            # past the wait, a full disk). Say so and go on to the next brain
+            # rather than let it end the whole batch.
+            try:
+                update_brain_status(brain_name, {
+                    'status': QCStatus.FAIL,
+                    'error': str(e),
+                })
+            except Exception as e2:
+                print(f"  [!] Could not record this failure in the status file: {e2}")
 
     # Final summary
     print("\n" + "=" * 80)

@@ -209,6 +209,27 @@ not write.)
 `--brain` on step 2 takes the exact folder name. Without it step 2 extracts every
 brain that still needs it, as before.
 
+**The status file is safe to share.** Every change to `pipeline_status.csv` is
+made holding `pipeline_status.csv.lock` (beside it) and written to a temporary
+file that is swapped in whole. So a crash or a full disk never leaves the file
+cut short, and two batches running at once do not drop each other's rows.
+
+- A batch that finds the lock taken waits and prints
+  `Waiting for the lock on pipeline_status.csv (held by ...)` -- normally for
+  well under a second, because each change holds the lock only for the moment
+  of the write and lets it go at once.
+- A lock stays behind only when a batch crashed (or was ended) in the middle of
+  a write. The next change takes it over after two minutes and prints
+  `Took over a lock left ... s ago by: ...`. Seeing that line when no batch
+  crashed is a fault worth reporting.
+- A batch that has waited five minutes stops with a message naming the lock
+  file and who holds it: delete that file only when no batch is running. The
+  five-minute limit holds even when an old lock cannot be removed (some program
+  keeps it open, or the folder refuses it), so a batch never waits forever.
+- If recording a brain's failure in the status file itself fails, the batch
+  says so (`Could not record this failure in the status file`) and goes on
+  with the next brain.
+
 **Resuming.** Before each step starts, the brain's row in `pipeline_status.csv`
 is saved as `PENDING` with the step in `current_step`. If the batch is stopped
 part-way (window closed, restart, task ended), `python batch_process.py --resume`
