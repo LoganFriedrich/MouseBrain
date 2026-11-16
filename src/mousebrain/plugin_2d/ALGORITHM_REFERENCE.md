@@ -473,12 +473,120 @@ Every analysis run is logged to a CSV (`calibration_runs.csv`) with:
 | **Paths** | `input_path`, `output_path`, `measurements_path`, `labels_path` |
 | **Quality** | `status`, `rating`, `marked_best`, `notes` |
 
+The file lives at `<MouseBrain_Pipeline>/2D_Slices/2_Data_Summary/calibration_runs.csv`.
+
+### What a run's status means
+
+| `status` | Meaning |
+|----------|---------|
+| `started` | The run is going on right now. A row is written only once the run's inputs have been checked, so a run refused by a check ("Run detection first", "No signal channel data available" ...) leaves no row at all. |
+| `completed` | The run finished and its result is in the row. |
+| `failed` | The run did not finish, or finished but its result could not be written. The `notes` column says why (for example `batch stopped at colocalize: RuntimeError: ...`, `colocalization failed: ...`, `result could not be recorded: ...`). |
+
+`failed` is the only word for a run that did not finish. Older rows written by the
+batch may say `error`; that means the same thing (writing `error` now records `failed`).
+
+A row that is already `completed` is never changed to `failed` by a later problem.
+The batch analyzes each image in two runs, detection and then colocalization. The
+colocalization row is set to `completed` only after its measurements CSV and its QC
+pictures have been saved. If the colocalization fails, or saving its CSV or pictures
+fails, the **colocalization** row becomes `failed` (the reason in `notes`) and the
+finished detection row stays `completed`.
+
+A row stays `started`:
+
+- while its run is going on;
+- when the program was killed outright (closed from Task Manager, the machine
+  switched off) -- nothing can record anything then;
+- when the napari window was closed while a run was still going, so its result
+  never arrived;
+- when neither the result nor the failure could be written, because
+  `calibration_runs.csv` itself refused the write (see the next paragraph). The
+  napari window then said so in its status bar. The batch printed
+  `[SliceTracker] [!] Could not mark run ... failed`, and that sample's error in
+  `summary.csv` ends with `tracker row <run id> could not be marked failed and
+  still reads 'started'`. The batch itself goes on with the next sample.
+
+Any `started` row older than the current session is one of these; treat it as failed.
+
+**When the napari window cannot write a finished result to the tracker** -- most
+often because `calibration_runs.csv` is open in a spreadsheet program. This is the
+same for every kind of run the window records: nuclei detection (with or without
+insets), colocalization (single- and dual-channel) and particle analysis.
+
+- The status bar first says `Saving the result to the calibration tracker...`. The
+  window does not respond while it waits: at most about 12 seconds (10 for another
+  writer's lock, 2 for the file to be released). The batch waits much longer (up to
+  5 minutes for the lock, 30 seconds for the file), because nobody is waiting on its
+  window.
+- If the write still cannot be made, the status bar ends with
+  `[!] not saved to the tracker (<the reason>); its row in the tracker still says 'started' -- is calibration_runs.csv open elsewhere?`.
+  The window does not try a second write to mark the row failed: the file would
+  refuse it the same way and the window would freeze again. (When the write failed
+  for some other reason than the file, the row is marked failed instead and the
+  line says `run marked failed`.)
+- The result stays on screen (the nuclei layer, the colocalization colors, the
+  particle count). For a colocalization the measurements CSV, which is saved before
+  the tracker is written, is on disk. But the run will not appear as completed in
+  the Run History. Close the spreadsheet and run it again.
+
+**When the dual-channel colocalization cannot save its measurements CSV** (a full
+disk, a folder that cannot be written), the status bar ends with
+`[!] measurements CSV not saved (<the reason>); run marked failed`. The run is not
+recorded as completed, because a run with no CSV on disk cannot be reloaded from the
+Run History. (Single-channel colocalization still records such a run as completed
+with no measurements file; the reason is printed in the console.)
+
+### When runs are NOT being logged
+
+If the tracker cannot be opened, nothing is logged, and you are told:
+
+- **In the napari window:** a red line under the status bar reads
+  `[!] Runs will NOT be logged to the calibration tracker: <the reason>`. It stays
+  there for as long as the window is open. Fix the reason and reopen the window
+  before tuning anything you want to keep a record of.
+- **In the batch:** every sample prints the same `[!] Runs will NOT be logged ...`
+  line. The sample is still analyzed and its CSV and pictures are still written.
+
+The most common reason is that mousebrain does not know where the lab's data lives
+(`CONNECTOME_ROOT` is not set): the tracker then refuses to open rather than
+creating a new, empty tracker in a temporary folder, where runs would look logged
+and be lost. Check with `mousebrain --paths`.
+
+### Several windows and the batch at once
+
+The napari window and the batch can write the tracker at the same time, on one
+machine or several. Every write first takes a lock file,
+`calibration_runs.csv.lock`, beside the tracker and removes it when done (well under
+a second). A writer that finds the lock waits for it, and gives up with a message
+naming who holds it: the batch after 5 minutes, the napari window after 10 seconds
+(see above). A lock left behind by a program that crashed is taken over
+automatically after 2 minutes; until then the window's writes give up and say
+`not saved to the tracker`. Never delete the lock by hand while anything may be
+writing.
+
+A change to the file is written to a temporary file next to it
+(`calibration_runs.csv.tmp-...`) and then swapped in, so a crash part-way leaves the
+previous tracker whole. Columns the file has that this version of the code does not
+know are kept, and a row is always written in the file's own column order, so files
+written by older or newer versions stay readable. If the tracker is ever found with
+a row that has more values than the header has columns, writing stops with a
+message asking for the file to be repaired: it is never rewritten in a way that
+would lose those values.
+
 ### Run Loading
 
 Previous runs can be reloaded from the widget's Run History panel. The measurements CSV is read back from disk, and the colocalization visualization is re-displayed in napari. This allows:
 - Comparing different parameter settings on the same image
 - Reviewing results produced by batch scripts or other users
 - Loading a "best" run marked by a previous reviewer
+
+The Run History lists the runs of the sample on screen only: the name in the
+Sample ID box, or the image's file name when the box is empty, matched exactly
+(slice `..._S1` does not list the runs of `..._S10`). **Load Selected Run** refuses
+a run made on another sample and says which sample it belongs to: its cells are
+positions in that sample's image, and drawn over this one they would look like
+(and be counted as) this slice's result. Open that sample's image first.
 
 ### Sample Name Parsing
 
