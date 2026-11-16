@@ -62,6 +62,30 @@ A trial detection run kept in `from_1_Extracted_Full` on a brain that was
 registered on its crop does NOT count as detection: those coordinates are not
 in the space the atlas was fitted to, and step 5 will not read them.
 
+**Which file is "the candidates".** Step 5 classifies one file: in the
+registered-space candidates folder (the top of `4_Cell_Candidates`, then
+`from_<the folder the atlas was fitted to>`), `detected_cells.xml` if it is
+there, else `cell_classification.xml`, else the first `.xml` by name. Everything
+else that reads "the candidates" reads that same file: `batch_process.py`'s
+detection check, the pre-filter (`python -m mousebrain.prefilter --brain ...`
+without `--candidates`, and the Setup & Tuning pre-filter button when no run is
+selected) and the Setup & Tuning Classify button. Nothing reads a run kept in
+`4_Cell_Candidates/_archive/` (an earlier, replaced run) or a trial run outside
+registered space. To use any other file, give it explicitly (`--candidates` on
+the pre-filter, or choose a run in Setup & Tuning's pre-filter section with
+**Load Best** or **Load Selected**).
+
+**The Setup & Tuning pre-filter button and a chosen run.** Once a detection run
+is chosen with Load Best or Load Selected (the label under the buttons shows
+`Loaded: <run id>`), the button pre-filters **that run's** candidates file -- the
+file the run's `output_path` in the tracker names, or `detected_cells.xml` /
+`cells.xml` in the folder it names -- and records that run as the pre-filter's
+parent. If that file cannot be found (the run is not in the tracker, or its
+file was moved or deleted), the button stops with "Selected Run Not Found",
+naming the run, and pre-filters nothing; choose another run. It never
+substitutes another file under the chosen run's name. Only when no run has been
+chosen does it take the file step 5 classifies.
+
 ## Which folders are brains?
 
 Every script, the napari plugins, the utilities and the `mousebrain` launcher

@@ -415,6 +415,29 @@ class ClassificationWorker(QThread):
             return 0
 
 
+def _candidates_file_of_run(run):
+    """The candidates .xml a tracker detection run points at, or None.
+
+    A run's ``output_path`` is either the .xml itself (what step 4 records
+    once it finishes) or the folder the run wrote into. None when there is no
+    run, no path, or no candidates file at that path.
+    """
+    if not run:
+        return None
+    output_path = (run.get('output_path') or '').strip()
+    if not output_path:
+        return None
+    out = Path(output_path)
+    if out.suffix.lower() == '.xml':
+        return out if out.is_file() else None
+    if out.is_dir():
+        for xml_name in ('detected_cells.xml', 'Detected_cells.xml', 'cells.xml'):
+            candidate = out / xml_name
+            if candidate.is_file():
+                return candidate
+    return None
+
+
 class TuningWidget(QWidget):
     """Widget for tuning BrainGlobe settings."""
 
@@ -3382,38 +3405,35 @@ class TuningWidget(QWidget):
                 "Run registration (step 3) first.")
             return
 
-        # Find candidates XML
-        candidates_xml = None
-
-        # If a detection exp_id is selected, find its output
-        if self._prefilter_source_exp_id and self.tracker:
-            try:
-                runs = self.tracker.search(exp_id=self._prefilter_source_exp_id)
-                if runs:
-                    output_path = runs[0].get('output_path', '')
-                    if output_path:
-                        from pathlib import Path
-                        out_dir = Path(output_path)
-                        # Look for the XML in the output dir
-                        for xml_name in ['Detected_cells.xml', 'cells.xml']:
-                            candidate = out_dir / xml_name
-                            if candidate.exists():
-                                candidates_xml = candidate
-                                break
-                        if not candidates_xml:
-                            # Check if output_path IS the XML
-                            if out_dir.suffix == '.xml' and out_dir.exists():
-                                candidates_xml = out_dir
-            except Exception:
-                pass
-
-        # Fallback: find latest detection XML
-        if candidates_xml is None:
-            det_dir = brain_path / "4_Cell_Candidates"
-            if det_dir.exists():
-                xml_files = sorted(det_dir.glob("Detected_*.xml"), reverse=True)
-                if xml_files:
-                    candidates_xml = xml_files[0]
+        # Which candidates file to pre-filter.
+        # - A detection run is selected (Load Best / Load Selected): THAT run's
+        #   file, because the pre-filter is recorded in the tracker with the
+        #   selected run as its parent. If the run's file cannot be found, stop
+        #   and say so -- pre-filtering some other file under that run's name
+        #   would record a provenance that is false. (This lookup used to call
+        #   tracker.search(exp_id=...), which search() does not accept; the
+        #   error was swallowed, so a selected run never chose the file.)
+        # - No run selected: the candidates step 5 would classify
+        #   (pipeline_status.find_candidates), the one rule every reader uses.
+        if self._prefilter_source_exp_id:
+            run = None
+            if self.tracker:
+                try:
+                    run = self.tracker.get_experiment(self._prefilter_source_exp_id)
+                except Exception:
+                    run = None
+            candidates_xml = _candidates_file_of_run(run)
+            if candidates_xml is None:
+                QMessageBox.warning(self, "Selected Run Not Found",
+                    f"The selected detection run {self._prefilter_source_exp_id} "
+                    "has no candidates file that can be found"
+                    + ("" if run else " (the run is not in the tracker)") + ".\n"
+                    "Nothing was pre-filtered. Choose another run with "
+                    "Load Best or Load Selected.")
+                return
+        else:
+            from mousebrain.pipeline_status import find_candidates
+            candidates_xml = find_candidates(brain_path)
 
         if candidates_xml is None or not candidates_xml.exists():
             QMessageBox.warning(self, "No Candidates",
@@ -7002,13 +7022,12 @@ class TuningWidget(QWidget):
             )
             return
 
-        # Find candidates XML
-        candidates_xml = None
-        for pattern in ["detected_cells.xml", "cell_classification.xml", "*.xml"]:
-            files = list(candidates_folder.glob(pattern))
-            if files:
-                candidates_xml = files[0]
-                break
+        # The candidates are the file step 5 would classify
+        # (pipeline_status.find_candidates) -- one rule for every reader, so
+        # this classifies what the pipeline would, including a run kept in the
+        # registered-space from_<folder> subfolder.
+        from mousebrain.pipeline_status import find_candidates
+        candidates_xml = find_candidates(self.current_brain)
 
         if not candidates_xml:
             QMessageBox.warning(

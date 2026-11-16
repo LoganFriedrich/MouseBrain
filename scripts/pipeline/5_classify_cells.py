@@ -104,16 +104,17 @@ def find_detection_output(pipeline_folder: Path):
     The top level of 4_Cell_Candidates first; then ``from_<folder>`` when the
     atlas was fitted to that folder's images (config.registered_candidate_folders
     says why). A run on images in any other space is never returned.
-    """
-    for det_folder in registered_candidate_folders(pipeline_folder):
-        if not det_folder.exists():
-            continue
-        for pattern in ["detected_cells.xml", "cell_classification.xml", "*.xml"]:
-            files = list(det_folder.glob(pattern))
-            if files:
-                return files[0]
 
-    return None
+    WHY IT CALLS pipeline_status.find_candidates: "the candidates" is ONE rule.
+    The batch QC, the pre-filter and Setup & Tuning read the file that function
+    names, and this step must classify that same file. A second copy of the
+    search here took the first .xml in directory-listing order, which a network
+    share does not guarantee to be by name -- so with two non-standard .xml files
+    in a folder, this step could classify a different file from the one the
+    others had checked.
+    """
+    from mousebrain.pipeline_status import find_candidates
+    return find_candidates(pipeline_folder)
 
 
 def _best_model_in_dir(model_dir):

@@ -18,6 +18,7 @@ try:
         _coords_to_xml,
         find_brain_path,
         find_latest_candidates,
+        find_step5_candidates,
         main,
         SCRIPT_VERSION,
         FOLDER_REGISTRATION,

@@ -676,29 +676,27 @@ def find_brain_path(brain_name: str) -> Optional[Path]:
     return matches[0] if matches else None
 
 
-def find_latest_candidates(brain_path: Path) -> Optional[Path]:
-    """Find the most recent detection candidates XML for a brain."""
-    det_dir = brain_path / FOLDER_DETECTION
-    if not det_dir.exists():
-        return None
+def find_step5_candidates(brain_path: Path) -> Optional[Path]:
+    """The brain's candidates: the file step 5 would classify, or None.
 
-    # Look for Detected_*.xml files (dated format), sorted newest first
-    xml_files = sorted(det_dir.glob("Detected_*.xml"), reverse=True)
-    if xml_files:
-        return xml_files[0]
+    NOT the newest file: detected_cells.xml first, then cell_classification.xml,
+    then the first .xml by name, in the registered-space candidates folders
+    (docs/pipeline/README.md, "Which file is 'the candidates'").
 
-    # Look for detected_cells.xml (cellfinder default name)
-    default = det_dir / "detected_cells.xml"
-    if default.exists():
-        return default
+    One rule for every reader (pipeline_status.find_candidates). This used to
+    keep its own: a legacy Detected_*.xml first, then ANY subfolder of
+    4_Cell_Candidates -- including _archive/ (an earlier, replaced run) and a
+    from_<folder>/ trial run whose positions are not in the space the atlas was
+    fitted to -- so the pre-filter could filter a file the pipeline would never
+    classify.
+    """
+    from mousebrain.pipeline_status import find_candidates
+    return find_candidates(brain_path)
 
-    # Also check subdirectories (detection run folders)
-    for subdir in sorted(det_dir.iterdir(), reverse=True):
-        if subdir.is_dir():
-            for xml_file in sorted(subdir.glob("*.xml"), reverse=True):
-                return xml_file
 
-    return None
+# The old name, kept so scripts that import it keep working. It never meant
+# "newest" since the shared rule took over; use find_step5_candidates.
+find_latest_candidates = find_step5_candidates
 
 
 # =============================================================================
@@ -711,7 +709,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Filter candidates for a brain (auto-finds latest detection)
+  # Filter candidates for a brain (default: the candidates file step 5 classifies)
   python -m mousebrain.prefilter --brain 005_CNT_02_01_1p625x_z4
 
   # Adjust surface depth (default 100um) and extreme OOB (default 500um)
@@ -727,7 +725,9 @@ Examples:
     )
     parser.add_argument('--brain', required=True, help='Brain folder name')
     parser.add_argument('--candidates', type=Path,
-                        help='Path to candidates XML (default: latest in 4_Cell_Candidates)')
+                        help='Path to candidates XML (default: the candidates file step 5 '
+                             'classifies; see docs/pipeline/README.md, '
+                             'Which file is "the candidates")')
     parser.add_argument('--tracing-type', default='descending',
                         choices=['descending', 'ascending', 'unknown'],
                         help='Tracing type for suspicious region filtering (default: descending)')
@@ -783,7 +783,7 @@ Examples:
         if not candidates_xml.is_absolute():
             candidates_xml = brain_path / candidates_xml
     else:
-        candidates_xml = find_latest_candidates(brain_path)
+        candidates_xml = find_step5_candidates(brain_path)
 
     if candidates_xml is None or not candidates_xml.exists():
         print(f"ERROR: No candidates XML found for {args.brain}")

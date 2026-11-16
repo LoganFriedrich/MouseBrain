@@ -98,3 +98,23 @@ def test_step5_prefers_the_top_level(tmp_path):
     (top / "from_1_Extracted_Full" / "detected_cells.xml").write_text("<x/>")
     (top / "detected_cells.xml").write_text("<x/>")
     assert step5.find_detection_output(brain) == top / "detected_cells.xml"
+
+
+def test_step5_classifies_the_file_the_other_readers_call_the_candidates(tmp_path, monkeypatch):
+    """Two non-standard .xml files in the candidates folder, and a share that
+    lists them out of name order: step 5 takes the same file as
+    pipeline_status.find_candidates (the batch QC, the pre-filter and Setup &
+    Tuning), the first by name, not whichever the listing gave first."""
+    import pathlib
+    from mousebrain.pipeline_status import find_candidates
+    step5 = _step5()
+    brain = _brain(tmp_path)
+    top = brain / "4_Cell_Candidates"
+    top.mkdir(parents=True)
+    (top / "a_run.xml").write_text("<x/>")
+    (top / "b_run.xml").write_text("<x/>")
+    real_glob = pathlib.Path.glob
+    monkeypatch.setattr(pathlib.Path, "glob",
+                        lambda self, pattern: iter(sorted(real_glob(self, pattern), reverse=True)))
+    assert find_candidates(brain) == top / "a_run.xml"
+    assert step5.find_detection_output(brain) == top / "a_run.xml"

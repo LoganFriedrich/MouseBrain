@@ -245,13 +245,14 @@ def qc_check_detection(brain_path: Path) -> Tuple[str, str]:
     if not detect_dir.exists():
         return QCStatus.FAIL, "Detection folder not created"
 
-    # Find XML files
-    xml_files = list(detect_dir.glob("*.xml"))
-    if not xml_files:
+    # The candidates step 5 will classify (pipeline_status.find_candidates),
+    # the one rule every reader uses. This took the newest .xml at the top of
+    # the folder, which need not be the file step 5 reads -- so the check could
+    # pass or fail a brain on a different file from the one it then classified.
+    from mousebrain.pipeline_status import find_candidates
+    xml_file = find_candidates(brain_path)
+    if xml_file is None:
         return QCStatus.FAIL, "No detection XML found"
-
-    # Count cells in most recent XML
-    xml_file = sorted(xml_files, key=lambda f: f.stat().st_mtime)[-1]
     try:
         import xml.etree.ElementTree as ET
         tree = ET.parse(xml_file)

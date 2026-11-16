@@ -111,9 +111,11 @@ def steps(include_prefilter: bool = True) -> List[tuple]:
 def find_candidates(pipeline_dir) -> Optional[Path]:
     """The candidates file step 5 would classify, or None.
 
-    Same search as step 5 (``find_detection_output``): each registered-space
-    folder in turn, and in each the standard name first, then the legacy
-    names, then any .xml.
+    THE rule for "the candidates": step 5 (``find_detection_output``) calls
+    this, so the file it classifies is the file every other reader checks.
+    Each registered-space folder in turn, and in each the standard name first,
+    then the legacy names, then any .xml -- the first BY NAME, because a
+    network share does not promise to list a folder in name order.
     """
     for folder in registered_candidate_folders(pipeline_dir):
         if not folder.is_dir():
