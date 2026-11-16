@@ -338,8 +338,10 @@ you.)
 once a person has approved its current registration; until then it only lists
 it. Add `--retry-failed` to retry brains that failed: the step the brain failed
 at, and every step after it, are run again even when their files are there (the
-failed step's output is what failed). Each new attempt clears the previous
-attempt's failure fields.
+failed step's output is what failed). This holds whether the step reported a
+failure or crashed with an error: a crash is recorded as a failure AT the step
+the brain was in (`failed_step` in `batch_process.py --status`), so that step is
+run again too. Each new attempt clears the previous attempt's failure fields.
 
 ## Where the scripts live
 

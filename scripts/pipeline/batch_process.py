@@ -867,10 +867,17 @@ def main():
             # Recording the failure can itself fail (the status file locked
             # past the wait, a full disk). Say so and go on to the next brain
             # rather than let it end the whole batch.
+            # failed_step is the step the brain was in when it raised (saved
+            # by mark_step_started). process_brain clears failed_step when an
+            # attempt starts, so without this --resume --retry-failed would
+            # have no step to redo from and would skip the step that raised
+            # whenever its files looked finished.
             try:
+                row = load_pipeline_status().get(brain_name, {})
                 update_brain_status(brain_name, {
                     'status': QCStatus.FAIL,
                     'error': str(e),
+                    'failed_step': row.get('current_step', ''),
                 })
             except Exception as e2:
                 print(f"  [!] Could not record this failure in the status file: {e2}")

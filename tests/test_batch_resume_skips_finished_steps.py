@@ -163,3 +163,26 @@ def test_processing_a_brain_with_input_runs_every_step(bp, tmp_path, monkeypatch
     _main(bp, monkeypatch, "--input", str(ims))
     assert ran == ALL_STEPS
     assert not bp.load_pipeline_status()[NAME].get("skipped_steps")
+
+
+def test_a_step_that_raised_is_run_again_on_retry(bp, tmp_path, monkeypatch):
+    """A step that raises (rather than reporting failure) used to leave the
+    row FAIL with no failed step, so --retry-failed skipped the step that
+    raised whenever its files looked finished."""
+    brain = _classified_brain(tmp_path)
+    _write(brain / "6_Region_Analysis" / "counts.csv", "a\n1\n")
+    _row(bp, brain, bp.QCStatus.PENDING, current_step="classify")
+
+    def raising_run_step(script, args, timeout=7200):
+        if script == "5_classify_cells.py":
+            raise RuntimeError("classifier crashed")
+        return True, "OK"
+    monkeypatch.setattr(bp, "run_step", raising_run_step)
+    _main(bp, monkeypatch, "--resume")
+    row = bp.load_pipeline_status()[NAME]
+    assert row["status"] == bp.QCStatus.FAIL
+    assert row["failed_step"] == "classify"
+
+    ran = _recorder(bp, monkeypatch, brain)
+    _main(bp, monkeypatch, "--resume", "--retry-failed")
+    assert ran == ["5_classify_cells.py", "6_count_regions.py"]
