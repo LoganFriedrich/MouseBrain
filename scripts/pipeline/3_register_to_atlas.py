@@ -679,7 +679,7 @@ Examples:
     parser.add_argument('--atlas', default=DEFAULT_ATLAS,
                         help=f'Atlas to use (default: {DEFAULT_ATLAS})')
     parser.add_argument('--brain', type=str, default=None,
-                        help='Process only this specific brain (partial name match)')
+                        help='Process only this brain: its exact folder name (that brain only), or part of a name (every brain containing it)')
 
     args = parser.parse_args()
     
@@ -726,14 +726,21 @@ Examples:
         to_process = [i for i, (status, _) in enumerate(statuses)
                       if status in ["needs_registration", "incomplete"]]
 
-        # Filter by brain name if specified
+        # Filter by brain name if specified. An exact folder name means that
+        # brain only: a part of a name also fits every brain whose name
+        # contains it, and registering those too is not what was asked (the
+        # napari dashboard passes the selected brain's exact name).
         if args.brain:
-            to_process = [i for i in to_process
-                         if args.brain in pipelines[i][0].name]
+            exact = [i for i, p in enumerate(pipelines) if p[0].name == args.brain]
+            if exact:
+                to_process = [i for i in to_process if i in exact]
+            else:
+                to_process = [i for i in to_process
+                              if args.brain in pipelines[i][0].name]
             if not to_process:
                 # Also check if already complete and just needs to be reported
                 for i, (pipeline_folder, mouse_folder, metadata) in enumerate(pipelines):
-                    if args.brain in pipeline_folder.name:
+                    if (i in exact) if exact else (args.brain in pipeline_folder.name):
                         status, _ = statuses[i]
                         if status == "complete":
                             print(f"\nBrain '{args.brain}' is already registered.")

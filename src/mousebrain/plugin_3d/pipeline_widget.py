@@ -580,8 +580,10 @@ class PipelineDashboard(QWidget):
                     if str(wizard.pipeline_dir) == item.data(Qt.UserRole):
                         self.brain_list.setCurrentItem(item)
                         self.on_brain_selected(item)
-                        # Start extraction
-                        self.run_script('2_extract_and_analyze.py', [])
+                        # Start extraction: this brain only, no questions
+                        # (see the note in run_next_step).
+                        self.run_script('2_extract_and_analyze.py',
+                                        ['--batch', '--brain', wizard.pipeline_dir.name])
 
     def on_brain_selected(self, item):
         """Handle brain selection."""
@@ -727,8 +729,16 @@ class PipelineDashboard(QWidget):
         self.message_label.setText(f"Running {status['step_name']}...")
         self.run_next_btn.setEnabled(False)
 
+        # Steps 2 and 3 are started with --batch and --brain <this brain>.
+        # WHY: started bare, step 2 runs its interactive form -- it asks
+        # "Extract N pipeline(s)?" and waits for Enter -- but this runner
+        # captures the output and gives the script no way to be answered, so
+        # the question was invisible, Run stayed disabled, and when it did go
+        # on it extracted EVERY brain waiting for extraction. Step 3 got
+        # --batch only, which registers every brain still waiting. Both now
+        # act on the brain selected here and nothing else.
         if status['step'] == 'extract':
-            self.run_script('2_extract_and_analyze.py', [])
+            self.run_script('2_extract_and_analyze.py', ['--batch', '--brain', brain_name])
 
         elif status['step'] == 'crop':
             # Open manual crop widget
@@ -737,7 +747,7 @@ class PipelineDashboard(QWidget):
             self.run_next_btn.setEnabled(True)
 
         elif status['step'] == 'register':
-            self.run_script('3_register_to_atlas.py', ['--batch'])
+            self.run_script('3_register_to_atlas.py', ['--batch', '--brain', brain_name])
 
         elif status['step'] == 'approve':
             # Show QC first

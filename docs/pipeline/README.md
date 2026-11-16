@@ -163,6 +163,33 @@ out, with the reason:
 hand-cropped brain, or one registered uncropped, never ran overnight and nothing
 said so.)
 
+## The Pipeline Dashboard's Run button
+
+In napari (Plugins -> BrainTools -> 3D: 1. Pipeline Dashboard), select a brain
+and press **Run Next Step**. Every step it starts acts on **the selected brain
+only** and asks no questions:
+
+| Next step | What the button runs |
+|---|---|
+| Extract | `2_extract_and_analyze.py --batch --brain <selected brain>` |
+| Crop | opens nothing: the dashboard asks you to open the crop tool yourself (**Plugins -> BrainTools -> 3D: 3. Manual Crop**); save the crop there, then press **Refresh** on the dashboard |
+| Register | `3_register_to_atlas.py --batch --brain <selected brain>` |
+| Approve | shows the registration QC picture and asks whether to approve |
+| Detect / Classify / Count | steps 4 / 5 / 6 with `--brain <selected brain>` |
+
+The same holds for **+ Add New Brain** when you answer Yes to starting extraction at the end. While the
+step runs the dashboard shows nothing of its progress. When it ends the dashboard
+shows "Done!" or "Error - check console". The script's output is printed to the
+console napari was started from **only when the step fails**; after a step that
+succeeds nothing of its output is shown anywhere, so to follow a long step as it
+runs, run the same command from a terminal instead.
+
+(Before this, Extract started step 2 in its interactive form, which waits for
+an answer the dashboard cannot give, and then extracted every brain waiting;
+Register registered every brain waiting, not the selected one. Step 3 given an
+exact brain folder name now registers that brain only, even when its name is
+part of another brain's name.)
+
 ## Utility Scripts
 
 ```
