@@ -136,8 +136,13 @@ def find_brains_to_process() -> Tuple[List[Tuple[Path, str]], List[Tuple[str, st
         elif source == "full":
             left_out.append((name, "not cropped and not registered yet (crop it, or "
                                    "register it on its full extraction with step 3)"))
-        else:
+        elif (pipeline_dir / "0_Raw_IMS").exists() or (pipeline_dir / "1_Extracted_Full").exists():
             left_out.append((name, "no extracted images yet (run step 2)"))
+        # Anything else is a folder that sits beside the brains in a mouse
+        # folder but is not one (a training_data folder, a stray copy of a
+        # numbered output folder): passed over without a word, as
+        # RUN_PIPELINE.find_brains does. Listing it as "run step 2" sent the
+        # operator to extract a folder that holds no brain.
     return sorted(ready, key=lambda x: x[1]), sorted(left_out)
 
 

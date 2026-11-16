@@ -224,7 +224,13 @@ out, with the reason:
   extraction. Crop it (Plugins -> BrainTools -> 3D: 3. Manual Crop), or, if it
   arrived already cut, register it once on the full extraction with
   `3_register_to_atlas.py`; the next overnight run then takes it.
-- `no extracted images yet` -- run `2_extract_and_analyze.py` first.
+- `no extracted images yet` -- the brain has its `.ims` in `0_Raw_IMS` (or an
+  empty `1_Extracted_Full`) but no images; run `2_extract_and_analyze.py` first.
+
+A folder in a mouse folder that is not a brain at all -- a `training_data`
+folder, a stray copy of a numbered output folder -- has none of `0_Raw_IMS`,
+`1_Extracted_Full` or a crop or registration, and is not listed: the overnight
+batch passes over it without a word, as `RUN_PIPELINE.py` does.
 
 (It used to take only brains with images in `2_Cropped_For_Registration`, so a
 hand-cropped brain, or one registered uncropped, never ran overnight and nothing

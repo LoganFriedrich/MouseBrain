@@ -133,3 +133,24 @@ def test_overnight_names_a_brain_it_leaves_out(overnight, tmp_path, caplog, monk
     text = _run_dry(overnight, root, caplog, monkeypatch)
     assert "  - %s [" % BRAIN not in text
     assert "%s: not cropped and not registered yet" % BRAIN in text
+
+
+def test_overnight_leaves_out_only_brains_never_a_folder_beside_them(overnight, tmp_path, caplog,
+                                                                     monkeypatch):
+    """A folder in a mouse folder that is not a brain (training data, a stray
+    copy of a numbered output folder) is passed over without a word. It used
+    to be logged as left out with "no extracted images yet (run step 2)",
+    sending the operator to extract a folder that holds no brain. A brain that
+    has its raw file but no extraction is still named, with that reason."""
+    root = tmp_path / "1_Brains"
+    _images(root / "mouse_a" / BRAIN / "2_Cropped_For_Registration")
+    (root / "mouse_a" / "training_data" / "cells").mkdir(parents=True)
+    (root / "mouse_a" / "3_Registered_Atlas").mkdir()
+    waiting = root / "mouse_b" / "102_PROJ_01_03_2p5x_z5" / "0_Raw_IMS"
+    waiting.mkdir(parents=True)
+    (waiting / "102_PROJ_01_03_2p5x_z5.ims").write_bytes(b"x")
+    text = _run_dry(overnight, root, caplog, monkeypatch)
+    assert "  - %s [" % BRAIN in text
+    assert "training_data" not in text
+    assert "3_Registered_Atlas:" not in text
+    assert "102_PROJ_01_03_2p5x_z5: no extracted images yet (run step 2)" in text
