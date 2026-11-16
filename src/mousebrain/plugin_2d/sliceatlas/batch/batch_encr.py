@@ -977,9 +977,19 @@ def process_single(
                              else 'infrastructure')
         print(f"  ERROR ({step}): {e}")
 
-        # Update tracker on error
+        # Update tracker on error. WHY its own try: the tracker write that
+        # failed (a CSV another program holds open, say) can fail again here,
+        # and an exception raised from this handler used to leave
+        # process_single and stop the whole batch -- no summary.csv, no
+        # results for the samples after this one. A tracker that cannot be
+        # written is this sample's error, not the batch's.
         if tracker and det_run_id:
-            tracker.update_status(det_run_id, status="error")
+            try:
+                tracker.update_status(det_run_id, status="error")
+            except Exception as tracker_err:
+                print(f"  [!] tracker not updated for {det_run_id}: {tracker_err}")
+                result['error'] = (f"{result['error']}; tracker row {det_run_id} "
+                                   f"not marked error: {tracker_err}")
 
     return result
 
