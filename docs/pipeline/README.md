@@ -173,9 +173,11 @@ scan or list of brains when it is run without `--brain`, `RUN_PIPELINE.py`,
 `overnight_batch.py`) print one
 line for every folder in the brains root passed over because of a skip word:
 `[i] Not treated as a mouse folder: <name> (its name has the word '<word>' ...)`.
-Asking a step or utility for a brain by name that sits in such a folder (or in a
-folder starting with `_`) prints why it was not found. To bring such brains back,
-rename the mouse folder. (The napari lists do not print these lines; check the
+Asking for a brain by name (`--brain`, or `mousebrain --crop <brain>`) that sits
+in such a folder, or in a folder starting with `_`, prints why it was not found:
+`[i] <brain> is in <folder>, which is not treated as a mouse folder (...)`. Every
+step (2 to 6), the pre-filter and every `util_*.py` script that takes `--brain`
+does this. To bring such brains back, rename the mouse folder. (The napari lists do not print these lines; check the
 names there by hand.)
 
 What a step needs INSIDE a brain is still its own business: extraction lists
@@ -190,12 +192,24 @@ the pre-filter, the orientation check and the other `util_*.py` scripts that
 take `--brain`). Before this, those lists offered an archive kept beside a brain
 as if it were a brain, and a utility could act on it instead of the real one.
 
-**Giving a brain by name.** The exact brain folder name (or
-`<mouse folder>/<brain folder>`) always works. A part of a name works only when
-it fits exactly one brain; when it fits several -- two imaging setups of one
-mouse share its number -- the utility stops and prints the full names to choose
-from, instead of acting on whichever brain happened to be listed first.
-The same holds for `mousebrain --crop <brain>`: it opens only a brain (never a
+**Giving a brain by name.** The exact brain folder name always works (and
+`<mouse folder>/<brain folder>` works everywhere except step 2). What a PART of
+a name does depends on the tool:
+
+- `util_registration_qc.py`, `util_manual_crop.py`, `util_approve_registration.py`,
+  `util_apply_crop_from_reference.py`, `util_compare_to_published.py`,
+  `util_pipeline_comparison.py`, `util_visualize_3d.py` and the orientation
+  check accept a part of a name only when it fits exactly one brain; when it
+  fits several -- two imaging setups of one mouse share its number -- they stop
+  and print the full names to choose from, instead of acting on whichever brain
+  happened to be listed first.
+- Steps 2, 4, 5 and 6, the pre-filter (`python -m mousebrain.prefilter --brain`),
+  `util_optimize_crop.py` and `util_create_training_cubes.py` take the exact
+  name only; a part of a name is "not found". Give the full folder name.
+- Step 3 (`3_register_to_atlas.py --brain`) registers the exact brain when the
+  name is exact, and otherwise every brain whose name contains the part.
+
+`mousebrain --crop <brain>` behaves like the first group: it opens only a brain (never a
 `_` folder or a copy in a backup mouse folder), refuses a part of a name that
 fits several brains and prints their full names, and when nothing fits it lists
 the brains there are.

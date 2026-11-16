@@ -301,6 +301,13 @@ def find_brain_path(brain_name: str) -> Optional[Path]:
         if brain_path.name == brain_name:
             return brain_path
 
+    # Say why, when the brain is there but in a folder the rule passes over
+    # (a mouse folder with a skip word, or a name starting with '_'): a bare
+    # "not found" left the operator guessing.
+    from mousebrain.config import explain_brain_not_found
+    why = explain_brain_not_found(brain_name, BRAINS_ROOT)
+    if why:
+        print(why)
     return None
 
 

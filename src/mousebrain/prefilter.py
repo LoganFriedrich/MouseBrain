@@ -673,7 +673,16 @@ def find_brain_path(brain_name: str) -> Optional[Path]:
     if direct.is_dir() and _is_brain_pipeline(direct):
         return direct
 
-    return matches[0] if matches else None
+    if matches:
+        return matches[0]
+    # Say why, when the brain is there but in a folder the rule passes over
+    # (a mouse folder with a skip word, or a name starting with '_'): a bare
+    # "not found" left the operator guessing.
+    from mousebrain.config import explain_brain_not_found
+    why = explain_brain_not_found(name, BRAINS_ROOT)
+    if why:
+        print(why)
+    return None
 
 
 def find_step5_candidates(brain_path: Path) -> Optional[Path]:

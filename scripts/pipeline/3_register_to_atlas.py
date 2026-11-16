@@ -700,7 +700,16 @@ Examples:
     # Find extracted pipelines
     print(f"\nScanning: {root_path}")
     pipelines = find_extracted_pipelines(root_path)
-    
+
+    # A brain asked for by name that no brain's name contains: say why when the
+    # reason is the folder rule (it sits in a mouse folder with a skip word, or
+    # in a folder starting with '_'), instead of only "nothing found".
+    if args.brain and not any(args.brain in p[0].name for p in pipelines):
+        from mousebrain.config import explain_brain_not_found
+        why = explain_brain_not_found(args.brain, root_path)
+        if why:
+            print(why)
+
     if not pipelines:
         print("\nNo extracted pipelines found.")
         print("Run Script 2 (extract_and_analyze.py) first!")

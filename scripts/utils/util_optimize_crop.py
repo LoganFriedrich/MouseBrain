@@ -146,6 +146,13 @@ def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT):
         if brain_name in [pipeline_dir.name, full_name]:
             return pipeline_dir, mouse_dir
 
+    # Say why, when the brain is there but in a folder the rule passes over
+    # (a mouse folder with a skip word, or a name starting with '_'): a bare
+    # "not found" left the operator guessing.
+    from mousebrain.config import explain_brain_not_found
+    why = explain_brain_not_found(brain_name, root)
+    if why:
+        print(why)
     return None, None
 
 
