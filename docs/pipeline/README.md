@@ -105,7 +105,11 @@ that is not the brain's own candidates file, nothing is pre-filtered.
   interior / removed counts would be wrong. A whole-stack test run is refused as
   well, because nothing records that the images it read are the ones the atlas
   was fitted to. What to do: run step 4 (`4_detect_cells.py`) with the settings
-  you settled on, then choose that run -- or choose no run -- and pre-filter.
+  you settled on, then choose that run and pre-filter. Or press **Clear Chosen
+  Run** (beside Refresh) so no run is chosen, then **Run Pre-Filter**: the brain's
+  candidates file is filtered with no parent run recorded. (Refresh, or reloading
+  the same brain, keeps the chosen run; only Clear Chosen Run or loading a
+  different brain forgets it.)
   A run the tracker lists as covering part of the stack (`det_scope` =
   `partial`) is refused wherever its file is.
 - If no such file can be found (the run is not in the tracker, its file was

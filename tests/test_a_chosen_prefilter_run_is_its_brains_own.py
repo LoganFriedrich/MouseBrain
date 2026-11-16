@@ -223,3 +223,32 @@ def test_the_run_that_wrote_the_brains_candidates_is_used(tmp_path, monkeypatch)
                            prefilter_status=_Label())
     with pytest.raises(_Stop):
         tw.TuningWidget.run_prefilter(fake)
+
+
+def test_clear_chosen_run_forgets_the_run_for_the_same_brain(tmp_path):
+    """Refreshing the same brain keeps a chosen run, so the operator needs a
+    way back to "no run chosen" for the loaded brain: Clear Chosen Run."""
+    import mousebrain.plugin_3d.tuning_widget as tw
+    brain_a = _brain(tmp_path, BRAIN_A)
+    label = _Label("Loaded: run_of_a")
+    label.setText = lambda t: setattr(label, "text", t)
+    fake = SimpleNamespace(current_brain=brain_a, tracker=None,
+                           _prefilter_source_exp_id="run_of_a", _prefilter_source_brain=BRAIN_A,
+                           prefilter_source_label=label)
+    tw.TuningWidget._prefilter_clear_chosen(fake)
+    assert fake._prefilter_source_exp_id is None
+    assert fake._prefilter_source_brain is None
+    assert label.text == "No detection loaded"
+
+
+def test_a_refused_run_says_how_to_choose_no_run(tmp_path, monkeypatch):
+    """The refusal names the way to pre-filter with no run chosen."""
+    import mousebrain.plugin_3d.tuning_widget as tw
+    brain_a = _brain(tmp_path, BRAIN_A)
+    folder = _test_run_folder(tmp_path)
+    tracker = _tracker(tmp_path)
+    exp_id = tracker.log_detection(brain=BRAIN_A, status="completed", output_path=str(folder),
+                                   det_scope="full")
+    warnings = _press(tw, monkeypatch, brain_a, tracker, exp_id)
+    assert [w[0] for w in warnings] == ["Run Cannot Be Pre-filtered"]
+    assert "Clear Chosen Run" in warnings[0][1]

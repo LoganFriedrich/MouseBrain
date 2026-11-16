@@ -3154,6 +3154,18 @@ class TuningWidget(QWidget):
         refresh_btn.clicked.connect(self._refresh_prefilter_runs)
         load_btns.addWidget(refresh_btn)
 
+        # The way back to "no run chosen" without loading another brain: the
+        # pre-filter then takes the brain's candidates file and records no
+        # parent run. Without it, a refused run stayed chosen until a
+        # different brain was loaded (refreshing the same brain keeps it).
+        clear_chosen_btn = QPushButton("Clear Chosen Run")
+        clear_chosen_btn.setToolTip(
+            "Forget the run chosen with Load Best / Load Selected.\n"
+            "Run Pre-Filter then uses this brain's candidates file (the one\n"
+            "step 5 classifies) and records no parent run.")
+        clear_chosen_btn.clicked.connect(self._prefilter_clear_chosen)
+        load_btns.addWidget(clear_chosen_btn)
+
         source_layout.addLayout(load_btns)
 
         self.prefilter_source_label = QLabel("No detection loaded")
@@ -3522,6 +3534,19 @@ class TuningWidget(QWidget):
         self.prefilter_source_label.setText(f"Loaded: {exp_id}")
         self.prefilter_source_label.setStyleSheet("color: #00BFFF; font-weight: bold;")
 
+    def _prefilter_clear_chosen(self):
+        """Forget the run chosen for pre-filtering.
+
+        With no run chosen, Pre-filter takes the brain's candidates file (the
+        one step 5 classifies) and records no parent run. This is the only way
+        back to that state for the brain that is loaded: refreshing the run
+        list keeps a run chosen for the same brain.
+        """
+        self._prefilter_source_exp_id = None
+        self._prefilter_source_brain = None
+        self.prefilter_source_label.setText("No detection loaded")
+        self.prefilter_source_label.setStyleSheet("")
+
     def run_prefilter(self):
         """Run atlas pre-filtering on loaded detection candidates."""
         import napari
@@ -3591,7 +3616,10 @@ class TuningWidget(QWidget):
                        "fitted to.\n")
                     + "Nothing was pre-filtered. Choose the pipeline detection "
                     "run (step 4) that wrote this brain's candidates, or run "
-                    "step 4 with the settings you want and pre-filter that.")
+                    "step 4 with the settings you want and pre-filter that. "
+                    "To pre-filter this brain's candidates file with no run "
+                    "named as its parent, press Clear Chosen Run, then Run "
+                    "Pre-Filter.")
                 return
             if candidates_xml is None:
                 QMessageBox.warning(self, "Selected Run Not Found",
