@@ -599,6 +599,118 @@ def discover_nd2_files(roots, project: str = None) -> tuple:
     return [], None, None
 
 
+# Steps of process_single in which a failure can be about the SAMPLE: taking
+# the two channels out of its image, detecting its nuclei, measuring its
+# cells. All three work on an image that is already in memory.
+# NOT among them, on purpose:
+#   "read"    -- getting the file off the disk (load_image). Whatever the
+#                reader raises there keeps the earlier entry: it reports a
+#                file it does not recognize with an OSError, and a file whose
+#                end is missing (cut off, or still being copied) with a
+#                ValueError. Neither can be told from a share that drops out
+#                mid-read, and a file that is only half there says nothing
+#                about the sample.
+#   "tracker", "save" -- tracker writes and saving outputs.
+SAMPLE_STEPS = ("channels", "detect", "colocalize")
+
+# The errors that can say something about the sample's DATA: what the channel
+# extraction, the detector and the measuring code raise for an image they
+# cannot use (a wrong number of channels or dimensions, a missing metadata
+# key, an index past the image's channels). They count only inside
+# SAMPLE_STEPS; the same error types raised while READING the file do not
+# (see above).
+SAMPLE_DATA_ERRORS = (ValueError, KeyError, IndexError)
+
+# Which finished samples show that the software can get past a step. A sample
+# that ended with no nuclei read its image and ran the detector, but never
+# reached the measuring step, so it is no evidence about that step.
+STEP_EVIDENCE = {
+    "channels": ("completed", "no_nuclei"),
+    "detect": ("completed", "no_nuclei"),
+    "colocalize": ("completed",),
+}
+
+# Libraries the sample steps import only when they first run. Checked once
+# before the first sample (check_environment): a missing or broken one would
+# otherwise surface as each sample's own error.
+REQUIRED_MODULES = (
+    "nd2", "pandas", "matplotlib", "scipy.ndimage", "scipy.stats",
+    "scipy.interpolate", "skimage.feature", "skimage.filters",
+    "skimage.measure", "skimage.morphology", "skimage.segmentation",
+    "sklearn.mixture",
+)
+
+
+def check_environment() -> list:
+    """Import every library the sample steps need; return [(module, error)].
+
+    WHY before the loop: those libraries are imported lazily inside the
+    reading, detecting and measuring code. In an environment that lacks one
+    (or holds a broken build, which can fail with an ImportError, an OSError
+    from a DLL or a ValueError about binary sizes), every sample would fail
+    the same way, one after another. Checking first stops the batch with one
+    message naming the library, before any sample is attempted.
+    """
+    import importlib
+    problems = []
+    for name in REQUIRED_MODULES:
+        try:
+            importlib.import_module(name)
+        except Exception as e:  # any failure to import is the environment's
+            problems.append((name, f"{type(e).__name__}: {e}"))
+    return problems
+
+
+def failure_is_the_samples(step: str, exc: BaseException) -> bool:
+    """True when a run failed because of the sample, not the machinery around it.
+
+    WHY this distinction: when a sample's re-run fails, its earlier registry
+    entry is retired (main()) only if the failure says something about the
+    sample -- an image with the wrong channels or shape, a detector that
+    rejects it.
+    A share that cannot be reached, a tracker file another program holds
+    open, a full disk, a machine out of memory, a library that is missing or
+    broken, or a defect in the code says nothing about the sample
+    (infrastructure failures are not scientific outcomes); retiring a good
+    result because of one would drop it for no reason, so those keep the
+    earlier entry current.
+
+    So the rule is a positive list: a failure counts as the sample's only
+    when it happened while taking the channels out of the loaded image,
+    detecting or measuring (SAMPLE_STEPS) AND is one of the data errors in
+    SAMPLE_DATA_ERRORS. Everything else is infrastructure and keeps the
+    entry:
+      - ANY error while reading the file from disk (step "read"), whatever
+        its type. The ND2 reader raises an OSError for a file it does not
+        recognize and a ValueError for a file whose end is missing (cut off,
+        or still being copied); both keep the entry, as does a share that
+        drops out mid-read.
+      - at any step: ImportError and ModuleNotFoundError, OSError,
+        MemoryError, TypeError, AttributeError, NameError, RuntimeError,
+        EOFError and anything not listed.
+
+    WHAT THIS RULE CANNOT KNOW: the three listed errors are also what a
+    defect in the code or in a library typically raises (a missing table
+    column, an array of the wrong shape). An error type alone does not say
+    whose fault it is. main() therefore adds a second condition -- another
+    sample of the same run must have got past the step that failed
+    (STEP_EVIDENCE) -- which rules out a defect that hits every image. A
+    defect that hits only SOME images, raises one of the listed errors and
+    happens in a run where another sample got past that step is still taken
+    for the sample's, and that sample's earlier entry is retired. Nothing is
+    deleted by that: the files are in _archived/ and a re-run after the
+    defect is fixed registers the sample again.
+    """
+    if step not in SAMPLE_STEPS:
+        return False
+    # ImportError is not a data error even where a library raises a subclass
+    # of a listed type for it; checked first so the order of the list cannot
+    # change that.
+    if isinstance(exc, (ImportError, OSError, MemoryError)):
+        return False
+    return isinstance(exc, SAMPLE_DATA_ERRORS)
+
+
 def process_single(
     nd2_path: Path,
     output_dir: Path,
@@ -637,6 +749,8 @@ def process_single(
             core.detection.detect_with_log_augmentation).
 
     Returns dict with summary stats, or dict with 'error' key on failure.
+    A failed run also carries 'failed_at' (the step) and 'failure': 'sample'
+    or 'infrastructure' (see failure_is_the_samples).
     """
     from ..core.io import load_image, extract_channels
     from ..core.detection import detect_with_log_augmentation, diameter_range_to_area_px
@@ -659,6 +773,7 @@ def process_single(
     }
     det_run_id = None
     coloc_run_id = None
+    step = "read"   # the step running now; says whose failure an error is
 
     try:
         # Parse animal and region from filename (e.g., E01_01_S13_DCN.nd2)
@@ -671,9 +786,16 @@ def process_single(
         # Parse sample ID
         sample_id = nd2_path.stem
 
-        # Load
+        # Read the file. Its own step, and not one of SAMPLE_STEPS: nothing
+        # the reader raises may retire the sample's earlier registry entry
+        # (a cut-off or half-copied file raises a ValueError here, which
+        # would otherwise count as a data error of the sample).
+        step = "read"
         print(f"  Loading {nd2_path.name}...")
         data, metadata = load_image(nd2_path)
+
+        # From here on the image is in memory: an error is about its content.
+        step = "channels"
         red, green = extract_channels(data, red_idx=RED_IDX, green_idx=GREEN_IDX)
 
         # Physical size conversion
@@ -687,6 +809,7 @@ def process_single(
             min_diameter_um, max_diameter_um, pixel_um)
 
         # Log detection run to tracker
+        step = "tracker"
         det_run_id = None
         if tracker:
             det_run_id = tracker.log_detection(
@@ -705,6 +828,7 @@ def process_single(
             )
 
         # Detect using threshold + LoG augmentation with decision tree
+        step = "detect"
         print(f"  Detecting nuclei (threshold+LoG, {min_diameter_um}-{max_diameter_um} um "
               f"= {min_area_px}-{max_area_px} px area, {pixel_um:.2f} um/px)...")
         labels, details = detect_with_log_augmentation(
@@ -722,6 +846,7 @@ def process_single(
         print(f"  Found {n_nuclei} nuclei ({decision}: {n_thresh} threshold + {n_log} LoG)")
 
         # Update tracker with detection results
+        step = "tracker"
         if tracker and det_run_id:
             tracker.update_status(det_run_id, status="completed", det_nuclei_found=n_nuclei)
 
@@ -730,6 +855,7 @@ def process_single(
             return result
 
         # Log colocalization run to tracker
+        step = "tracker"
         coloc_run_id = None
         if tracker:
             coloc_run_id = tracker.log_colocalization(
@@ -754,6 +880,7 @@ def process_single(
         # Colocalize using background_mean (PI's method):
         # Mask out all possible somas from green channel, average remaining
         # tissue = background. Cell is positive if green > background mean.
+        step = "colocalize"
         print(f"  Running colocalization (background_mean)...")
         analyzer = ColocalizationAnalyzer(
             background_method='gmm',
@@ -775,6 +902,7 @@ def process_single(
         summary = analyzer.get_summary_statistics(classified)
 
         # Update tracker with colocalization results
+        step = "tracker"
         if tracker and coloc_run_id:
             tracker.update_status(
                 coloc_run_id,
@@ -796,6 +924,7 @@ def process_single(
         })
 
         # Route output to per-subject pipeline folder
+        step = "save"
         parsed = parse_sample_name(sample_id)
         subject_id = f"{parsed['project']}_{parsed['cohort']}_{parsed['subject']}"
         subject_base = DATA_DIR / parsed['project'] / subject_id if DATA_DIR else output_dir
@@ -843,7 +972,10 @@ def process_single(
         traceback.print_exc()
         result['status'] = 'error'
         result['error'] = str(e)
-        print(f"  ERROR: {e}")
+        result['failed_at'] = step
+        result['failure'] = ('sample' if failure_is_the_samples(step, e)
+                             else 'infrastructure')
+        print(f"  ERROR ({step}): {e}")
 
         # Update tracker on error
         if tracker and det_run_id:
@@ -1046,6 +1178,18 @@ def main():
             print(f"  {f.relative_to(root_used)}")
         return
 
+    # Every library the sample steps need, before the first sample: see
+    # check_environment for why.
+    missing = check_environment()
+    if missing:
+        print("[!] this environment cannot run the batch; no sample was "
+              "attempted and no registry entry was changed:")
+        for name, err in missing:
+            print(f"      {name}: {err}")
+        print("    Activate the environment MouseBrain is installed in (or "
+              "install the missing library) and run the batch again.")
+        sys.exit(1)
+
     args.output.mkdir(parents=True, exist_ok=True)
 
     # Instantiate AnalysisRegistry once for the batch run
@@ -1061,6 +1205,16 @@ def main():
 
     # Process each file
     all_results = []
+    replaced_by_no_nuclei = []   # (sample, earlier n_nuclei, files archived)
+    not_replaced = []            # (sample, earlier n_nuclei): files would not move
+    retired_by_error = []        # samples whose earlier entry a failure retired
+    not_retired = []             # samples whose entry should retire, files would not move
+    kept_after_error = []        # failed samples whose earlier entry stays current
+    kept_unproven = []           # (sample, step): no other sample got past the step
+    sample_failures = []         # (sample, step) of runs that failed on the sample
+    registry_errors = []         # (sample, message): a registry call that raised
+    retired_not_registered = []  # (sample, earlier n, files archived, message):
+                                 # no nuclei; earlier entry retired, new one not written
     start_time = time.time()
 
     for i, nd2_path in enumerate(nd2_files):
@@ -1110,6 +1264,123 @@ def main():
             except Exception as _reg_err:
                 print(f"  Registry warning: {_reg_err}")
 
+        # A finished run that found no nuclei is a result, and it is
+        # registered like one: 0 nuclei, no files, the parameters it ran with.
+        # WHY: only completed samples used to be registered, so a sample whose
+        # re-run found nothing kept its earlier entry -- with the earlier
+        # count -- marked current, and the registry reported a number the
+        # newest run contradicts. The earlier entry's files are archived first
+        # (invalidate moves them to _archived/<timestamp>/ beside them), so no
+        # current entry is left pointing at, or next to, another run's files.
+        # WHEN THEY WILL NOT MOVE (a file open in another program, a share
+        # dropping out): invalidate leaves the earlier entry current with its
+        # files in place and returns nothing. Registering 0 nuclei over it
+        # then would leave the earlier run's files in the active folder with
+        # no entry naming them -- and whatever mirrors that folder would take
+        # them for current. So the 0-nuclei result is NOT registered in that
+        # case; the earlier entry stays and the summary says what to do.
+        elif result.get('status') == 'no_nuclei' and registry is not None:
+            sample_id = nd2_path.stem
+            earlier = None
+            archived = 0
+            retired = False   # True once the earlier entry's files have moved
+            try:
+                earlier = registry.get_entry(sample_id)
+                if (earlier and earlier.get('is_current', True)
+                        and earlier.get('outputs')):
+                    # Counted before the move (afterwards they are gone from
+                    # here) and reported only once invalidate says it moved
+                    # them all.
+                    present = sum(
+                        1 for rel in earlier['outputs'].values()
+                        if (Path(registry.registry_root) / rel).exists())
+                    if not registry.invalidate(sample=sample_id):
+                        not_replaced.append(
+                            (sample_id,
+                             (earlier.get('results') or {}).get('n_nuclei')))
+                        continue
+                    archived = present
+                    retired = True
+                registry.register_output(
+                    sample=sample_id,
+                    category="detection",
+                    files={},
+                    # No cells, so no positive fraction and no background
+                    # measured: null, never a made-up 0.
+                    results={
+                        'n_nuclei': 0,
+                        'n_positive': 0,
+                        'positive_fraction': None,
+                        'background': None,
+                    },
+                    method_params=method_params,
+                    source_files={'nd2': str(nd2_path)},
+                )
+                if earlier:
+                    replaced_by_no_nuclei.append(
+                        (sample_id,
+                         (earlier.get('results') or {}).get('n_nuclei'),
+                         archived))
+            except Exception as _reg_err:
+                print(f"  Registry warning: {_reg_err}")
+                if retired:
+                    # The earlier entry is already retired and its files are
+                    # in _archived/, and the 0-nuclei result did not get
+                    # registered: the sample has NO current entry. Reported
+                    # as exactly that -- the general "entry is as it was"
+                    # line would be false here.
+                    retired_not_registered.append(
+                        (sample_id,
+                         (earlier.get('results') or {}).get('n_nuclei'),
+                         archived, str(_reg_err)))
+                else:
+                    registry_errors.append((sample_id, str(_reg_err)))
+
+        # A run that FAILED produced no result. Whether its earlier entry is
+        # retired is decided after the loop (below), once it is known which
+        # steps the other samples of this run got past.
+        elif result.get('status') == 'error' and registry is not None:
+            if result.get('failure') == 'sample':
+                sample_failures.append((nd2_path.stem, result.get('failed_at')))
+            else:
+                try:
+                    earlier = registry.get_entry(nd2_path.stem)
+                    if earlier and earlier.get('is_current', True):
+                        kept_after_error.append(nd2_path.stem)
+                except Exception as _reg_err:
+                    print(f"  Registry warning: {_reg_err}")
+                    registry_errors.append((nd2_path.stem, str(_reg_err)))
+
+    # A failed sample's earlier entry is retired (moved to _archived/,
+    # recorded as no longer current) when the failure is the sample's -- the
+    # newest attempt on it failed, so the older count must not stand as
+    # current -- AND another sample of this run got past the step that failed
+    # (STEP_EVIDENCE). WHY the second condition: when no sample got past a
+    # step, its failures say more about the software (a code defect, a broken
+    # library) than about each sample, and retiring entries on that evidence
+    # would drop good results for no reason. WHY per step: a sample with no
+    # nuclei never reaches the measuring step, so it cannot vouch for it; if
+    # every sample that has nuclei fails while measuring, that is the
+    # software, however many no-nuclei samples the run also had.
+    finished = {r.get('status') for r in all_results}
+    for sample_id, failed_step in sample_failures:
+        try:
+            earlier = registry.get_entry(sample_id)
+            if not (earlier and earlier.get('is_current', True)):
+                continue   # nothing current to retire
+            if not finished.intersection(STEP_EVIDENCE.get(failed_step, ())):
+                kept_unproven.append((sample_id, failed_step))
+            elif registry.invalidate(sample=sample_id):
+                retired_by_error.append(sample_id)
+            else:
+                # invalidate could not move a file: the entry is still
+                # current. Said in the summary, not only in invalidate's own
+                # line among the per-sample output.
+                not_retired.append(sample_id)
+        except Exception as _reg_err:
+            print(f"  Registry warning: {_reg_err}")
+            registry_errors.append((sample_id, str(_reg_err)))
+
     # Write summary CSV
     summary_path = args.output / "summary.csv"
     fieldnames = [
@@ -1133,7 +1404,48 @@ def main():
     print(f"  Processed: {len(all_results)} files in {elapsed/60:.1f} min")
     print(f"  Completed: {completed}")
     print(f"  No nuclei: {no_nuclei}")
+    for sample_id, earlier_n, archived in replaced_by_no_nuclei:
+        what = (f"{archived} file(s) moved to _archived/" if archived
+                else "no files to archive")
+        print(f"    {sample_id}: earlier registry entry ({earlier_n} nuclei) "
+              f"replaced by this run's 0 nuclei; {what}")
+    for sample_id, earlier_n in not_replaced:
+        print(f"    [!] {sample_id}: this run found 0 nuclei, but the earlier "
+              f"registry entry ({earlier_n} nuclei) is KEPT CURRENT: its files "
+              "could not be moved to _archived/ (in use?). Close whatever has "
+              "them open and run again.")
+    for sample_id, earlier_n, archived, message in retired_not_registered:
+        print(f"    [!] {sample_id}: earlier registry entry ({earlier_n} "
+              f"nuclei) was retired, {archived} file(s) moved to _archived/, "
+              "but this run's 0-nuclei result could NOT be registered: "
+              f"{message}. The sample has no current entry now; run the "
+              "batch again.")
     print(f"  Errors:    {errored}")
+    for r in all_results:
+        if r.get('status') == 'error':
+            print(f"    {r.get('file', '')}: [{r.get('failure', '')} failure "
+                  f"while {r.get('failed_at', '')}] {r.get('error', '')}")
+    for sample_id in retired_by_error:
+        print(f"    {sample_id}: earlier registry entry retired (no longer "
+              "current, its files moved to _archived/) -- the sample's own "
+              "re-run failed")
+    for sample_id in not_retired:
+        print(f"    [!] {sample_id}: the sample's own re-run failed, but its "
+              "earlier registry entry could not be retired and is STILL "
+              "CURRENT: its files could not be moved to _archived/ (in use?). "
+              "Close whatever has them open and run again.")
+    for sample_id, failed_step in kept_unproven:
+        print(f"    {sample_id}: earlier registry entry kept current -- no "
+              f"other sample of this run got past the '{failed_step}' step, so "
+              "the failure may be the software's, not the sample's; fix the "
+              "cause and run again")
+    for sample_id in kept_after_error:
+        print(f"    {sample_id}: earlier registry entry kept current -- the "
+              "failure was not shown to be the sample's; fix it and run again")
+    for sample_id, message in registry_errors:
+        print(f"    [!] {sample_id}: the registry could not be read or updated "
+              f"for this sample ({message}); its entry is as it was before "
+              "this run unless a line above says otherwise")
     print(f"  Summary:   {summary_path}")
     print(f"{'=' * 60}")
 
