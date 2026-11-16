@@ -895,6 +895,81 @@ def _store_edited_rois(rois_path, rois, image_name, image_shape, previous_state)
     return "No ROIs drawn. Nothing saved."
 
 
+# The method recorded with ROI counts whose measurements cannot be tied to a
+# registered detection run. A fixed value, so such counts always show as
+# stale against any approved method and are never mistaken for current ones.
+UNTIED_METHOD = {
+    "detection_method": "unknown: measurements not tied to a registered detection run",
+}
+
+
+def _sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _open_detection_registry(registry_root, project):
+    """The project's detection registry, or None when it has no manifest.
+
+    Opened only when <project>_Detection/registry.json exists, because opening
+    an AnalysisRegistry creates its folders, and an empty analysis folder
+    would look to whoever pulls the registry like an analysis with no results.
+    """
+    from mousebrain.analysis_registry import AnalysisRegistry
+    from mousebrain.plugin_2d.sliceatlas.core.config import detection_analysis_name
+
+    name = detection_analysis_name(project)
+    if not (Path(registry_root) / 'exports' / name / 'registry.json').is_file():
+        return None
+    return AnalysisRegistry(analysis_name=name, registry_root=registry_root)
+
+
+def _detection_provenance(det_registry, sample, meas_file, meas_sha):
+    """Tie the measurements counted for *sample* to the detection run that made them.
+
+    Returns (method_params, detection_method_hash, problem). method_params
+    and the hash come from the sample's entry in the detection registry when
+    that entry is current and its registered measurements file has the same
+    contents (SHA-256) as the file being counted; problem is None then.
+    Otherwise method_params is UNTIED_METHOD, the hash is None, and problem
+    says why.
+
+    WHY: ROI counts used to be registered with the APPROVED method, whatever
+    run produced the measurements they were counted against, and without
+    naming the measurements file. A re-detection then left the old counts
+    looking current. Recording the detection run's own parameters (hence its
+    method hash) makes the counts go stale exactly when the detection they
+    rest on does.
+    """
+    if det_registry is None:
+        return UNTIED_METHOD, None, "the project has no detection registry"
+    entry = det_registry.get_entry(sample)
+    if entry is None:
+        return UNTIED_METHOD, None, "no entry for this sample in the detection registry"
+    if not entry.get('is_current', True):
+        return UNTIED_METHOD, None, "its detection entry was invalidated"
+    rel = (entry.get('outputs') or {}).get('measurements')
+    if not rel:
+        return UNTIED_METHOD, None, "its detection entry names no measurements file"
+    registered = Path(rel)
+    if not registered.is_absolute():
+        registered = Path(det_registry.registry_root) / registered
+    if not registered.is_file():
+        return UNTIED_METHOD, None, f"the registered measurements file is missing: {registered}"
+    if _sha256(registered) != meas_sha:
+        return (UNTIED_METHOD, None,
+                f"the measurements counted ({meas_file}) differ from the "
+                f"registered ones ({registered})")
+    params = entry.get('method_params')
+    if not isinstance(params, dict) or not params:
+        return UNTIED_METHOD, None, "its detection entry records no method"
+    return dict(params), entry.get('method_hash'), None
+
+
 def cmd_batch(args):
     """Walk through images for a dataset, draw/edit ROIs, then count all.
 
@@ -1054,6 +1129,7 @@ def cmd_batch(args):
     # Resolve output directories (registry root preferred)
     exports_dir, figures_dir = _get_roi_output_dirs(base_folder, project)
     registry = None
+    det_registry = None
     if exports_dir is None:
         # WHY not batch_results/ (where this used to write): that folder is
         # searched for DETECTION results, so counts written there were read
@@ -1075,18 +1151,28 @@ def cmd_batch(args):
                                         follows_approved_method=True)
         except Exception as e:
             print(f"[!] registry: {e}")
+        if registry is not None:
+            try:
+                det_registry = _open_detection_registry(registry.registry_root, project)
+            except Exception as e:
+                print(f"[!] detection registry: {e}")
+            _warn_if_judged_differently(registry, det_registry)
 
     print(f"\n{'='*60}")
     print(f"COUNTING -- {len(done)} samples with ROIs")
     print(f"{'='*60}\n")
 
     all_rows = []
+    untied = []
 
     for sample in done:
         s_name = sample['sample']
         meas_file = sample['measurements_path']
         rois_path = sample['rois_path']
 
+        # The fingerprint of the measurements is taken BEFORE they are read,
+        # so the counts are recorded against exactly the file counted.
+        meas_sha = _sha256(meas_file)
         meas = pd.read_csv(meas_file)
 
         roi_data = after[s_name][1]
@@ -1119,26 +1205,30 @@ def cmd_batch(args):
         per_sample_df.to_csv(per_sample_csv, index=False)
 
         # Registry provenance tracking (non-blocking): records the counts with
-        # the method parameters and source files so an integrator can pull
-        # them. count_cells_in_rois returns a LIST of rows keyed by 'name';
+        # the method that produced the MEASUREMENTS they were counted against
+        # (see _detection_provenance) and every file they rest on, so an
+        # integrator can pull them and a re-detection makes them stale.
+        # count_cells_in_rois returns a LIST of rows keyed by 'name';
         # roi_results_from_rows turns that into the ROI-name -> counts mapping
         # the registry stores.
         if registry is not None:
             try:
-                from mousebrain.analysis_registry import (
-                    get_approved_method, roi_results_from_rows,
-                )
+                from mousebrain.analysis_registry import roi_results_from_rows
+                method_params, det_hash, problem = _detection_provenance(
+                    det_registry, s_name, meas_file, meas_sha)
+                if problem:
+                    untied.append((s_name, problem))
                 registry.register_roi_counts(
                     sample=s_name,
                     region=base_region,
                     roi_results=roi_results_from_rows(results),
-                    # The method this analysis is judged by (see
-                    # analysis_registry.approved_method_for).
-                    method_params=(registry.approved_method()
-                                   or get_approved_method(registry.registry_root)),
+                    method_params=method_params,
                     source_files={
                         "nd2": str(sample['nd2_path']),
                         "roi_json": str(rois_path),
+                        "measurements": str(meas_file),
+                        "measurements_sha256": meas_sha,
+                        "detection_method_hash": det_hash or "",
                     },
                 )
             except Exception as e:
@@ -1158,6 +1248,12 @@ def cmd_batch(args):
         summary_df.to_csv(output_path, index=False)
 
         print(f"\n{'='*60}")
+        if untied:
+            print(f"[!] {len(untied)} sample(s) counted against measurements that are "
+                  f"not tied to a registered detection run; their counts are "
+                  f"recorded as stale:")
+            for name, problem in untied:
+                print(f"    {name}: {problem}")
         _print_left_out(left_out + not_counted)
         print(f"SUMMARY: {len(all_rows)} samples counted"
               + (f", {len(left_out) + len(not_counted)} left out"
@@ -1166,6 +1262,33 @@ def cmd_batch(args):
         print(f"{'='*60}")
 
     return 0
+
+
+def _warn_if_judged_differently(roi_registry, det_registry):
+    """Say so when the ROI counts and the detection are judged by different methods.
+
+    ROI counts now carry the detection run's method (see
+    _detection_provenance), and each analysis compares its entries with its
+    OWN approved method. If approved_method.json gives the detection analysis
+    an entry and the ROI analysis none (or a different one), every ROI count
+    would show as stale even when its detection is current. The fix is a
+    configuration line, so this only prints how to make them agree.
+    """
+    if det_registry is None:
+        return
+    try:
+        det_m = det_registry.approved_method()
+        roi_m = roi_registry.approved_method()
+    except Exception as e:
+        print(f"[!] approved method: {e}")
+        return
+    if det_m is None or roi_m is None:
+        return
+    if roi_registry.get_method_hash(det_m) != roi_registry.get_method_hash(roi_m):
+        print(f"[!] {roi_registry.analysis_name} and {det_registry.analysis_name} are "
+              f"judged by different approved methods, so these ROI counts will show "
+              f"as stale even where the detection is current. Give both analyses the "
+              f"same entry in approved_method.json.")
 
 
 # ---------------------------------------------------------------------------
