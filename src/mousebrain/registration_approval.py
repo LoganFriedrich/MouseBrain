@@ -566,8 +566,9 @@ def approve(reg_folder, approved_by: Optional[str] = None, note: str = "",
     registration exists would be inherited by whatever lands there later), or
     a registration that did not finish, or one whose images changed since
     (OUT_OF_DATE). A REJECTED registration is refused
-    too, unless ``allow_rejected`` -- only the approval script passes it,
-    after asking the person whether they mean to overrule the rejection; the
+    too, unless ``allow_rejected`` -- passed only after a person was asked
+    whether they mean to overrule the rejection and said yes (the approval
+    script's question, the pipeline dashboard's overrule question); the
     rejection then goes into ``_archive/``.
     """
     reg = _reg(reg_folder)

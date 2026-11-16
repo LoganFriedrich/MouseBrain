@@ -354,8 +354,8 @@ only** and asks no questions:
 |---|---|
 | Extract | `2_extract_and_analyze.py --batch --brain <selected brain>` |
 | Crop | opens nothing: the dashboard asks you to open the crop tool yourself (**Plugins -> BrainTools -> 3D: 3. Manual Crop**); save the crop there, then press **Refresh** on the dashboard |
-| Register | `3_register_to_atlas.py --batch --brain <selected brain>` |
-| Approve | shows the registration QC picture and asks whether to approve |
+| Register | `3_register_to_atlas.py --batch --brain <selected brain>`. If a person REJECTED the brain's registration it asks first, with three buttons: **Register again** (runs the same with `--reprocess`), **Approve anyway...** (overrules the rejection, after a second question), **Not yet** (nothing changes). If the brain is being registered right now it says so and starts nothing |
+| Approve | shows the registration QC picture and asks "Does the registration look good?" with three buttons: **Approve**, **Reject** (recorded, see "Rejecting is recorded") and **Not yet**. Closing the question with Esc or the window's close button is **Not yet**: nothing is recorded |
 | Detect / Classify / Count | steps 4 / 5 / 6 with `--brain <selected brain>` |
 
 The same holds for **+ Add New Brain** when you answer Yes to starting extraction at the end. While the
@@ -811,10 +811,13 @@ folder now. What that means for you:
 - **You cannot approve before registering.** With no `brainreg.json` there is
   nothing to approve, and the buttons say so.
 - **Rejecting is recorded.** Saying the registration is NOT good -- the Reject
-  button in Setup & Tuning, "No" in the pipeline dashboard's "Does the
-  registration look good?", "No, reject it (recorded)" in RUN_PIPELINE, or
-  "no" in `util_approve_registration.py` -- writes
+  button in Setup & Tuning, the **Reject** button in the pipeline dashboard's
+  "Does the registration look good?", "No, reject it (recorded)" in
+  RUN_PIPELINE, or "no" (or "n") in `util_approve_registration.py` -- writes
   `3_Registered_Atlas/.registration_rejected` (who, when, which registration).
+  Only an explicit Reject / no does this: closing the dashboard's question
+  (Esc, the close button) is "Not yet", and `util_approve_registration.py`
+  asks again on anything that is not yes, y, no or n (a bare Enter included).
   Any approval goes into `_archive/` (kept, not deleted). From then on every
   reader shows `[!] Registered to atlas -- rejected by <who> at <when> --
   change what made it bad, then register it again ...` and the brain is at
@@ -828,16 +831,19 @@ folder now. What that means for you:
   - **Re-crop it.** A crop made after the rejection makes the registration
     "out of date", and from then on every batch registers it again by itself.
   - **Or change its orientation or voxel sizes** (in the crop's
-    `metadata.json`) and ask for the registration yourself: RUN_PIPELINE's
-    "Register" step asks "Register it again now?", or run
+    `metadata.json`) and ask for the registration yourself: the dashboard's
+    Run Next Step offers **Register again**, RUN_PIPELINE's "Register" step
+    asks "Register it again now?", or run
     `python 3_register_to_atlas.py --batch --brain <brain> --reprocess`
     (step 3's interactive menu lists it under `[INCOMPLETE/FAILED]` too).
   Registering again moves the rejection into `_archive/<date>_<time>_rejected/`
   together with the registration it was for.
-- **Rejected by mistake?** Run `util_approve_registration.py --brain <brain>`:
-  it says who rejected it and asks "Approve it anyway, overruling the
-  rejection?". Answering yes approves it and moves the rejection into
-  `_archive/`. No other path overrules a rejection.
+- **Rejected by mistake?** In the pipeline dashboard select the brain, press
+  Run Next Step, choose **Approve anyway...** and confirm. Or run
+  `util_approve_registration.py --brain <brain>`: it says who rejected it and
+  asks "Approve it anyway, overruling the rejection?". Either way the approval
+  is written (its note says it overruled a rejection) and the rejection moves
+  into `_archive/`. No other path overrules a rejection.
 
 **Re-registering also makes the region counts stale.** The status readers
 compare each output with what it was made from (see "Which step is a brain

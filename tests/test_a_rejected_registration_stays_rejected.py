@@ -6,7 +6,8 @@ the registration as "waiting for approval", and anyone could approve what had
 just been turned down. Now the "no" of every path (the approval script, the
 RUN_PIPELINE menu, the dashboard, Setup & Tuning) is recorded, every reader
 puts the brain back at "register", and nothing unattended registers it again:
-a person asks for that (--reprocess), or re-crops it. Identifiers are
+a person asks for that (--reprocess), or re-crops it. Only an explicit "no"
+rejects -- closing a dialog or pressing Enter does not. Identifiers are
 invented.
 """
 import builtins
@@ -115,6 +116,26 @@ def test_a_rejection_overruled_in_the_approval_script_is_archived(tmp_path, monk
     assert ra.is_approved(reg)
     assert not (reg / ra.REJECTION_MARKER).exists()
     assert list((reg / "_archive").glob("*/" + ra.REJECTION_MARKER))
+
+
+def test_a_blank_or_unclear_answer_is_asked_again_not_a_rejection(tmp_path, monkeypatch):
+    b = _brain(tmp_path)
+    util = _approval_script(monkeypatch, b)
+    _say(monkeypatch, "", "maybe")  # then nobody answers any more
+    with pytest.raises(SystemExit):
+        util.main()
+    reg = b / "3_Registered_Atlas"
+    assert not (reg / ra.REJECTION_MARKER).exists()
+    assert ra.approval_state(reg)[0] == ra.UNAPPROVED
+
+
+def test_no_after_an_unclear_answer_is_recorded(tmp_path, monkeypatch):
+    b = _brain(tmp_path)
+    util = _approval_script(monkeypatch, b)
+    _say(monkeypatch, "", "n")
+    with pytest.raises(SystemExit):
+        util.main()
+    assert _is_rejected(b)
 
 
 def _step3_with(monkeypatch, tmp_path, *extra):

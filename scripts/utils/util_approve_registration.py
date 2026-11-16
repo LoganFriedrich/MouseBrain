@@ -60,6 +60,25 @@ def check_approval_status(pipeline_folder: Path):
     return state == APPROVED, text
 
 
+def ask_yes_no(question: str):
+    """True for yes/y, False for no/n; anything else asks again. None when
+    there is nobody to answer (end of input) -- nothing is recorded then.
+
+    WHY IT ASKS AGAIN: "no" RECORDS A REJECTION under the person's name. A
+    bare Enter or a typo used to count as "no", so a person who only pressed
+    Enter rejected the registration and sent the brain back to "Register"."""
+    while True:
+        try:
+            response = input(question).strip().lower()
+        except EOFError:
+            return None
+        if response in ('yes', 'y'):
+            return True
+        if response in ('no', 'n'):
+            return False
+        print("  Please answer yes or no.")
+
+
 def approve_registration(pipeline_folder: Path, overrule_rejection: bool = False):
     """Record that the person running this script approved the registration.
     ``overrule_rejection``: the person was told the registration had been
@@ -168,9 +187,8 @@ Examples:
         # explicit "yes, overrule": nobody approves a rejected registration
         # by answering the ordinary question.
         print(f"\n[!] This registration was {why}")
-        response = input("\nApprove it anyway, overruling the rejection? (yes/no): ").strip().lower()
-        if response not in ['yes', 'y']:
-            print("Rejection kept. Register the brain again.")
+        if not ask_yes_no("\nApprove it anyway, overruling the rejection? (yes/no): "):
+            print("Rejection kept. Nothing changed.")
             sys.exit(1)
         overrule = True
     elif state == RUNNING and not args.view:
@@ -220,13 +238,15 @@ Examples:
     elif approved:
         print(f"\n[!] This registration is already approved:")
         print(f"  {approval_data}")
-        response = input("\nRe-approve? (yes/no): ").strip().lower()
-        if response not in ['yes', 'y']:
+        if not ask_yes_no("\nRe-approve? (yes/no): "):
             print("Keeping existing approval")
             sys.exit(0)
     else:
-        response = input("\nDoes the registration look good? (yes/no): ").strip().lower()
-        if response not in ['yes', 'y']:
+        answer = ask_yes_no("\nDoes the registration look good? (yes/no): ")
+        if answer is None:
+            print("\nNo answer: nothing recorded (neither approved nor rejected).")
+            sys.exit(1)
+        if not answer:
             # "no" is a rejection, and it is recorded: every reader shows the
             # brain back at "Register" and nobody approves it by accident.
             reject(reg_folder, note="rejected with util_approve_registration.py")

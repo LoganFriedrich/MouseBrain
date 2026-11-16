@@ -755,20 +755,60 @@ class PipelineDashboard(QWidget):
             self.run_next_btn.setEnabled(True)
 
         elif status['step'] == 'register':
-            self.run_script('3_register_to_atlas.py', ['--batch', '--brain', brain_name])
+            from mousebrain.registration_approval import REJECTED, RUNNING
+            if status.get('approval') == RUNNING:
+                # Another run is registering it right now; step 3 would refuse.
+                self.message_label.setText("Being registered right now: " + status['approval_text'])
+                self.run_next_btn.setEnabled(True)
+            elif status.get('approval') == REJECTED:
+                # A person turned this registration down. Registering it again
+                # is a decision (the batches never do it), so ask -- and offer
+                # to overrule the rejection, so a rejection made by mistake can
+                # be undone here, not only in a terminal.
+                choice = self._choose(
+                    'Registration was rejected',
+                    'This registration was ' + status['approval_text'] + '\n\n'
+                    'Register again: the rejected registration goes into _archive and '
+                    'the brain is registered again (hours); then it needs approval.\n'
+                    'Approve anyway: overrule the rejection.\n'
+                    'Not yet: change nothing.',
+                    [('register', 'Register again'), ('overrule', 'Approve anyway...'),
+                     ('later', 'Not yet')], escape='later')
+                if choice == 'register':
+                    self.run_script('3_register_to_atlas.py',
+                                    ['--batch', '--brain', brain_name, '--reprocess'])
+                    return
+                if choice == 'overrule':
+                    self._overrule_rejection()
+                else:
+                    self.message_label.setText("Nothing changed; the registration stays rejected.")
+                self.run_next_btn.setEnabled(True)
+            else:
+                self.run_script('3_register_to_atlas.py', ['--batch', '--brain', brain_name])
 
         elif status['step'] == 'approve':
             # Show QC first
             self.view_qc_image()
-            reply = QMessageBox.question(
-                self, 'Approve Registration',
-                'Does the registration look good?',
-                QMessageBox.Yes | QMessageBox.No
-            )
-            if reply == QMessageBox.Yes:
+            # Three explicit answers, and closing the question (Esc, the
+            # window's close button) is "Not yet". A Yes/No question used to
+            # take a close as No, which RECORDED A REJECTION under the
+            # person's name for someone who had only closed the dialog to look
+            # at the QC picture -- and the brain went back to "Register".
+            choice = self._choose(
+                'Approve Registration',
+                'Does the registration look good?\n\n'
+                'Approve: detection may run on it.\n'
+                'Reject: it is recorded as rejected, and the brain is registered '
+                'again only when someone asks for it.\n'
+                'Not yet: change nothing (look at the QC picture first).',
+                [('approve', 'Approve'), ('reject', 'Reject'), ('later', 'Not yet')],
+                escape='later')
+            if choice == 'approve':
                 self._approve_current_registration()
-            else:
+            elif choice == 'reject':
                 self._reject_current_registration()
+            else:
+                self.message_label.setText("Not approved or rejected yet.")
             self.run_next_btn.setEnabled(True)
 
         elif status['step'] == 'detect':
@@ -875,8 +915,48 @@ class PipelineDashboard(QWidget):
         self.refresh_brains()
         self.update_status_display()
 
+    def _choose(self, title, text, choices, escape):
+        """Ask with one button per (key, label) in ``choices``; return the key
+        of the button pressed. Closing the dialog (Esc, the close button)
+        returns ``escape`` -- a choice that changes nothing."""
+        box = QMessageBox(self)
+        box.setWindowTitle(title)
+        box.setText(text)
+        buttons = {}
+        for key, label in choices:
+            role = QMessageBox.RejectRole if key == escape else QMessageBox.AcceptRole
+            buttons[box.addButton(label, role)] = key
+        escape_btn = next(b for b, k in buttons.items() if k == escape)
+        box.setEscapeButton(escape_btn)
+        box.setDefaultButton(escape_btn)
+        box.exec_()
+        return buttons.get(box.clickedButton(), escape)
+
+    def _overrule_rejection(self):
+        """Approve a registration a person rejected, after a second question.
+        The rejection goes into _archive (kept); the approval says it overruled
+        one (mousebrain.registration_approval.approve, allow_rejected)."""
+        from mousebrain.registration_approval import approve
+        sure = self._choose(
+            'Overrule the rejection?',
+            'Approve this registration although it was rejected? The rejection '
+            'is kept in 3_Registered_Atlas/_archive.',
+            [('yes', 'Approve it'), ('no', 'Cancel')], escape='no')
+        if sure != 'yes':
+            self.message_label.setText("Nothing changed; the registration stays rejected.")
+            return
+        try:
+            approve(self.current_brain / "3_Registered_Atlas",
+                    note="approved in the napari pipeline dashboard, overruling a rejection",
+                    allow_rejected=True)
+            self.message_label.setText("Registration approved (the rejection was overruled).")
+        except ValueError as e:
+            QMessageBox.warning(self, "Cannot approve", str(e))
+        self.refresh_brains()
+        self.update_status_display()
+
     def _reject_current_registration(self):
-        """The person has just answered No to "does it look good?".
+        """The person has just pressed Reject on "does it look good?".
 
         Recorded (mousebrain.registration_approval.reject): every reader then
         shows the brain back at "Register". The No used to only set this
