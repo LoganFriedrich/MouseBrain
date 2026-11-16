@@ -186,3 +186,31 @@ def test_a_step_that_raised_is_run_again_on_retry(bp, tmp_path, monkeypatch):
     ran = _recorder(bp, monkeypatch, brain)
     _main(bp, monkeypatch, "--resume", "--retry-failed")
     assert ran == ["5_classify_cells.py", "6_count_regions.py"]
+
+
+def test_a_crash_recorded_without_its_step_is_run_again_from_the_step_it_was_in(
+        bp, tmp_path, monkeypatch):
+    """Batches that recorded a crash wrote only FAIL and the error; the failed
+    step stayed empty while current_step still named the step that crashed.
+    Status files keep such rows. A count that crashed after writing its
+    per-brain CSV must be run again, not taken for finished and filed PASS."""
+    brain = _classified_brain(tmp_path)
+    _write(brain / "6_Region_Analysis" / "all_points_information.csv", "a\n1\n")
+    _write(brain / "6_Region_Analysis" / "counts.csv", "a\n1\n")
+    _row(bp, brain, bp.QCStatus.FAIL, failed_step="", current_step="count",
+         error="crashed part-way")
+    ran = _recorder(bp, monkeypatch, brain)
+    _main(bp, monkeypatch, "--resume", "--retry-failed")
+    assert ran == ["6_count_regions.py"]
+    row = bp.load_pipeline_status()[NAME]
+    assert "count" not in row["skipped_steps"].split(",")
+
+
+def test_a_crash_recorded_without_any_step_runs_every_step(bp, tmp_path, monkeypatch):
+    """Nothing says which step was unfinished: every step runs again."""
+    brain = _classified_brain(tmp_path)
+    _write(brain / "6_Region_Analysis" / "counts.csv", "a\n1\n")
+    _row(bp, brain, bp.QCStatus.FAIL, failed_step="", current_step="", error="crashed")
+    ran = _recorder(bp, monkeypatch, brain)
+    _main(bp, monkeypatch, "--resume", "--retry-failed")
+    assert ran == ALL_STEPS

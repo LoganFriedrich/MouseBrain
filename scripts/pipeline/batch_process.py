@@ -529,7 +529,16 @@ def process_brain(brain_path: Path, brain_name: str, skip_finished: bool = False
     # cleared below.
     previous = load_pipeline_status().get(brain_name, {})
     if previous.get('status') == QCStatus.FAIL:
-        redo_from = previous.get('failed_step', '')
+        # A FAIL row with no failed step is a crash recorded by a batch that
+        # wrote only the status and the error (older batches did; see main's
+        # exception handler). The step it crashed in is the step the row was
+        # in, current_step; if even that is missing, nothing says which step
+        # is unfinished, so every step runs again. Without this fallback an
+        # empty redo_from skips every step whose files exist, and a count that
+        # crashed after writing its per-brain CSV would be filed as a PASS.
+        redo_from = (previous.get('failed_step', '')
+                     or previous.get('current_step', '')
+                     or 'extract')
     elif previous.get('status') == QCStatus.PENDING:
         redo_from = previous.get('current_step', '')
     else:

@@ -358,6 +358,10 @@ failed step's output is what failed). This holds whether the step reported a
 failure or crashed with an error: a crash is recorded as a failure AT the step
 the brain was in (`failed_step` in `batch_process.py --status`), so that step is
 run again too. Each new attempt clears the previous attempt's failure fields.
+Older versions recorded a crash as a failure with an empty `failed_step`, and a
+status file can still hold such rows: for those, the step named in
+`current_step` (the step the brain was in when it crashed) and every step after
+it run again, and if `current_step` is empty too, every step runs again.
 
 ## Where the scripts live
 
