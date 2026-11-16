@@ -425,11 +425,6 @@ def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLA
         print(f"    Previous approval moved to {retired.parent.name} -- this registration "
               f"will need a person's approval")
 
-    # Everything after this has to work in the SAME space the atlas was fitted
-    # to, or cells land in the wrong structures while every number still looks
-    # reasonable. Record it rather than leaving later steps to assume.
-    record_registered_space(reg_folder, source, crop_folder)
-
     # Get registration channel from metadata
     # Prefer background channel for registration (clearer tissue boundaries)
     channels_info = metadata.get('channels', {})
@@ -559,6 +554,14 @@ def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLA
                 except Exception:
                     pass
             raise RuntimeError(f"Registration verification failed: {reason}")
+
+        # Everything after this has to work in the SAME space the atlas was
+        # fitted to, or cells land in the wrong structures while every number
+        # still looks reasonable. Record it rather than leaving later steps to
+        # assume -- and only NOW, once brainreg finished and its output is
+        # complete: written before brainreg started, a failed run left a record
+        # naming images no registration had been fitted to.
+        record_registered_space(reg_folder, source, crop_folder)
 
         # Update tracker with success
         if tracker and exp_id:

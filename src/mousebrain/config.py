@@ -684,6 +684,20 @@ PIPELINE_INPUT_PRIORITY = ("manual", "cropped", "full")
 REGISTERED_SPACE_FILE = "registered_from.json"
 
 
+class RegisteredImagesMissing(FileNotFoundError):
+    """The registration records which images the atlas was fitted to, and that
+    folder holds no images any more (moved, deleted, or emptied by a crop that
+    did not finish).
+
+    WHY THIS IS AN ERROR AND NOT A FALLBACK
+    registered_input used to return the caller's default folder instead, with
+    no message. Cell coordinates are positions in the registered images; read
+    against another folder's images (a crop of a different size, or the full
+    extraction), every cell lands in the wrong place and every count still
+    looks plausible. Stopping, with the folder named, is the only safe answer.
+    """
+
+
 def resolve_pipeline_input(pipeline_dir, requested: str = "auto"):
     """Which folder of images a step should read for this brain.
 
@@ -770,6 +784,12 @@ def registered_input(pipeline_dir, fallback=("cropped",)):
     the pipeline steps assumed the crop, the napari widget the manual crop then
     the crop. If none holds images, the last one is returned anyway so the
     caller's own "not found" message still names it.
+
+    A brain whose registration DOES record its images, but whose recorded
+    folder holds none, raises RegisteredImagesMissing naming the folder. It
+    never falls back: the fallback folder is a different image space (see
+    RegisteredImagesMissing). Register the brain again on the images that are
+    there now.
     """
     from pathlib import Path as _Path
 
@@ -778,6 +798,12 @@ def registered_input(pipeline_dir, fallback=("cropped",)):
         source, folder, metadata = resolve_pipeline_input(pipeline_dir, recorded)
         if folder is not None:
             return source, folder, metadata
+        expected = _Path(pipeline_dir) / PIPELINE_INPUT_FOLDERS[recorded]
+        raise RegisteredImagesMissing(
+            "the registration of %s was fitted to the images in %s, and that folder "
+            "holds no images (no %s). Nothing else may be read in their place: "
+            "register the brain again on the images that are there now."
+            % (_Path(pipeline_dir).name, expected, "ch0/*.tif"))
     for name in fallback:
         source, folder, metadata = resolve_pipeline_input(pipeline_dir, name)
         if folder is not None:

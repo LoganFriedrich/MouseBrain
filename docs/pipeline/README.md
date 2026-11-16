@@ -814,6 +814,15 @@ images from `1_Extracted_Full`, and step 5 picks up a run in
 or re-running. A brain whose registration has no `registered_from.json`
 (registered before it was written) is treated as registered on the crop.
 
+`registered_from.json` is written only when registration FINISHED (all its
+output files are there); a failed run writes none. If the folder it names no
+longer holds any images (moved, deleted, emptied), nothing reads another folder
+in its place: steps 5 and 6, the pre-filter and Setup & Tuning stop with
+"the registration of <brain> was fitted to the images in <folder>, and that
+folder holds no images", because cell positions only mean something in the
+images the atlas was fitted to. Put the images back, or register the brain
+again on the images that are there now.
+
 **Where the results go**
 
 Into a subfolder named after the images they came from:

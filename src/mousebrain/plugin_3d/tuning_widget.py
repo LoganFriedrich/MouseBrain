@@ -2370,9 +2370,13 @@ class TuningWidget(QWidget):
         if signal_layer is None or background_layer is None:
             # The images the atlas was fitted to (config.registered_input);
             # brains registered before that was recorded: manual crop, then crop
-            from mousebrain.config import registered_input
-            _source, data_folder, _meta = registered_input(
-                self.current_brain, fallback=("manual", "cropped"))
+            from mousebrain.config import RegisteredImagesMissing, registered_input
+            try:
+                _source, data_folder, _meta = registered_input(
+                    self.current_brain, fallback=("manual", "cropped"))
+            except RegisteredImagesMissing as e:
+                QMessageBox.warning(self, "Registered images missing", str(e))
+                return
             print(f"[MouseBrain] Using {data_folder.name} (the registered images)")
             input_path = str(data_folder)
 
@@ -7258,9 +7262,13 @@ class TuningWidget(QWidget):
         # Get signal channel path (priority: manual_crop > auto_crop)
         # The images the atlas was fitted to (config.registered_input);
         # brains registered before that was recorded: manual crop, then crop
-        from mousebrain.config import registered_input
-        _source, data_folder, _meta = registered_input(
-            self.current_brain, fallback=("manual", "cropped"))
+        from mousebrain.config import RegisteredImagesMissing, registered_input
+        try:
+            _source, data_folder, _meta = registered_input(
+                self.current_brain, fallback=("manual", "cropped"))
+        except RegisteredImagesMissing as e:
+            QMessageBox.warning(self, "Registered images missing", str(e))
+            return
 
         if self.metadata:
             signal_ch = self.metadata.get('channels', {}).get('signal_channel', 0)
@@ -7758,9 +7766,13 @@ class TuningWidget(QWidget):
             # Find signal and background channel images (priority: manual_crop > auto_crop)
             # The images the atlas was fitted to (config.registered_input);
             # brains registered before that was recorded: manual crop, then crop
-            from mousebrain.config import registered_input
-            _source, data_folder, _meta = registered_input(
-                self.current_brain, fallback=("manual", "cropped"))
+            from mousebrain.config import RegisteredImagesMissing, registered_input
+            try:
+                _source, data_folder, _meta = registered_input(
+                    self.current_brain, fallback=("manual", "cropped"))
+            except RegisteredImagesMissing as e:
+                print(f"[QC] {e}")
+                return
 
             if self.metadata:
                 signal_ch = self.metadata.get('channels', {}).get('signal_channel', 0)

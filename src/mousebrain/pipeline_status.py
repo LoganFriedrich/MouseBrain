@@ -74,7 +74,8 @@ from typing import Dict, List, Optional
 
 import os
 
-from mousebrain.config import registered_candidate_folders, registered_input, registered_space
+from mousebrain.config import (RegisteredImagesMissing, registered_candidate_folders,
+                               registered_input, registered_space)
 from mousebrain.registration_approval import (APPROVED, NEEDS_REGISTRATION,
                                               NOT_REGISTERED, approval_state,
                                               registration_complete,
@@ -165,8 +166,13 @@ def _newest_csv(folder: Path) -> Optional[Path]:
 def images_time(pipeline_dir) -> Optional[float]:
     """When the images the atlas is fitted to were last written (newest
     ``ch*/*.tif`` of that folder), or None when there are none. One directory
-    listing per channel; the times come with the listing."""
-    _source, folder, _meta = registered_input(pipeline_dir)
+    listing per channel; the times come with the listing. None too when the
+    registration's recorded images are gone (config.RegisteredImagesMissing):
+    a status reader must still be able to show the brain."""
+    try:
+        _source, folder, _meta = registered_input(pipeline_dir)
+    except RegisteredImagesMissing:
+        return None
     if folder is None or not Path(folder).is_dir():
         return None
     newest = None
