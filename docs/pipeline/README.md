@@ -104,6 +104,22 @@ parent.
 It never substitutes another file under the chosen run's name. Only when no run
 has been chosen does it take the file step 5 classifies.
 
+**The Setup & Tuning Classify button and a chosen run.** Classify always
+classifies the file step 5 classifies, whatever run is chosen. The tracker row
+it writes names, as the classification's parent, the detection run that wrote
+**that file**:
+
+- the chosen run (Load Best / Load Selected), but only if it is a run of the
+  loaded brain and its own candidates file (found as described above) is the
+  file being classified;
+- otherwise the run named in the record beside the file
+  (`detected_cells.provenance.json`);
+- otherwise no parent at all. An empty parent means "not known", which is
+  true; naming the chosen run for a file it did not write would not be.
+
+A classification of a pre-filter output still names the pre-filter run as its
+parent, as before.
+
 ## Which folders are brains?
 
 Every script, the napari plugins, the utilities and the `mousebrain` launcher

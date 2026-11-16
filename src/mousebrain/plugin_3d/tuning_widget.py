@@ -483,6 +483,42 @@ def _candidates_file_of_run(run):
     return candidate
 
 
+def _same_file(a, b):
+    """True when two paths name the same file (resolved, case as the OS has it)."""
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return False
+
+
+def _detection_parent_of(candidates_xml, tracker, brain_name, chosen_exp_id):
+    """The detection run a classification of ``candidates_xml`` descends from.
+
+    - The run chosen with Load Best / Load Selected, but ONLY when that run is
+      of this brain and its own candidates file (``_candidates_file_of_run``)
+      is the very file being classified.
+    - Otherwise the run named by the provenance record beside the file
+      (``detected_cells.provenance.json``, written by step 4).
+    - Otherwise None: no parent is recorded.
+
+    WHY: the Classify button classifies the file step 5 would classify, which
+    is not necessarily the chosen run's file (a later run may have replaced
+    it, or the chosen run kept its file elsewhere). Recording the chosen run as
+    the parent of a classification of some other file is a false provenance;
+    an empty parent is honest.
+    """
+    if chosen_exp_id and tracker is not None:
+        try:
+            run = tracker.get_experiment(chosen_exp_id)
+        except Exception:
+            run = None
+        if run and _run_is_of_brain(run, brain_name):
+            own = _candidates_file_of_run(run)
+            if own is not None and _same_file(own, candidates_xml):
+                return chosen_exp_id
+    return _provenance_exp_id(candidates_xml)
+
+
 class TuningWidget(QWidget):
     """Widget for tuning BrainGlobe settings."""
 
@@ -7206,9 +7242,14 @@ class TuningWidget(QWidget):
                     if pf_output and pf_output in candidates_str:
                         parent_exp = pf.get('exp_id')
                         break
-            # If no prefilter parent found, link to the detection source
-            if not parent_exp and hasattr(self, '_prefilter_source_exp_id') and self._prefilter_source_exp_id:
-                parent_exp = self._prefilter_source_exp_id
+            # If no prefilter parent found, link to the detection run that
+            # wrote THIS file: the chosen run only if the file is its own,
+            # else the run its provenance record names, else none
+            # (_detection_parent_of says why).
+            if not parent_exp:
+                parent_exp = _detection_parent_of(
+                    candidates_xml, self.tracker, self.current_brain.name,
+                    getattr(self, '_prefilter_source_exp_id', None))
 
             exp_id = self.tracker.log_classification(
                 brain=self.current_brain.name,
