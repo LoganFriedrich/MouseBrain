@@ -70,15 +70,22 @@ that produced it. The registry lives inside the pipeline data folder:
   as mousedb, for example) may pull from this folder; the manifest tells it
   what is there, how it was produced and whether it is still current.
 - Inspect a registry: `mousebrain-registry --name <analysis> --stale --summary`.
-- Each entry of the 2D batch (`ENCR_Detection`) records the parameters that
-  run actually used, so a batch output made with anything other than the
-  approved method shows as stale. (The other producers, ROI analysis among
-  them, still record the approved method whatever they ran with.) The 2D
+- Each entry of the 2D batch (`<project>_Detection`) records the parameters
+  that run actually used, so a batch output made with anything other than the
+  approved method shows as stale. The ROI counter's entries
+  (`<project>_ROI_Analysis`) record the parameters of the detection entry
+  whose measurements they counted, so they go stale with it. (The other
+  producers still record the approved method whatever they ran with.) The 2D
   batch script prints where each of its parameters came from and warns
   before it runs with anything that is not the approved method. Marking a run best in
   the BrainSlice Run History panel chooses the batch's sigma and percentile
   but does not change the approved method; how to do both is in
   `src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, section 6.
+- Counting cells in hand-drawn regions of 2D slices (`brainslice-roi batch`):
+  where it finds the detection results, which samples it leaves out, how ROI
+  files are kept (never deleted) and how the counts are tied to the
+  measurements they were counted against --
+  [docs/pipeline/ROI_COUNTING.md](docs/pipeline/ROI_COUNTING.md).
 
 ## Annotating ND2 slices (2D: BrainSlice, tab "7. Annotate")
 

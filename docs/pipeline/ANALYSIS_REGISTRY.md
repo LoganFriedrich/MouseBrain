@@ -152,15 +152,16 @@ mousebrain-registry --name 3D_Orientation_Check --no-approved-method --stale
   result, the values it ACTUALLY ran with. A result made with any other
   value is therefore stale, and its banner says so before it runs (see
   `src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, section 6).
-- The slice ROI counting tool records, as the parameters of each result,
-  the approved method of ITS analysis, not the values it ran with (those
-  come from its command line and are in the tuning tracker). **Know this
-  before trusting the ROI analysis's stale count:** every ROI result is
-  recorded as made with the approved method, and so counts as current, even
-  when the run used other settings; its "stale vs approved" count tells you
-  only which results were registered before the approved method last
-  changed. Naming a slice analysis under `"analyses"` takes effect from its
-  next batch run.
+- The ROI counter (`brainslice-roi batch`, analysis `<project>_ROI_Analysis`)
+  records, for each sample's counts, the parameters of the DETECTION entry
+  whose measurements it counted -- so ROI counts go stale exactly when the
+  detection they rest on does. If the measurements cannot be tied to a
+  current detection entry, the counts are recorded with a fixed "not tied"
+  method and always show as stale (see [ROI_COUNTING.md](ROI_COUNTING.md)).
+  If you give `<project>_Detection` its own entry under `"analyses"`, give
+  `<project>_ROI_Analysis` the same entry, or every ROI count shows as stale;
+  the counter prints a warning when the two differ. Naming a slice analysis
+  under `"analyses"` takes effect from its next batch run.
 - The old form -- the parameters alone, `{ "detection": ..., ... }` -- still
   works and means the same as `{"default": {...}}`.
 - `"default"` and `"analyses"` are reserved words at the top of the file: a

@@ -540,18 +540,20 @@ method"). Which one the batch (`<project>_Detection`) is judged by:
 - otherwise (no file, a file holding the parameters alone, or a per-analysis
   file that does not name it) -> the SHARED method, which is also the
   approved method of every other analysis that follows it -- the ROI analysis
-  (`<project folder>_ROI_Analysis`) included, unless the file names that
+  (`<project>_ROI_Analysis`) included, unless the file names that
   one too.
 
-Editing the shared method therefore has two effects on those other analyses:
-
-- every existing entry of theirs is judged against the new numbers, so the
-  ones made with the old numbers show as **stale**
-  (`mousebrain-registry --name <project folder>_ROI_Analysis --stale`, and in any
-  database that pulls the registry);
-- the ROI analysis records the approved method in each new entry whatever it
-  ran with, so its later entries carry the new numbers even though it did
-  not run with them.
+Editing the shared method therefore changes what those other analyses are
+judged against: every existing entry of theirs is compared with the new
+numbers, so the ones made with the old numbers show as **stale**
+(`mousebrain-registry --name <project>_ROI_Analysis --stale`, and in any
+database that pulls the registry). The ROI counter records, in each of its
+entries, the parameters of the detection entry it counted against
+(`docs/pipeline/ROI_COUNTING.md`), so its counts go stale together with the
+detection they rest on -- as long as both analyses are judged by the same
+approved method. Give the batch its own entry (step 2) and the ROI analysis
+the same one, or every ROI count shows as stale; `brainslice-roi batch`
+warns when the two differ.
 
 How the banner tells you: whenever it lists a difference from the approved
 method (`[!] NOT the approved method`) -- whatever the numbers came from:
