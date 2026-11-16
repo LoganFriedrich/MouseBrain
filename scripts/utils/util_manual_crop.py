@@ -238,79 +238,15 @@ Examples:
         print(f"Crop position: Y={y_crop}")
         print(f"Keeping: {rows_kept}/{total_rows} rows ({100*rows_kept/total_rows:.1f}%)\n")
 
-        source_folder = pipeline_folder / FOLDER_EXTRACTED
-        output_folder = pipeline_folder / "2_Cropped_For_Registration"
-
-        # Load metadata
-        meta_path = pipeline_folder / FOLDER_EXTRACTED / "metadata.json"
-        metadata = None
-        if meta_path.exists():
-            with open(meta_path, 'r') as f:
-                metadata = json.load(f)
-
-        # Perform the crop
-        import tifffile
-        output_folder.mkdir(parents=True, exist_ok=True)
-
-        # Find all channels
-        channels = sorted([d for d in source_folder.iterdir()
-                         if d.is_dir() and d.name.startswith("ch")])
-
-        total_files = sum(len(list(ch.glob("Z*.tif"))) for ch in channels)
-        processed = 0
-
-        for ch_folder in channels:
-            ch_name = ch_folder.name
-            print(f"Processing {ch_name}...")
-
-            out_ch = output_folder / ch_name
-            out_ch.mkdir(exist_ok=True)
-
-            tiff_files = sorted(ch_folder.glob("Z*.tif"))
-
-            for tiff_path in tiff_files:
-                img = tifffile.imread(str(tiff_path))
-                cropped = img[:y_crop, :]  # Keep everything BEFORE y_crop (top portion)
-
-                out_path = out_ch / tiff_path.name
-                tifffile.imwrite(str(out_path), cropped)
-
-                processed += 1
-                if processed % 50 == 0:
-                    print(f"  {processed}/{total_files} files processed ({100*processed/total_files:.1f}%)")
-
-        print(f"  {processed}/{total_files} files processed (100.0%)")
-
-        # Save metadata
-        print("\nSaving metadata...")
-        first_ch = channels[0]
-        first_tif = sorted(first_ch.glob("Z*.tif"))[0]
-        first_img = tifffile.imread(str(first_tif))
-        orig_y, x = first_img.shape
-        z = len(list(first_ch.glob("Z*.tif")))
-
-        crop_meta = metadata.copy() if metadata else {}
-        crop_meta['crop_y_end'] = y_crop  # Crop line position (everything before this is kept)
-        crop_meta['crop_y_original'] = orig_y
-        crop_meta['crop_y_new'] = y_crop  # New height = y_crop (kept top portion)
-        crop_meta['crop_method'] = 'napari_plugin_manual'
-        crop_meta['dimensions_cropped'] = {
-            'z': z,
-            'y': y_crop,  # New Y dimension
-            'x': x,
-        }
-
-        with open(output_folder / "metadata.json", 'w') as f:
-            json.dump(crop_meta, f, indent=2)
-
-        # Clean up temp file
-        crop_file.unlink()
-
-        print(f"\n{'='*60}")
-        print("[OK] Crop complete!")
-        print(f"{'='*60}")
-        print(f"Output: {output_folder}")
-        print(f"\nYou can now run the next pipeline step (registration).")
+        # The crop itself is the napari tool's own (crop_subprocess.do_crop):
+        # the new crop is built beside the old one and swapped in only when
+        # complete, the previous crop kept in 2_Cropped_For_Registration/_archive.
+        # This used to be a copy of that code that wrote over the old crop
+        # plane by plane, so an interrupted crop mixed old and new planes
+        # under the old metadata.
+        from mousebrain.plugin_3d.crop_subprocess import do_crop
+        if not do_crop(pipeline_folder):
+            print("\n[FAIL] The crop was not applied.")
     else:
         print("\n(Crop position not saved - napari closed without applying crop)")
 

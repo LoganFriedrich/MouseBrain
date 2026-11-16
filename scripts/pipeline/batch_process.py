@@ -460,8 +460,9 @@ def step_already_done(brain_path: Path, step: str, redo_from: str = '') -> bool:
     and it is asked again before each step, so a step that has just run can
     make a later output stale -- but only by the rules stale_outputs has:
     newer candidates make the classification and the counts stale, a newer
-    classification or registration makes the counts stale. A re-run
-    extraction or crop does NOT by itself make the registration stale.
+    classification or registration makes the counts stale, and newer images
+    (a re-crop) make the registration stale -- it is then registered again
+    and waits for a new approval.
 
     ``redo_from``: the step a previous attempt FAILED at or was STOPPED in.
     That step and every step after it run again even when their files are

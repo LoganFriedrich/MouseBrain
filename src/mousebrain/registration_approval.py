@@ -37,6 +37,15 @@ could approve it. A registration is complete only when every one of its output
 files (FINGERPRINT_FILES) is there -- registration_complete(), the one test
 every reader uses. An incomplete registration cannot be approved.
 
+A REGISTRATION WHOSE IMAGES CHANGED IS OUT OF DATE
+The atlas is fitted to one set of images (``registered_from.json`` names the
+folder). A re-crop rewrites those images; the registration then describes
+images that are no longer there, yet it stayed "registered" and "approved" and
+step 4 ran on it. Now a registration older than the newest image it was fitted
+to, or whose recorded images are gone, is OUT_OF_DATE: no reader counts it as
+registered, nobody can approve it, step 4's approval gate is closed, and the
+brain is at "register" again (step 3's --batch registers it).
+
 A REJECTED REGISTRATION STAYS REJECTED
 Rejecting used to only move an existing approval away (and do nothing at all
 for a registration never approved), so the next reader showed the
@@ -84,6 +93,7 @@ FINGERPRINT_FILES = ("brainreg.json", "registered_atlas.tiff", "boundaries.tiff"
 NOT_REGISTERED = "not_registered"      # no brainreg.json: nothing to approve
 INCOMPLETE = "incomplete"              # started, but an output file is missing
 REJECTED = "rejected"                  # a person rejected THIS registration
+OUT_OF_DATE = "out_of_date"            # its images were made again, or are gone
 UNAPPROVED = "unapproved"              # registered, no marker
 APPROVED = "approved"                  # marker names this registration
 OTHER_REGISTRATION = "other_registration"  # marker names a different one
@@ -91,7 +101,7 @@ UNRECORDED = "unrecorded"              # old-style marker: does not say which
 
 # The states in which the brain needs registering (again) before anything
 # else: there is nothing a person could approve.
-NEEDS_REGISTRATION = (NOT_REGISTERED, INCOMPLETE, REJECTED)
+NEEDS_REGISTRATION = (NOT_REGISTERED, INCOMPLETE, REJECTED, OUT_OF_DATE)
 
 _STATE_TEXT = {
     NOT_REGISTERED: "not registered yet",
@@ -177,6 +187,60 @@ def read_marker(reg_folder) -> Optional[dict]:
     return {"legacy": text.strip()}
 
 
+_UNSET = object()
+
+
+def registered_images_time(pipeline_dir) -> Optional[float]:
+    """When the images the atlas is fitted to were last written: the newest
+    ``ch*/*.tif`` of the folder config.registered_input names, or None when
+    there are none. One directory listing per channel; the times come with
+    the listing. Raises config.RegisteredImagesMissing when the registration
+    records a folder whose images are gone."""
+    import os
+    from mousebrain.config import registered_input
+    _source, folder, _meta = registered_input(pipeline_dir)
+    if folder is None or not Path(folder).is_dir():
+        return None
+    newest = None
+    for ch in Path(folder).glob("ch*"):
+        if not ch.is_dir():
+            continue
+        with os.scandir(ch) as it:
+            for entry in it:
+                if entry.name.lower().endswith((".tif", ".tiff")):
+                    t = entry.stat().st_mtime
+                    newest = t if newest is None or t > newest else newest
+    return newest
+
+
+# File times are compared with this much slack: copies and network shares
+# round modification times.
+_SLACK_SECONDS = 2.0
+
+
+def images_problem(reg_folder, images_time=_UNSET) -> str:
+    """Why the registration in this folder no longer fits its images, or "".
+
+    "" also when nothing can be said (no registration, no images found).
+    ``images_time``: the caller's own registered_images_time() result, so a
+    reader that already listed the images does not list them twice; left
+    out, the images are listed here."""
+    from mousebrain.config import RegisteredImagesMissing
+    reg = _reg(reg_folder)
+    reg_t = registration_time(reg)
+    if reg_t is None:
+        return ""
+    if images_time is _UNSET:
+        try:
+            images_time = registered_images_time(reg.parent)
+        except RegisteredImagesMissing as e:
+            return "the images it was fitted to are gone: %s" % e
+    if images_time is not None and reg_t + _SLACK_SECONDS < images_time:
+        return ("its images were made again after it was registered (a re-crop or "
+                "re-extraction), so the atlas fit describes the earlier images")
+    return ""
+
+
 def read_rejection(reg_folder) -> Optional[dict]:
     """The rejection marker's content, or None when there is none."""
     marker = _reg(reg_folder) / REJECTION_MARKER
@@ -189,10 +253,12 @@ def read_rejection(reg_folder) -> Optional[dict]:
         return {}
 
 
-def approval_state(reg_folder) -> Tuple[str, str]:
+def approval_state(reg_folder, images_time=_UNSET) -> Tuple[str, str]:
     """(state, explanation) for the registration in this folder. Only
     APPROVED means a person approved the registration that is there now; the
-    states in NEEDS_REGISTRATION mean the brain has to be registered again."""
+    states in NEEDS_REGISTRATION mean the brain has to be registered again.
+
+    ``images_time``: see images_problem()."""
     current = registration_fingerprint(reg_folder)
     if current is None:
         return NOT_REGISTERED, _STATE_TEXT[NOT_REGISTERED]
@@ -206,6 +272,9 @@ def approval_state(reg_folder) -> Tuple[str, str]:
         return REJECTED, "rejected by %s at %s%s -- register the brain again" % (
             rejection.get("rejected_by") or "someone", rejection.get("rejected_at") or "?",
             (" (" + rejection["note"] + ")") if rejection.get("note") else "")
+    problem = images_problem(reg_folder, images_time)
+    if problem:
+        return OUT_OF_DATE, "out of date: %s -- register the brain again" % problem
     marker = read_marker(reg_folder)
     if marker is None:
         return UNAPPROVED, _STATE_TEXT[UNAPPROVED]
@@ -246,7 +315,8 @@ def approve(reg_folder, approved_by: Optional[str] = None, note: str = "",
     script's yes/no question). Raises ValueError when there is nothing a
     person could approve: no registration (an approval written before the
     registration exists would be inherited by whatever lands there later), or
-    a registration that did not finish. A REJECTED registration is refused
+    a registration that did not finish, or one whose images changed since
+    (OUT_OF_DATE). A REJECTED registration is refused
     too, unless ``allow_rejected`` -- only the approval script passes it,
     after asking the person whether they mean to overrule the rejection; the
     rejection then goes into ``_archive/``.
@@ -256,7 +326,7 @@ def approve(reg_folder, approved_by: Optional[str] = None, note: str = "",
     if current is None:
         raise ValueError("no registration to approve in %s (brainreg.json not found)" % reg)
     state, text = approval_state(reg)
-    if state == INCOMPLETE:
+    if state in (INCOMPLETE, OUT_OF_DATE):
         raise ValueError("cannot approve the registration in %s: %s" % (reg, text))
     if state == REJECTED:
         if not allow_rejected:

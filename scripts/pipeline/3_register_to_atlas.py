@@ -237,7 +237,8 @@ FOLDER_CROPPED = "2_Cropped_For_Registration"
 FOLDER_REGISTRATION = "3_Registered_Atlas"
 
 from mousebrain.registration_approval import (APPROVAL_MARKER, FINGERPRINT_FILES,
-                                              REJECTED, REJECTION_MARKER, approval_state,
+                                              OUT_OF_DATE, REJECTED, REJECTION_MARKER,
+                                              approval_state,
                                               missing_registration_files,
                                               retire_for_new_registration)
 
@@ -306,6 +307,7 @@ def check_registration_status(pipeline_folder):
         - "needs_registration": Not registered yet
         - "incomplete": Started but failed/incomplete
         - "rejected": Finished, but a person rejected it
+        - "out_of_date": Finished, but its images were made again since
         - "complete": Successfully registered
     """
     pipeline_folder = Path(pipeline_folder)
@@ -333,6 +335,10 @@ def check_registration_status(pipeline_folder):
     state, text = approval_state(reg_folder)
     if state == REJECTED:
         return "rejected", text
+    # Its images were made again after it (a re-crop), or are gone: it
+    # describes images that are not there, so it is registered again.
+    if state == OUT_OF_DATE:
+        return "out_of_date", text
     
     return "complete", "registration complete"
 
@@ -820,7 +826,8 @@ Examples:
     elif args.batch:
         # Non-interactive: process all pending
         to_process = [i for i, (status, _) in enumerate(statuses)
-                      if status in ["needs_registration", "incomplete", "rejected"]]
+                      if status in ["needs_registration", "incomplete", "rejected",
+                                    "out_of_date"]]
 
         # Filter by brain name if specified. An exact folder name (or
         # <mouse folder>/<brain folder>) means that brain only: a part of a

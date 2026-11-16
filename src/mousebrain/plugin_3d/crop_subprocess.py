@@ -2,14 +2,66 @@
 """
 Subprocess script for performing the actual crop operation.
 Called by the napari plugin after crop position is selected.
+
+WHY THE NEW CROP IS BUILT BESIDE THE OLD ONE AND SWAPPED IN
+A crop used to be written straight into 2_Cropped_For_Registration, plane by
+plane, over the crop already there, with metadata.json last. An interrupted
+re-crop (the window closed, the computer restarted) then left a folder of
+mixed planes -- some cut at the new line, some at the old -- under the OLD
+metadata, which every reader took for a finished crop. Now the new crop is
+written to 2_Cropped_For_Registration.partial; only when every plane and the
+metadata are written is the previous crop moved into
+2_Cropped_For_Registration/_archive/<time>/ (kept, not deleted) and the new
+one moved in, metadata.json last. An interrupted crop leaves the old crop
+untouched (or, if it stops during the swap itself, a crop folder without
+metadata.json, which every reader shows as "not cropped").
+
+A re-crop makes the registration fitted to the earlier crop OUT OF DATE (see
+mousebrain.registration_approval): the brain is back at "Register".
 """
 
+import os
+import shutil
 import sys
 import json
+from datetime import datetime
 from pathlib import Path
 
 FOLDER_EXTRACTED = "1_Extracted_Full"
 FOLDER_CROPPED = "2_Cropped_For_Registration"
+PARTIAL_SUFFIX = ".partial"
+
+
+def swap_in(output_folder: Path, partial: Path) -> Path:
+    """Move the finished crop in ``partial`` into ``output_folder``.
+
+    Everything already in ``output_folder`` (except its ``_archive``) goes
+    first into ``output_folder/_archive/<time>/``. The new crop's
+    metadata.json is moved LAST, so a reader never sees new metadata over
+    planes that are not all there. Returns the archive folder, or None when
+    there was nothing to archive.
+    """
+    output_folder.mkdir(parents=True, exist_ok=True)
+    old = [p for p in output_folder.iterdir() if p.name != "_archive"]
+    archive = None
+    if old:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive = output_folder / "_archive" / stamp
+        n = 1
+        while archive.exists():
+            n += 1
+            archive = output_folder / "_archive" / ("%s_%d" % (stamp, n))
+        archive.mkdir(parents=True)
+        # metadata.json FIRST: from this moment the folder is "not cropped"
+        # to every reader, until the new metadata lands.
+        old.sort(key=lambda p: p.name != "metadata.json")
+        for p in old:
+            shutil.move(str(p), str(archive / p.name))
+    new = sorted(partial.iterdir(), key=lambda p: p.name == "metadata.json")
+    for p in new:
+        os.replace(str(p), str(output_folder / p.name))
+    partial.rmdir()
+    return archive
 
 
 def do_crop(pipeline_folder: Path):
@@ -52,6 +104,12 @@ def do_crop(pipeline_folder: Path):
 
     source_folder = pipeline_folder / FOLDER_EXTRACTED
     output_folder = pipeline_folder / FOLDER_CROPPED
+    # The new crop is built here and swapped in only when complete (see the
+    # module docstring). A .partial left by an earlier interrupted crop is
+    # unfinished work: it is started again from nothing.
+    partial = pipeline_folder / (FOLDER_CROPPED + PARTIAL_SUFFIX)
+    if partial.exists():
+        shutil.rmtree(partial)
 
     # Load metadata
     meta_path = pipeline_folder / FOLDER_EXTRACTED / "metadata.json"
@@ -62,7 +120,7 @@ def do_crop(pipeline_folder: Path):
 
     # Perform the crop
     import tifffile
-    output_folder.mkdir(parents=True, exist_ok=True)
+    partial.mkdir(parents=True)
 
     # Find all channels
     channels = sorted([d for d in source_folder.iterdir()
@@ -75,7 +133,7 @@ def do_crop(pipeline_folder: Path):
         ch_name = ch_folder.name
         print(f"Processing {ch_name}...")
 
-        out_ch = output_folder / ch_name
+        out_ch = partial / ch_name
         out_ch.mkdir(exist_ok=True)
 
         tiff_files = sorted(ch_folder.glob("Z*.tif"))
@@ -112,16 +170,23 @@ def do_crop(pipeline_folder: Path):
         'x': x,
     }
 
-    with open(output_folder / "metadata.json", 'w') as f:
+    with open(partial / "metadata.json", 'w') as f:
         json.dump(crop_meta, f, indent=2)
+
+    # Every plane and the metadata are written: swap the new crop in.
+    archive = swap_in(output_folder, partial)
 
     # Clean up temp file
     crop_file.unlink()
 
     print(f"\n{'='*60}")
-    print("\u2713 Crop complete!")
+    print("[OK] Crop complete!")
     print(f"{'='*60}")
     print(f"Output: {output_folder}")
+    if archive:
+        print(f"The previous crop was moved to: {archive}")
+        print("A registration made on the previous crop is now OUT OF DATE:")
+        print("the brain is back at 'Register' -- register it again.")
     print(f"\nYou can now run the next pipeline step (registration).")
 
     return True

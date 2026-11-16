@@ -36,8 +36,10 @@ THE RULES (first missing item, in this order, is the brain's step)
             file brainreg writes (registration_approval.registration_complete).
             ``brainreg.json`` alone is not enough -- brainreg writes it before
             it registers, so a failed or stopped run leaves it behind.
-            A registration a person REJECTED does not count either: the
-            brain is back at "register" (registration_approval.reject).
+            A registration a person REJECTED does not count either, nor one
+            that is OUT OF DATE (its images were made again after it, or are
+            gone): the brain is back at "register"
+            (registration_approval).
   approve   a person's approval of THIS registration (see
             ``mousebrain.registration_approval``). An approval of an earlier
             registration, or one that does not say which registration it was
@@ -56,9 +58,13 @@ An output made from something that has since been replaced is stale: it
 exists, but it describes an earlier state of the brain. Nothing is deleted or
 moved -- the step is simply shown again, with the reason, so a person re-runs
 it. What each output depends on:
+  registration    the images it was fitted to (registered_from.json names
+                  them). Older than the newest of them (a re-crop), or the
+                  images are gone: stale, and its approval no longer counts.
   counts          the registration (regions come from the atlas fit) and the
-                  classification. Older than either: stale. So re-registering
-                  always makes the counts stale.
+                  classification. Older than either, or made on a registration
+                  that is stale: stale. So re-registering always makes the
+                  counts stale.
   classification  the candidates it classified, and the images. Older than
                   either: stale.
   detection       the images the atlas is fitted to: its coordinates are
@@ -74,12 +80,12 @@ A stale earlier output makes everything after it stale too.
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import os
-
 from mousebrain.config import (RegisteredImagesMissing, registered_candidate_folders,
-                               registered_input, registered_space)
+                               registered_space)
 from mousebrain.registration_approval import (APPROVED, NEEDS_REGISTRATION,
                                               NOT_REGISTERED, approval_state,
+                                              images_problem,
+                                              registered_images_time,
                                               registration_complete,
                                               registration_time)
 
@@ -167,43 +173,49 @@ def _newest_csv(folder: Path) -> Optional[Path]:
 
 def images_time(pipeline_dir) -> Optional[float]:
     """When the images the atlas is fitted to were last written (newest
-    ``ch*/*.tif`` of that folder), or None when there are none. One directory
-    listing per channel; the times come with the listing. None too when the
+    ``ch*/*.tif`` of that folder), or None when there are none
+    (registration_approval.registered_images_time). None too when the
     registration's recorded images are gone (config.RegisteredImagesMissing):
-    a status reader must still be able to show the brain."""
+    a status reader must still be able to show the brain -- stale_outputs
+    and approval_state say that the images are gone."""
     try:
-        _source, folder, _meta = registered_input(pipeline_dir)
+        return registered_images_time(pipeline_dir)
     except RegisteredImagesMissing:
         return None
-    if folder is None or not Path(folder).is_dir():
-        return None
-    newest = None
-    for ch in Path(folder).glob("ch*"):
-        if not ch.is_dir():
-            continue
-        with os.scandir(ch) as it:
-            for entry in it:
-                if entry.name.lower().endswith((".tif", ".tiff")):
-                    t = entry.stat().st_mtime
-                    newest = t if newest is None or t > newest else newest
-    return newest
+
+
+def _images(pipeline_dir):
+    """(newest image time or None, why the registered images are gone or "")."""
+    try:
+        return registered_images_time(pipeline_dir), ""
+    except RegisteredImagesMissing as e:
+        return None, str(e)
 
 
 def _older(a: Optional[float], b: Optional[float]) -> bool:
     return a is not None and b is not None and a + _SLACK_SECONDS < b
 
 
-def stale_outputs(pipeline_dir, candidates: Optional[Path] = None) -> Dict[str, str]:
-    """{'detect'|'classify'|'count': why} for outputs made from something that
-    has since been replaced. See STALE OUTPUTS in the module docstring."""
+def stale_outputs(pipeline_dir, candidates: Optional[Path] = None,
+                  images=None) -> Dict[str, str]:
+    """{'register'|'detect'|'classify'|'count': why} for outputs made from
+    something that has since been replaced. See STALE OUTPUTS in the module
+    docstring. ``images``: brain_status's own _images() result, so the image
+    folders are listed once per brain."""
     p = Path(pipeline_dir)
     reg_t = registration_time(p / FOLDER_REGISTRATION)
-    img_t = images_time(p)
+    img_t, gone = images if images is not None else _images(p)
     cand = candidates if candidates is not None else find_candidates(p)
     cand_t = _mtime(cand)
     cells_t = _mtime(p / FOLDER_CLASSIFICATION / "cells.xml")
     counts_t = _mtime(_newest_csv(p / FOLDER_ANALYSIS))
     stale = {}
+
+    if reg_t is not None:
+        problem = (("the images it was fitted to are gone: " + gone) if gone
+                   else images_problem(p / FOLDER_REGISTRATION, img_t))
+        if problem:
+            stale["register"] = problem
 
     if _older(cand_t, img_t):
         stale["detect"] = ("the candidates are older than the images they are positions in "
@@ -221,7 +233,9 @@ def stale_outputs(pipeline_dir, candidates: Optional[Path] = None) -> Dict[str, 
             stale["classify"] = "older than the images"
 
     if counts_t is not None:
-        if "classify" in stale:
+        if "register" in stale:
+            stale["count"] = "counted on a registration that no longer fits its images"
+        elif "classify" in stale:
             stale["count"] = "counted from a stale classification"
         elif _older(counts_t, reg_t):
             stale["count"] = "counted on an earlier registration (the brain was registered again since)"
@@ -250,7 +264,12 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
     analysis = p / FOLDER_ANALYSIS
 
     recorded_space = registered_space(p)
-    approval, approval_text = approval_state(reg)
+    # The registered images are listed once, and only for a finished
+    # registration (nothing else needs them), then shared by the approval
+    # state and the stale-output rules.
+    images = _images(p) if registration_complete(reg) else (None, "")
+    approval, approval_text = (approval_state(reg) if images[1]
+                               else approval_state(reg, images_time=images[0]))
     candidates = find_candidates(p)
     status = {
         "has_ims": raw.is_dir() and any(raw.glob("*.ims")),
@@ -276,7 +295,8 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
     status["register_problem"] = (approval_text if approval in NEEDS_REGISTRATION
                                   and approval != NOT_REGISTERED else "")
     status["candidates"] = candidates
-    status["stale"] = stale_outputs(p, candidates) if registration_complete(reg) else {}
+    status["stale"] = (stale_outputs(p, candidates, images=images)
+                       if registration_complete(reg) else {})
     if status["register_problem"] and status["counted"]:
         # Regions come from the atlas fit; counts made on a fit that no longer
         # counts (a person rejected it ...) are not counts of this brain.

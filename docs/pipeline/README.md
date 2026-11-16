@@ -43,7 +43,7 @@ is the first item on this list that is not done yet:
 |---|---|
 | Extract | `1_Extracted_Full/metadata.json` exists (extraction writes it last, so it means every channel finished) |
 | Crop | `metadata.json` exists in `2_Cropped_For_Registration` or `2_Cropped_For_Registration_Manual`, or the brain was registered on its full extraction (it arrived already cut, so there is nothing to crop) |
-| Register | a FINISHED registration is in `3_Registered_Atlas`: all four of `brainreg.json`, `registered_atlas.tiff`, `boundaries.tiff` and `deformation_field_0.tiff` (see "A registration that did not finish" below) |
+| Register | a FINISHED registration is in `3_Registered_Atlas`: all four of `brainreg.json`, `registered_atlas.tiff`, `boundaries.tiff` and `deformation_field_0.tiff` (see "A registration that did not finish" below) -- and not rejected by a person, and not out of date (see "Stale outputs") |
 | Approve | a person approved this registration (see "Registration QC & Approval" below) |
 | Detect | a candidates file is where step 5 will look: the top of `4_Cell_Candidates`, or `4_Cell_Candidates/from_<the folder the atlas was fitted to>` |
 | Pre-filter | optional (RUN_PIPELINE only). Done when any pre-filter output exists -- a `prefilter_report.json` in a `prefiltered_<time>` folder, or step 5's `prefiltered/interior_candidates.xml`. It is never shown once the brain is classified: step 5 pre-filters on its own by default |
@@ -52,8 +52,13 @@ is the first item on this list that is not done yet:
 
 **Stale outputs.** A file that exists but was made from something replaced since
 is shown as `[!] ... STALE: <why>` and its step is offered again (nothing is
-deleted or moved). Counts are stale when they are older than the current
-registration or the classification; a classification when it is older than its
+deleted or moved). The registration is OUT OF DATE when the images it was
+fitted to were made again after it (a re-crop) or are gone: every reader shows
+`[!] Registered to atlas -- out of date: ...`, the brain is back at
+"Register", its approval no longer counts (step 4 will not run, no Approve
+button accepts it) and step 3's `--batch` registers it again. Counts are stale
+when they are older than the current registration or the classification, or
+were made on an out-of-date registration; a classification when it is older than its
 candidates or the images; detection when it is older than the images the atlas
 is fitted to (or, for a registration that does not record its images, older
 than the registration). Anything made from a stale output is stale too.
@@ -441,8 +446,9 @@ at?" above. What always runs again on a resume:
   and classification;
 - **a step whose output is stale**, by the rules in **Stale outputs** under
   "Which step is a brain at?" above (and anything made from a stale output is
-  stale too). A re-run extraction or crop does **not** by itself make the
-  registration stale -- re-register such a brain by hand.
+  stale too). A re-crop, or a re-extraction when the brain was registered on
+  the full extraction, makes the registration out of date (see Stale outputs).
+  The batch registers it again, and it then waits for a new approval.
 
 The skipped steps are listed in the brain's `skipped_steps` column, and the
 batch prints `Already done (output there and current) -- not run again` for
@@ -620,6 +626,18 @@ python util_manual_crop.py --brain 001_CNT_01_01_1p625x_z4
 # 1. Launch napari
 # 2. Plugins → BrainTools → 3D: 3. Manual Crop
 ```
+
+**Cropping a brain again.** The new crop is first written to
+`2_Cropped_For_Registration.partial` beside the brain's other folders. Only
+when every plane and its `metadata.json` are written is the previous crop moved
+into `2_Cropped_For_Registration/_archive/<date>_<time>/` (kept, not deleted)
+and the new one moved in. If the crop is stopped part-way, the previous crop is
+untouched and the `.partial` folder is left behind; the next crop deletes it and
+starts again. A registration made on the previous crop is then OUT OF DATE (see
+"Which step is a brain at?"): register the brain again and approve the new
+registration. (Before, a crop wrote over the old one plane by plane: a crop
+stopped part-way left old and new planes mixed under the old `metadata.json`,
+and the old registration and its approval stayed valid for detection.)
 
 ### The orientation check (drawn by registration, or on demand)
 
