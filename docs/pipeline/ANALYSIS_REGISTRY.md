@@ -50,14 +50,15 @@ What you may see in `logs/` besides the `.log` files:
   or `.part` (a registration's working files), and files named
   `.clock-<8 letters/digits>` (the lock reading the file server's clock;
   each is deleted at once);
-- `<analysis>.lock.stale-<8 letters/digits>`: a lock left by a crashed writer,
-  taken over by the next writer and about to be deleted;
+- `<analysis>.lock.break`: for a few thousandths of a second, while a writer
+  takes over a lock left by a crashed writer (only one writer at a time may
+  do that, and this file is how the others know to keep their hands off);
 - only after a manifest was damaged, `<analysis>.registry.json.unreadable-<time>`
   (see "When the manifest cannot be read" -- do NOT delete this one before
   you have recovered its entries).
 
 Leave the lock and the other files alone while anything might be registering.
-Once nothing is registering, a `.lock`, a dot-file or a `.lock.stale-...`
+Once nothing is registering, a `.lock`, a dot-file or a `.lock.break`
 file that is still there was left by a crash (power cut, a process ended in
 Task Manager) and is safe to delete.
 

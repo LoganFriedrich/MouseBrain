@@ -317,6 +317,11 @@ brain that still needs it, as before.
 made holding `pipeline_status.csv.lock` (beside it) and written to a temporary
 file that is swapped in whole. So a crash or a full disk never leaves the file
 cut short, and two batches running at once do not drop each other's rows.
+(The one case no lock file can cover: a batch whose computer stopped dead for
+more than two minutes in the middle of a write -- asleep, or cut off from the
+shared drive -- and then carried on. Its lock was taken over meanwhile, so its
+write and another batch's can overlap. If that happened, run
+`python batch_process.py --status` and re-run any brain whose row looks wrong.)
 
 - A batch that finds the lock taken waits and prints
   `Waiting for the lock on pipeline_status.csv (held by ...)` -- normally for
@@ -325,7 +330,12 @@ cut short, and two batches running at once do not drop each other's rows.
 - A lock stays behind only when a batch crashed (or was ended) in the middle of
   a write. The next change takes it over after two minutes and prints
   `Took over a lock left ... s ago by: ...`. Seeing that line when no batch
-  crashed is a fault worth reporting.
+  crashed is a fault worth reporting. When several batches are waiting on the
+  same old lock, they take it over one at a time: for a few thousandths of a
+  second there is a second file, `pipeline_status.csv.lock.break`, held by the
+  one doing it, and the others leave the lock alone meanwhile. That file stays
+  behind only if a batch dies in that instant; the next batch to wait removes
+  it after two minutes and says so (`Removed pipeline_status.csv.lock.break ...`).
 - A batch that has waited five minutes stops with a message naming the lock
   file and who holds it: delete that file only when no batch is running. The
   five-minute limit holds even when an old lock cannot be removed (some program

@@ -32,10 +32,10 @@ Layout (rooted at the registry root, by default <pipeline root>/Registry/)
     |                                  logs/ may also hold temporary files
     |                                  whose names start with "." and end in
     |                                  ".tmp" or ".part", and the lock's clock
-    |                                  probes ".clock-<8 hex>"; a lock taken
-    |                                  over from a crashed writer is renamed
-    |                                  "{analysis_name}.lock.stale-<8 hex>"
-    |                                  before it is deleted (see
+    |                                  probes ".clock-<8 hex>"; while a lock
+    |                                  left by a crashed writer is taken over,
+    |                                  "{analysis_name}.lock.break" is held
+    |                                  by the writer doing it (see
     |                                  mousebrain.file_lock). Any of these
     |                                  left behind by a crash is safe to
     |                                  delete when nothing is registering.

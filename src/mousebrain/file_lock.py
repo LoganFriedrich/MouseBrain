@@ -17,9 +17,42 @@ and only if it still holds its own token.
 A holder that crashed leaves the lock behind. A lock that has not been touched
 for ``stale_seconds`` -- measured by the FILE SERVER's clock (the modification
 time of a probe file written there just now), never this machine's clock,
-because machines' clocks differ -- is taken over: it is read again to check it
-is still the lock that was judged stale, renamed aside (only one machine's
-rename can succeed), and checked once more before it is removed.
+because machines' clocks differ -- is taken over (see the next section).
+
+TAKING OVER AN ABANDONED LOCK: ONE BREAKER AT A TIME
+Several waiters usually judge the same abandoned lock stale at the same
+moment. If each were free to remove "the stale lock", the slower one would
+remove the FRESH lock the quicker one had just taken in its place, and two
+writers would be inside the read-change-write at once -- the lost update this
+lock exists to prevent. (An earlier version moved the lock aside, looked at
+it, and put it back when it turned out to be a fresh one; while it was aside
+the lock's name was free, a third writer could create it, and the put-back
+then failed.) So:
+
+- a waiter that wants to break a lock first creates ``<lock>.break`` with
+  O_EXCL -- only one waiter on one machine can hold it;
+- holding it, it looks at the lock AGAIN (its age and its holder line) and
+  deletes it only if it is still the very lock it judged abandoned;
+  otherwise it touches nothing;
+- it never moves a lock aside and never puts one back, and it does no other
+  work on the shared drive while it holds the breaker (the file server's
+  clock was read beforehand).
+
+A second waiter can therefore look only after the first has finished, and by
+then it sees no lock or a fresh one (a different holder line, a new
+modification time) and leaves it alone.
+
+A breaker's own crash leaves ``<lock>.break`` behind. It is held for a few
+milliseconds, so one untouched for max(stale_seconds, BREAKER_STALE_SECONDS)
+is deleted (checking first that it is still the same file) and the takeover
+is tried again on a later pass, never in the same one.
+
+WHAT THIS DOES NOT PROTECT AGAINST: a holder that stopped completely for
+longer than ``stale_seconds`` (its machine asleep, its link to the share
+down) and then carries on. Its lock was rightly judged abandoned and taken
+over, and it does not know. No lock file with a timeout can prevent that;
+the background refresh below makes it need a whole-process stall, not merely
+a slow step.
 
 KEEPING A LIVE LOCK FRESH
 While the block runs, a background thread refreshes the lock every quarter
@@ -72,9 +105,9 @@ FILES IT MAY LEAVE IN THE LOCK'S FOLDER
   it is taken over);
 - ``.clock-<8 hex>``: the clock probe, deleted at once; one can stay
   behind only if the process dies in that instant;
-- ``<lock>.stale-<8 hex>``: a taken-over lock on its way to being deleted;
-  it stays behind only if that delete fails (it is then reported with a
-  [!] line) or the process dies in that instant.
+- ``<lock>.break``: held for a few milliseconds by a waiter taking over an
+  abandoned lock; it stays behind only if that process dies in that
+  instant, and is then cleared by a later waiter (see above).
 All three are safe to delete when nothing is holding the lock.
 
 The calibration tracker (mousebrain.tracker) keeps its own, older copy of
@@ -91,11 +124,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterator, Optional, Union
 
-__all__ = ["exclusive_file_lock", "release_lock", "LockHandle", "RELEASE_RETRY_SECONDS"]
+__all__ = ["exclusive_file_lock", "release_lock", "LockHandle", "RELEASE_RETRY_SECONDS",
+           "BREAKER_STALE_SECONDS"]
 
 # How long a release keeps retrying the delete while another process has the
 # lock file open for a moment (see "RELEASING ON WINDOWS" above).
 RELEASE_RETRY_SECONDS = 10
+
+# A ``<lock>.break`` file (see "TAKING OVER AN ABANDONED LOCK") is held for a
+# few milliseconds. One older than this -- or than the lock's own stale time,
+# whichever is longer -- was left by a process that died holding it.
+BREAKER_STALE_SECONDS = 60
 
 
 def _server_now(folder: Path) -> float:
@@ -146,52 +185,103 @@ def _take_over_stale_lock(lock: Path, seen: str, stale_seconds: float, label: st
 
     *server_offset* is the file server's clock minus this machine's, measured
     once by a waiter (see exclusive_file_lock); without it the server's clock
-    is read now with a probe file."""
+    is read now with a probe file -- BEFORE the breaker is taken, so nothing
+    slow happens while it is held.
+
+    The lock is removed only while holding ``<lock>.break``, after looking at
+    it again; it is never moved aside (see "TAKING OVER AN ABANDONED LOCK" in
+    the module docstring for why)."""
     try:
         mtime = lock.stat().st_mtime
         if server_offset is None:
-            server_now = _server_now(lock.parent)
-        else:
-            server_now = time.time() + server_offset
-        age = server_now - mtime
+            server_offset = _server_now(lock.parent) - time.time()
+        age = time.time() + server_offset - mtime
     except FileNotFoundError:
         return _GONE
     except OSError:
         return _WAIT  # cannot judge its age now (e.g. a delete pending)
     if age < stale_seconds:
         return _WAIT
-    # Check it is still the same lock BEFORE renaming it, so a lock another
-    # process has just taken is (almost always) never moved at all. Moving a
-    # fresh lock and putting it back afterwards could fail if a third
-    # process created a lock in between, leaving two writers each believing
-    # they hold it.
+    # A first look without the breaker: a lock that has already changed hands
+    # needs no breaker at all.
     if _read_or(lock, seen) != seen:
         return _TRY_NOW
-    aside = lock.with_name(lock.name + ".stale-" + uuid.uuid4().hex[:8])
+
+    breaker = lock.with_name(lock.name + ".break")
     try:
-        os.rename(lock, aside)
-    except FileNotFoundError:
-        return _GONE  # another waiter took it over first
-    except OSError:
-        # Not allowed to move it (or it is held open): wait. Trying again at
-        # once would spin on the same refusal without ever timing out.
+        fd = os.open(str(breaker), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        # Another waiter is breaking the lock right now (wait for it), or one
+        # died doing so (clear its breaker; the takeover is tried on a later
+        # pass, so a waiter never clears a breaker and takes it in one go).
+        _clear_abandoned_breaker(breaker, stale_seconds, server_offset, label)
         return _WAIT
-    content = _read_or(aside, seen)
-    if content != seen:
-        # A fresh lock was taken in the instant between the check and the
-        # rename: not ours to break.
+    except OSError:
+        return _WAIT  # not allowed to create it: the wait limit decides
+    try:
+        os.close(fd)
+        # Holding the breaker, no other waiter can remove or replace the lock:
+        # only its own holder can change it. Look again, and delete it only
+        # if it is still the lock judged abandoned above -- same holder line,
+        # still untouched for stale_seconds. A fresh lock another waiter took
+        # before we got the breaker has a different holder line (or, for the
+        # instant before its line is written, a new modification time).
         try:
-            os.rename(aside, lock)
+            mtime = os.stat(str(lock)).st_mtime
+        except FileNotFoundError:
+            return _GONE
         except OSError:
-            print("[%s] [!] Moved a live lock aside by mistake and could not put it "
-                  "back (%s); its holder (%s) and another writer may both be "
-                  "writing. Check the file it protects." % (
-                      label, aside, content.strip() or "?"))
+            return _WAIT
+        age = time.time() + server_offset - mtime
+        if age < stale_seconds:
+            return _WAIT
+        content = _read_or(lock, None)
+        if content is None:
+            # Unreadable now: gone, or open in a way that refuses reading.
+            return _WAIT if lock.exists() else _GONE
+        if content != seen:
+            return _TRY_NOW
+        try:
+            os.unlink(str(lock))
+        except FileNotFoundError:
+            return _GONE
+        except OSError:
+            # Not allowed to delete it (or a program holds it open): wait.
+            # Trying again at once would spin on the same refusal without
+            # ever timing out.
+            return _WAIT
+        print("[%s] [!] Took over a lock left %.0f s ago by: %s"
+              % (label, age, seen.strip() or "(an empty lock file)"))
         return _TRY_NOW
-    print("[%s] [!] Took over a lock left %.0f s ago by: %s"
-          % (label, age, seen.strip() or "(an empty lock file)"))
-    _unlink_retrying(aside)
-    return _TRY_NOW
+    finally:
+        try:
+            os.unlink(str(breaker))
+        except OSError:
+            pass
+
+
+def _clear_abandoned_breaker(breaker: Path, stale_seconds: float,
+                             server_offset: float, label: str) -> None:
+    """Delete ``<lock>.break`` if a process died holding it.
+
+    A live breaker is held for a few milliseconds, so one untouched for
+    max(stale_seconds, BREAKER_STALE_SECONDS) by the server's clock is
+    abandoned. It is looked at twice, and deleted only if it is the same file
+    both times, so a breaker another waiter has just cleared and retaken is
+    left alone."""
+    limit = max(stale_seconds, BREAKER_STALE_SECONDS)
+    try:
+        first = os.stat(str(breaker))
+        if time.time() + server_offset - first.st_mtime < limit:
+            return
+        again = os.stat(str(breaker))
+        if (again.st_mtime, again.st_ctime) != (first.st_mtime, first.st_ctime):
+            return
+        os.unlink(str(breaker))
+    except OSError:
+        return
+    print("[%s] [!] Removed %s, left by a process that stopped while taking "
+          "over an abandoned lock" % (label, breaker.name))
 
 
 def _unlink_retrying(path: Path, still_mine: Optional[Callable[[], bool]] = None) -> bool:

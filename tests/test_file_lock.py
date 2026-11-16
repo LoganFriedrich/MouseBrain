@@ -153,21 +153,25 @@ def test_a_folder_this_account_cannot_create_files_in_times_out(tmp_path, monkey
     assert time.monotonic() - started < 5
 
 
-def test_a_stale_lock_that_cannot_be_moved_times_out(tmp_path, monkeypatch):
-    # A lock left by a crashed holder that this account may not rename
+def test_a_stale_lock_that_cannot_be_removed_times_out(tmp_path, monkeypatch):
+    # A lock left by a crashed holder that this account may not delete
     # (another program has it open, or an ACL refuses): wait and give up,
-    # never spin on the refused rename.
+    # never spin on the refused delete.
     target = tmp_path / "registry.json"
     lock = tmp_path / "registry.json.lock"
     lock.write_text("crashed-host pid 1 token a\n", encoding="utf-8")
     _age(lock, 3600)
     attempts = []
 
-    def refuse(src, dst, *a, **k):
-        attempts.append(src)
+    real_unlink = os.unlink
+
+    def refuse(path, *a, **k):
+        if str(path) != str(lock):
+            return real_unlink(path, *a, **k)  # the breaker file may go
+        attempts.append(path)
         raise PermissionError(13, "Access is denied")
 
-    monkeypatch.setattr(file_lock.os, "rename", refuse)
+    monkeypatch.setattr(file_lock.os, "unlink", refuse)
 
     def take():
         with exclusive_file_lock(target, "Test", stale_seconds=120, wait_seconds=1):
@@ -176,8 +180,10 @@ def test_a_stale_lock_that_cannot_be_moved_times_out(tmp_path, monkeypatch):
     finished, error = _run_with_limit(take, 10)
     assert finished, "the waiter never gave up"
     assert isinstance(error, TimeoutError)
+    assert attempts, "the takeover was never tried"
     assert len(attempts) < 50  # waited between attempts, did not spin
     assert lock.exists()
+    assert not (tmp_path / "registry.json.lock.break").exists()
 
 
 def test_a_touched_lock_is_dated_by_the_file_server_not_this_machines_clock(tmp_path, monkeypatch):
@@ -228,3 +234,177 @@ def test_a_lock_held_through_one_long_step_never_looks_abandoned(tmp_path):
         verdict = file_lock._take_over_stale_lock(handle.path, seen, 1, "Test")
         assert verdict == file_lock._WAIT, "a live lock was taken over during one long step"
     assert not handle.path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Several waiters on one abandoned lock: takeovers happen one at a time
+# ---------------------------------------------------------------------------
+
+class _OsWithARace:
+    """Stands in for the ``os`` module inside file_lock and replays, step by
+    step, what two other processes do while one waiter takes over a lock.
+
+    *before_removal* runs once, at the last moment before the waiter under
+    test acts on the lock (when it asks for the breaker, or -- in the older
+    scheme -- when it moves the lock aside). *while_name_is_free* runs right
+    after the lock has been moved away from its name, if that ever happens."""
+
+    def __init__(self, lock, before_removal, while_name_is_free):
+        self._lock = str(lock)
+        self._before = before_removal
+        self._free = while_name_is_free
+        self._fired = False
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    def _fire(self):
+        if not self._fired:
+            self._fired = True
+            self._before()
+
+    def open(self, path, *a, **k):
+        if str(path) == self._lock + ".break":
+            self._fire()
+        return os.open(path, *a, **k)
+
+    def rename(self, src, dst, *a, **k):
+        if str(src) == self._lock:
+            self._fire()
+        result = os.rename(src, dst, *a, **k)
+        if str(src) == self._lock:
+            self._free()
+        return result
+
+
+def test_a_fresh_lock_taken_during_a_takeover_is_never_moved_or_removed(tmp_path, monkeypatch):
+    # Waiters A and B both judge the crashed holder's lock abandoned. A is
+    # quicker: it removes the old lock and takes a fresh one of its own just
+    # as B is about to act. B used to move A's fresh lock aside, notice, and
+    # put it back -- and while it was aside a third writer C could create the
+    # lock, so the put-back failed: A and C were both writing (a lost row),
+    # and A's lock was stranded under another name.
+    lock = tmp_path / "registry.json.lock"
+    crashed = "crashed-host pid 1 token a\n"
+    fresh = "host-of-A pid 2 token b\n"
+    lock.write_bytes(crashed.encode("utf-8"))
+    _age(lock, 3600)
+    third_writer_got_in = []
+
+    def waiter_a_takes_over():
+        os.unlink(lock)
+        lock.write_bytes(fresh.encode("utf-8"))
+
+    def waiter_c_tries_to_create():
+        try:
+            os.close(os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            third_writer_got_in.append(True)
+        except FileExistsError:
+            pass
+
+    monkeypatch.setattr(file_lock, "os", _OsWithARace(
+        lock, waiter_a_takes_over, waiter_c_tries_to_create))
+    verdict = file_lock._take_over_stale_lock(lock, crashed, 120, "waiter B",
+                                              server_offset=0.0)
+    monkeypatch.undo()
+
+    assert not third_writer_got_in, "the lock's name was free while A held the lock"
+    assert lock.read_bytes().decode("utf-8") == fresh, "A's fresh lock was disturbed"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [lock.name]
+    assert verdict != file_lock._GONE
+
+
+def test_a_fresh_empty_lock_taken_during_a_takeover_is_left_alone(tmp_path, monkeypatch):
+    # The same race, where the abandoned lock was EMPTY (its holder crashed
+    # before writing its line) and A's fresh lock is, for an instant, empty
+    # too: the holder line cannot tell them apart, the modification time does.
+    lock = tmp_path / "registry.json.lock"
+    lock.write_bytes(b"")
+    _age(lock, 3600)
+
+    def waiter_a_takes_over():
+        os.unlink(lock)
+        lock.write_bytes(b"")  # created, line not yet written
+
+    monkeypatch.setattr(file_lock, "os", _OsWithARace(lock, waiter_a_takes_over, lambda: None))
+    verdict = file_lock._take_over_stale_lock(lock, "", 120, "waiter B", server_offset=0.0)
+    monkeypatch.undo()
+
+    assert lock.exists(), "A's fresh lock was removed"
+    assert verdict == file_lock._WAIT
+    assert sorted(p.name for p in tmp_path.iterdir()) == [lock.name]
+
+
+def test_a_waiter_leaves_the_lock_alone_while_another_is_taking_it_over(tmp_path):
+    # Only the waiter holding <lock>.break may remove the lock.
+    lock = tmp_path / "registry.json.lock"
+    breaker = tmp_path / "registry.json.lock.break"
+    crashed = "crashed-host pid 1 token a\n"
+    lock.write_bytes(crashed.encode("utf-8"))
+    _age(lock, 3600)
+    breaker.write_bytes(b"")  # another waiter is in the middle of a takeover
+
+    assert file_lock._take_over_stale_lock(lock, crashed, 120, "Test") == file_lock._WAIT
+    assert lock.read_bytes().decode("utf-8") == crashed
+    assert breaker.exists(), "a live breaker was removed"
+
+
+def test_a_breaker_left_by_a_process_that_died_does_not_block_takeovers(tmp_path, capsys):
+    # A process that died in the few milliseconds it held <lock>.break leaves
+    # it behind. Without a way out, no abandoned lock could ever be taken
+    # over again and every writer would time out.
+    target = tmp_path / "registry.json"
+    lock = tmp_path / "registry.json.lock"
+    breaker = tmp_path / "registry.json.lock.break"
+    lock.write_text("crashed-host pid 1 token a\n", encoding="utf-8")
+    _age(lock, 3600)
+    breaker.write_bytes(b"")
+    _age(breaker, 3600)
+
+    with exclusive_file_lock(target, "Test", stale_seconds=120, wait_seconds=5):
+        assert "crashed-host" not in lock.read_text(encoding="utf-8")
+    out = capsys.readouterr().out
+    assert "Removed registry.json.lock.break" in out
+    assert "Took over a lock" in out
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_many_waiters_on_one_abandoned_lock_never_hold_it_together(tmp_path):
+    # Real threads racing for real: every one of them judges the same
+    # abandoned lock stale at the same moment.
+    import threading
+    target = tmp_path / "registry.json"
+    lock = tmp_path / "registry.json.lock"
+    inside = []
+    together = []
+    errors = []
+    guard = threading.Lock()
+
+    def writer(start):
+        try:
+            start.wait()
+            with exclusive_file_lock(target, "Test", stale_seconds=120, wait_seconds=30):
+                with guard:
+                    inside.append(1)
+                    if len(inside) > 1:
+                        together.append(len(inside))
+                time.sleep(0.02)
+                with guard:
+                    inside.pop()
+        except BaseException as e:  # noqa: BLE001 - reported below
+            errors.append(e)
+
+    for _ in range(3):
+        lock.write_text("crashed-host pid 1 token a\n", encoding="utf-8")
+        _age(lock, 3600)
+        start = threading.Event()
+        threads = [threading.Thread(target=writer, args=(start,), daemon=True) for _ in range(6)]
+        for t in threads:
+            t.start()
+        start.set()
+        for t in threads:
+            t.join(40)
+        assert not any(t.is_alive() for t in threads)
+        assert not errors, errors
+        assert not together, "two writers held the lock at once"
+        assert list(tmp_path.iterdir()) == []
