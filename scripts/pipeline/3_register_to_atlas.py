@@ -85,6 +85,13 @@ COMMAND LINE OPTIONS
     python 3_register_to_atlas.py --batch      # Process all pending automatically
     python 3_register_to_atlas.py --inspect    # Dry run - show status only
     python 3_register_to_atlas.py --n-free-cpus 106  # Limit CPU usage
+    python 3_register_to_atlas.py --batch --brain BRAIN --reprocess
+                                               # Register ONE brain again even
+                                               # though it is registered: the
+                                               # old registration (and its
+                                               # approval) go into _archive,
+                                               # and the new one needs a new
+                                               # approval
 
 ================================================================================
 SETTINGS (edit in script if needed)
@@ -733,6 +740,10 @@ Examples:
                         help=f'Atlas to use (default: {DEFAULT_ATLAS})')
     parser.add_argument('--brain', type=str, default=None,
                         help='Process only this brain: its exact folder name (that brain only), or part of a name (every brain containing it)')
+    parser.add_argument('--reprocess', action='store_true',
+                        help='With --batch --brain: register that ONE brain again even if it is '
+                             'registered. The previous registration and its approval are moved to '
+                             '_archive; the new registration needs a new approval.')
 
     args = parser.parse_args()
     
@@ -783,7 +794,30 @@ Examples:
         return
     
     # Select pipelines to process
-    if args.batch:
+    if args.reprocess:
+        # WHY THIS EXISTS: --batch takes only brains that are NOT registered,
+        # and said "already registered" (exit 0) for the rest. The overnight
+        # batch's --force relied on it to register again, so it never did --
+        # yet logged "Registration complete" and redid every later step on the
+        # unchanged registration. --reprocess registers one named brain again,
+        # whatever its state. It is refused for anything but exactly one brain:
+        # registering many brains again by accident costs hours each and takes
+        # every one of them back to "waiting for approval".
+        if not (args.batch and args.brain):
+            print("\n[FAIL] --reprocess needs --batch and --brain <one brain>.")
+            return 1
+        asked = brain_filter_matches(args.brain, pipelines)
+        if len(asked) != 1:
+            if asked:
+                print(f"\n[FAIL] '{args.brain}' matches {len(asked)} brains; --reprocess "
+                      "registers exactly one. Give its full folder name:")
+                for i in asked:
+                    print(f"  {pipelines[i][1].name}/{pipelines[i][0].name}")
+            else:
+                print(f"\n[FAIL] No brain with images to register matches '{args.brain}'.")
+            return 1
+        to_process = asked
+    elif args.batch:
         # Non-interactive: process all pending
         to_process = [i for i, (status, _) in enumerate(statuses)
                       if status in ["needs_registration", "incomplete", "rejected"]]

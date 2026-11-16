@@ -133,7 +133,7 @@ def test_the_overnight_batch_registers_an_unfinished_registration_again(tmp_path
     _started_only(b)
     called = []
 
-    def fake_registration(name, pipeline_dir):
+    def fake_registration(name, pipeline_dir, **k):
         called.append(name)
         return False, "registration failed"
     monkeypatch.setattr(ob, "run_registration", fake_registration)

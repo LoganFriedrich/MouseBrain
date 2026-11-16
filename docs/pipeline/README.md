@@ -299,6 +299,24 @@ carries on with the others (see "When a folder cannot be read" above).
 hand-cropped brain, or one registered uncropped, never ran overnight and nothing
 said so.)
 
+**`overnight_batch.py --force` registers the brain again.** `--force` redoes
+every step, registration included: for a registered brain it runs
+`3_register_to_atlas.py --batch --brain <brain> --reprocess`, which moves the
+old registration and its approval into `3_Registered_Atlas/_archive/<date>_<time>/`
+and registers again. The new registration has no approval, so the brain stops
+there ("awaiting approval" in the report): detection, classification and
+counting wait until a person has looked at the new QC pictures and approved
+them; the next run then does them. If step 3 ends without a new registration
+in the folder, the batch reports the registration as failed and does nothing
+after it. Use `--force --brain <brain>`: without `--brain`, every brain is
+registered again. (Before, `--force` never registered anything -- step 3 said
+"already registered" -- yet the batch logged "Registration complete" and redid
+every later step on the old registration.)
+
+To register ONE brain again by hand: `python 3_register_to_atlas.py --batch
+--brain <brain folder name> --reprocess`. It refuses a name that fits more than
+one brain (it lists them), and needs `--batch`.
+
 ## The Pipeline Dashboard's Run button
 
 In napari (Plugins -> BrainTools -> 3D: 1. Pipeline Dashboard), select a brain

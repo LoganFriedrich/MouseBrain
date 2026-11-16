@@ -12,6 +12,10 @@ Usage:
     python overnight_batch.py --dry-run        # Show what would run
     python overnight_batch.py --brain 005      # Process specific brain only
     python overnight_batch.py --skip-complete  # Skip already completed steps
+    python overnight_batch.py --force --brain X  # Redo every step of brain X:
+                                               # it is REGISTERED AGAIN, then
+                                               # waits for a person's approval
+                                               # before detection
 
 The script will:
 1. Find every brain that is registered or has a crop to register (a brain with
@@ -39,7 +43,8 @@ from mousebrain.pipeline_status import brain_status, find_candidates
 from mousebrain.registration_approval import (approval_state,
                                               is_approved as is_registration_approved,
                                               missing_registration_files,
-                                              registration_complete)
+                                              registration_complete,
+                                              registration_fingerprint)
 import time
 import traceback
 from datetime import datetime
@@ -203,18 +208,30 @@ def run_with_retry(func, *args, max_retries: int = MAX_RETRIES, **kwargs) -> Tup
 # PIPELINE STEPS
 # =============================================================================
 
-def run_registration(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
-    """Run brainreg registration for a brain."""
-    log.info(f"[{brain_name}] Running registration...")
+def run_registration(brain_name: str, pipeline_dir: Path,
+                     reprocess: bool = False) -> Tuple[bool, str]:
+    """Run brainreg registration for a brain.
+
+    ``reprocess``: register it again even though it is registered (--force).
+    Step 3 is then given --reprocess; without it step 3 skips a registered
+    brain with "already registered" and exit 0, which this used to log as
+    "Registration complete" before redoing every later step on the old
+    registration. A reprocess counts as done only when the registration in the
+    folder afterwards is a DIFFERENT one."""
+    log.info(f"[{brain_name}] Running registration{' again (--force)' if reprocess else ''}...")
     sys.stdout.flush()
 
     script = find_script("3_register_to_atlas.py")
+    before = registration_fingerprint(pipeline_dir / FOLDER_REGISTRATION)
 
     # Use --brain to filter to just this specific brain
     # Stream output directly so we can see progress
+    cmd = [sys.executable, str(script), "--batch", "--brain", brain_name]
+    if reprocess:
+        cmd.append("--reprocess")
     try:
         result = subprocess.run(
-            [sys.executable, str(script), "--batch", "--brain", brain_name],
+            cmd,
             capture_output=False,  # Stream output to console
             timeout=7200,  # 2 hour timeout
             cwd=str(script.parent)
@@ -235,6 +252,10 @@ def run_registration(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
         missing = missing_registration_files(reg_folder)
         if missing:
             return False, f"Registration failed: not created: {', '.join(missing)}"
+        if reprocess and before is not None and \
+                registration_fingerprint(reg_folder) == before:
+            return False, ("Registration was not redone: the registration in the folder "
+                           "is still the one that was there before")
 
         # NOT approved here. This used to write the approval marker itself,
         # so registrations nobody had looked at went on to detection and
@@ -431,12 +452,15 @@ def process_brain(brain_name: str, pipeline_dir: Path, skip_complete: bool = Tru
 
     status = get_brain_status(pipeline_dir)
 
-    # Step 1: Registration
+    # Step 1: Registration. Without skip_complete (--force) a registered brain
+    # is registered AGAIN (step 3 --reprocess); the new registration has no
+    # approval, so the brain then stops below at "awaiting approval".
     if status['registered'] and skip_complete:
         log.info(f"[{brain_name}] Registration already complete, skipping")
         result['steps']['registration'] = 'skipped'
     else:
-        success, msg = run_with_retry(run_registration, brain_name, pipeline_dir)
+        success, msg = run_with_retry(run_registration, brain_name, pipeline_dir,
+                                      reprocess=status['registered'])
         result['steps']['registration'] = 'success' if success else 'failed'
         if not success:
             result['status'] = 'failed'
@@ -828,7 +852,10 @@ def main():
     parser.add_argument('--skip-complete', action='store_true', default=True,
                        help='Skip already completed steps (default: True)')
     parser.add_argument('--force', '-f', action='store_true',
-                       help='Reprocess all steps even if complete')
+                       help='Redo every step even if complete. A registered brain is '
+                            'REGISTERED AGAIN (its old registration and approval are '
+                            'archived) and then waits for a person to approve the new '
+                            'registration before detection, classification and counting')
 
     args = parser.parse_args()
 
