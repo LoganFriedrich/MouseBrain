@@ -5968,6 +5968,23 @@ class BrainSliceWidget(QWidget):
             QMessageBox.warning(self, "Error", f"Run {run_id} not found in tracker.")
             return
 
+        # The run must belong to the sample on screen -- the name runs of this
+        # image are logged under (the Sample ID box, else the file name).
+        # WHY: its measurements are cell positions in ITS image; drawn over
+        # another slice they look like a result for that slice, and Run
+        # Quantification would then count them there.
+        current_sample = self.sample_id_edit.text()
+        if not current_sample and self.current_file:
+            current_sample = self.current_file.stem
+        if not current_sample or run.get('sample_id', '') != current_sample:
+            QMessageBox.warning(
+                self, "Different Sample",
+                f"Run {run_id} was made on sample '{run.get('sample_id', '')}', "
+                f"not on the sample on screen ('{current_sample or 'none'}').\n\n"
+                "Open that sample's image first, then load the run."
+            )
+            return
+
         measurements_path = run.get('measurements_path', '')
         if not measurements_path or not Path(measurements_path).exists():
             QMessageBox.warning(

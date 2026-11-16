@@ -635,7 +635,10 @@ class SliceTracker:
         rows = self._read_all()
 
         if sample_id:
-            rows = [r for r in rows if sample_id.lower() in r.get('sample_id', '').lower()]
+            # Exact match. WHY: a substring match made slice S1's run history
+            # list S10-S19 too, and Load Selected Run could then put another
+            # slice's measurements over the image on screen.
+            rows = [r for r in rows if r.get('sample_id', '') == sample_id]
         if run_type:
             rows = [r for r in rows if r.get('run_type') == run_type]
         if status:

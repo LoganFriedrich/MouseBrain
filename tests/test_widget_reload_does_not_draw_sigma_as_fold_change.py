@@ -67,6 +67,7 @@ def _run_widget_coloc(tracker, monkeypatch, method, local=False):
         sigma_threshold_spin=_Spin(0.75), bg_dilation_spin=_Spin(50),
         area_fraction_spin=_Spin(0.5), bg_local_check=_Spin(local),
         bg_block_size_spin=_Spin(256), soma_dilation_spin=_Spin(6),
+        sample_id_edit=_Spin(SAMPLE_A), current_file=None,
         tracker=tracker, last_run_id=None,
         _get_current_slice=lambda img: img,
         _on_coloc_progress=None, _on_coloc_finished=None,
@@ -122,6 +123,7 @@ def test_loading_a_background_mean_run_does_not_use_its_sigma_as_fold_change(
         run_history_table=_Table(run), tracker=tracker,
         _visualize_colocalization=lambda m: None, _update_diagnostic_plot=lambda: None,
         coloc_result_label=_Spin(""), status_label=_Spin(""), quant_btn=_Spin(""),
+        sample_id_edit=_Spin(SAMPLE_A), current_file=None,
         _coloc_threshold="unset")
     mw.BrainSliceWidget._load_selected_run(fake)
     # 0.5 is a sigma; the fold-change plots must fall back to their own setting.
@@ -142,6 +144,7 @@ def test_loading_a_fold_change_run_keeps_its_fold_change(tracker, monkeypatch, t
         run_history_table=_Table(run), tracker=tracker,
         _visualize_colocalization=lambda m: None, _update_diagnostic_plot=lambda: None,
         coloc_result_label=_Spin(""), status_label=_Spin(""), quant_btn=_Spin(""),
+        sample_id_edit=_Spin(SAMPLE_A), current_file=None,
         _coloc_threshold="unset")
     mw.BrainSliceWidget._load_selected_run(fake)
     assert fake._coloc_threshold == 2.5
