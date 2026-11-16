@@ -4,6 +4,7 @@ Save/load ROI polygons as JSON, count cells within ROIs, format results.
 """
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -37,8 +38,17 @@ def save_rois_json(output_path, rois, image_name, image_shape):
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, 'w') as f:
-        json.dump(data, f, indent=2)
+    # WHY a temporary file swapped in with os.replace: writing in place left a
+    # half-written, unreadable file when the process died mid-write, and the
+    # ROIs drawn before (the only copy of a person's work) were lost with it.
+    tmp_path = output_path.with_name(output_path.name + '.tmp')
+    try:
+        with open(tmp_path, 'w') as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, output_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
 
 def load_rois_json(path, require_image_shape=False):
