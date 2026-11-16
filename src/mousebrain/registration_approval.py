@@ -37,12 +37,27 @@ could approve it. A registration is complete only when every one of its output
 files (FINGERPRINT_FILES) is there -- registration_complete(), the one test
 every reader uses. An incomplete registration cannot be approved.
 
+A REJECTED REGISTRATION STAYS REJECTED
+Rejecting used to only move an existing approval away (and do nothing at all
+for a registration never approved), so the next reader showed the
+registration as merely "waiting for approval" and anyone could approve what a
+person had just turned down. reject() now writes ``.registration_rejected``
+naming the registration (who, when, its fingerprint). Every reader then shows
+it as REJECTED, the brain is back at the register step, and approve() refuses
+it -- except the approval script, which asks the person whether they mean to
+overrule the rejection. Registering again archives the rejection with the
+registration it was for.
+
 What happens to approvals:
   * approve()                    -- a person approved what is there now
+  * reject()                     -- a person turned the registration down; the
+                                    rejection is recorded and any approval
+                                    goes into ``_archive/``
   * retire_for_new_registration() -- registration is about to run again: the
-                                     marker moves into ``_archive/`` with the
-                                     registration it was for
-  * withdraw()                   -- a person rejected the registration
+                                     approval and any rejection move into
+                                     ``_archive/`` with the registration they
+                                     were for
+  * withdraw()                   -- take an approval back without rejecting
 """
 
 import getpass
@@ -56,6 +71,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 APPROVAL_MARKER = ".registration_approved"
+REJECTION_MARKER = ".registration_rejected"
 
 # The registration's own output files. Their sizes and modification times
 # identify one registration: a new run rewrites all of them. QC pictures and
@@ -67,6 +83,7 @@ FINGERPRINT_FILES = ("brainreg.json", "registered_atlas.tiff", "boundaries.tiff"
 # What approval_state() can say.
 NOT_REGISTERED = "not_registered"      # no brainreg.json: nothing to approve
 INCOMPLETE = "incomplete"              # started, but an output file is missing
+REJECTED = "rejected"                  # a person rejected THIS registration
 UNAPPROVED = "unapproved"              # registered, no marker
 APPROVED = "approved"                  # marker names this registration
 OTHER_REGISTRATION = "other_registration"  # marker names a different one
@@ -74,7 +91,7 @@ UNRECORDED = "unrecorded"              # old-style marker: does not say which
 
 # The states in which the brain needs registering (again) before anything
 # else: there is nothing a person could approve.
-NEEDS_REGISTRATION = (NOT_REGISTERED, INCOMPLETE)
+NEEDS_REGISTRATION = (NOT_REGISTERED, INCOMPLETE, REJECTED)
 
 _STATE_TEXT = {
     NOT_REGISTERED: "not registered yet",
@@ -160,6 +177,18 @@ def read_marker(reg_folder) -> Optional[dict]:
     return {"legacy": text.strip()}
 
 
+def read_rejection(reg_folder) -> Optional[dict]:
+    """The rejection marker's content, or None when there is none."""
+    marker = _reg(reg_folder) / REJECTION_MARKER
+    if not marker.is_file():
+        return None
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8", errors="replace"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def approval_state(reg_folder) -> Tuple[str, str]:
     """(state, explanation) for the registration in this folder. Only
     APPROVED means a person approved the registration that is there now; the
@@ -170,6 +199,13 @@ def approval_state(reg_folder) -> Tuple[str, str]:
     missing = missing_registration_files(reg_folder)
     if missing:
         return INCOMPLETE, "%s (missing: %s)" % (_STATE_TEXT[INCOMPLETE], ", ".join(missing))
+    rejection = read_rejection(reg_folder)
+    if rejection is not None and rejection.get("registration") in (None, current):
+        # A rejection that cannot be read, or does not say which registration
+        # it was for, is still a person's "no" about what is in this folder.
+        return REJECTED, "rejected by %s at %s%s -- register the brain again" % (
+            rejection.get("rejected_by") or "someone", rejection.get("rejected_at") or "?",
+            (" (" + rejection["note"] + ")") if rejection.get("note") else "")
     marker = read_marker(reg_folder)
     if marker is None:
         return UNAPPROVED, _STATE_TEXT[UNAPPROVED]
@@ -193,14 +229,27 @@ def _write_atomic(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def approve(reg_folder, approved_by: Optional[str] = None, note: str = "") -> dict:
+def _who(name: Optional[str]) -> str:
+    if name:
+        return name
+    try:
+        return getpass.getuser()
+    except Exception:
+        return "unknown"
+
+
+def approve(reg_folder, approved_by: Optional[str] = None, note: str = "",
+            allow_rejected: bool = False) -> dict:
     """Record that a person approved the registration in this folder.
 
     Call this only from something a person did (a button, the approval
     script's yes/no question). Raises ValueError when there is nothing a
     person could approve: no registration (an approval written before the
     registration exists would be inherited by whatever lands there later), or
-    a registration that did not finish.
+    a registration that did not finish. A REJECTED registration is refused
+    too, unless ``allow_rejected`` -- only the approval script passes it,
+    after asking the person whether they mean to overrule the rejection; the
+    rejection then goes into ``_archive/``.
     """
     reg = _reg(reg_folder)
     current = registration_fingerprint(reg)
@@ -209,14 +258,13 @@ def approve(reg_folder, approved_by: Optional[str] = None, note: str = "") -> di
     state, text = approval_state(reg)
     if state == INCOMPLETE:
         raise ValueError("cannot approve the registration in %s: %s" % (reg, text))
-    if approved_by is None:
-        try:
-            approved_by = getpass.getuser()
-        except Exception:
-            approved_by = "unknown"
+    if state == REJECTED:
+        if not allow_rejected:
+            raise ValueError("this registration was %s" % text)
+        _move_marker(reg, "rejection_overruled", REJECTION_MARKER)
     record = {
         "approved_at": datetime.now().isoformat(timespec="seconds"),
-        "approved_by": approved_by,
+        "approved_by": _who(approved_by),
         "host": socket.gethostname(),
         "note": note,
         "registration": current,
@@ -226,25 +274,52 @@ def approve(reg_folder, approved_by: Optional[str] = None, note: str = "") -> di
     return record
 
 
-def _move_marker(reg: Path, label: str) -> Optional[Path]:
-    marker = reg / APPROVAL_MARKER
+def reject(reg_folder, rejected_by: Optional[str] = None, note: str = "") -> dict:
+    """Record that a person looked at the registration in this folder and
+    turned it down. Any approval goes into ``_archive/``; every reader shows
+    the brain back at the register step until it is registered again (step 3
+    then archives this rejection with the registration it was for). Raises
+    ValueError when there is no registration in the folder."""
+    reg = _reg(reg_folder)
+    current = registration_fingerprint(reg)
+    if current is None:
+        raise ValueError("no registration to reject in %s (brainreg.json not found)" % reg)
+    _move_marker(reg, "withdrawn_rejected")
+    record = {
+        "rejected_at": datetime.now().isoformat(timespec="seconds"),
+        "rejected_by": _who(rejected_by),
+        "host": socket.gethostname(),
+        "note": note,
+        "registration": current,
+        "registration_id": fingerprint_id(current),
+    }
+    _write_atomic(reg / REJECTION_MARKER, json.dumps(record, indent=1))
+    return record
+
+
+def _move_marker(reg: Path, label: str, name: str = APPROVAL_MARKER) -> Optional[Path]:
+    marker = reg / name
     if not marker.exists():
         return None
     dest_dir = reg / "_archive" / ("%s_%s" % (datetime.now().strftime("%Y%m%d_%H%M%S"), label))
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / APPROVAL_MARKER
+    dest = dest_dir / name
     shutil.move(str(marker), str(dest))
     return dest
 
 
 def retire_for_new_registration(reg_folder) -> Optional[Path]:
-    """Registration is about to run (again): move any approval out of the way,
-    into ``_archive/``, so the new registration starts unapproved. Returns
-    where it went, or None if there was none."""
-    return _move_marker(_reg(reg_folder), "approval_of_previous_registration")
+    """Registration is about to run (again): move any approval -- and any
+    rejection -- out of the way, into ``_archive/``, so the new registration
+    starts unapproved and unrejected. Returns where the approval went, or None
+    if there was none."""
+    reg = _reg(reg_folder)
+    _move_marker(reg, "rejection_of_previous_registration", REJECTION_MARKER)
+    return _move_marker(reg, "approval_of_previous_registration")
 
 
 def withdraw(reg_folder, reason: str = "rejected") -> Optional[Path]:
-    """A person rejected the registration: the approval (if any) goes into
-    ``_archive/`` -- kept, not deleted -- and the brain is unapproved."""
+    """Take an approval back: it goes into ``_archive/`` -- kept, not
+    deleted -- and the brain is unapproved. To turn the registration DOWN use
+    reject(), which also records that it was turned down."""
     return _move_marker(_reg(reg_folder), "withdrawn_" + reason)

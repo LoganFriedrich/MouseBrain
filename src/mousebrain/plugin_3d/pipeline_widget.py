@@ -764,7 +764,7 @@ class PipelineDashboard(QWidget):
             if reply == QMessageBox.Yes:
                 self._approve_current_registration()
             else:
-                self.message_label.setText("Registration not approved. Re-register if needed.")
+                self._reject_current_registration()
             self.run_next_btn.setEnabled(True)
 
         elif status['step'] == 'detect':
@@ -868,6 +868,25 @@ class PipelineDashboard(QWidget):
             self.message_label.setText("Registration approved.")
         except ValueError as e:
             QMessageBox.warning(self, "Nothing to approve", str(e))
+        self.refresh_brains()
+        self.update_status_display()
+
+    def _reject_current_registration(self):
+        """The person has just answered No to "does it look good?".
+
+        Recorded (mousebrain.registration_approval.reject): every reader then
+        shows the brain back at "Register". The No used to only set this
+        message, so the next refresh offered the same registration for
+        approval again, to anyone.
+        """
+        from mousebrain.registration_approval import reject
+        try:
+            reject(self.current_brain / "3_Registered_Atlas",
+                   note="rejected in the napari pipeline dashboard")
+            self.message_label.setText(
+                "Registration rejected (recorded). Fix the crop or settings, then register again.")
+        except ValueError as e:
+            QMessageBox.warning(self, "Nothing to reject", str(e))
         self.refresh_brains()
         self.update_status_display()
 

@@ -246,7 +246,7 @@ def show_brain_status(brain):
 
         choice = ask("\nDoes the registration look good?", [
             "Yes, approve it",
-            "No, I need to re-register",
+            "No, reject it (recorded)",
             "Let me look at it first",
         ])
 
@@ -264,6 +264,18 @@ def show_brain_status(brain):
                 print(f"\n[FAIL] {e}")
             input("Press Enter to continue...")
         elif choice == 1:
+            # "No" is a rejection, recorded so that every reader shows the
+            # brain back at "Register" -- it used to be forgotten as soon as
+            # this menu closed, and the brain was offered for approval again.
+            from mousebrain.registration_approval import reject
+            try:
+                reject(brain['path'] / "3_Registered_Atlas",
+                       note="rejected in RUN_PIPELINE after viewing the QC picture")
+                print("\n[OK] Registration rejected (recorded). The brain is back at 'Register'.")
+            except ValueError as e:
+                print(f"\n[FAIL] {e}")
+            print("Change what made it bad first (crop, orientation, voxel size),")
+            print("then register it again.")
             print("\nRe-running registration...")
             run_script('3_register_to_atlas.py')
 

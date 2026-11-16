@@ -23,7 +23,8 @@ import argparse
 import sys
 from pathlib import Path
 from mousebrain.registration_approval import (APPROVED, NEEDS_REGISTRATION, NOT_REGISTERED,
-                                              approval_state, approve as record_approval)
+                                              REJECTED, approval_state,
+                                              approve as record_approval, reject)
 
 # =============================================================================
 # CONFIGURATION
@@ -59,10 +60,14 @@ def check_approval_status(pipeline_folder: Path):
     return state == APPROVED, text
 
 
-def approve_registration(pipeline_folder: Path):
-    """Record that the person running this script approved the registration."""
+def approve_registration(pipeline_folder: Path, overrule_rejection: bool = False):
+    """Record that the person running this script approved the registration.
+    ``overrule_rejection``: the person was told the registration had been
+    rejected and said they approve it anyway."""
     record_approval(pipeline_folder / FOLDER_REGISTERED,
-                    note="approved with util_approve_registration.py")
+                    note="approved with util_approve_registration.py"
+                    + (" (overruling a rejection)" if overrule_rejection else ""),
+                    allow_rejected=overrule_rejection)
     print(f"[OK] Registration approved and marked for: {pipeline_folder.name}")
     return True
 
@@ -157,7 +162,18 @@ Examples:
     # ...): say why and stop, instead of showing pictures and asking a
     # question whose "yes" would be refused.
     state, why = approval_state(reg_folder)
-    if state in NEEDS_REGISTRATION:
+    overrule = False
+    if state == REJECTED and not (args.status or args.view):
+        # A person turned this registration down. Approving it now needs an
+        # explicit "yes, overrule": nobody approves a rejected registration
+        # by answering the ordinary question.
+        print(f"\n[!] This registration was {why}")
+        response = input("\nApprove it anyway, overruling the rejection? (yes/no): ").strip().lower()
+        if response not in ['yes', 'y']:
+            print("Rejection kept. Register the brain again.")
+            sys.exit(1)
+        overrule = True
+    elif state in NEEDS_REGISTRATION and not args.view:
         print(f"\n[!] Nothing to approve: {why}")
         print(f"  Register it again: python 3_register_to_atlas.py --batch --brain {pipeline_folder.name}")
         sys.exit(1)
@@ -196,7 +212,9 @@ Examples:
     print("  - Registration looks good across dorsal-ventral axis")
     print(f"{'='*60}")
 
-    if approved:
+    if overrule:
+        pass  # already asked above
+    elif approved:
         print(f"\n[!] This registration is already approved:")
         print(f"  {approval_data}")
         response = input("\nRe-approve? (yes/no): ").strip().lower()
@@ -206,14 +224,15 @@ Examples:
     else:
         response = input("\nDoes the registration look good? (yes/no): ").strip().lower()
         if response not in ['yes', 'y']:
-            print("\n[FAIL] Registration NOT approved")
-            if approval_data:
-                print(f"  ({approval_data})")
-            print("  Re-run registration if needed, or adjust parameters")
+            # "no" is a rejection, and it is recorded: every reader shows the
+            # brain back at "Register" and nobody approves it by accident.
+            reject(reg_folder, note="rejected with util_approve_registration.py")
+            print("\n[FAIL] Registration REJECTED (recorded)")
+            print("  Adjust the crop or parameters, then register the brain again")
             sys.exit(1)
 
     # Create approval marker
-    approve_registration(pipeline_folder)
+    approve_registration(pipeline_folder, overrule_rejection=overrule)
 
     print(f"\n{'='*60}")
     print("[OK] Registration approved!")

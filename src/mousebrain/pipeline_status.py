@@ -36,6 +36,8 @@ THE RULES (first missing item, in this order, is the brain's step)
             file brainreg writes (registration_approval.registration_complete).
             ``brainreg.json`` alone is not enough -- brainreg writes it before
             it registers, so a failed or stopped run leaves it behind.
+            A registration a person REJECTED does not count either: the
+            brain is back at "register" (registration_approval.reject).
   approve   a person's approval of THIS registration (see
             ``mousebrain.registration_approval``). An approval of an earlier
             registration, or one that does not say which registration it was
@@ -256,7 +258,9 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
         "cropped": ((p / FOLDER_CROPPED / "metadata.json").exists()
                     or (p / FOLDER_CROPPED_MANUAL / "metadata.json").exists()
                     or recorded_space == "full"),
-        "registered": registration_complete(reg),
+        # Finished, and not one that has to be registered again (a person
+        # rejected it ...): registration_approval.NEEDS_REGISTRATION.
+        "registered": registration_complete(reg) and approval not in NEEDS_REGISTRATION,
         "approved": approval == APPROVED,
         "detected": candidates is not None,
         "prefiltered": _prefiltered(det),
@@ -272,7 +276,12 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
     status["register_problem"] = (approval_text if approval in NEEDS_REGISTRATION
                                   and approval != NOT_REGISTERED else "")
     status["candidates"] = candidates
-    status["stale"] = stale_outputs(p, candidates) if status["registered"] else {}
+    status["stale"] = stale_outputs(p, candidates) if registration_complete(reg) else {}
+    if status["register_problem"] and status["counted"]:
+        # Regions come from the atlas fit; counts made on a fit that no longer
+        # counts (a person rejected it ...) are not counts of this brain.
+        status["stale"]["count"] = ("counted on a registration that no longer counts: "
+                                    + status["register_problem"])
     for key in status["stale"]:
         status[_DONE_FLAG[key]] = False
 

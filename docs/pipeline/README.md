@@ -704,8 +704,23 @@ folder now. What that means for you:
   the pipeline dashboard, or "Yes, approve it" in RUN_PIPELINE.
 - **You cannot approve before registering.** With no `brainreg.json` there is
   nothing to approve, and the buttons say so.
-- **Rejecting** (the Reject button) moves the approval into `_archive/` -- kept,
-  not deleted -- and the brain is unapproved.
+- **Rejecting is recorded.** Saying the registration is NOT good -- the Reject
+  button in Setup & Tuning, "No" in the pipeline dashboard's "Does the
+  registration look good?", "No, reject it (recorded)" in RUN_PIPELINE, or
+  "no" in `util_approve_registration.py` -- writes
+  `3_Registered_Atlas/.registration_rejected` (who, when, which registration).
+  Any approval goes into `_archive/` (kept, not deleted). From then on every
+  reader shows `[!] Registered to atlas -- rejected by <who> at <when> --
+  register the brain again` and offers "Register"; region counts made on it are
+  shown as STALE. No Approve button accepts a rejected registration. Fix what
+  made it bad (the crop, the orientation, the voxel size) and register again:
+  step 3 lists the brain as `rejected` under `[INCOMPLETE/FAILED]`, `--batch`
+  registers it again, and the rejection goes into
+  `_archive/<date>_<time>_rejected/` together with the registration it was for.
+- **Rejected by mistake?** Run `util_approve_registration.py --brain <brain>`:
+  it says who rejected it and asks "Approve it anyway, overruling the
+  rejection?". Answering yes approves it and moves the rejection into
+  `_archive/`. No other path overrules a rejection.
 
 **Re-registering also makes the region counts stale.** The status readers
 compare each output with what it was made from (see "Which step is a brain

@@ -230,6 +230,7 @@ FOLDER_CROPPED = "2_Cropped_For_Registration"
 FOLDER_REGISTRATION = "3_Registered_Atlas"
 
 from mousebrain.registration_approval import (APPROVAL_MARKER, FINGERPRINT_FILES,
+                                              REJECTED, REJECTION_MARKER, approval_state,
                                               missing_registration_files,
                                               retire_for_new_registration)
 
@@ -297,6 +298,7 @@ def check_registration_status(pipeline_folder):
         Status:
         - "needs_registration": Not registered yet
         - "incomplete": Started but failed/incomplete
+        - "rejected": Finished, but a person rejected it
         - "complete": Successfully registered
     """
     pipeline_folder = Path(pipeline_folder)
@@ -318,6 +320,12 @@ def check_registration_status(pipeline_folder):
     missing = missing_registration_files(reg_folder)
     if missing:
         return "incomplete", f"did not finish (missing: {', '.join(missing)})"
+
+    # A person looked at it and turned it down: it has to be registered again
+    # (after whatever made it bad is changed -- crop, orientation, voxel size).
+    state, text = approval_state(reg_folder)
+    if state == REJECTED:
+        return "rejected", text
     
     return "complete", "registration complete"
 
@@ -342,10 +350,11 @@ def archive_existing_registration(pipeline_folder, label=""):
     # Get contents to archive (excluding _archive folder itself). The approval
     # marker goes WITH the registration it approved: it used to be skipped with
     # the other dot-files, so it stayed beside the NEW registration and made
-    # that one look approved before anyone had looked at it.
+    # that one look approved before anyone had looked at it. A rejection goes
+    # with the registration it rejected, for the same reason.
     contents = [f for f in reg_folder.iterdir()
                 if f.name != '_archive'
-                and (not f.name.startswith('.') or f.name == APPROVAL_MARKER)
+                and (not f.name.startswith('.') or f.name in (APPROVAL_MARKER, REJECTION_MARKER))
                 and f.name.lower() not in ['thumbs.db', 'desktop.ini']]
     
     if not contents:
@@ -777,7 +786,7 @@ Examples:
     if args.batch:
         # Non-interactive: process all pending
         to_process = [i for i, (status, _) in enumerate(statuses)
-                      if status in ["needs_registration", "incomplete"]]
+                      if status in ["needs_registration", "incomplete", "rejected"]]
 
         # Filter by brain name if specified. An exact folder name (or
         # <mouse folder>/<brain folder>) means that brain only: a part of a

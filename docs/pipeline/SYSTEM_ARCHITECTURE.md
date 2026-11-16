@@ -182,8 +182,9 @@ tracker.mark_as_best(run_id)
 3. Click "Load Brain" → loads registration view
 4. Verify boundaries align with tissue
 5. Approve or reject registration. The approval covers this registration only:
-   registering the brain again needs a new approval (see docs/pipeline/README.md,
-   "Registration QC & Approval").
+   registering the brain again needs a new approval. A rejection is recorded
+   and puts the brain back at "Register" for every reader (see
+   docs/pipeline/README.md, "Registration QC & Approval").
 
 ### The Zarr fast-load caches (`ch0.zarr`, `ch1.zarr`)
 

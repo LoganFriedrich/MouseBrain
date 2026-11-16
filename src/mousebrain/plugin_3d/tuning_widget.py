@@ -9731,17 +9731,23 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Error", "Select a brain first")
             return
 
-        # The approval (if any) is moved into 3_Registered_Atlas/_archive,
-        # kept rather than deleted, and the brain is unapproved.
-        from mousebrain.registration_approval import withdraw
+        # The rejection is RECORDED (.registration_rejected, naming this
+        # registration): every reader shows the brain back at "Register" and
+        # no Approve button accepts it. It used to only move an existing
+        # approval away, so the next reader showed the registration as merely
+        # waiting for approval. Any approval is kept in _archive.
+        from mousebrain.registration_approval import reject
         try:
-            withdraw(self.current_brain / "3_Registered_Atlas", reason="rejected")
+            reject(self.current_brain / "3_Registered_Atlas",
+                   note="rejected in the napari Setup & Tuning widget")
+        except ValueError as e:
+            QMessageBox.warning(self, "Nothing to reject", str(e))
+            return
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to withdraw the approval: {e}")
+            QMessageBox.warning(self, "Error", f"Failed to record the rejection: {e}")
             return
 
-        self.approval_status.setText("Status: REJECTED")
-        self.approval_status.setStyleSheet("color: red;")
+        self._update_registration_status()
         QMessageBox.information(self, "Rejected", "Registration rejected. Adjust settings and re-register.")
 
     def create_results_tab(self):
