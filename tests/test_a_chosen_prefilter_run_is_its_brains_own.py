@@ -155,13 +155,71 @@ def test_a_folder_whose_file_is_recorded_as_the_runs_own_is_used(tmp_path, monke
     assert tw._candidates_file_of_run(tracker.get_experiment(exp_id)) == folder / "detected_cells.xml"
 
 
-def test_a_test_runs_own_folder_is_used(tmp_path):
-    """A Setup & Tuning test run writes into a folder of its own, outside
-    4_Cell_Candidates, and records that folder: its file is its own."""
-    import mousebrain.plugin_3d.tuning_widget as tw
+def _test_run_folder(tmp_path):
     folder = tmp_path / "optimization_runs" / BRAIN_A / "test_run_1"
     folder.mkdir(parents=True)
     (folder / "detected_cells.xml").write_text(_markers(3), encoding="utf-8")
+    return folder
+
+
+def test_a_test_runs_own_folder_prefilters_nothing(tmp_path, monkeypatch):
+    """A Setup & Tuning test run keeps its cells in a folder of its own,
+    outside the brain. Nothing shows they are in the space the atlas was
+    fitted to, so they are not compared with it."""
+    import mousebrain.plugin_3d.tuning_widget as tw
+    brain_a = _brain(tmp_path, BRAIN_A)
+    folder = _test_run_folder(tmp_path)
     tracker = _tracker(tmp_path)
-    exp_id = tracker.log_detection(brain=BRAIN_A, status="completed", output_path=str(folder))
-    assert tw._candidates_file_of_run(tracker.get_experiment(exp_id)) == folder / "detected_cells.xml"
+    exp_id = tracker.log_detection(brain=BRAIN_A, status="completed", output_path=str(folder),
+                                   det_scope="full")
+    warnings = _press(tw, monkeypatch, brain_a, tracker, exp_id)
+    assert [w[0] for w in warnings] == ["Run Cannot Be Pre-filtered"]
+    assert exp_id in warnings[0][1] and "Nothing was pre-filtered" in warnings[0][1]
+    assert not list((brain_a / "4_Cell_Candidates").glob("prefilter*"))
+
+
+def test_a_test_of_part_of_the_stack_prefilters_nothing(tmp_path, monkeypatch):
+    """A test of part of the stack saves positions counted from the first
+    plane tested; against the atlas every cell would be in the wrong plane."""
+    import mousebrain.plugin_3d.tuning_widget as tw
+    brain_a = _brain(tmp_path, BRAIN_A)
+    folder = _test_run_folder(tmp_path)
+    tracker = _tracker(tmp_path)
+    exp_id = tracker.log_detection(brain=BRAIN_A, status="completed", output_path=str(folder),
+                                   det_scope="partial", det_z_start=200, det_z_end=260)
+    warnings = _press(tw, monkeypatch, brain_a, tracker, exp_id)
+    assert [w[0] for w in warnings] == ["Run Cannot Be Pre-filtered"]
+    assert "part of the stack" in warnings[0][1]
+    assert not list((brain_a / "4_Cell_Candidates").glob("prefilter*"))
+
+
+def test_a_partial_run_is_refused_wherever_its_file_is(tmp_path, monkeypatch):
+    """Even a tracker row that names the brain's own candidates file: a run
+    recorded as covering part of the stack is never compared with the atlas."""
+    import mousebrain.plugin_3d.tuning_widget as tw
+    brain_a = _brain(tmp_path, BRAIN_A)
+    tracker = _tracker(tmp_path)
+    exp_id = tracker.log_detection(brain=BRAIN_A, status="completed", det_scope="partial",
+                                   output_path=str(brain_a / "4_Cell_Candidates" / "detected_cells.xml"))
+    warnings = _press(tw, monkeypatch, brain_a, tracker, exp_id)
+    assert [w[0] for w in warnings] == ["Run Cannot Be Pre-filtered"]
+
+
+def test_the_run_that_wrote_the_brains_candidates_is_used(tmp_path, monkeypatch):
+    """The pipeline run whose file is the one step 5 classifies starts the
+    pre-filter on that file."""
+    import mousebrain.plugin_3d.tuning_widget as tw
+    from mousebrain.pipeline_status import find_candidates
+    brain_a = _brain(tmp_path, BRAIN_A)
+    tracker = _tracker(tmp_path)
+    xml = brain_a / "4_Cell_Candidates" / "detected_cells.xml"
+    exp_id = tracker.log_detection(brain=BRAIN_A, status="completed", output_path=str(xml),
+                                   det_scope="full")
+    path, why_not = tw._prefilter_file_of_run(tracker.get_experiment(exp_id), brain_a)
+    assert (path, why_not) == (xml, "")
+    assert path == find_candidates(brain_a)
+    monkeypatch.setattr(tw.QMessageBox, "warning", lambda *a, **k: pytest.fail(a[2]))
+    fake = SimpleNamespace(current_brain=brain_a, _prefilter_source_exp_id=exp_id, tracker=tracker,
+                           prefilter_status=_Label())
+    with pytest.raises(_Stop):
+        tw.TuningWidget.run_prefilter(fake)

@@ -458,6 +458,9 @@ def _candidates_file_of_run(run):
     filtering a newer run's file would record a false provenance. A folder
     outside 4_Cell_Candidates (a Setup & Tuning test run's own folder) is used
     by that one run only, so its file is the run's.
+
+    This answers only WHOSE file it is. Whether the file may be compared with
+    the atlas is a separate question: see ``_prefilter_file_of_run``.
     """
     if not run:
         return None
@@ -489,6 +492,45 @@ def _same_file(a, b):
         return Path(a).resolve() == Path(b).resolve()
     except OSError:
         return False
+
+
+def _prefilter_file_of_run(run, brain_path):
+    """The file the pre-filter may use for a chosen detection run, and why not.
+
+    Returns ``(path, "")`` or ``(None, reason)``; reason is "partial",
+    "not_found" or "not_the_brains_candidates".
+
+    The pre-filter sorts candidates by where they fall in the atlas, so the
+    file must be in the space the atlas was fitted to and cover the whole
+    stack. The ONE file known to be that is the file step 5 classifies
+    (``pipeline_status.find_candidates``). So a chosen run is accepted only
+    when its own file (``_candidates_file_of_run``) is that very file; the
+    choice then decides which run is recorded as the pre-filter's parent,
+    never which positions are filtered.
+
+    WHY A SETUP & TUNING TEST RUN IS REFUSED
+    A test run keeps its cells in a folder of its own, outside the brain. A
+    test of part of the stack (``det_scope`` "partial") detects on a slice of
+    the images and saves positions counted from the first plane of that slice;
+    the offset is added only to what napari shows. Compared with the atlas as
+    saved, every cell would sit in the wrong plane: wrong interior and removed
+    counts, written into the brain's folder and the tracker, and wrongly
+    placed positions offered as training examples. A whole-stack test run is
+    refused too: nothing records that the images it read are the ones the
+    atlas was fitted to.
+    """
+    if not run:
+        return None, "not_found"
+    if (run.get('det_scope') or '').strip().lower() == 'partial':
+        return None, "partial"
+    own = _candidates_file_of_run(run)
+    if own is None:
+        return None, "not_found"
+    from mousebrain.pipeline_status import find_candidates
+    brains_file = find_candidates(brain_path)
+    if brains_file is None or not _same_file(own, brains_file):
+        return None, "not_the_brains_candidates"
+    return own, ""
 
 
 def _detection_parent_of(candidates_xml, tracker, brain_name, chosen_exp_id):
@@ -3500,16 +3542,21 @@ class TuningWidget(QWidget):
                 "Run registration (step 3) first.")
             return
 
-        # Which candidates file to pre-filter.
-        # - A detection run is selected (Load Best / Load Selected): THAT run's
-        #   file, because the pre-filter is recorded in the tracker with the
-        #   selected run as its parent. If the run's file cannot be found, stop
-        #   and say so -- pre-filtering some other file under that run's name
-        #   would record a provenance that is false. (This lookup used to call
-        #   tracker.search(exp_id=...), which search() does not accept; the
-        #   error was swallowed, so a selected run never chose the file.)
-        # - No run selected: the candidates step 5 would classify
-        #   (pipeline_status.find_candidates), the one rule every reader uses.
+        # Which candidates file to pre-filter: ALWAYS the candidates step 5
+        # would classify (pipeline_status.find_candidates), the one rule every
+        # reader uses -- the one file known to be in the atlas's space and to
+        # cover the whole stack.
+        # - A detection run is selected (Load Best / Load Selected): the
+        #   pre-filter is recorded in the tracker with that run as its parent,
+        #   so the run must be the one that wrote that file. If it is not --
+        #   a Setup & Tuning test run, a run whose file was replaced or cannot
+        #   be found -- stop and say so: filtering under that run's name would
+        #   record a false provenance, and a test run's own file is not in the
+        #   atlas's space (see _prefilter_file_of_run). (This lookup used to
+        #   call tracker.search(exp_id=...), which search() does not accept;
+        #   the error was swallowed, so the selected run was recorded as the
+        #   parent of whatever file was filtered.)
+        # - No run selected: that file, with no parent claimed.
         if self._prefilter_source_exp_id:
             run = None
             if self.tracker:
@@ -3528,7 +3575,24 @@ class TuningWidget(QWidget):
                     "Nothing was pre-filtered. Choose a run of this brain with "
                     "Load Best or Load Selected.")
                 return
-            candidates_xml = _candidates_file_of_run(run)
+            candidates_xml, why_not = _prefilter_file_of_run(run, brain_path)
+            if why_not in ("partial", "not_the_brains_candidates"):
+                QMessageBox.warning(self, "Run Cannot Be Pre-filtered",
+                    f"The chosen detection run {self._prefilter_source_exp_id} "
+                    + ("is a test of part of the stack: its cell positions are "
+                       "counted from the first plane tested, not from the first "
+                       "plane of the brain, so they cannot be compared with the "
+                       "atlas.\n"
+                       if why_not == "partial" else
+                       "did not write this brain's candidates file (the file "
+                       "step 5 classifies, in 4_Cell_Candidates). A Setup & "
+                       "Tuning test run keeps its cells in a folder of its own, "
+                       "and nothing shows those are in the space the atlas was "
+                       "fitted to.\n")
+                    + "Nothing was pre-filtered. Choose the pipeline detection "
+                    "run (step 4) that wrote this brain's candidates, or run "
+                    "step 4 with the settings you want and pre-filter that.")
+                return
             if candidates_xml is None:
                 QMessageBox.warning(self, "Selected Run Not Found",
                     f"The selected detection run {self._prefilter_source_exp_id} "

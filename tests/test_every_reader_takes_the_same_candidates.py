@@ -181,9 +181,11 @@ def test_a_chosen_run_whose_file_is_gone_prefilters_nothing(tmp_path, monkeypatc
     assert exp_id in warnings[0][1]
 
 
-def test_a_chosen_run_prefilters_its_own_file(tmp_path, monkeypatch):
-    """The chosen run's own candidates file is filtered, not the brain's
-    current detected_cells.xml."""
+def test_a_chosen_run_never_has_a_file_of_its_own_filtered(tmp_path, monkeypatch):
+    """A chosen run whose file sits outside the brain (a Setup & Tuning test
+    run's own folder) is refused: neither its file nor the brain's
+    detected_cells.xml is filtered under its name. Only the brain's own
+    candidates file is ever compared with the atlas."""
     import mousebrain.plugin_3d.tuning_widget as tw
     brain = _brain(tmp_path)
     (brain / "4_Cell_Candidates" / "detected_cells.xml").write_text(_markers(5), encoding="utf-8")
@@ -192,10 +194,11 @@ def test_a_chosen_run_prefilters_its_own_file(tmp_path, monkeypatch):
     kept.write_text(_markers(7), encoding="utf-8")
     tracker, exp_id = _tracker_with_run(tmp_path, kept)
     warnings = []
-    monkeypatch.setattr(tw.QMessageBox, "warning", lambda *a, **k: warnings.append(a[2]))
+    monkeypatch.setattr(tw.QMessageBox, "warning", lambda *a, **k: warnings.append(a[1:3]))
     fake = SimpleNamespace(current_brain=brain, _prefilter_source_exp_id=exp_id, tracker=tracker,
                            prefilter_status=_Label())
-    with pytest.raises(_Stop):
-        tw.TuningWidget.run_prefilter(fake)
-    assert not warnings
-    assert "earlier_candidates.xml" in fake.prefilter_status.text
+    tw.TuningWidget.run_prefilter(fake)  # returns without starting: no _Stop
+    assert fake.prefilter_status.text is None
+    assert len(warnings) == 1
+    assert warnings[0][0] == "Run Cannot Be Pre-filtered"
+    assert exp_id in warnings[0][1]

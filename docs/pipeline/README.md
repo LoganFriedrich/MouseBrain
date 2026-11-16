@@ -79,10 +79,12 @@ the pre-filter, or choose a run in Setup & Tuning's pre-filter section with
 
 **The Setup & Tuning pre-filter button and a chosen run.** Once a detection run
 is chosen with Load Best or Load Selected (the label under the buttons shows
-`Loaded: <run id>`), the button pre-filters **that run's** candidates file -- the
-file the run's `output_path` in the tracker names, or `detected_cells.xml` /
-`cells.xml` in the folder it names -- and records that run as the pre-filter's
-parent.
+`Loaded: <run id>`), the button records that run as the pre-filter's parent --
+so the run must be the one that wrote the file being filtered. The file filtered
+is always the brain's own candidates file, the one step 5 classifies (in
+`4_Cell_Candidates`). The chosen run's file is the file its `output_path` in the
+tracker names, or `detected_cells.xml` / `cells.xml` in the folder it names; if
+that is not the brain's own candidates file, nothing is pre-filtered.
 
 - **A chosen run applies only to its own brain.** Loading another brain clears
   the choice (the label goes back to `No detection loaded`). If the run chosen
@@ -94,15 +96,25 @@ parent.
   the run's tracker row names only the `4_Cell_Candidates` folder and the file
   there has no record (old runs, and runs that never finished, recorded the
   folder; a newer run may have written the file since), the file is not taken.
-  A Setup & Tuning test run's own folder (outside `4_Cell_Candidates`, used by
-  that one run only) is taken as it is.
+- **A Setup & Tuning test run cannot be pre-filtered.** The button stops with
+  "Run Cannot Be Pre-filtered", naming the run, and pre-filters nothing. Why: a
+  test run keeps its cells in a folder of its own, outside the brain. A test of
+  part of the stack saves each cell's position counted from the first plane
+  tested, not from the first plane of the brain (napari shifts them only for
+  display), so against the atlas every cell would sit in the wrong plane and the
+  interior / removed counts would be wrong. A whole-stack test run is refused as
+  well, because nothing records that the images it read are the ones the atlas
+  was fitted to. What to do: run step 4 (`4_detect_cells.py`) with the settings
+  you settled on, then choose that run -- or choose no run -- and pre-filter.
+  A run the tracker lists as covering part of the stack (`det_scope` =
+  `partial`) is refused wherever its file is.
 - If no such file can be found (the run is not in the tracker, its file was
   moved or deleted, or the file is not shown to be its own), the button stops
   with "Selected Run Not Found", naming the run, and pre-filters nothing;
   choose another run.
 
-It never substitutes another file under the chosen run's name. Only when no run
-has been chosen does it take the file step 5 classifies.
+It never filters a file under the name of a run that did not write it. When no
+run has been chosen it filters the same file and records no parent run.
 
 **The Setup & Tuning Classify button and a chosen run.** Classify always
 classifies the file step 5 classifies, whatever run is chosen. The tracker row
