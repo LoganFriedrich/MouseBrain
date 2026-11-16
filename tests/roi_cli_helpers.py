@@ -85,12 +85,16 @@ class _FakeLayer:
 
 class FakeEditor:
     """Stands in for napari: records which samples were opened and returns
-    the polygons a person 'drew' (``drawn``) when the window closes."""
+    the polygons a person 'drew' (``drawn``) when the window closes.
 
-    def __init__(self, monkeypatch, drawn=()):
+    ``keep=True`` is a person who changes nothing and clicks Save & Next: the
+    window closes holding exactly the polygons it was opened with."""
+
+    def __init__(self, monkeypatch, drawn=(), keep=False):
         self.opened = []
         self.preloaded = []
         self.drawn = list(drawn)
+        self.shown_shapes = []
         editor = self
 
         class Viewer:
@@ -99,6 +103,9 @@ class FakeEditor:
 
             def add_image(self, *a, **k):
                 return None
+
+            def add_shapes(self, data, **k):
+                editor.shown_shapes.append(list(data))
 
         fake = types.ModuleType("napari")
         fake.Viewer = Viewer
@@ -112,6 +119,11 @@ class FakeEditor:
 
         def _setup(viewer, existing_rois=None):
             editor.preloaded.append(existing_rois)
+            if keep:
+                rois = existing_rois or []
+                left = [r["vertices"] for r in rois if "right" not in r.get("name", "").lower()]
+                right = [r["vertices"] for r in rois if "right" in r.get("name", "").lower()]
+                return _FakeLayer(left), _FakeLayer(right)
             return _FakeLayer(editor.drawn), _FakeLayer([])
 
         monkeypatch.setattr(run_roi, "_load_image_channels", _load)

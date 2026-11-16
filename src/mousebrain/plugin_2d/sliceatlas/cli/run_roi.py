@@ -334,7 +334,6 @@ def cmd_draw(args):
     """Open napari to draw ROI polygons, save to JSON on close."""
     import napari
     import pandas as pd
-    from mousebrain.plugin_2d.sliceatlas.core.roi import save_rois_json, load_rois_json
 
     image_path = Path(args.image)
     if not image_path.exists():
@@ -350,14 +349,15 @@ def cmd_draw(args):
 
     # Check for existing ROIs
     output_path = Path(args.output) if args.output else image_path.with_suffix('.rois.json')
-    existing_rois = None
-    if output_path.exists():
-        try:
-            roi_data = load_rois_json(output_path)
-            existing_rois = roi_data['rois']
-            print(f"  Loaded {len(existing_rois)} existing ROI(s) -- edit or redraw")
-        except ValueError:
-            pass
+    state, roi_data, err = _roi_file_state(output_path)
+    existing_rois = roi_data['rois'] if state in ROI_PRELOADED else None
+    if state == ROI_OK:
+        print(f"  Loaded {len(existing_rois)} existing ROI(s) -- edit or redraw")
+    elif state == ROI_NO_SHAPE:
+        print(f"  Loaded {len(existing_rois)} existing ROI(s). The file has no "
+              f"image size; closing the window saves them with it.")
+    elif state == ROI_UNREADABLE:
+        print(f"  [!] Existing ROI file is unreadable ({err}); it is kept.")
 
     # Create viewer
     viewer = napari.Viewer(title=f"ROI Draw -- {image_path.name}")
@@ -384,15 +384,9 @@ def cmd_draw(args):
     # Block until viewer closes
     napari.run()
 
-    # Extract and save
+    # Extract and save (never deleting a file; see _store_edited_rois)
     rois = _extract_rois_from_layers(left_layer, right_layer)
-
-    if not rois:
-        print("No ROIs drawn. Nothing saved.")
-        return 0
-
-    save_rois_json(output_path, rois, image_path.name, image_shape)
-    print(f"Saved {len(rois)} ROI(s) to: {output_path}")
+    print(_store_edited_rois(output_path, rois, image_path.name, image_shape, state))
 
     return 0
 
@@ -438,9 +432,14 @@ def cmd_count(args):
     # Load ROIs
     print(f"Loading ROIs: {rois_path.name}")
     try:
-        roi_data = load_rois_json(rois_path)
+        roi_data = load_rois_json(rois_path, require_image_shape=True)
     except ValueError as e:
         print(f"Error: {e}")
+        if _roi_file_state(rois_path)[0] == ROI_NO_SHAPE:
+            # The polygons are fine; only the size is missing. Say how to add it.
+            print("  Open the image once with brainslice-roi draw (or the sample in "
+                  "brainslice-roi batch) and save: the ROIs are kept and saved "
+                  "with the image size.")
         return 1
 
     rois = roi_data['rois']
@@ -782,6 +781,119 @@ def _print_left_out(left_out):
         print(f"    {name}: {reason}")
 
 
+# ROI file states (see _roi_file_state).
+ROI_NONE = 'none'
+ROI_OK = 'ok'
+ROI_UNREADABLE = 'unreadable'
+ROI_NO_SHAPE = 'no_shape'
+
+# The one line every list and prompt uses for an ROI_NO_SHAPE file, so the
+# person always reads the same fix.
+NO_SHAPE_FIX = ("ROI file has no image size: open it once in brainslice-roi "
+                "batch and click Save & Next")
+
+
+def _roi_file_state(rois_path):
+    """(state, roi data or None, error text or None) for one sample's ROI file.
+
+    WHY the file is READ, not only checked for existence: an existing but
+    unreadable file used to count as "already has ROIs", so --skip-done never
+    opened it for redrawing and the counting step then skipped the sample --
+    the sample silently had no counts. Reading it here lets the lists say
+    which files need a person.
+
+    ROI_NO_SHAPE is a file whose polygons read fine but which records no image
+    size (what the napari widget's "Save ROIs" writes). WHY it is its own
+    state and not "unreadable": the polygons are a person's drawing and are
+    perfectly usable -- the editor must open with them loaded, and one Save &
+    Next re-saves them with the image size, which makes the file countable.
+    Calling it unreadable opened the editor empty and asked for a redraw.
+    It is still not "done": counting cannot place polygons without the size.
+    """
+    from mousebrain.plugin_2d.sliceatlas.core.roi import load_rois_json
+
+    rois_path = Path(rois_path)
+    if not rois_path.exists():
+        return ROI_NONE, None, None
+    try:
+        return ROI_OK, load_rois_json(rois_path, require_image_shape=True), None
+    except (ValueError, OSError) as e:
+        shape_error = str(e)
+    try:
+        return ROI_NO_SHAPE, load_rois_json(rois_path), shape_error
+    except (ValueError, OSError) as e:
+        return ROI_UNREADABLE, None, str(e)
+
+
+# States whose polygons the editor opens with (the person edits or keeps them).
+ROI_PRELOADED = (ROI_OK, ROI_NO_SHAPE)
+
+
+def _set_aside(rois_path, why):
+    """Rename an ROI file to <stem>.rois.<time>.<why>.bak beside it; return the new path.
+
+    WHY a rename and never a delete: the ROI file is a person's drawing, the
+    only copy of it. Whatever replaces or empties it, the old one stays on
+    disk under a name nothing reads as current ROIs, so it can be put back by
+    renaming it.
+    """
+    from datetime import datetime
+
+    rois_path = Path(rois_path)
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    stem = rois_path.name[:-len('.json')] if rois_path.name.endswith('.json') else rois_path.name
+    dest = rois_path.with_name(f"{stem}.{stamp}.{why}.bak")
+    n = 1
+    while dest.exists():
+        dest = rois_path.with_name(f"{stem}.{stamp}_{n}.{why}.bak")
+        n += 1
+    rois_path.rename(dest)
+    return dest
+
+
+def _store_edited_rois(rois_path, rois, image_name, image_shape, previous_state):
+    """Write what the editor holds when its window closes. Returns a status line.
+
+    * ROIs drawn: they are saved. An unreadable file they replace is first
+      set aside (*.unreadable.bak), never overwritten; so is a file without
+      an image size (*.noshape.bak), which this save replaces with the same
+      polygons plus the image size, making it countable.
+    * No ROIs, and the sample had a readable ROI file (with or without the
+      image size -- either way the editor showed its polygons): the person
+      cleared them. The file is set aside (*.cleared.bak) -- the sample then counts
+      as having no ROIs -- and the line names the backup.
+    * No ROIs, and the old file was unreadable: it is left exactly as it is
+      (it could not be shown, so it was not cleared by anyone).
+    * No ROIs and no file: nothing to do.
+
+    WHY: closing the window with nothing drawn used to DELETE the existing
+    file -- after a Clear, but also when the file merely could not be read
+    and the editor had opened empty.
+    """
+    from mousebrain.plugin_2d.sliceatlas.core.roi import save_rois_json
+
+    rois_path = Path(rois_path)
+    if rois:
+        note = ""
+        if previous_state == ROI_UNREADABLE and rois_path.exists():
+            kept = _set_aside(rois_path, 'unreadable')
+            note = f" (the unreadable file was kept as {kept.name})"
+        elif previous_state == ROI_NO_SHAPE and rois_path.exists():
+            kept = _set_aside(rois_path, 'noshape')
+            note = (f" with the image size, so it can be counted (the file "
+                    f"without it was kept as {kept.name})")
+        save_rois_json(rois_path, rois, image_name, image_shape)
+        return f"Saved {len(rois)} ROI(s) -> {rois_path.name}{note}"
+
+    if previous_state in ROI_PRELOADED and rois_path.exists():
+        kept = _set_aside(rois_path, 'cleared')
+        return (f"No ROIs: the ROIs were cleared. The old file was kept as "
+                f"{kept.name} (rename it back to {rois_path.name} to restore it).")
+    if previous_state == ROI_UNREADABLE and rois_path.exists():
+        return (f"No ROIs drawn. The unreadable file {rois_path.name} was left "
+                f"as it is.")
+    return "No ROIs drawn. Nothing saved."
+
 
 def cmd_batch(args):
     """Walk through images for a dataset, draw/edit ROIs, then count all.
@@ -789,11 +901,9 @@ def cmd_batch(args):
     Unified workflow: opens every sample. If ROIs exist, they're loaded as
     editable polygons. If not, starts fresh. Edit or just Save & Next to keep.
     """
-    import napari
     import pandas as pd
     from mousebrain.plugin_2d.sliceatlas.core.roi import (
-        save_rois_json, load_rois_json, count_cells_in_rois,
-        results_to_dataframe,
+        count_cells_in_rois, results_to_dataframe,
     )
 
     base_folder = Path(args.folder)
@@ -813,9 +923,12 @@ def cmd_batch(args):
         print(f"No samples found in {base_folder}{region_msg}")
         return 1
 
-    # Split into already-drawn and pending
-    done = [s for s in samples if s['rois_path'].exists()]
-    pending = [s for s in samples if not s['rois_path'].exists()]
+    # Split into already-drawn, pending and unreadable (see _roi_file_state)
+    states = {s['sample']: _roi_file_state(s['rois_path']) for s in samples}
+    done = [s for s in samples if states[s['sample']][0] == ROI_OK]
+    pending = [s for s in samples if states[s['sample']][0] == ROI_NONE]
+    unreadable = [s for s in samples if states[s['sample']][0] == ROI_UNREADABLE]
+    no_shape = [s for s in samples if states[s['sample']][0] == ROI_NO_SHAPE]
 
     region_label = f" [{region}]" if region else ""
     print(f"Dataset: {base_folder.name}{region_label}  (project {project})")
@@ -824,15 +937,28 @@ def cmd_batch(args):
           + (f" (+{len(left_out)} left out, listed above)" if left_out else ""))
     print(f"  Already have ROIs: {len(done)}")
     print(f"  Need ROIs drawn: {len(pending)}")
+    if unreadable:
+        print(f"  [!] ROI file unreadable: {len(unreadable)} "
+              f"(not counted until redrawn or repaired)")
+        for s in unreadable:
+            print(f"    {s['sample']}: {s['rois_path']} -- {states[s['sample']][2]}")
+    if no_shape:
+        print(f"  [!] {NO_SHAPE_FIX}: {len(no_shape)} "
+              f"(not counted until then; their ROIs are kept and shown)")
+        for s in no_shape:
+            print(f"    {s['sample']}: {s['rois_path']}")
 
     if args.count_only:
         if not done:
-            print("\nNo samples have ROI files yet. Run without --count-only first.")
+            print("\nNo samples have countable ROI files yet. Run without --count-only first.")
             return 1
         # Skip to counting
         samples_to_open = []
     elif args.skip_done:
-        samples_to_open = pending
+        # An unreadable file is not "done": it is opened so it can be redrawn.
+        # Nor is one without an image size: it is opened with its ROIs loaded,
+        # and Save & Next re-saves them with the size.
+        samples_to_open = [s for s in samples if states[s['sample']][0] != ROI_OK]
         if not samples_to_open:
             print("\nAll samples already have ROIs. Use --count-only or run without --skip-done to review.")
             # Fall through to counting
@@ -842,9 +968,12 @@ def cmd_batch(args):
 
     if samples_to_open:
         n = len(samples_to_open)
-        has_existing = sum(1 for s in samples_to_open if s['rois_path'].exists())
+        has_existing = sum(1 for s in samples_to_open
+                           if states[s['sample']][0] in ROI_PRELOADED)
         print(f"\nOpening {n} images ({has_existing} with existing ROIs, {n - has_existing} new)")
         print("For each: draw/edit ROIs, then click 'Save & Next'.\n")
+        # Only the drawing step needs napari; --count-only runs without it.
+        import napari
 
     # Draw/edit phase
     for i, sample in enumerate(samples_to_open):
@@ -872,18 +1001,23 @@ def cmd_batch(args):
         meas = pd.read_csv(meas_file)
         print(f"  Cells: {len(meas)}")
 
-        # Load existing ROIs if any
-        existing_rois = None
-        if rois_path.exists():
-            try:
-                roi_data = load_rois_json(rois_path)
-                existing_rois = roi_data['rois']
-                print(f"  Existing ROIs: {len(existing_rois)} (edit or Save & Next to keep)")
-            except ValueError:
-                print(f"  Existing ROI file corrupt, starting fresh")
+        # Load existing ROIs if any (re-read: the file may have changed since
+        # the lists above were made)
+        state, roi_data, err = _roi_file_state(rois_path)
+        existing_rois = roi_data['rois'] if state in ROI_PRELOADED else None
+        if state == ROI_OK:
+            print(f"  Existing ROIs: {len(existing_rois)} (edit or Save & Next to keep)")
+        elif state == ROI_NO_SHAPE:
+            print(f"  Existing ROIs: {len(existing_rois)}. The file has no image size:")
+            print(f"      Save & Next saves them with it, so the sample can be counted.")
+        elif state == ROI_UNREADABLE:
+            print(f"  [!] Existing ROI file is unreadable ({err}).")
+            print(f"      It is kept. Draw new ROIs to replace it (the old file is")
+            print(f"      then renamed to *.unreadable.bak), or close to leave it as it is.")
 
         # Open napari
-        status = "EDIT" if existing_rois else "NEW"
+        status = {ROI_OK: "EDIT", ROI_NO_SHAPE: "EDIT - NO IMAGE SIZE",
+                  ROI_UNREADABLE: "UNREADABLE FILE"}.get(state, "NEW")
         viewer = napari.Viewer(
             title=f"[{i+1}/{len(samples_to_open)}] {s_name} [{status}]"
         )
@@ -899,25 +1033,22 @@ def cmd_batch(args):
 
         napari.run()
 
-        # Save whatever is in the layers
+        # Save whatever is in the layers (never deleting a file; see
+        # _store_edited_rois)
         rois = _extract_rois_from_layers(left_layer, right_layer)
+        print(f"  {_store_edited_rois(rois_path, rois, nd2.name, image_shape, state)}")
 
-        if not rois:
-            print(f"  No ROIs for {s_name}. Skipped.")
-            # Delete stale ROI file if it existed
-            if rois_path.exists():
-                rois_path.unlink()
-            continue
-
-        save_rois_json(rois_path, rois, nd2.name, image_shape)
-        print(f"  Saved {len(rois)} ROI(s) -> {rois_path.name}")
-
-    # Count phase: count all samples that have ROIs
-    done = [s for s in samples if s['rois_path'].exists()]
+    # Count phase: count all samples that have a readable ROI file
+    after = {s['sample']: _roi_file_state(s['rois_path']) for s in samples}
+    done = [s for s in samples if after[s['sample']][0] == ROI_OK]
+    not_counted = [(s['sample'], f"ROI file unreadable: {after[s['sample']][2]}")
+                   for s in samples if after[s['sample']][0] == ROI_UNREADABLE]
+    not_counted += [(s['sample'], NO_SHAPE_FIX)
+                    for s in samples if after[s['sample']][0] == ROI_NO_SHAPE]
 
     if not done:
         print("\nNo ROIs saved. Nothing to count.")
-        _print_left_out(left_out)
+        _print_left_out(left_out + not_counted)
         return 0
 
     # Resolve output directories (registry root preferred)
@@ -958,12 +1089,7 @@ def cmd_batch(args):
 
         meas = pd.read_csv(meas_file)
 
-        try:
-            roi_data = load_rois_json(rois_path)
-        except ValueError as e:
-            print(f"  [{s_name}] Error loading ROIs: {e}")
-            continue
-
+        roi_data = after[s_name][1]
         rois = roi_data['rois']
         image_shape = tuple(roi_data['image_shape'])
 
@@ -1032,9 +1158,10 @@ def cmd_batch(args):
         summary_df.to_csv(output_path, index=False)
 
         print(f"\n{'='*60}")
-        _print_left_out(left_out)
+        _print_left_out(left_out + not_counted)
         print(f"SUMMARY: {len(all_rows)} samples counted"
-              + (f", {len(left_out)} left out" if left_out else ""))
+              + (f", {len(left_out) + len(not_counted)} left out"
+                 if (left_out or not_counted) else ""))
         print(f"Saved: {output_path}")
         print(f"{'='*60}")
 

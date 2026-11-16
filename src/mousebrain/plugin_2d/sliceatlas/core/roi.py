@@ -41,25 +41,49 @@ def save_rois_json(output_path, rois, image_name, image_shape):
         json.dump(data, f, indent=2)
 
 
-def load_rois_json(path):
+def load_rois_json(path, require_image_shape=False):
     """Load ROI polygons from JSON file.
 
     Args:
         path: Path to .rois.json file.
+        require_image_shape: Also refuse a file without a two-number
+            'image_shape'. Counting needs the shape; viewing does not.
 
     Returns:
         Dict with keys: 'version', 'image', 'image_shape', 'created', 'rois'.
         Each roi has 'name' and 'vertices' (list of [y, x] pairs).
 
     Raises:
-        ValueError: If file is not valid ROI JSON.
+        ValueError: If file is not valid ROI JSON -- not JSON at all, no
+            'rois' list of polygons with 'vertices', or (when
+            require_image_shape) no two-number 'image_shape'.
+        OSError: If the file cannot be opened.
+
+    WHY the polygons are always checked here: a file that loads but lacks
+    'vertices' used to pass this check, be listed as "has ROIs", and then
+    crash the counting of every sample after it. One check here lets every
+    caller tell a usable file from an unreadable one up front.
+
+    WHY the shape check is opt-in: only counting places the polygons on the
+    image grid. ROI files saved from the napari widget's "Save ROIs" carry no
+    image shape and are still valid for viewing (brainslice-roi view), so
+    only the counting callers ask for the shape.
     """
     path = Path(path)
     with open(path) as f:
         data = json.load(f)
 
-    if 'rois' not in data:
+    if not isinstance(data, dict) or 'rois' not in data:
         raise ValueError(f"Not a valid ROI JSON file (missing 'rois' key): {path}")
+    if not isinstance(data['rois'], list) or not all(
+            isinstance(r, dict) and 'vertices' in r for r in data['rois']):
+        raise ValueError(f"Not a valid ROI JSON file ('rois' must be a list of "
+                         f"polygons with 'vertices'): {path}")
+    if require_image_shape:
+        shape = data.get('image_shape')
+        if not isinstance(shape, (list, tuple)) or len(shape) < 2:
+            raise ValueError(f"ROI file has no 'image_shape', so its polygons "
+                             f"cannot be placed for counting: {path}")
 
     return data
 
