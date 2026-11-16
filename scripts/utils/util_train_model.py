@@ -85,6 +85,10 @@ def discover_training_yamls(paradigm: str) -> list:
         found.append(shared)
 
     # 2. Per-brain directories
+    # Every folder, not config.iter_brains: this gathers labels a person
+    # already made, wherever they were saved (a '_superseded_' folder or a
+    # backup copy included); it does not choose brains to process. See
+    # docs/pipeline/README.md, 'Which folders are brains?'.
     per_brain = []
     if BRAINS_ROOT.exists():
         for mouse_dir in sorted(BRAINS_ROOT.iterdir()):

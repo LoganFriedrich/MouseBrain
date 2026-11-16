@@ -107,7 +107,8 @@ has been chosen does it take the file step 5 classifies.
 ## Which folders are brains?
 
 Every script, the napari plugins, the utilities and the `mousebrain` launcher
-(`mousebrain --crop <brain>`) use the same rule
+(`mousebrain --crop <brain>`) -- with the one exception of the training-data
+collectors described at the end of this section -- use the same rule
 (`mousebrain.config.iter_brains`) to decide which folders are brains, so they
 always agree on which brains exist. A brain is a folder two levels down,
 `1_Brains/<mouse folder>/<brain folder>`, where:
@@ -132,6 +133,24 @@ always agree on which brains exist. A brain is a folder two levels down,
 name with an underscore** -- for example `_superseded_<date>` for the outputs of
 an earlier delivery. Such a folder is never listed, never processed and never
 found by name.
+
+**The exception: training data.** The places that gather labelled training
+cubes for the classifier do not use this rule: Setup & Tuning's list of training
+sources (each per-brain source is shown as `Brain: <folder name>`), its table of
+saved training batches, and `scripts/utils/util_train_model.py`. They look in
+`training_data` inside **every** folder two levels down, including folders that
+start with `_` and mouse folders with a skip word. They gather labels a person
+has already made, wherever they were saved; they do not decide which brains are
+processed. So:
+
+- a `_superseded_<date>` folder (or a backup copy of a mouse) that holds a
+  `training_data` folder shows up as a training source under its own folder
+  name. In Setup & Tuning, untick it in the training sources table if it should
+  not be used (for example when it is a copy of cubes the live brain also has,
+  which would count the same cubes twice);
+- `util_train_model.py` has no such table: it uses every matching
+  `training_data` it finds. To leave a copy out, move its `training_data`
+  folder outside the brains root before training.
 
 **When a brain is missing from a list.** The command-line listings (each step's
 scan or list of brains when it is run without `--brain`, `RUN_PIPELINE.py`,

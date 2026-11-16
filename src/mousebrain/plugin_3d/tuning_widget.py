@@ -6203,6 +6203,10 @@ class TuningWidget(QWidget):
                 batches.append((source_name, date_str, cells_xml, non_cells_xml, n_cells, n_non))
 
         # Scan per-brain training data
+        # Every folder, not config.iter_brains: this gathers labels a person
+        # already made, wherever they were saved (a '_superseded_' folder or a
+        # backup copy included); it does not choose brains to process. See
+        # docs/pipeline/README.md, 'Which folders are brains?'.
         if BRAINS_ROOT.exists():
             for mouse_dir in sorted(BRAINS_ROOT.iterdir()):
                 if not mouse_dir.is_dir():
@@ -6414,6 +6418,10 @@ class TuningWidget(QWidget):
                     ))
 
         # --- 2. Per-brain training_data folders ---
+        # Every folder, not config.iter_brains: this gathers labels a person
+        # already made, wherever they were saved (a '_superseded_' folder or a
+        # backup copy included); it does not choose brains to process. See
+        # docs/pipeline/README.md, 'Which folders are brains?'.
         if BRAINS_ROOT.exists():
             for mouse_dir in sorted(BRAINS_ROOT.iterdir()):
                 if not mouse_dir.is_dir():
