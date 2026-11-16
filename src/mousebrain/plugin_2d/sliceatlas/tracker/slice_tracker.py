@@ -17,12 +17,37 @@ import csv
 import os
 import socket
 import hashlib
+import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 
+from mousebrain.file_lock import exclusive_file_lock
+
 from .schema import CSV_COLUMNS, RUN_TYPES
+
+
+# HOW THE CSV IS WRITTEN (see SliceTracker._rewrite and _write_row)
+#
+# The 2D tracker is one CSV that the napari widget and the batch script write,
+# possibly at the same time and from different machines. Every status change
+# rewrites the whole file. That rewrite used to:
+#   * write in place, so a crash part-way left a truncated tracker;
+#   * take no lock, so the widget and the batch each wrote back the rows they
+#     had read, and one of them lost the other's new rows and updates.
+# Now every write holds an exclusive lock file beside the CSV
+# (mousebrain.file_lock), and a rewrite goes through a temporary file swapped
+# in with os.replace, keeping every column the file has (known to this
+# version or not) in the file's own order.
+LOCK_STALE_SECONDS = 120
+LOCK_WAIT_SECONDS = 300
+REPLACE_RETRY_SECONDS = 30  # a reader on Windows can hold the file open briefly
+# The napari window writes from its main thread, which cannot repaint while it
+# waits, so it opens the tracker with much shorter waits (see
+# SliceTracker.__init__ and the widget's _open_tracker). The module values are
+# for the batch, which can afford to wait.
 
 
 class SliceTracker:
@@ -32,28 +57,134 @@ class SliceTracker:
     All runs are logged to a single CSV file with consistent columns.
     """
 
-    def __init__(self, csv_path: Optional[Path] = None):
+    def __init__(self, csv_path: Optional[Path] = None, *,
+                 lock_wait_seconds: Optional[float] = None,
+                 replace_retry_seconds: Optional[float] = None):
         """
         Initialize tracker.
 
         Args:
             csv_path: Path to calibration runs CSV. Uses default if not specified.
+            lock_wait_seconds / replace_retry_seconds: how long one write
+                waits for another writer's lock, and keeps retrying the swap
+                while something holds the CSV open. None = the module values
+                (LOCK_WAIT_SECONDS, REPLACE_RETRY_SECONDS). WHY settable: a
+                GUI writes on the thread that draws its window, so a long
+                wait there freezes the window; it passes short waits and
+                reports a write that could not be made instead.
         """
         if csv_path is None:
             from ..core.config import TRACKER_CSV
             csv_path = TRACKER_CSV
 
         self.csv_path = Path(csv_path)
+        self._lock_wait_seconds = lock_wait_seconds
+        self._replace_retry_seconds = replace_retry_seconds
         self._ensure_csv_exists()
 
     def _ensure_csv_exists(self):
-        """Create CSV with headers if it doesn't exist."""
+        """Create the CSV with headers if it does not exist."""
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
 
         if not self.csv_path.exists():
-            with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+            with self._lock():
+                if not self.csv_path.exists():
+                    tmp = self._tmp_path()
+                    with open(tmp, 'w', newline='', encoding='utf-8') as f:
+                        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+                        writer.writeheader()
+                    self._replace(tmp)
+
+    # -----------------------------------------------------------------
+    # Safe writing (see the note at the top of this module)
+    # -----------------------------------------------------------------
+    @property
+    def _lock_path(self) -> Path:
+        return self.csv_path.with_name(self.csv_path.name + ".lock")
+
+    def _lock(self):
+        """Hold the tracker's write lock for the duration of the block."""
+        return exclusive_file_lock(self.csv_path, "SliceTracker",
+                                   stale_seconds=LOCK_STALE_SECONDS,
+                                   wait_seconds=(LOCK_WAIT_SECONDS
+                                                 if self._lock_wait_seconds is None
+                                                 else self._lock_wait_seconds))
+
+    def _tmp_path(self) -> Path:
+        return self.csv_path.with_name(
+            "%s.tmp-%d-%s" % (self.csv_path.name, os.getpid(), uuid.uuid4().hex[:8]))
+
+    def _replace(self, tmp: Path) -> None:
+        """Swap the finished temporary file in. Retries while a reader on
+        Windows briefly holds the CSV open; removes the temporary file if the
+        swap finally fails, so nothing is left beside the tracker."""
+        budget = (REPLACE_RETRY_SECONDS if self._replace_retry_seconds is None
+                  else self._replace_retry_seconds)
+        deadline = time.monotonic() + budget
+        try:
+            while True:
+                try:
+                    os.replace(tmp, self.csv_path)
+                    return
+                except PermissionError:
+                    if time.monotonic() > deadline:
+                        raise
+                    time.sleep(0.2)
+        except BaseException:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
+
+    def _read_locked(self):
+        """(header, rows) of the file. Call with the lock held."""
+        with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            header = list(reader.fieldnames or [])
+            rows = list(reader)
+        if any(None in row for row in rows):
+            # A row with more values than the header has columns: rewriting
+            # would drop the extra values. A person has to look.
+            raise RuntimeError(
+                f"{self.csv_path}: some rows have more values than the header has "
+                f"columns, so the file cannot be rewritten without losing them. "
+                f"Repair it first.")
+        return header, rows
+
+    def _rewrite_locked(self, mutate):
+        """The body of _rewrite; the caller holds the lock."""
+        header, rows = self._read_locked()
+        result = mutate(rows)
+        columns = header + [c for c in CSV_COLUMNS if c not in header]
+        extra = [k for row in rows for k in row if k not in columns]
+        columns += list(dict.fromkeys(extra))
+        tmp = self._tmp_path()
+        try:
+            with open(tmp, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=columns)
                 writer.writeheader()
+                for row in rows:
+                    writer.writerow({c: row.get(c, "") for c in columns})
+        except BaseException:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
+        self._replace(tmp)
+        return result
+
+    def _rewrite(self, mutate):
+        """Read every row, let `mutate(rows)` change them, write them back.
+
+        Under the lock; in the file's own column order, keeping columns this
+        version does not know and adding any column it does know at the end;
+        through a temporary file, so a failure part-way leaves the file as it
+        was. Returns what `mutate` returns.
+        """
+        with self._lock():
+            return self._rewrite_locked(mutate)
 
     def _generate_run_id(self, run_type: str, sample_id: str) -> str:
         """Generate a unique run ID.
@@ -88,12 +219,14 @@ class SliceTracker:
         return row
 
     def _write_row(self, row: Dict[str, Any]):
-        """Append a row to the CSV."""
+        """Append a row to the CSV, under the lock, so an append never lands
+        inside another writer's rewrite."""
         full_row = {col: row.get(col, "") for col in CSV_COLUMNS}
 
-        with open(self.csv_path, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-            writer.writerow(full_row)
+        with self._lock():
+            with open(self.csv_path, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+                writer.writerow(full_row)
 
     def _read_all(self) -> List[Dict[str, str]]:
         """Read all runs from CSV."""
@@ -105,28 +238,25 @@ class SliceTracker:
             return list(reader)
 
     def _update_row(self, run_id: str, updates: Dict[str, Any]) -> bool:
-        """Update a specific row by run_id."""
-        rows = self._read_all()
-        found = False
+        """Update a specific row by run_id. One locked rewrite (see _rewrite)."""
+        return self._update_rows({run_id: updates})
 
-        for row in rows:
-            if row['run_id'] == run_id:
-                row.update({k: str(v) if v is not None else "" for k, v in updates.items()})
-                found = True
-                break
-
-        if found:
-            clean_rows = []
+    def _update_rows(self, updates_by_id: Dict[str, Dict[str, Any]]) -> bool:
+        """Apply several rows' updates in ONE locked rewrite, so a change that
+        must touch more than one row (moving a 'best' mark) can never be left
+        half done. True when the first id given was found."""
+        def mutate(rows):
+            found = set()
             for row in rows:
-                clean_row = {k: row.get(k, "") for k in CSV_COLUMNS}
-                clean_rows.append(clean_row)
-
-            with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-                writer.writeheader()
-                writer.writerows(clean_rows)
-
-        return found
+                rid = row.get('run_id')
+                upd = updates_by_id.get(rid)
+                if upd is not None and rid not in found:
+                    row.update({k: str(v) if v is not None else "" for k, v in upd.items()})
+                    found.add(rid)
+            return found
+        found = self._rewrite(mutate)
+        first = next(iter(updates_by_id), None)
+        return first in found
 
     # =========================================================================
     # LOGGING METHODS
@@ -380,19 +510,19 @@ class SliceTracker:
         if not 1 <= rating <= 5:
             raise ValueError("Rating must be 1-5")
 
-        updates = {'rating': rating}
-        if notes:
-            rows = self._read_all()
+        def mutate(rows):
             for row in rows:
-                if row['run_id'] == run_id:
-                    existing = row.get('notes', '')
-                    if existing:
-                        updates['notes'] = f"{existing}; {notes}"
-                    else:
-                        updates['notes'] = notes
-                    break
+                if row.get('run_id') == run_id:
+                    row['rating'] = str(rating)
+                    if notes:
+                        existing = row.get('notes', '')
+                        row['notes'] = f"{existing}; {notes}" if existing else notes
+                    return True
+            return False
 
-        return self._update_row(run_id, updates)
+        # The notes are read and changed inside one locked rewrite, so a note
+        # another writer added in between is never lost.
+        return bool(self._rewrite(mutate))
 
     # =========================================================================
     # QUERY METHODS
@@ -482,20 +612,23 @@ class SliceTracker:
         sample_id = run.get('sample_id', '')
         run_type = run.get('run_type', '')
 
-        # Clear previous best for this sample+type
-        rows = self._read_all()
-        for row in rows:
-            if (row.get('sample_id') == sample_id and
-                row.get('run_type') == run_type and
-                row.get('marked_best') == 'True' and
-                row['run_id'] != run_id):
-                self._update_row(row['run_id'], {'marked_best': ''})
+        # Clear the previous best for this sample+type and mark this one in
+        # ONE locked rewrite (it used to be one rewrite per cleared row plus
+        # one), so the move can never be left half done.
+        def mutate(rows):
+            found = False
+            for row in rows:
+                if row.get('run_id') == run_id and not found:
+                    row['marked_best'] = 'True'
+                    row['rating'] = '5'
+                    found = True
+                elif (row.get('sample_id') == sample_id and
+                      row.get('run_type') == run_type and
+                      row.get('marked_best') == 'True'):
+                    row['marked_best'] = ''
+            return found
 
-        # Mark this one as best
-        return self._update_row(run_id, {
-            'marked_best': 'True',
-            'rating': 5,
-        })
+        return bool(self._rewrite(mutate))
 
     def unmark_best(self, run_id: str) -> bool:
         """Clear a run's marked-best flag (its rating is left as it is).
