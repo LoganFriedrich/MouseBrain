@@ -94,6 +94,18 @@ class SliceTracker:
                         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
                         writer.writeheader()
                     self._replace(tmp)
+        else:
+            self._add_missing_columns()
+
+    def _add_missing_columns(self):
+        """Give a tracker written before the newest columns those columns,
+        every existing value kept under its own name, before anything is
+        appended to it (see _write_row)."""
+        with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
+            header = next(csv.reader(f), None) or []
+        if all(col in header for col in CSV_COLUMNS):
+            return
+        self._rewrite(lambda rows: None)
 
     # -----------------------------------------------------------------
     # Safe writing (see the note at the top of this module)
@@ -219,14 +231,29 @@ class SliceTracker:
         return row
 
     def _write_row(self, row: Dict[str, Any]):
-        """Append a row to the CSV, under the lock, so an append never lands
-        inside another writer's rewrite."""
-        full_row = {col: row.get(col, "") for col in CSV_COLUMNS}
+        """Append a row to the CSV.
+
+        In the FILE's column order, not this code's. WHY: the two differ
+        whenever the file was written by another version of this code, and
+        appending in the code's order put a row's values under the wrong
+        column names (channel names under input_path, an area under
+        output_path ...) -- which the next rewrite then made permanent. If
+        the file lacks a column this version writes, the row goes in through
+        one rewrite that adds the column first, so no value is dropped.
+        Under the lock, so an append never lands inside another writer's
+        rewrite.
+        """
+        full_row = {col: ("" if row.get(col) is None else row.get(col)) for col in CSV_COLUMNS}
 
         with self._lock():
-            with open(self.csv_path, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-                writer.writerow(full_row)
+            with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
+                header = next(csv.reader(f), None) or []
+            if header and all(col in header for col in CSV_COLUMNS):
+                with open(self.csv_path, 'a', newline='', encoding='utf-8') as f:
+                    writer = csv.DictWriter(f, fieldnames=header)
+                    writer.writerow({c: full_row.get(c, "") for c in header})
+            else:
+                self._rewrite_locked(lambda rows: rows.append(full_row))
 
     def _read_all(self) -> List[Dict[str, str]]:
         """Read all runs from CSV."""
