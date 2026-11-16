@@ -144,21 +144,22 @@ mousebrain-registry --name 3D_Orientation_Check --no-approved-method --stale
 - An analysis not named there is judged by `"default"` if it follows the
   shared method, and has no approved method otherwise. Leaving `"default"`
   out means the built-in parameters.
-- The slice batch tools (detection and ROI counting) record, as the
-  parameters of each result they register, the approved method of THEIR
-  analysis: its own entry under `"analyses"` if you gave it one, else
-  `"default"`. So naming a slice analysis under `"analyses"` takes effect
-  from its next batch run.
-
-  **Know this before trusting a slice analysis's stale count:** what these
-  tools record is the APPROVED method, not the values the batch actually ran
-  with (those come from its command line, e.g. a different threshold, and are
-  in the tuning tracker). Every slice result they register is therefore
+- The slice DETECTION batch (`ENCR_Detection`) runs with the approved
+  method of its analysis (its own entry under `"analyses"` if you gave it
+  one, else `"default"`) for every number not typed on its command line or
+  taken from a run marked best, and records, as the parameters of each
+  result, the values it ACTUALLY ran with. A result made with any other
+  value is therefore stale, and its banner says so before it runs (see
+  `src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, section 6).
+- The slice ROI counting tool records, as the parameters of each result,
+  the approved method of ITS analysis, not the values it ran with (those
+  come from its command line and are in the tuning tracker). **Know this
+  before trusting the ROI analysis's stale count:** every ROI result is
   recorded as made with the approved method, and so counts as current, even
-  when the run used other settings. Until the batch tools record the values
-  they really used, a slice analysis's "stale vs approved" count tells you
+  when the run used other settings; its "stale vs approved" count tells you
   only which results were registered before the approved method last
-  changed.
+  changed. Naming a slice analysis under `"analyses"` takes effect from its
+  next batch run.
 - The old form -- the parameters alone, `{ "detection": ..., ... }` -- still
   works and means the same as `{"default": {...}}`.
 - `"default"` and `"analyses"` are reserved words at the top of the file: a

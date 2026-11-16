@@ -70,6 +70,15 @@ that produced it. The registry lives inside the pipeline data folder:
   as mousedb, for example) may pull from this folder; the manifest tells it
   what is there, how it was produced and whether it is still current.
 - Inspect a registry: `mousebrain-registry --name <analysis> --stale --summary`.
+- Each entry of the 2D batch (`ENCR_Detection`) records the parameters that
+  run actually used, so a batch output made with anything other than the
+  approved method shows as stale. (The other producers, ROI analysis among
+  them, still record the approved method whatever they ran with.) The 2D
+  batch script prints where each of its parameters came from and warns
+  before it runs with anything that is not the approved method. Marking a run best in
+  the BrainSlice Run History panel chooses the batch's sigma and percentile
+  but does not change the approved method; how to do both is in
+  `src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, section 6.
 
 ## Annotating ND2 slices (2D: BrainSlice, tab "7. Annotate")
 

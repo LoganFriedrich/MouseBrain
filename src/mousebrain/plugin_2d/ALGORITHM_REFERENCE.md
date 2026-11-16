@@ -492,6 +492,365 @@ Sample IDs are automatically parsed to extract hierarchy fields:
 
 ---
 
+## 6. Batch Colocalization (`batch_encr`): choosing its numbers and running it
+
+**Source:** `sliceatlas/batch/batch_encr.py`
+
+The batch script runs ONE fixed method on every ND2 file of a project:
+threshold + LoG nucleus detection, GMM background, `background_mean`
+classification with a sigma threshold, measured in the green channel. What
+you choose is six numbers: the sigma threshold, the background percentile,
+the soma dilation, the background-exclusion dilation and the two detector
+settings (`threshold_fraction`, `log_threshold`).
+
+### Two different things: the batch's numbers and the approved method
+
+- **The batch's numbers** are what it runs with. They come from the list
+  below; marking a run best in BrainSlice is one way to choose two of them.
+- **The approved method** is what the analysis registry judges the batch's
+  results against: the approved method the registry holds for the batch's
+  analysis, `ENCR_Detection`. It is set in the approved-method file
+  (`approved_method.json` under the registry root, or the file named by
+  `MOUSEBRAIN_APPROVED_METHOD`); without that file it is the built-in method.
+  The batch asks the registry for exactly this method, so its banner compares
+  with what the registry will compare with. A result made with any number
+  that differs from it is registered as **stale**, and shows so in
+  `mousebrain-registry --name ENCR_Detection --stale` and in any database that
+  pulls the registry.
+
+Marking a run best does **not** change the approved method. If you mark a run
+whose sigma or percentile differs from it, the batch uses the run's numbers,
+prints `[!] NOT the approved method` with the differences, and registers its
+results as stale. To make those numbers approved, write them into the
+approved-method file (next section) and the batch's next results are current.
+
+### Making numbers the approved method
+
+**First: whose approved method you are editing.** The approved-method file
+can hold one SHARED method, used by every analysis that follows it, and a
+separate entry per analysis (the per-analysis form, explained in
+`docs/pipeline/ANALYSIS_REGISTRY.md`, "Giving each analysis its own approved
+method"). Which one the batch (`ENCR_Detection`) is judged by:
+
+- the file names `ENCR_Detection` under `"analyses"` -> that entry, and only
+  that entry is the batch's;
+- otherwise (no file, a file holding the parameters alone, or a per-analysis
+  file that does not name it) -> the SHARED method, which is also the
+  approved method of every other analysis that follows it -- the ROI analysis
+  (`<project folder>_ROI_Analysis`) included, unless the file names that
+  one too.
+
+Editing the shared method therefore has two effects on those other analyses:
+
+- every existing entry of theirs is judged against the new numbers, so the
+  ones made with the old numbers show as **stale**
+  (`mousebrain-registry --name <project folder>_ROI_Analysis --stale`, and in any
+  database that pulls the registry);
+- the ROI analysis records the approved method in each new entry whatever it
+  ran with, so its later entries carry the new numbers even though it did
+  not run with them.
+
+How the banner tells you: whenever it lists a difference from the approved
+method (`[!] NOT the approved method`) -- whatever the numbers came from:
+typed, a marked run or the defaults -- it adds `[!] On this registry that
+file is the approved method of EVERY analysis it holds` when the batch is
+judged by the shared method. A banner with no difference listed says
+nothing either way; then look in the file for an `"analyses"` entry named
+`ENCR_Detection`.
+
+If you do not want to change the other analyses, give the batch its own
+entry instead of editing the shared method (step 2).
+
+1. Run the batch once with `--dry-run` (below). Its banner lists every number
+   it would use; under `[!] NOT the approved method` it lists each one that
+   differs, as `this run ...` and `approved ...`.
+2. Open (or create) `approved_method.json` in the registry folder
+   (`<pipeline root>/Registry/`). The batch's method is one JSON object of
+   name -> value, with these names: `detection`,
+   `threshold_fraction`, `log_threshold`, `log_decision_tree`,
+   `size_filter_um`, `colocalization`, `sigma_threshold`, `soma_dilation`,
+   `background`, `background_percentile`, `bg_exclusion_dilation`. Example:
+
+   ```json
+   {"detection": "threshold+log", "threshold_fraction": 0.2,
+    "log_threshold": 0.005, "log_decision_tree": true,
+    "size_filter_um": [10, 25], "colocalization": "background_mean",
+    "sigma_threshold": 0.5, "soma_dilation": 6, "background": "gmm",
+    "background_percentile": 10, "bg_exclusion_dilation": 50}
+   ```
+
+   The values in the example only illustrate the format; the size range in
+   particular is the open question at the end of this section. To make it
+   the batch's own approved method, leaving every other analysis as it is,
+   put that object under `"analyses"` as the entry for `ENCR_Detection`:
+
+   ```json
+   {"default":  { ...the shared method, as before (or leave "default" out
+                  for the built-in parameters)... },
+    "analyses": {"ENCR_Detection": { ...the object above... }}}
+   ```
+
+   If the file holds the parameters alone (the old form), move them under
+   `"default"` first so the other analyses keep their method. Writing the
+   object as the whole file (or as `"default"`) instead makes it the
+   approved method of every analysis that follows the shared method (see
+   "First: whose approved method you are editing" above).
+
+   Use only the names listed. A name the batch has no setting for (any other
+   name) is never used by the batch, so every batch entry would differ from
+   the approved method and show as stale; the banner then says
+   `The batch has no setting for <name>`.
+
+3. Put in the `this run` value of every line the banner listed, save, and run
+   `--dry-run` again: the `[!] NOT the approved method` block is gone when the
+   two agree. An unreadable file stops the batch with a message naming it.
+   Then refresh the header of the analysis you changed (and, if you edited
+   the shared method, of every analysis that follows it):
+   `mousebrain-registry --name ENCR_Detection --refresh-approved --stale`.
+
+Results registered before the change are judged against the new approved
+method too; any made with other numbers now show as stale.
+
+### Where each number comes from
+
+For each number, the first of these that gives one wins:
+
+| Order | Source | Gives |
+|-------|--------|-------|
+| 1 | What you type on the command line (`--threshold`, `--bg-percentile`, `--soma-dilation`, `--dilation`) | that number, even when it equals the default |
+| 2 | A colocalization run of **this project** marked best in the tracker (skipped with `--ignore-tracker`) | sigma threshold and background percentile only (its dilations must match; see below) |
+| 3 | The approved method | every number |
+| 4 | Built-in defaults (sigma 0, percentile 10, soma 6 px, exclusion 50, threshold_fraction 0.20, log_threshold 0.005) | every number |
+
+The banner printed at the start lists every number with its source in square
+brackets, e.g. `sigma_threshold=0.5 [marked-best run col_...]`.
+
+### Choosing the sigma and percentile in the napari widget
+
+1. In BrainSlice, run colocalization on an image of the project with
+   **Single Channel** mode, threshold method **background_mean**, background
+   method **gmm**, the local-background box **unticked**, and a **soma
+   dilation above 0**.
+2. In the **Run History** panel, click the run, then **Mark Selected as Best**.
+   Marking a run clears the mark of the sample's previous best run; the
+   message names that run (`The mark on run ... was cleared`).
+3. A message says whether the batch will use it. If it says *will NOT use*,
+   it gives the reason (another method, another channel, soma dilation 0, a
+   run logged before runs recorded their sigma, ...): run again as in step 1
+   and mark the new run.
+
+   If the batch will NOT use the run you selected while the sample already
+   has a marked run the batch DOES use, you are asked first (`Replace a mark
+   the batch uses?`), with that run named. **No** leaves everything as it
+   was. **Yes** marks the new run and clears the old mark, and the batch then
+   takes its sigma and percentile from elsewhere (another sample's mark, or
+   the approved method).
+
+**Not the same measurement.** The widget measures each cell's green signal in
+a disk around its nucleus (the disks of neighboring cells may overlap), using
+the widget's own detection settings. The batch measures a ring around each
+nucleus that leaves the nucleus out and is never shared with a neighbor, and
+detects with its own fixed settings. A sigma chosen in the widget is therefore
+applied by the batch to a related, not identical, measurement. A run with soma
+dilation 0 measured the nucleus itself and is never used.
+
+**Per project.** A marked run counts for a batch when its slice is one of the
+files the batch processes, or the tracker files it under the batch's project.
+Marks on other projects' slices are ignored (the batch prints how many).
+
+**One mark per sample.** Marking a run clears the previous best of the same
+sample only. If marked runs of different samples of the project carry
+**different** numbers (sigma, percentile, or the dilations they were made at),
+the batch stops before processing anything and lists them with their samples.
+To settle it, open each sample whose mark you did not mean, select its starred
+run in Run History and click **Unmark Best**. (Or type both `--threshold` and
+`--bg-percentile`: the batch then lists the disagreeing runs, uses neither,
+and its banner says `Tracker: marked-best runs disagree; none used, because
+--threshold and --bg-percentile were typed`. Or use `--ignore-tracker`.)
+Nothing else counts: an
+unmarked run, however recent, never changes the batch. Run History lists the
+20 newest completed runs of the open sample **and every marked run of it**,
+however old, so a mark can always be found and cleared there.
+
+**The dilations must match.** A run's soma dilation and exclusion dilation are
+written in its notes (`soma_dilation=...; bg_exclusion_dilation=...`). The
+batch does not take them from the run -- they come from the command line or
+the approved method -- but a sigma is chosen for one measurement, so it checks
+them whenever it takes a number (the sigma or the percentile) from the marked
+run: when the batch would run at a different soma or exclusion dilation than
+the marked run was made at, it **stops before processing anything** and names
+both values, e.g. `soma_dilation: marked-best run col_... was made at 3, the
+batch would run at 6 [approved method]`. To go on, do one of these:
+
+- type the run's value (`--soma-dilation 3`, `--dilation 30`) to run at the
+  dilations the sigma was chosen at;
+- type the batch's own value to keep it -- the batch then runs and repeats the
+  difference in its banner as `[!] soma_dilation: the marked-best run was made
+  at 3; this batch runs at 6 (typed on the command line)`;
+- mark a run made at the batch's dilations instead; or
+- use `--ignore-tracker`.
+
+A marked run whose notes do not record both dilations is never used.
+
+When you type **both** `--threshold` and `--bg-percentile`, the marked run
+supplies nothing, so its dilations are not checked and the batch runs with
+what you typed (the same rule that lets typing both settle disagreeing marked
+runs).
+
+### Running it
+
+```
+conda activate <your MouseBrain environment>
+python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project PROJECT_A --dry-run
+python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project PROJECT_A
+```
+
+`--dry-run` prints the banner and the file list and changes nothing. Read the
+banner before the real run.
+
+### What it records
+
+- **Tracker** (`calibration_runs.csv`): per file, a detection row with the
+  pixel-area range the detector applied to that image and, in its notes, the
+  diameter range and detector settings; and a colocalization row with the
+  sigma threshold actually used.
+- **Registry** (`ENCR_Detection`): per sample, the counts and the method
+  parameters **this run used** (not simply the approved method): exactly the
+  eleven names listed under "Making numbers the approved method", nothing
+  else. When any of them differs from the approved method, or the approved
+  method names something the batch has no setting for, the banner says
+  `[!] NOT the approved method` and lists the differences; those entries show
+  as stale.
+- **A sample with no nuclei** is a result and is registered like one: a
+  current entry with 0 nuclei, no files, a positive fraction and background of
+  `null` (nothing was measured), and the parameters the run used. If the
+  sample already had a current entry with files, those files are first moved
+  to an `_archived/<date_time>/` folder beside them (the earlier entry's record
+  is replaced; the registry's log keeps both events). The end-of-batch summary
+  lists each such sample as `earlier registry entry (<n> nuclei) replaced by
+  this run's 0 nuclei;` followed by `<k> file(s) moved to _archived/` when
+  files were moved, or `no files to archive` when the earlier entry had none
+  (or was already retired, that is, no longer current).
+
+  **If those files cannot be moved** (one is open in another program, or the
+  share drops out), nothing is replaced: the 0-nuclei result is NOT
+  registered, the earlier entry stays current with its files where they
+  were, and the summary says `[!] <sample>: this run found 0 nuclei, but the
+  earlier registry entry (<n> nuclei) is KEPT CURRENT: its files could not be
+  moved to _archived/`. Close whatever has the files open and run the batch
+  again. WHY it is not registered anyway: the earlier run's files would stay
+  in the active folder with no entry naming them, and anything that copies
+  that folder would take them for current results.
+
+  **If the files were moved and the 0-nuclei result then cannot be written**
+  (the registry file is open in another program, or the share drops out at
+  that moment), the sample is left with NO current entry: the earlier one is
+  retired, its files are in `_archived/`, and nothing replaced it. The
+  summary says `[!] <sample>: earlier registry entry (<n> nuclei) was
+  retired, <k> file(s) moved to _archived/, but this run's 0-nuclei result
+  could NOT be registered: <error>. The sample has no current entry now; run
+  the batch again.` Running the batch again registers the 0-nuclei result.
+- **A sample whose run fails**: the batch goes on with the next file. Its
+  row in `summary.csv` has status `error` and the message, and the
+  end-of-batch summary lists every failed file under `Errors:` as
+  `<file>: [<sample|infrastructure> failure while <step>] <message>`. What
+  happens to the sample's earlier registry entry depends on whose failure it
+  was:
+
+  | The failure | Examples | Earlier registry entry |
+  |---|---|---|
+  | **The sample's**: while taking the two channels out of the image (after the file has been read), detecting nuclei or measuring cells, a data error (`ValueError`, `KeyError` or `IndexError`) -- and some OTHER sample of the same run got past that same step | the image has the wrong number of channels or dimensions, the detector rejects it | **retired**: no longer current, its files moved to an `_archived/<date_time>/` folder beside them (nothing is deleted). The summary says `earlier registry entry retired`. |
+  | **Infrastructure**: ANY error while reading the file from disk (`read`), and anything else at any step | the share cannot be reached, **the file is not recognized as an ND2** (empty or damaged), **the file's end is missing** (cut off, or still being copied), the tracker file is open in another program, the disk is full, memory runs out, **a missing library or the wrong environment** (an import error), a library or code defect that raises a type, attribute or runtime error | **kept current**, unchanged. The summary says `earlier registry entry kept current -- the failure was not shown to be the sample's`. |
+  | **A data error at a step no other sample of the run got past** | the same software fault hit every file; or every sample that has nuclei failed while measuring | **kept current**. The summary says `earlier registry entry kept current -- no other sample of this run got past the '<step>' step, so the failure may be the software's, not the sample's`. |
+
+  The `<step>` in an `Errors:` line is one of: `read` (reading the file from
+  disk), `channels` (taking the two channels out of the image that was
+  read), `detect` (detecting nuclei), `colocalize` (measuring cells),
+  `tracker` (writing the tracker) and `save` (saving the outputs). Only
+  `channels`, `detect` and `colocalize` can ever be a `sample` failure.
+
+  Which samples count as "got past the step": for a failure while taking
+  the channels out of the image or detecting nuclei, any sample of the run
+  that finished, with or without nuclei. For a failure while measuring cells, only a sample that
+  finished WITH nuclei -- a sample with no nuclei is never measured, so it
+  shows nothing about that step.
+
+  **If a retirement cannot be carried out** because the earlier entry's
+  files cannot be moved (one is open in another program, or the share drops
+  out), the entry stays current and the summary says `[!] <sample>: the
+  sample's own re-run failed, but its earlier registry entry could not be
+  retired and is STILL CURRENT`. Close whatever has the files open and run
+  the batch again.
+
+  WHY the split: the newest attempt on a sample that failed on the sample
+  itself contradicts the older count, so the older count must not stand as
+  current. A failure of the share, the tracker, the environment or the code
+  says nothing about the sample, and retiring a good result because of it
+  would drop it for no reason. So only errors that can say something about
+  the image's data count as the sample's, and only when another sample of
+  the same run shows the software gets past that step.
+
+  Reading the file from disk is deliberately on the infrastructure side,
+  whatever error it gives. The ND2 reader reports two different errors
+  there: an `OSError` for a file it does not recognize as an ND2 at all, and
+  a `ValueError` for a file that starts like an ND2 but whose end is missing
+  -- a copy that was cut off, or one still under way. Both keep the entry. A
+  file that is only half there says nothing about the sample, and neither
+  error can be told from a share that drops out during the read. (The
+  `ValueError` is one of the three data errors, which is why reading has a
+  step of its own: at any later step the image is already in memory, so the
+  file and the share can no longer be the cause.) The cost: a file that is
+  truly damaged for good also keeps its earlier entry, and shows up as an
+  `infrastructure failure while read` on every run until the file is
+  replaced.
+
+  What the rule cannot know: the three data errors are also what a defect
+  in the code or in a library typically raises. A defect that hits every
+  image is caught by the "another sample got past that step" condition. A
+  defect that hits only SOME images, in a run where another sample got past
+  the step, is taken for those samples' own failure and their earlier
+  entries ARE retired. Nothing is lost when that happens: the files are in
+  `_archived/`, the registry's log records the retirement, and running the
+  batch again once the defect is fixed registers the samples again. One more
+  consequence: a batch run on a single sample never retires its entry,
+  because nothing else in the run shows the software works; run it together
+  with a sample known to be good.
+
+  **Before the first sample** the batch imports every library the reading,
+  detecting and measuring steps need (the ND2 reader, scipy, scikit-image,
+  scikit-learn, pandas, matplotlib). If one is missing or broken it stops
+  with `[!] this environment cannot run the batch; no sample was attempted
+  and no registry entry was changed`, names the library, and exits with
+  status 1. Activate the environment MouseBrain is installed in (or install
+  the named library) and run again.
+
+  Either way, fix the cause and run the batch again: a successful re-run
+  registers a new current entry. A retired entry's files stay in `_archived/`
+  and the registry's log records the retirement. If the registry itself
+  could not be read or written for a sample, the summary lists it as
+  `[!] <sample>: the registry could not be read or updated for this sample`.
+
+### Open question: the nucleus diameter range
+
+The batch detects nuclei 10-25 um across. The built-in approved method says
+8-25 um. Until a lab settles which is approved (by setting `size_filter_um`
+in its approved-method file, or by a code change), every batch run with the
+built-in approved method prints the `NOT the approved method` warning for
+`size_filter_um` and its entries show as stale. That is the record being
+honest, not a failed run.
+
+### Open question: recording the measurement region
+
+The batch measures each cell's signal in a ring around its nucleus that
+leaves the nucleus out and does not overlap a neighbor's ring. That choice
+is fixed in the code and is NOT yet among the method parameters a registry
+entry records, so two entries cannot be told apart by it. Adding a name for
+it changes the method hash of every entry, and which name and which approved
+value to use is for a lab to settle; until then nothing about the region is
+recorded.
+
+---
+
 ## Physical Context
 
 ### Typical Image Properties
