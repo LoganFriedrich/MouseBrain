@@ -82,11 +82,27 @@ is chosen with Load Best or Load Selected (the label under the buttons shows
 `Loaded: <run id>`), the button pre-filters **that run's** candidates file -- the
 file the run's `output_path` in the tracker names, or `detected_cells.xml` /
 `cells.xml` in the folder it names -- and records that run as the pre-filter's
-parent. If that file cannot be found (the run is not in the tracker, or its
-file was moved or deleted), the button stops with "Selected Run Not Found",
-naming the run, and pre-filters nothing; choose another run. It never
-substitutes another file under the chosen run's name. Only when no run has been
-chosen does it take the file step 5 classifies.
+parent.
+
+- **A chosen run applies only to its own brain.** Loading another brain clears
+  the choice (the label goes back to `No detection loaded`). If the run chosen
+  is still somehow a run of a different brain, the button stops with "Run
+  Belongs To Another Brain", naming both brains, and pre-filters nothing.
+- **The file must be the run's own.** Step 4 writes a record beside each
+  candidates file (`detected_cells.provenance.json`) naming the run that wrote
+  it. If that record names a different run (a later run replaced the file), or
+  the run's tracker row names only the `4_Cell_Candidates` folder and the file
+  there has no record (old runs, and runs that never finished, recorded the
+  folder; a newer run may have written the file since), the file is not taken.
+  A Setup & Tuning test run's own folder (outside `4_Cell_Candidates`, used by
+  that one run only) is taken as it is.
+- If no such file can be found (the run is not in the tracker, its file was
+  moved or deleted, or the file is not shown to be its own), the button stops
+  with "Selected Run Not Found", naming the run, and pre-filters nothing;
+  choose another run.
+
+It never substitutes another file under the chosen run's name. Only when no run
+has been chosen does it take the file step 5 classifies.
 
 ## Which folders are brains?
 

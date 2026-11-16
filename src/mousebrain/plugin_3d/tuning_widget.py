@@ -415,12 +415,49 @@ class ClassificationWorker(QThread):
             return 0
 
 
+def _run_is_of_brain(run, brain_name):
+    """Whether a tracker run belongs to the brain called ``brain_name``.
+
+    The widget records a run under the brain folder's name, the pipeline step
+    under "<mouse folder>/<brain folder>"; both name the same brain.
+    """
+    recorded = (run.get('brain') or '').strip().replace('\\', '/')
+    return bool(recorded) and recorded.split('/')[-1] == brain_name
+
+
+def _provenance_exp_id(xml_path):
+    """The run a candidates file's record (candidates_io) says wrote it, or
+    None when there is no record or it names no run."""
+    import json
+    from mousebrain.candidates_io import provenance_path
+    rec = provenance_path(xml_path)
+    if not rec.is_file():
+        return None
+    try:
+        exp_id = json.loads(rec.read_text(encoding='utf-8')).get('exp_id')
+    except (OSError, ValueError, AttributeError):
+        return None
+    return (exp_id or '').strip() or None
+
+
 def _candidates_file_of_run(run):
-    """The candidates .xml a tracker detection run points at, or None.
+    """The candidates .xml a tracker detection run wrote, or None.
 
     A run's ``output_path`` is either the .xml itself (what step 4 records
     once it finishes) or the folder the run wrote into. None when there is no
-    run, no path, or no candidates file at that path.
+    run, no path, no candidates file at that path -- or when the file there
+    cannot be shown to be THIS run's:
+
+    - a record beside the file (``detected_cells.provenance.json``, written by
+      step 4) that names another run means a later run replaced it;
+    - a folder inside ``4_Cell_Candidates`` with no such record is the place
+      step 4 writes run after run, so the file in it may be a newer run's.
+      (Old step-4 runs and runs that never finished recorded that folder.)
+
+    WHY: the pre-filter is recorded with the chosen run as its parent, so
+    filtering a newer run's file would record a false provenance. A folder
+    outside 4_Cell_Candidates (a Setup & Tuning test run's own folder) is used
+    by that one run only, so its file is the run's.
     """
     if not run:
         return None
@@ -428,14 +465,22 @@ def _candidates_file_of_run(run):
     if not output_path:
         return None
     out = Path(output_path)
+    candidate = None
     if out.suffix.lower() == '.xml':
-        return out if out.is_file() else None
-    if out.is_dir():
+        candidate = out if out.is_file() else None
+    elif out.is_dir():
         for xml_name in ('detected_cells.xml', 'Detected_cells.xml', 'cells.xml'):
-            candidate = out / xml_name
-            if candidate.is_file():
-                return candidate
-    return None
+            if (out / xml_name).is_file():
+                candidate = out / xml_name
+                break
+    if candidate is None:
+        return None
+    recorded = _provenance_exp_id(candidate)
+    if recorded is not None:
+        return candidate if recorded == (run.get('exp_id') or '').strip() else None
+    if out.is_dir() and '4_Cell_Candidates' in out.parts:
+        return None
+    return candidate
 
 
 class TuningWidget(QWidget):
@@ -465,6 +510,7 @@ class TuningWidget(QWidget):
         # Pre-filter state
         self._prefilter_result = None
         self._prefilter_source_exp_id = None
+        self._prefilter_source_brain = None
 
         # Classification selection for region counting
         self._selected_class_run = None
@@ -3254,6 +3300,17 @@ class TuningWidget(QWidget):
         """Populate the detection runs list for pre-filtering (same format as Det Compare)."""
         self.prefilter_runs_list.clear()
 
+        # A run chosen with Load Best / Load Selected belongs to the brain it
+        # was chosen for. When another brain is loaded (or none), forget it, so
+        # the pre-filter button never runs on the previous brain's candidates.
+        brain_now = getattr(self.current_brain, 'name', None) if self.current_brain else None
+        if getattr(self, '_prefilter_source_brain', None) != brain_now:
+            self._prefilter_source_exp_id = None
+            self._prefilter_source_brain = None
+            if hasattr(self, 'prefilter_source_label'):
+                self.prefilter_source_label.setText("No detection loaded")
+                self.prefilter_source_label.setStyleSheet("")
+
         if not self.current_brain or not self.tracker:
             return
 
@@ -3362,6 +3419,7 @@ class TuningWidget(QWidget):
 
             if best_run:
                 self._prefilter_source_exp_id = best_run['exp_id']
+                self._prefilter_source_brain = getattr(self.current_brain, 'name', None)
                 output_path = best_run.get('output_path', '')
                 cells_found = best_run.get('det_cells_found', '?')
                 self.prefilter_source_label.setText(
@@ -3382,6 +3440,7 @@ class TuningWidget(QWidget):
 
         exp_id = selected.data(Qt.UserRole)
         self._prefilter_source_exp_id = exp_id
+        self._prefilter_source_brain = getattr(self.current_brain, 'name', None)
         self.prefilter_source_label.setText(f"Loaded: {exp_id}")
         self.prefilter_source_label.setStyleSheet("color: #00BFFF; font-weight: bold;")
 
@@ -3422,11 +3481,23 @@ class TuningWidget(QWidget):
                     run = self.tracker.get_experiment(self._prefilter_source_exp_id)
                 except Exception:
                     run = None
+            # A chosen run applies to its own brain only: filtering another
+            # brain's candidates against this brain's atlas would write them
+            # into this brain's folder and record them as this brain's.
+            if run and not _run_is_of_brain(run, brain_name):
+                QMessageBox.warning(self, "Run Belongs To Another Brain",
+                    f"The chosen detection run {self._prefilter_source_exp_id} "
+                    f"is a run of brain {run.get('brain')}, but the brain loaded "
+                    f"is {brain_name}.\n"
+                    "Nothing was pre-filtered. Choose a run of this brain with "
+                    "Load Best or Load Selected.")
+                return
             candidates_xml = _candidates_file_of_run(run)
             if candidates_xml is None:
                 QMessageBox.warning(self, "Selected Run Not Found",
                     f"The selected detection run {self._prefilter_source_exp_id} "
-                    "has no candidates file that can be found"
+                    "has no candidates file that can be found and shown "
+                    "to be its own"
                     + ("" if run else " (the run is not in the tracker)") + ".\n"
                     "Nothing was pre-filtered. Choose another run with "
                     "Load Best or Load Selected.")
