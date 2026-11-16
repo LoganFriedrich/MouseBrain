@@ -831,6 +831,72 @@ def identify_channel_roles(channel_metrics):
 # MAIN EXTRACTION
 # =============================================================================
 
+def existing_extraction_problem(full_folder, num_channels, size_z):
+    """Why the TIFF planes already in ``1_Extracted_Full`` are NOT a finished
+    extraction of this brain, or "" when they are.
+
+    WHY THIS CHECK EXISTS
+    A re-run of this step reuses planes already on disk instead of reading the
+    .ims again (the fast path). It used to reuse them whenever a channel
+    folder held ANY Z*.tif, and took the plane count from the files it found.
+    An extraction stopped part-way (the window closed, the drive dropped)
+    therefore came back as a "complete" brain with a short stack: metadata.json
+    was written with the short depth and every later step -- crop,
+    registration, detection, counts -- worked on a brain missing its back
+    planes, with nothing to say so.
+
+    A reuse is allowed only when every channel holds exactly the planes
+    Z0000 .. Z{n-1}, n is the depth the .ims header gives (``size_z``; when
+    the header does not say, every channel must hold the same n and there must
+    be more than one channel to compare), and each channel's last plane reads
+    cleanly with the same size as its first. Anything else: the brain is
+    extracted again from the .ims (slow, but nothing is lost).
+    """
+    import tifffile
+
+    full_folder = Path(full_folder)
+    counts = {}
+    for ch_idx in range(num_channels):
+        ch_folder = full_folder / f"ch{ch_idx}"
+        names = {p.name for p in ch_folder.glob('Z*.tif')} if ch_folder.is_dir() else set()
+        if not names:
+            return f"ch{ch_idx} has no planes"
+        n = len(names)
+        expected = {f"Z{z:04d}.tif" for z in range(n)}
+        if names != expected:
+            return (f"ch{ch_idx}'s planes are not numbered Z0000 to Z{n - 1:04d} "
+                    f"without gaps")
+        if size_z is not None and n != size_z:
+            return f"ch{ch_idx} has {n} planes, the .ims file has {size_z}"
+        try:
+            first = tifffile.imread(str(ch_folder / "Z0000.tif"))
+            last = tifffile.imread(str(ch_folder / f"Z{n - 1:04d}.tif"))
+        except Exception as e:
+            return f"ch{ch_idx}'s first or last plane cannot be read ({e})"
+        if first.shape != last.shape:
+            return (f"ch{ch_idx}'s last plane is {last.shape}, its first {first.shape} "
+                    f"(the last plane was not finished)")
+        counts[ch_idx] = n
+    if size_z is None:
+        if num_channels < 2:
+            return ("the .ims header does not say how many planes the brain has, so "
+                    "the planes on disk cannot be checked")
+        if len(set(counts.values())) != 1:
+            return "the channels hold different numbers of planes: %s" % counts
+    return ""
+
+
+def _write_plane(path, data):
+    """Write one plane under a hidden temporary name, then rename it into
+    place: a plane named Z####.tif is always a whole plane, even if the run
+    is killed while writing it."""
+    import tifffile
+    path = Path(path)
+    tmp = path.with_name("." + path.name + ".partial")
+    tifffile.imwrite(str(tmp), data)
+    os.replace(str(tmp), str(path))
+
+
 def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
     """
     Main extraction function.
@@ -871,11 +937,16 @@ def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
     # =========================================================================
     # CHECK IF FULL EXTRACTION ALREADY EXISTS
     # =========================================================================
-    full_exists = all(
-        (full_folder / f"ch{ch_idx}").exists() and 
-        len(list((full_folder / f"ch{ch_idx}").glob('Z*.tif'))) > 0
-        for ch_idx in range(num_channels)
-    )
+    # Reused only when the planes on disk are a FINISHED extraction of this
+    # brain (existing_extraction_problem says why that is checked).
+    full_exists = False
+    if num_channels and any((full_folder / f"ch{c}").is_dir() for c in range(num_channels)):
+        problem = existing_extraction_problem(full_folder, num_channels, ims_info['size_z'])
+        if problem:
+            print(f"    [!] The planes already in {full_folder.name} are not a finished "
+                  f"extraction: {problem}.")
+            print(f"        Extracting this brain again from the .ims file.")
+        full_exists = not problem
     
     volumes = []
     channel_metrics = []
@@ -986,9 +1057,23 @@ def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
             
             for z in range(num_slices):
                 slice_path = ch_folder / f"Z{z:04d}.tif"
-                tifffile.imwrite(str(slice_path), volume[z, :, :])
+                _write_plane(slice_path, volume[z, :, :])
                 if (z + 1) % 50 == 0 or z == num_slices - 1:
                     print_progress(z + 1, num_slices, prefix="Saving ")
+
+            # Planes beyond this depth are left over from an earlier, different
+            # extraction; kept, but moved out of the channel so no reader takes
+            # them as part of this brain.
+            extra = [p for p in ch_folder.glob('Z*.tif')
+                     if p.name not in {f"Z{z:04d}.tif" for z in range(num_slices)}]
+            if extra:
+                leftover = full_folder / "_archive" / (
+                    datetime.now().strftime("%Y%m%d_%H%M%S") + "_extra_planes") / f"ch{ch_idx}"
+                leftover.mkdir(parents=True, exist_ok=True)
+                for p in extra:
+                    shutil.move(str(p), str(leftover / p.name))
+                print_status(f"Moved {len(extra)} leftover plane(s) beyond Z{num_slices - 1:04d} "
+                             f"to {leftover}")
             
             save_time = time.time() - start_time
             print_status(f"Saved in {format_duration(save_time)} ({num_slices/save_time:.1f} slices/sec)")

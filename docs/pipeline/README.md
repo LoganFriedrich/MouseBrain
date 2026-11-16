@@ -50,6 +50,20 @@ is the first item on this list that is not done yet:
 | Classify | `5_Classified_Cells/cells.xml` exists |
 | Count | a `.csv` exists in `6_Region_Analysis` |
 
+**An extraction that was stopped part-way.** Running step 2 again on a brain
+whose `1_Extracted_Full` already holds planes reuses them (fast) ONLY when they
+are a finished extraction: every channel holds exactly `Z0000.tif` up to the
+last plane with no gaps, as many planes as the `.ims` file says the brain has,
+and each channel's last plane reads cleanly. Otherwise step 2 prints `[!] The
+planes already in 1_Extracted_Full are not a finished extraction: <why>` and
+extracts the brain again from the `.ims` (slow; nothing is lost). Each plane is
+written under a hidden temporary name and renamed when whole, so a plane named
+`Z####.tif` is never half-written. Planes beyond the brain's depth, left by an
+earlier different extraction, are moved to
+`1_Extracted_Full/_archive/<date>_<time>_extra_planes/`. (Before, any plane on
+disk counted: an extraction stopped part-way came back as a "complete" brain
+with its back planes missing, and every later step used the short stack.)
+
 **Stale outputs.** A file that exists but was made from something replaced since
 is shown as `[!] ... STALE: <why>` and its step is offered again (nothing is
 deleted or moved). The registration is OUT OF DATE when the images it was
