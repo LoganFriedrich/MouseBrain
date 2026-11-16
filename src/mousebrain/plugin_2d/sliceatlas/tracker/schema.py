@@ -137,3 +137,50 @@ PARTICLE_ANALYSIS_COLUMNS = [
     "pa_particles_found", "pa_particles_raw", "pa_bg_method", "pa_bg_value",
     "pa_mean_intensity"
 ]
+
+# script_version written on colocalization rows whose coloc_threshold_value is
+# the value classification actually used. For the background_mean method that is
+# the SIGMA threshold (positive if signal > background mean + sigma * std).
+# WHY a version marker: rows written before it by the napari widget stored the
+# fold-change spin box in coloc_threshold_value even when background_mean was
+# chosen, so the number in an old row cannot be trusted as a sigma. The batch
+# (batch_encr.get_tuned_parameters) only takes a threshold from a row carrying
+# this version or a later one; an older row is refused with a message saying
+# to re-run it. Compared as a version (records_sigma), never as exact text:
+# WHY: a later bump of this constant would otherwise refuse every run already
+# marked best and make reloads draw their sigmas as fold changes again. A bump
+# must therefore keep the meaning "coloc_threshold_value holds the sigma".
+COLOC_SIGMA_RECORDED_VERSION = "1.1.0"
+
+
+def _version_tuple(text) -> tuple:
+    """'1.1.0' -> (1, 1, 0); anything unparsable -> () (older than any)."""
+    try:
+        return tuple(int(part) for part in str(text).strip().split('.'))
+    except (TypeError, ValueError):
+        return ()
+
+
+def records_sigma(row) -> bool:
+    """True when a row's script_version is COLOC_SIGMA_RECORDED_VERSION or later."""
+    found = _version_tuple(row.get('script_version', ''))
+    return bool(found) and found >= _version_tuple(COLOC_SIGMA_RECORDED_VERSION)
+
+
+def coloc_fold_change_threshold(row) -> "float | None":
+    """The fold-change threshold a colocalization row records, or None.
+
+    WHY: from COLOC_SIGMA_RECORDED_VERSION on, a background_mean row's
+    coloc_threshold_value is a SIGMA (standard deviations above the background
+    mean), not a fold change. Code that draws a fold-change threshold (the
+    widget's diagnostic plots after "Load selected run") must not draw a sigma
+    as if it were one; it gets None and falls back to its own fold-change
+    setting, exactly as it does right after a live run.
+    """
+    if (row.get('coloc_threshold_method') == 'background_mean'
+            and records_sigma(row)):
+        return None
+    try:
+        return float(row.get('coloc_threshold_value', ''))
+    except (TypeError, ValueError):
+        return None
