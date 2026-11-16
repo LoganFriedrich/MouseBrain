@@ -49,6 +49,11 @@ REPLACE_RETRY_SECONDS = 30  # a reader on Windows can hold the file open briefly
 # SliceTracker.__init__ and the widget's _open_tracker). The module values are
 # for the batch, which can afford to wait.
 
+# The one word for a run that did not finish. WHY: the batch used to write
+# 'error' and the widget 'failed' for the same state, so anything looking for
+# failed runs missed the batch's. update_status turns 'error' into this.
+FAILED = "failed"
+
 
 class SliceTracker:
     """
@@ -285,6 +290,58 @@ class SliceTracker:
         first = next(iter(updates_by_id), None)
         return first in found
 
+    # -----------------------------------------------------------------
+    # No run left 'started'
+    # -----------------------------------------------------------------
+    @contextmanager
+    def finish_or_fail(self, run_id: Optional[str]):
+        """Wrap a run's work: if the block ends while the run is still
+        'started' -- an exception, Ctrl-C, or a path that forgot to record a
+        result -- the run is set to 'failed' with the reason in its notes.
+        WHY: a row left at 'started' forever cannot be told apart from a run
+        still going. (A process killed outright runs no code at all and still
+        leaves 'started'.)"""
+        try:
+            yield
+        except BaseException as e:
+            self.fail_if_unfinished(run_id, "stopped before finishing: %s: %s"
+                                    % (type(e).__name__, e))
+            raise
+        else:
+            self.fail_if_unfinished(run_id, "ended without recording a result")
+
+    def fail_if_unfinished(self, run_id: Optional[str], why: str) -> bool:
+        """Set a run that is still 'started' to 'failed', adding `why` to its
+        notes. A run that already finished (completed, or failed) is never
+        touched. WHY: a problem in a LATER step must not overwrite a result
+        that was recorded -- the batch used to turn a completed detection row
+        into 'error' when its colocalization step crashed. Never raises: it
+        runs on error paths, where it must not hide the original error.
+        True when the row was changed."""
+        if not run_id:
+            return False
+        try:
+            # A plain read first: a caller may call this on every exit path,
+            # and a run that already finished needs no locked rewrite.
+            run = self.get_run(run_id)
+            if run is None or run.get('status') != 'started':
+                return False
+
+            def mutate(rows):
+                for row in rows:
+                    if row.get('run_id') == run_id and row.get('status') == 'started':
+                        row['status'] = FAILED
+                        row['notes'] = "; ".join(filter(None, [row.get('notes', ''), why]))
+                        return True
+                return False
+            changed = bool(self._rewrite(mutate))
+            if changed:
+                print("[SliceTracker] Run %s marked failed: %s" % (run_id, why))
+            return changed
+        except Exception as e:
+            print("[SliceTracker] [!] Could not mark run %s failed: %s" % (run_id, e))
+            return False
+
     # =========================================================================
     # LOGGING METHODS
     # =========================================================================
@@ -511,6 +568,8 @@ class SliceTracker:
         """
         updates = {}
 
+        if status == 'error':
+            status = FAILED  # one word for one state (see FAILED)
         if status:
             updates['status'] = status
         if duration_seconds is not None:

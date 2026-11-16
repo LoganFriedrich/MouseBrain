@@ -26,9 +26,11 @@ SAMPLES = ["PRJ_01_02_S3_RA", "PRJ_01_02_S4_RB"]
 
 
 class _LockedTracker(SliceTracker):
-    """Logs new rows but cannot rewrite the file to change one."""
+    """Logs new rows but cannot rewrite the file to change one: every change
+    to an existing row goes through _rewrite, which is refused here the way
+    a file another program holds open refuses the swap."""
 
-    def update_status(self, *a, **k):
+    def _rewrite(self, mutate):
         raise PermissionError("the tracker file is open in another program")
 
 

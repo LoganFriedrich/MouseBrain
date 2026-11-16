@@ -849,6 +849,7 @@ def process_single(
     det_run_id = None
     coloc_run_id = None
     step = "read"   # the step running now; says whose failure an error is
+    stop_reason = None  # why the sample stopped, for the run left in progress
 
     try:
         # Parse animal and region from filename (e.g., E01_01_S13_DCN.nd2)
@@ -976,18 +977,6 @@ def process_single(
         )
         summary = analyzer.get_summary_statistics(classified)
 
-        # Update tracker with colocalization results
-        step = "tracker"
-        if tracker and coloc_run_id:
-            tracker.update_status(
-                coloc_run_id,
-                status="completed",
-                coloc_positive_cells=summary['positive_cells'],
-                coloc_negative_cells=summary['negative_cells'],
-                coloc_positive_fraction=summary['positive_fraction'],
-                coloc_background_value=summary['background_used'],
-            )
-
         result.update({
             'n_positive': summary['positive_cells'],
             'n_negative': summary['negative_cells'],
@@ -1040,6 +1029,22 @@ def process_single(
             prefix=sample_id,
         )
 
+        step = "tracker"
+        # Record the colocalization as completed only now, after its CSV and
+        # QC pictures are written. WHY: a run recorded 'completed' whose
+        # outputs were never saved looks finished in the run history while
+        # nothing can be reloaded from it; when a save fails, the finally
+        # below marks this run 'failed' with the reason instead.
+        if tracker and coloc_run_id:
+            tracker.update_status(
+                coloc_run_id,
+                status="completed",
+                coloc_positive_cells=summary['positive_cells'],
+                coloc_negative_cells=summary['negative_cells'],
+                coloc_positive_fraction=summary['positive_fraction'],
+                coloc_background_value=summary['background_used'],
+            )
+
         print(f"  Done: {summary['positive_cells']} pos, {summary['negative_cells']} neg ({summary['positive_fraction']*100:.1f}%)")
 
     except Exception as e:
@@ -1051,20 +1056,38 @@ def process_single(
         result['failure'] = ('sample' if failure_is_the_samples(step, e)
                              else 'infrastructure')
         print(f"  ERROR ({step}): {e}")
+        stop_reason = f"batch stopped at {step}: {type(e).__name__}: {e}"
 
-        # Update tracker on error. WHY its own try: the tracker write that
-        # failed (a CSV another program holds open, say) can fail again here,
-        # and an exception raised from this handler used to leave
-        # process_single and stop the whole batch -- no summary.csv, no
-        # results for the samples after this one. A tracker that cannot be
-        # written is this sample's error, not the batch's.
-        if tracker and det_run_id:
-            try:
-                tracker.update_status(det_run_id, status="error")
-            except Exception as tracker_err:
-                print(f"  [!] tracker not updated for {det_run_id}: {tracker_err}")
-                result['error'] = (f"{result['error']}; tracker row {det_run_id} "
-                                   f"not marked error: {tracker_err}")
+    finally:
+        # Fail whichever run was still in progress -- the colocalization run
+        # if it had begun, else the detection run -- and never a run whose
+        # result was already recorded. WHY: this used to set the DETECTION
+        # row to 'error' on any later exception (colocalization, CSV, QC
+        # figures), overwriting a completed detection, while the
+        # colocalization row it was really about stayed 'started' forever.
+        # In a finally so Ctrl-C, too, leaves no row 'started'.
+        # fail_if_unfinished never raises: an exception from here would leave
+        # process_single and stop the whole batch, and a tracker that cannot
+        # be written (its CSV held open by another program, say) is this
+        # sample's error, not the batch's. When it could not mark a row, the
+        # row is named in the sample's error, so the summary says which row
+        # still reads 'started'.
+        if tracker:
+            if stop_reason is None:
+                exc = sys.exc_info()[1]
+                stop_reason = (f"stopped before finishing: {type(exc).__name__}: {exc}"
+                               if exc is not None else "ended without recording a result")
+            for run_id in (coloc_run_id, det_run_id):
+                if not run_id or tracker.fail_if_unfinished(run_id, stop_reason):
+                    continue
+                try:
+                    left = ("could not be marked failed and still reads 'started'"
+                            if (tracker.get_run(run_id) or {}).get('status') == 'started'
+                            else None)
+                except Exception as read_err:
+                    left = f"could not be read or marked failed: {read_err}"
+                if left and result.get('status') == 'error':
+                    result['error'] = f"{result['error']}; tracker row {run_id} {left}"
 
     return result
 

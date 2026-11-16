@@ -44,9 +44,20 @@ class _Spin:
 
 def _run_widget_coloc(tracker, monkeypatch, method, local=False):
     mw = pytest.importorskip("mousebrain.plugin_2d.sliceatlas.napari_plugin.main_widget")
-    # The fake widget has no signal image, so the method stops right after
-    # logging the run; the warning box is replaced so no window opens.
+    from mousebrain.plugin_2d.sliceatlas.napari_plugin import workers
+    # The run is logged only after the input checks pass, just before the
+    # worker starts; the worker is a stand-in that never runs, and the warning
+    # box is replaced so no window opens.
     monkeypatch.setattr(mw, "QMessageBox", SimpleNamespace(warning=lambda *a, **k: None))
+
+    class _Worker:
+        def __init__(self, *a, **k):
+            self.progress = self.finished = SimpleNamespace(connect=lambda *_: None)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(workers, "ColocalizationWorker", _Worker)
     fake = SimpleNamespace(
         nuclei_labels=object(), green_channel=object(), red_channel=None,
         coloc_mode_combo=_Spin("Single Channel"),
@@ -56,9 +67,9 @@ def _run_widget_coloc(tracker, monkeypatch, method, local=False):
         sigma_threshold_spin=_Spin(0.75), bg_dilation_spin=_Spin(50),
         area_fraction_spin=_Spin(0.5), bg_local_check=_Spin(local),
         bg_block_size_spin=_Spin(256), soma_dilation_spin=_Spin(6),
-        sample_id_edit=_Spin(SAMPLE_A), current_file=None,
         tracker=tracker, last_run_id=None,
-        _get_current_slice=lambda img: None,
+        _get_current_slice=lambda img: img,
+        _on_coloc_progress=None, _on_coloc_finished=None,
     )
     mw.BrainSliceWidget._run_colocalization(fake)
     return tracker.get_run(fake.last_run_id)
