@@ -40,7 +40,7 @@ except Exception:
 _config_dir = Path(__file__).resolve().parent.parent.parent
 if str(_config_dir) not in sys.path:
     sys.path.insert(0, str(_config_dir))
-from mousebrain.config import BRAINS_ROOT, find_script, parse_brain_name
+from mousebrain.config import BRAINS_ROOT, find_script, iter_brains, parse_brain_name
 from mousebrain.tracker import ExperimentTracker
 from mousebrain.pipeline_status import brain_status
 
@@ -536,34 +536,27 @@ class PipelineDashboard(QWidget):
             self.brain_list.addItem("Brains folder not found!")
             return
 
-        for mouse_dir in sorted(BRAINS_ROOT.iterdir()):
-            if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-                continue
-            if any(skip in mouse_dir.name.lower() for skip in ['script', 'backup', 'archive', 'summary']):
-                continue
+        # Which folders are brains is ONE rule, config.iter_brains: an archive
+        # kept beside a brain (a leading underscore) is never offered here.
+        for mouse_dir, pipeline_dir in iter_brains(BRAINS_ROOT):
+            # Check if this looks like a pipeline
+            has_structure = any([
+                (pipeline_dir / "0_Raw_IMS").exists(),
+                (pipeline_dir / "1_Extracted_Full").exists(),
+                (pipeline_dir / "2_Cropped_For_Registration").exists(),
+            ])
 
-            for pipeline_dir in sorted(mouse_dir.iterdir()):
-                if not pipeline_dir.is_dir():
-                    continue
+            if has_structure:
+                status = self.get_brain_status(pipeline_dir)
+                progress = status['step_num'] - 1
 
-                # Check if this looks like a pipeline
-                has_structure = any([
-                    (pipeline_dir / "0_Raw_IMS").exists(),
-                    (pipeline_dir / "1_Extracted_Full").exists(),
-                    (pipeline_dir / "2_Cropped_For_Registration").exists(),
-                ])
+                # Create item with progress indicator
+                bar = "=" * progress + ">" + " " * (7 - progress) if progress < 7 else "======="
+                text = f"{pipeline_dir.name}  [{bar}]"
 
-                if has_structure:
-                    status = self.get_brain_status(pipeline_dir)
-                    progress = status['step_num'] - 1
-
-                    # Create item with progress indicator
-                    bar = "=" * progress + ">" + " " * (7 - progress) if progress < 7 else "======="
-                    text = f"{pipeline_dir.name}  [{bar}]"
-
-                    item = QListWidgetItem(text)
-                    item.setData(Qt.UserRole, str(pipeline_dir))
-                    self.brain_list.addItem(item)
+                item = QListWidgetItem(text)
+                item.setData(Qt.UserRole, str(pipeline_dir))
+                self.brain_list.addItem(item)
 
     def get_brain_status(self, brain_path):
         """Get status of a brain.

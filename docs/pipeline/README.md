@@ -64,7 +64,8 @@ in the space the atlas was fitted to, and step 5 will not read them.
 
 ## Which folders are brains?
 
-Every script, the napari plugins and the utilities use the same rule
+Every script, the napari plugins, the utilities and the `mousebrain` launcher
+(`mousebrain --crop <brain>`) use the same rule
 (`mousebrain.config.iter_brains`) to decide which folders are brains, so they
 always agree on which brains exist. A brain is a folder two levels down,
 `1_Brains/<mouse folder>/<brain folder>`, where:
@@ -103,6 +104,24 @@ names there by hand.)
 What a step needs INSIDE a brain is still its own business: extraction lists
 brains with a `.ims` in `0_Raw_IMS`, registration brains with images to register,
 and so on.
+
+The same rule decides what the napari brain lists offer (the Pipeline Dashboard,
+Setup & Tuning, Manual Crop, the 3D cell viewer and the cross-brain comparison)
+and which folder a utility acts on when you give it a brain by name
+(`util_registration_qc.py`, `util_manual_crop.py`, `util_approve_registration.py`,
+the pre-filter, the orientation check and the other `util_*.py` scripts that
+take `--brain`). Before this, those lists offered an archive kept beside a brain
+as if it were a brain, and a utility could act on it instead of the real one.
+
+**Giving a brain by name.** The exact brain folder name (or
+`<mouse folder>/<brain folder>`) always works. A part of a name works only when
+it fits exactly one brain; when it fits several -- two imaging setups of one
+mouse share its number -- the utility stops and prints the full names to choose
+from, instead of acting on whichever brain happened to be listed first.
+The same holds for `mousebrain --crop <brain>`: it opens only a brain (never a
+`_` folder or a copy in a backup mouse folder), refuses a part of a name that
+fits several brains and prints their full names, and when nothing fits it lists
+the brains there are.
 
 **The overnight batch** (`overnight_batch.py`) takes every brain that is already
 registered (on whatever images) or has a crop to register -- a hand crop in

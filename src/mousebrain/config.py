@@ -558,6 +558,30 @@ def iter_brains(root=None, report_skipped: bool = False):
                 yield mouse_dir, brain_dir
 
 
+def find_brain_folder(brain_name: str, root=None):
+    """Look a brain up by name: (folder or None, list of folders that matched).
+
+    ``brain_name`` is a brain folder name or ``<mouse>/<brain>``. An exact name
+    wins. Otherwise the name must be part of exactly ONE brain's folder name: a
+    part that fits several brains (two imaging setups of one mouse share its
+    number) returns (None, those folders), so the caller can name them instead
+    of silently acting on whichever happened to be listed first.
+    """
+    name = str(brain_name).replace("\\", "/").strip("/")
+    partial = []
+    for mouse_dir, brain_dir in iter_brains(root):
+        if name in (brain_dir.name, "%s/%s" % (mouse_dir.name, brain_dir.name)):
+            return brain_dir, [brain_dir]
+        if name and name in brain_dir.name:
+            partial.append(brain_dir)
+    if len(partial) == 1:
+        return partial[0], partial
+    if not partial:
+        why = explain_brain_not_found(name, root)
+        if why:
+            print(why)
+    return None, partial
+
 
 def explain_brain_not_found(brain_name: str, root=None) -> str:
     """Why a brain asked for by name is not found, when the reason is the

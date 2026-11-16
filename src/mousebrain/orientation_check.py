@@ -262,14 +262,10 @@ def find_brain(name: str) -> Optional[Path]:
     p = Path(name)
     if p.is_dir():
         return p
-    from mousebrain.config import BRAINS_ROOT
-    root = Path(BRAINS_ROOT)
-    folders = [f for m in root.iterdir() if m.is_dir() for f in m.iterdir() if f.is_dir()]
-    exact = [f for f in folders if f.name == name]
-    if exact:
-        return exact[0]
-    partial = [f for f in folders if name in f.name]
-    return partial[0] if len(partial) == 1 else None
+    # The one rule for which folders are brains (config.find_brain_folder),
+    # so an archive kept beside a brain is never checked in its place.
+    from mousebrain.config import find_brain_folder
+    return find_brain_folder(name)[0]
 
 
 def main(argv=None) -> int:

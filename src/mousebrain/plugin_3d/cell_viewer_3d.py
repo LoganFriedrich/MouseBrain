@@ -18,7 +18,7 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt
 
-from mousebrain.config import BRAINS_ROOT
+from mousebrain.config import BRAINS_ROOT, iter_brains
 from mousebrain.region_mapping import get_elife_group, ELIFE_GROUPS
 
 # =============================================================================
@@ -230,21 +230,14 @@ class Cell3DViewer(QWidget):
             self.brain_combo.blockSignals(False)
             return
 
-        for mouse_dir in sorted(BRAINS_ROOT.iterdir()):
-            if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-                continue
-            if any(s in mouse_dir.name.lower()
-                   for s in ['script', 'backup', 'archive', 'summary']):
-                continue
-
-            for pipeline_dir in sorted(mouse_dir.iterdir()):
-                if not pipeline_dir.is_dir():
-                    continue
-                # Only show brains that have region analysis results
-                analysis_dir = pipeline_dir / FOLDER_ANALYSIS
-                cell_csv = analysis_dir / CELL_CSV
-                if cell_csv.exists():
-                    self.brain_combo.addItem(pipeline_dir.name, str(pipeline_dir))
+        # Which folders are brains is ONE rule, config.iter_brains: an archive
+        # kept beside a brain (a leading underscore) is never offered here.
+        for _mouse_dir, pipeline_dir in iter_brains(BRAINS_ROOT):
+            # Only show brains that have region analysis results
+            analysis_dir = pipeline_dir / FOLDER_ANALYSIS
+            cell_csv = analysis_dir / CELL_CSV
+            if cell_csv.exists():
+                self.brain_combo.addItem(pipeline_dir.name, str(pipeline_dir))
 
         self.brain_combo.blockSignals(False)
 

@@ -44,26 +44,13 @@ def find_brain(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT):
     folder: a part of a name that fits several brains (two imaging setups of one
     mouse share its number) used to approve whichever was listed first.
     """
-    from mousebrain.config import is_pipeline_candidate
-    root = Path(root)
-    partial = []
-    for mouse_folder in root.iterdir():
-        if not mouse_folder.is_dir():
-            continue
-        for pipeline_folder in mouse_folder.iterdir():
-            if not is_pipeline_candidate(pipeline_folder):
-                continue
-            if brain_name == pipeline_folder.name:
-                return pipeline_folder
-            if brain_name in pipeline_folder.name:
-                partial.append(pipeline_folder)
-    if len(partial) == 1:
-        return partial[0]
-    if len(partial) > 1:
+    from mousebrain.config import find_brain_folder
+    found, partial = find_brain_folder(brain_name, root)
+    if found is None and len(partial) > 1:
         print(f"Error: '{brain_name}' matches more than one brain; give the full name:")
         for p in partial:
             print(f"  {p.name}")
-    return None
+    return found
 
 
 def check_approval_status(pipeline_folder: Path):

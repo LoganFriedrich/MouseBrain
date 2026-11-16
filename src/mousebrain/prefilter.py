@@ -655,28 +655,25 @@ def find_brain_path(brain_name: str) -> Optional[Path]:
     Prefers directories that contain pipeline folders (0_Raw_IMS, etc.)
     over directories that just happen to match the name.
     """
-    # Check mouse_id/brain_id pattern first (most common)
-    for subdir in BRAINS_ROOT.iterdir():
-        if subdir.is_dir():
-            candidate = subdir / brain_name
-            if candidate.exists() and _is_brain_pipeline(candidate):
-                return candidate
+    # Brains are looked up by the one rule every step uses
+    # (config.iter_brains). This used to fall back to a recursive search of
+    # the whole brains root, which also found folders INSIDE a brain -- an
+    # archive of a superseded delivery has the brain's own name and its
+    # numbered folders -- and could pre-filter that instead.
+    from mousebrain.config import iter_brains
+    name = str(brain_name).replace("\\", "/").strip("/")
+    matches = [b for m, b in iter_brains(BRAINS_ROOT)
+               if name in (b.name, "%s/%s" % (m.name, b.name))]
+    for candidate in matches:
+        if _is_brain_pipeline(candidate):
+            return candidate
 
-    # Direct match (if it's a real pipeline folder)
-    direct = BRAINS_ROOT / brain_name
-    if direct.exists() and _is_brain_pipeline(direct):
+    # A brain folder placed directly in the brains root (old layout)
+    direct = BRAINS_ROOT / name
+    if direct.is_dir() and _is_brain_pipeline(direct):
         return direct
 
-    # Fallback: any match with pipeline markers
-    for path in BRAINS_ROOT.rglob(brain_name):
-        if path.is_dir() and _is_brain_pipeline(path):
-            return path
-
-    # Last resort: direct match without validation
-    if direct.exists():
-        return direct
-
-    return None
+    return matches[0] if matches else None
 
 
 def find_latest_candidates(brain_path: Path) -> Optional[Path]:

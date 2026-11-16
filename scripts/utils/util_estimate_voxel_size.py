@@ -35,29 +35,24 @@ def find_extracted_channels(root_path):
     root_path = Path(root_path)
     results = []
     
-    for mouse_folder in root_path.iterdir():
-        if not mouse_folder.is_dir() or mouse_folder.name.startswith('.'):
-            continue
-        
-        for pipeline_folder in mouse_folder.iterdir():
-            if not pipeline_folder.is_dir():
-                continue
-            
-            # Look for extracted channels
-            for folder_name in ['1_Extracted_Channels_from_1_ims_to_brainglobe', 
-                                '1_Extracted_Full',
-                                '1_Channels']:
-                channels_folder = pipeline_folder / folder_name
-                if channels_folder.exists():
-                    ch0 = channels_folder / 'ch0'
-                    ch1 = channels_folder / 'ch1'
-                    
-                    # Prefer ch1 (usually autofluorescence, better for brain outline)
-                    if ch1.exists() and len(list(ch1.glob('Z*.tif'))) > 0:
-                        results.append((pipeline_folder.name, ch1))
-                    elif ch0.exists() and len(list(ch0.glob('Z*.tif'))) > 0:
-                        results.append((pipeline_folder.name, ch0))
-                    break
+    # Which folders are brains is ONE rule, config.iter_brains.
+    from mousebrain.config import iter_brains
+    for _mouse_folder, pipeline_folder in iter_brains(root_path):
+        # Look for extracted channels
+        for folder_name in ['1_Extracted_Channels_from_1_ims_to_brainglobe',
+                            '1_Extracted_Full',
+                            '1_Channels']:
+            channels_folder = pipeline_folder / folder_name
+            if channels_folder.exists():
+                ch0 = channels_folder / 'ch0'
+                ch1 = channels_folder / 'ch1'
+
+                # Prefer ch1 (usually autofluorescence, better for brain outline)
+                if ch1.exists() and len(list(ch1.glob('Z*.tif'))) > 0:
+                    results.append((pipeline_folder.name, ch1))
+                elif ch0.exists() and len(list(ch0.glob('Z*.tif'))) > 0:
+                    results.append((pipeline_folder.name, ch0))
+                break
     
     return results
 

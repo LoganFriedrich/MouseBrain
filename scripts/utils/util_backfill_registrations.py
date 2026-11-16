@@ -17,7 +17,7 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
-from mousebrain.config import BRAINS_ROOT
+from mousebrain.config import BRAINS_ROOT, iter_brains
 from mousebrain.tracker import ExperimentTracker
 
 
@@ -49,107 +49,98 @@ def backfill_registrations(dry_run: bool = False):
     backfilled = 0
     skipped = 0
 
-    for mouse_dir in BRAINS_ROOT.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
+    # Which folders are brains is ONE rule, config.iter_brains: an archive
+    # kept beside a brain is never back-filled into the tracker as a brain.
+    for _mouse_dir, pipeline_dir in iter_brains(BRAINS_ROOT):
+        brain_name = pipeline_dir.name
+
+        # Skip if already tracked
+        if brain_name in tracked_brains:
+            skipped += 1
             continue
 
-        # Skip non-brain directories
-        if any(skip in mouse_dir.name.lower() for skip in ['script', 'backup', 'archive', 'summary']):
+        reg_folder = pipeline_dir / "3_Registered_Atlas"
+        brainreg_json = reg_folder / "brainreg.json"
+
+        # Skip if no registration exists
+        if not brainreg_json.exists():
             continue
 
-        for pipeline_dir in mouse_dir.iterdir():
-            if not pipeline_dir.is_dir():
-                continue
+        # Skip archive/optimization folders
+        if "_archive" in str(reg_folder) or "_crop_optimization" in str(reg_folder):
+            continue
 
-            brain_name = pipeline_dir.name
+        # Found untracked registration - parse metadata
+        try:
+            with open(brainreg_json) as f:
+                meta = json.load(f)
+        except Exception as e:
+            print(f"  Warning: Could not parse {brainreg_json}: {e}")
+            continue
 
-            # Skip if already tracked
-            if brain_name in tracked_brains:
-                skipped += 1
-                continue
+        # Parse voxel sizes (stored as strings in a list)
+        voxel_sizes = meta.get('voxel_sizes', ['4.0', '4.0', '4.0'])
+        try:
+            voxel_z = float(voxel_sizes[0])
+            voxel_xy = float(voxel_sizes[1])
+        except (IndexError, ValueError, TypeError):
+            voxel_z = 4.0
+            voxel_xy = 4.0
 
-            reg_folder = pipeline_dir / "3_Registered_Atlas"
-            brainreg_json = reg_folder / "brainreg.json"
+        # Parse registration steps
+        try:
+            affine_n_steps = int(meta.get('affine_n_steps', '6'))
+            freeform_n_steps = int(meta.get('freeform_n_steps', '6'))
+        except (ValueError, TypeError):
+            affine_n_steps = 6
+            freeform_n_steps = 6
 
-            # Skip if no registration exists
-            if not brainreg_json.exists():
-                continue
+        # Get timestamp from folder mtime (when brainreg completed)
+        try:
+            created_at = datetime.fromtimestamp(reg_folder.stat().st_mtime)
+        except:
+            created_at = datetime.now()
 
-            # Skip archive/optimization folders
-            if "_archive" in str(reg_folder) or "_crop_optimization" in str(reg_folder):
-                continue
+        # Approved only when a person approved THIS registration
+        # (mousebrain.registration_approval).
+        from mousebrain.registration_approval import is_approved
+        approved = is_approved(reg_folder)
 
-            # Found untracked registration - parse metadata
-            try:
-                with open(brainreg_json) as f:
-                    meta = json.load(f)
-            except Exception as e:
-                print(f"  Warning: Could not parse {brainreg_json}: {e}")
-                continue
+        # Determine initial status
+        initial_status = "approved" if approved else "completed"
 
-            # Parse voxel sizes (stored as strings in a list)
-            voxel_sizes = meta.get('voxel_sizes', ['4.0', '4.0', '4.0'])
-            try:
-                voxel_z = float(voxel_sizes[0])
-                voxel_xy = float(voxel_sizes[1])
-            except (IndexError, ValueError, TypeError):
-                voxel_z = 4.0
-                voxel_xy = 4.0
+        print(f"\nFound: {brain_name}")
+        print(f"  Atlas: {meta.get('atlas', 'unknown')}")
+        print(f"  Orientation: {meta.get('orientation', 'unknown')}")
+        print(f"  Voxel sizes: Z={voxel_z}, XY={voxel_xy}")
+        print(f"  Status: {initial_status}")
+        print(f"  Estimated date: {created_at.strftime('%Y-%m-%d %H:%M')}")
 
-            # Parse registration steps
-            try:
-                affine_n_steps = int(meta.get('affine_n_steps', '6'))
-                freeform_n_steps = int(meta.get('freeform_n_steps', '6'))
-            except (ValueError, TypeError):
-                affine_n_steps = 6
-                freeform_n_steps = 6
-
-            # Get timestamp from folder mtime (when brainreg completed)
-            try:
-                created_at = datetime.fromtimestamp(reg_folder.stat().st_mtime)
-            except:
-                created_at = datetime.now()
-
-            # Approved only when a person approved THIS registration
-            # (mousebrain.registration_approval).
-            from mousebrain.registration_approval import is_approved
-            approved = is_approved(reg_folder)
-
-            # Determine initial status
-            initial_status = "approved" if approved else "completed"
-
-            print(f"\nFound: {brain_name}")
-            print(f"  Atlas: {meta.get('atlas', 'unknown')}")
-            print(f"  Orientation: {meta.get('orientation', 'unknown')}")
-            print(f"  Voxel sizes: Z={voxel_z}, XY={voxel_xy}")
-            print(f"  Status: {initial_status}")
-            print(f"  Estimated date: {created_at.strftime('%Y-%m-%d %H:%M')}")
-
-            if dry_run:
-                print(f"  [DRY RUN] Would backfill as: reg_...")
-                backfilled += 1
-                continue
-
-            # Log to tracker
-            exp_id = tracker.log_registration(
-                brain=brain_name,
-                atlas=meta.get('atlas', 'allen_mouse_10um'),
-                orientation=meta.get('orientation', 'unknown'),
-                voxel_z=voxel_z,
-                voxel_xy=voxel_xy,
-                affine_n_steps=affine_n_steps,
-                freeform_n_steps=freeform_n_steps,
-                output_path=str(reg_folder),
-                status="completed",  # Start as completed, then approve if needed
-                notes="Backfilled from existing registration",
-            )
-
-            # If approved, mark it
-            if approved:
-                tracker.approve_registration(exp_id)
-
-            print(f"  Backfilled: {exp_id}")
+        if dry_run:
+            print(f"  [DRY RUN] Would backfill as: reg_...")
             backfilled += 1
+            continue
+
+        # Log to tracker
+        exp_id = tracker.log_registration(
+            brain=brain_name,
+            atlas=meta.get('atlas', 'allen_mouse_10um'),
+            orientation=meta.get('orientation', 'unknown'),
+            voxel_z=voxel_z,
+            voxel_xy=voxel_xy,
+            affine_n_steps=affine_n_steps,
+            freeform_n_steps=freeform_n_steps,
+            output_path=str(reg_folder),
+            status="completed",  # Start as completed, then approve if needed
+            notes="Backfilled from existing registration",
+        )
+
+        # If approved, mark it
+        if approved:
+            tracker.approve_registration(exp_id)
+
+        print(f"  Backfilled: {exp_id}")
+        backfilled += 1
 
     print(f"\n{'=' * 60}")
     print(f"Summary:")

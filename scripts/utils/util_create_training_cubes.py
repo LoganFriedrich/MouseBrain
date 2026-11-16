@@ -294,12 +294,12 @@ def find_brain_path(brain_name: str) -> Optional[Path]:
     if direct_path.exists():
         return direct_path
 
-    # Try searching subdirectories (mouse folders)
-    for mouse_dir in BRAINS_ROOT.iterdir():
-        if mouse_dir.is_dir():
-            brain_path = mouse_dir / brain_name
-            if brain_path.exists():
-                return brain_path
+    # Then the brains, by the one rule every step uses (config.iter_brains):
+    # an archive kept beside a brain is never taken for it.
+    from mousebrain.config import iter_brains
+    for _mouse_dir, brain_path in iter_brains(BRAINS_ROOT):
+        if brain_path.name == brain_name:
+            return brain_path
 
     return None
 

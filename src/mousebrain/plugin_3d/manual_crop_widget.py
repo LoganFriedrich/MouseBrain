@@ -29,7 +29,7 @@ import sys as _sys
 _config_dir = Path(__file__).resolve().parent.parent.parent
 if str(_config_dir) not in _sys.path:
     _sys.path.insert(0, str(_config_dir))
-from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT
+from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, iter_brains
 FOLDER_EXTRACTED = "1_Extracted_Full"
 FOLDER_CROPPED = "2_Cropped_For_Registration"
 
@@ -395,15 +395,13 @@ class ManualCropWidget(QWidget):
         print(f"[{time.time()-t0:.2f}s] Scanning brains in: {scan_path}")
 
         try:
-            # Use glob pattern to find all pipeline folders at once (faster than nested iterdir)
-            # Pattern: mouse_folder/pipeline_folder
-            all_folders = list(scan_path.glob("*/*"))
+            # Which folders are brains is ONE rule, config.iter_brains: an
+            # archive kept beside a brain (a leading underscore) is never
+            # offered for cropping.
+            all_folders = [b for _m, b in iter_brains(scan_path)]
             print(f"[{time.time()-t0:.2f}s] Found {len(all_folders)} potential brain folders")
 
             for pipeline_folder in all_folders:
-                if not pipeline_folder.is_dir() or pipeline_folder.name.startswith('.'):
-                    continue
-
                 # Quick check: does extracted folder exist?
                 extracted_folder = pipeline_folder / FOLDER_EXTRACTED
                 if not extracted_folder.exists():

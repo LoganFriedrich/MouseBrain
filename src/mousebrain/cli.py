@@ -395,24 +395,28 @@ def launch_manual_crop(brain_name):
 
         debug(f"Searching for brain '{brain_name}' in: {BRAINS_ROOT}")
 
-        # Find the brain using glob (faster than nested iteration over network)
-        brain_folder = None
-        debug("Searching for brain with glob pattern...")
+        # Look the brain up by THE rule (config.find_brain_folder), never by a
+        # glob of its own. WHY: a glob for "*/*<name>*" took whichever match the
+        # directory listing happened to give first -- an archive kept beside the
+        # brain ("_..._superseded"), a whole-mouse backup copy, or the other
+        # imaging setup of the same mouse -- and opened it as if it were the
+        # brain. The shared rule offers only brains, prefers an exact name, and
+        # refuses a name that fits several brains instead of picking one.
+        from mousebrain.config import find_brain_folder, iter_brains
+        brain_folder, matches = find_brain_folder(brain_name, root=BRAINS_ROOT)
+        debug(f"  Found {len(matches)} matching brain(s)")
 
-        pattern = f"*/*{brain_name}*"
-        debug(f"  Pattern: {pattern}")
-        matches = list(BRAINS_ROOT.glob(pattern))
-        debug(f"  Found {len(matches)} matches")
+        if brain_folder is None and len(matches) > 1:
+            print(f"Error: '{brain_name}' fits more than one brain. Give the full name of one of:")
+            for folder in matches:
+                print(f"  - {folder.parent.name}/{folder.name}")
+            return 1
 
-        if matches:
-            brain_folder = matches[0]
-            debug(f"  Using: {brain_folder.name}")
-
-        if not brain_folder:
+        if brain_folder is None:
             print(f"Error: Brain '{brain_name}' not found in {BRAINS_ROOT}")
             print("\nAvailable brains:")
-            for folder in sorted(BRAINS_ROOT.glob("*/*")):
-                if folder.is_dir() and not folder.name.startswith('.'):
+            for _mouse_dir, folder in iter_brains(BRAINS_ROOT, report_skipped=True):
+                if folder.is_dir():
                     print(f"  - {folder.name}")
             return 1
 

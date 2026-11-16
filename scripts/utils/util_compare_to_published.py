@@ -370,16 +370,22 @@ def show_reference(reference: dict = None, ref_name: str = "CERVICAL (C4)"):
 
 
 def find_brain_counts(brain_name: str) -> Path:
-    """Find the counts CSV for a brain."""
-    for mouse_dir in BRAINS_ROOT.iterdir():
-        if not mouse_dir.is_dir():
-            continue
-        for pipeline_dir in mouse_dir.iterdir():
-            if brain_name in pipeline_dir.name:
-                csv_path = pipeline_dir / "6_Region_Analysis" / "cell_counts_by_region.csv"
-                if csv_path.exists():
-                    return csv_path
-    return None
+    """Find the counts CSV for a brain.
+
+    The brain is looked up by the one rule every step uses
+    (config.find_brain_folder): an archive's counts are never compared in
+    its place, and a part of a name that fits several brains is refused.
+    """
+    from mousebrain.config import find_brain_folder
+    found, matches = find_brain_folder(brain_name, BRAINS_ROOT)
+    if found is None:
+        if len(matches) > 1:
+            print(f"Error: '{brain_name}' matches more than one brain; give the full name:")
+            for p in matches:
+                print(f"  {p.name}")
+        return None
+    csv_path = found / "6_Region_Analysis" / "cell_counts_by_region.csv"
+    return csv_path if csv_path.exists() else None
 
 
 def main():

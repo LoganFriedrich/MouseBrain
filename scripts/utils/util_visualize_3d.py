@@ -60,17 +60,17 @@ DEFAULT_FIGURES_DIR = Path(r'figures/Tissue/3D')
 # =============================================================================
 
 def find_brain(brain_name, root=BRAINS_ROOT):
-    """Find a brain's pipeline folder using 2-level search."""
-    root = Path(root)
-    for mouse_folder in root.iterdir():
-        if not mouse_folder.is_dir():
-            continue
-        for pipeline_folder in mouse_folder.iterdir():
-            if not pipeline_folder.is_dir():
-                continue
-            if brain_name == pipeline_folder.name or brain_name in pipeline_folder.name:
-                return pipeline_folder
-    return None
+    """Find a brain's pipeline folder."""
+    from mousebrain.config import find_brain_folder
+    # One rule for which folders are brains (config.find_brain_folder): an
+    # archive beside a brain is never picked, and a part of a name that fits
+    # several brains is refused instead of taking the first one listed.
+    found, matches = find_brain_folder(brain_name, root)
+    if found is None and len(matches) > 1:
+        print(f"Error: '{brain_name}' matches more than one brain; give the full name:")
+        for p in matches:
+            print(f"  {p.name}")
+    return found
 
 
 # =============================================================================

@@ -139,20 +139,13 @@ def format_duration(seconds):
 
 def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT):
     """Find pipeline folder for a brain."""
-    root = Path(root)
-    
-    for mouse_dir in root.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-            continue
-        
-        for pipeline_dir in mouse_dir.iterdir():
-            if not pipeline_dir.is_dir():
-                continue
-            
-            full_name = f"{mouse_dir.name}/{pipeline_dir.name}"
-            if brain_name in [pipeline_dir.name, full_name]:
-                return pipeline_dir, mouse_dir
-    
+    # Which folders are brains is ONE rule, config.iter_brains.
+    from mousebrain.config import iter_brains
+    for mouse_dir, pipeline_dir in iter_brains(root):
+        full_name = f"{mouse_dir.name}/{pipeline_dir.name}"
+        if brain_name in [pipeline_dir.name, full_name]:
+            return pipeline_dir, mouse_dir
+
     return None, None
 
 

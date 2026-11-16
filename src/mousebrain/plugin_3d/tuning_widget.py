@@ -35,7 +35,7 @@ import numpy as np
 _config_dir = Path(__file__).resolve().parent.parent.parent
 if str(_config_dir) not in sys.path:
     sys.path.insert(0, str(_config_dir))
-from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR, MODELS_DIR, DATA_SUMMARY_DIR, find_script
+from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR, MODELS_DIR, DATA_SUMMARY_DIR, find_script, iter_brains
 
 # Repo root for finding scripts (scripts/utils/ lives here)
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent  # → MouseBrain/
@@ -7801,23 +7801,16 @@ class TuningWidget(QWidget):
         if not BRAINS_ROOT.exists():
             return
 
-        for mouse_dir in sorted(BRAINS_ROOT.iterdir()):
-            if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-                continue
-            if any(skip in mouse_dir.name.lower() for skip in ['script', 'backup', 'archive', 'summary']):
-                continue
+        # Which folders are brains is ONE rule, config.iter_brains: an archive
+        # kept beside a brain (a leading underscore) is never offered here.
+        for _mouse_dir, pipeline_dir in iter_brains(BRAINS_ROOT):
+            has_structure = any([
+                (pipeline_dir / "0_Raw_IMS").exists(),
+                (pipeline_dir / "1_Extracted_Full").exists(),
+            ])
 
-            for pipeline_dir in sorted(mouse_dir.iterdir()):
-                if not pipeline_dir.is_dir():
-                    continue
-
-                has_structure = any([
-                    (pipeline_dir / "0_Raw_IMS").exists(),
-                    (pipeline_dir / "1_Extracted_Full").exists(),
-                ])
-
-                if has_structure:
-                    self.brain_combo.addItem(pipeline_dir.name, str(pipeline_dir))
+            if has_structure:
+                self.brain_combo.addItem(pipeline_dir.name, str(pipeline_dir))
 
     def _on_mode_changed(self):
         """Handle workflow mode change."""
@@ -10056,18 +10049,14 @@ class TuningWidget(QWidget):
         self.cross_brain_list.clear()
 
         try:
-            from mousebrain.config import BRAINS_ROOT
-            for mouse_dir in BRAINS_ROOT.iterdir():
-                if not mouse_dir.is_dir():
-                    continue
-                for brain_dir in mouse_dir.iterdir():
-                    if not brain_dir.is_dir():
-                        continue
-                    counts_csv = brain_dir / "6_Region_Analysis" / "cell_counts_by_region.csv"
-                    if counts_csv.exists():
-                        item = QListWidgetItem(brain_dir.name)
-                        item.setData(Qt.UserRole, brain_dir)
-                        self.cross_brain_list.addItem(item)
+            # Brains only (config.iter_brains): an archive's counts are not a
+            # brain to compare.
+            for _mouse_dir, brain_dir in iter_brains(BRAINS_ROOT):
+                counts_csv = brain_dir / "6_Region_Analysis" / "cell_counts_by_region.csv"
+                if counts_csv.exists():
+                    item = QListWidgetItem(brain_dir.name)
+                    item.setData(Qt.UserRole, brain_dir)
+                    self.cross_brain_list.addItem(item)
         except Exception as e:
             print(f"[MouseBrain] Error loading brains: {e}")
 

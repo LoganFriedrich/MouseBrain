@@ -43,13 +43,16 @@ from util_compare_to_published import (
 
 def find_brain_path(brain_name: str) -> Optional[Path]:
     """Find the full path to a brain's pipeline folder."""
-    for mouse_dir in BRAINS_ROOT.iterdir():
-        if not mouse_dir.is_dir():
-            continue
-        for pipeline_dir in mouse_dir.iterdir():
-            if brain_name in pipeline_dir.name:
-                return pipeline_dir
-    return None
+    from mousebrain.config import find_brain_folder
+    # One rule for which folders are brains (config.find_brain_folder): an
+    # archive beside a brain is never picked, and a part of a name that fits
+    # several brains is refused instead of taking the first one listed.
+    found, matches = find_brain_folder(brain_name, BRAINS_ROOT)
+    if found is None and len(matches) > 1:
+        print(f"Error: '{brain_name}' matches more than one brain; give the full name:")
+        for p in matches:
+            print(f"  {p.name}")
+    return found
 
 
 def get_pipeline_runs(tracker: ExperimentTracker, brain_name: str) -> Dict[str, List[dict]]:
