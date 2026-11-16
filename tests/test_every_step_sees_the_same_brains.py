@@ -122,7 +122,10 @@ def test_overnight_takes_a_brain_registered_on_its_full_extraction(overnight, tm
     brain = root / "mouse_a" / BRAIN
     _images(brain / "1_Extracted_Full")
     (brain / "3_Registered_Atlas").mkdir()
-    (brain / "3_Registered_Atlas" / "brainreg.json").write_text("{}", encoding="utf-8")
+    # A finished registration: all of brainreg's output files.
+    for name in ("brainreg.json", "registered_atlas.tiff", "boundaries.tiff",
+                 "deformation_field_0.tiff"):
+        (brain / "3_Registered_Atlas" / name).write_text("{}", encoding="utf-8")
     text = _run_dry(overnight, root, caplog, monkeypatch)
     assert "  - %s [" % BRAIN in text
 

@@ -66,6 +66,18 @@ When you re-register a brain, the old registration is NOT deleted. Instead:
 
 You can always roll back by moving files from _archive back to main folder.
 
+A registration that FAILED (brainreg stopped with an error, or its output
+files are not all there afterwards) is moved into _archive/<time>_failed/
+straight away, so the folder never holds half a registration that looks like a
+finished one. A registration left half-written by a run that was killed (the
+window closed, the computer restarted) is listed as INCOMPLETE; registering it
+again first moves it into _archive/<time>_incomplete/.
+
+WHEN IS A BRAIN "REGISTERED"? Only when every output file brainreg writes is
+there (brainreg.json, registered_atlas.tiff, boundaries.tiff,
+deformation_field_0.tiff). brainreg writes brainreg.json first, before it
+registers anything, so that file alone only says a registration started.
+
 ================================================================================
 COMMAND LINE OPTIONS
 ================================================================================
@@ -217,13 +229,17 @@ FOLDER_EXTRACTED_FULL = "1_Extracted_Full"
 FOLDER_CROPPED = "2_Cropped_For_Registration"
 FOLDER_REGISTRATION = "3_Registered_Atlas"
 
-# Files that indicate a complete registration
-REGISTRATION_REQUIRED_FILES = [
-    "brainreg.json",
-]
+from mousebrain.registration_approval import (APPROVAL_MARKER, FINGERPRINT_FILES,
+                                              missing_registration_files,
+                                              retire_for_new_registration)
 
-
-from mousebrain.registration_approval import APPROVAL_MARKER, retire_for_new_registration
+# Files that indicate a complete registration: ALL of brainreg's outputs.
+# brainreg.json alone used to be the test, but brainreg writes it before it
+# registers, so a failed or killed run counted as registered -- skipped by
+# --batch, approvable, and called a failure by the overnight batch every night
+# (it checks boundaries.tiff). One list, registration_approval's, for every
+# reader.
+REGISTRATION_REQUIRED_FILES = list(FINGERPRINT_FILES)
 
 # =============================================================================
 # DISCOVERY AND STATUS
@@ -298,14 +314,10 @@ def check_registration_status(pipeline_folder):
     if len(contents) == 0:
         return "needs_registration", "registration folder empty"
     
-    # Check for required files
-    missing = []
-    for req_file in REGISTRATION_REQUIRED_FILES:
-        if not (reg_folder / req_file).exists():
-            missing.append(req_file)
-    
+    # Check for required files: every output, see REGISTRATION_REQUIRED_FILES
+    missing = missing_registration_files(reg_folder)
     if missing:
-        return "incomplete", f"missing: {', '.join(missing)}"
+        return "incomplete", f"did not finish (missing: {', '.join(missing)})"
     
     return "complete", "registration complete"
 
@@ -314,9 +326,12 @@ def check_registration_status(pipeline_folder):
 # ARCHIVING
 # =============================================================================
 
-def archive_existing_registration(pipeline_folder):
+def archive_existing_registration(pipeline_folder, label=""):
     """
     Move existing registration to _archive folder with timestamp.
+    ``label`` is added to the archive folder's name ("failed", "incomplete")
+    so a person browsing _archive can tell a finished registration from the
+    leftovers of one that did not finish.
     Returns True if anything was archived.
     """
     reg_folder = Path(pipeline_folder) / FOLDER_REGISTRATION
@@ -342,7 +357,12 @@ def archive_existing_registration(pipeline_folder):
     
     # Create timestamped subfolder
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    archive_folder = archive_base / timestamp
+    stem = timestamp + ("_" + label if label else "")
+    archive_folder = archive_base / stem
+    n = 1
+    while archive_folder.exists():  # two archives within the same second
+        n += 1
+        archive_folder = archive_base / ("%s_%d" % (stem, n))
     archive_folder.mkdir()
     
     # Move contents
@@ -815,29 +835,42 @@ Examples:
         print("-" * 50)
         
         try:
-            # Archive existing if reprocessing
-            if status == "complete":
+            # Whatever is in the folder goes into _archive first, so brainreg
+            # writes into an empty folder: a finished registration (being
+            # redone), or the leftovers of one that did not finish (brainreg
+            # would otherwise write over some of them and leave the rest).
+            if status != "needs_registration":
+                label = "" if status == "complete" else status
                 print("    Archiving previous registration...")
-                archived = archive_existing_registration(pipeline_folder)
+                archived = archive_existing_registration(pipeline_folder, label=label)
                 if archived:
                     print("    [OK] Previous registration archived")
-            
+
             # Run registration
             run_brainreg(
-                pipeline_folder, 
+                pipeline_folder,
                 metadata,
                 n_free_cpus=args.n_free_cpus,
                 atlas=args.atlas
             )
-            
+
             success += 1
             print(f"\n    [OK] Registration complete")
-            
+
         except Exception as e:
             failed += 1
             print(f"\n    [FAIL] Error: {e}")
             import traceback
             traceback.print_exc()
+            # What the failed run wrote is not a registration. Left in place,
+            # its brainreg.json made it look like one to every reader; it goes
+            # into _archive/<time>_failed/, kept for whoever investigates.
+            try:
+                if archive_existing_registration(pipeline_folder, label="failed"):
+                    print("    The failed run's output was moved to "
+                          "3_Registered_Atlas/_archive/ (folder name ends in _failed)")
+            except Exception as archive_error:
+                print(f"    [!] Could not move the failed run's output aside: {archive_error}")
     
     print("\n" + "=" * 60)
     print(f"Complete: {success} succeeded, {failed} failed")

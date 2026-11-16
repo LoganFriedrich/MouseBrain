@@ -156,7 +156,12 @@ def show_brain_status(brain):
     for label, done in checks:
         why = status['stale'].get(stale_of.get(label, ""))
         mark = "[!]" if why else ("[X]" if done else "[ ]")
-        print(f"  {mark} {label}" + (f" -- STALE: {why}" if why else ""))
+        line = f"  {mark} {label}" + (f" -- STALE: {why}" if why else "")
+        # A registration that is in the folder but does not count (it did not
+        # finish ...): say why, so "not registered" is not a mystery.
+        if label == "Registered to atlas" and status.get('register_problem'):
+            line = f"  [!] {label} -- {status['register_problem']}"
+        print(line)
     if status['registered'] and not status['approved']:
         print(f"\n  Registration: {status['approval_text']}")
 

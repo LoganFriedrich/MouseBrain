@@ -32,7 +32,10 @@ THE RULES (first missing item, in this order, is the brain's step)
             ``2_Cropped_For_Registration_Manual``; OR the registration records
             that the atlas was fitted to the full extraction (a delivery that
             arrived already cut has nothing to crop).
-  register  ``3_Registered_Atlas/brainreg.json``.
+  register  a COMPLETE registration in ``3_Registered_Atlas``: every output
+            file brainreg writes (registration_approval.registration_complete).
+            ``brainreg.json`` alone is not enough -- brainreg writes it before
+            it registers, so a failed or stopped run leaves it behind.
   approve   a person's approval of THIS registration (see
             ``mousebrain.registration_approval``). An approval of an earlier
             registration, or one that does not say which registration it was
@@ -72,7 +75,9 @@ from typing import Dict, List, Optional
 import os
 
 from mousebrain.config import registered_candidate_folders, registered_input, registered_space
-from mousebrain.registration_approval import (APPROVED, approval_state,
+from mousebrain.registration_approval import (APPROVED, NEEDS_REGISTRATION,
+                                              NOT_REGISTERED, approval_state,
+                                              registration_complete,
                                               registration_time)
 
 FOLDER_EXTRACTED = "1_Extracted_Full"
@@ -223,7 +228,9 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
     Returns a dict with one boolean per item (has_ims, extracted, cropped,
     registered, approved, detected, prefiltered, classified, counted) -- a
     stale output counts as not done -- plus ``stale`` ({step: why}),
-    ``approval`` / ``approval_text`` (see registration_approval), ``candidates``
+    ``approval`` / ``approval_text`` (see registration_approval),
+    ``register_problem`` (why the registration in the folder does not count as
+    one, e.g. it did not finish; "" otherwise), ``candidates``
     (the file step 5 would classify, or None), ``step`` (a key of STEPS, or
     'done'), ``step_name`` and ``step_num`` (1-based position in
     ``steps(include_prefilter)``; len+1 when done).
@@ -243,7 +250,7 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
         "cropped": ((p / FOLDER_CROPPED / "metadata.json").exists()
                     or (p / FOLDER_CROPPED_MANUAL / "metadata.json").exists()
                     or recorded_space == "full"),
-        "registered": (reg / "brainreg.json").exists(),
+        "registered": registration_complete(reg),
         "approved": approval == APPROVED,
         "detected": candidates is not None,
         "prefiltered": _prefiltered(det),
@@ -253,6 +260,11 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
 
     status["approval"] = approval
     status["approval_text"] = approval_text
+    # Why a registration that is there does not count (it did not finish ...),
+    # for the readers' "Registered to atlas" line; "" when there is none or
+    # it counts.
+    status["register_problem"] = (approval_text if approval in NEEDS_REGISTRATION
+                                  and approval != NOT_REGISTERED else "")
     status["candidates"] = candidates
     status["stale"] = stale_outputs(p, candidates) if status["registered"] else {}
     for key in status["stale"]:

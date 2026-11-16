@@ -193,7 +193,7 @@ DEFAULT_SOURCES_IN_REGISTERED_SPACE = ("manual", "cropped")
 from mousebrain.candidates_io import (CANDIDATES_NAME, archive_previous, restore,
                                       write_provenance)
 from mousebrain.pipeline_status import find_candidates
-from mousebrain.registration_approval import (APPROVED, approval_state,
+from mousebrain.registration_approval import (APPROVED, approval_state, registration_complete,
                                               is_approved as is_registration_approved)
 
 
@@ -385,7 +385,9 @@ def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT, source: str = "a
             'source': source_name,
             'input_folder': input_folder,
             'metadata': metadata,
-            'registered': (reg_folder / "brainreg.json").exists(),
+            # Complete, not merely started: brainreg writes brainreg.json
+            # before it registers (registration_approval.registration_complete).
+            'registered': registration_complete(reg_folder),
             'approved': is_registration_approved(reg_folder),
             # The same "detected" every status reader uses: step 5 has a
             # candidates file to classify (not any .xml at the top level).

@@ -249,19 +249,14 @@ def qc_check_registration(brain_path: Path) -> Tuple[str, str]:
     if not reg_dir.exists():
         return QCStatus.FAIL, "Registration folder not created"
 
-    brainreg_json = reg_dir / "brainreg.json"
-    if not brainreg_json.exists():
-        return QCStatus.FAIL, "brainreg.json not found - registration failed"
-
-    # Check for deformation fields (critical for cell mapping)
-    deformation_field = reg_dir / "deformation_field_0.tiff"
-    if not deformation_field.exists():
-        return QCStatus.FAIL, "Deformation fields missing"
-
-    # Check for boundaries (indicates successful segmentation)
-    boundaries = reg_dir / "boundaries.tiff"
-    if not boundaries.exists():
-        return QCStatus.REVIEW, "boundaries.tiff missing - may affect visualization"
+    # A registration is there only when ALL of brainreg's outputs are
+    # (registration_approval.registration_complete, the test every reader
+    # uses). brainreg writes brainreg.json before it registers, so that file
+    # alone is no proof; a missing boundaries.tiff used to pass as "review".
+    from mousebrain.registration_approval import missing_registration_files
+    missing = missing_registration_files(reg_dir)
+    if missing:
+        return QCStatus.FAIL, "registration did not finish - missing: " + ", ".join(missing)
 
     # Registration always needs human review for approval -- of THIS
     # registration (mousebrain.registration_approval).

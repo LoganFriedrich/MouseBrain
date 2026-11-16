@@ -37,7 +37,9 @@ from mousebrain.config import (brains_root_problem, iter_brains, registered_inpu
                                resolve_pipeline_input)
 from mousebrain.pipeline_status import brain_status, find_candidates
 from mousebrain.registration_approval import (approval_state,
-                                              is_approved as is_registration_approved)
+                                              is_approved as is_registration_approved,
+                                              missing_registration_files,
+                                              registration_complete)
 import time
 import traceback
 from datetime import datetime
@@ -136,7 +138,7 @@ def find_brains_to_process() -> Tuple[List[Tuple[Path, str]], List[Tuple[str, st
     for _mouse_dir, pipeline_dir in iter_brains(BRAINS_ROOT, report_skipped=True,
                                                 problems=unreadable):
         name = pipeline_dir.name
-        registered = (pipeline_dir / FOLDER_REGISTRATION / "brainreg.json").exists()
+        registered = registration_complete(pipeline_dir / FOLDER_REGISTRATION)
         source, _folder, _meta = resolve_pipeline_input(pipeline_dir)
         if registered or source in ("manual", "cropped"):
             ready.append((pipeline_dir, name))
@@ -220,17 +222,19 @@ def run_registration(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
 
         # Check return code AND verify output files exist
         reg_folder = pipeline_dir / FOLDER_REGISTRATION
-        brainreg_json = reg_folder / "brainreg.json"
-        boundaries_tiff = reg_folder / "boundaries.tiff"
 
         if result.returncode != 0:
             return False, f"Registration failed with code {result.returncode}"
 
-        # Verify registration actually produced output files
-        if not brainreg_json.exists():
-            return False, "Registration failed: brainreg.json not created"
-        if not boundaries_tiff.exists():
-            return False, "Registration failed: boundaries.tiff not created"
+        # Verify registration actually produced ALL its output files -- the
+        # same test step 3 and every status reader use
+        # (registration_approval.registration_complete). This batch used to
+        # check boundaries.tiff while step 3 checked only brainreg.json, so a
+        # failed registration was "done" to step 3 and "failed" here, on every
+        # retry of every night.
+        missing = missing_registration_files(reg_folder)
+        if missing:
+            return False, f"Registration failed: not created: {', '.join(missing)}"
 
         # NOT approved here. This used to write the approval marker itself,
         # so registrations nobody had looked at went on to detection and

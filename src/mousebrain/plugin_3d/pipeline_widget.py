@@ -704,6 +704,10 @@ class PipelineDashboard(QWidget):
             why = status['stale'].get(stale_of.get(text, ""))
             if text == "Registration approved" and status['registered'] and not done:
                 why = status['approval_text']
+            # A registration that is in the folder but does not count (it did
+            # not finish ...): say why on its own line.
+            if text == "Registered to atlas" and status.get('register_problem'):
+                why = status['register_problem']
             mark = "[!]" if (why and text != "Registration approved") else ("[X]" if done else "[ ]")
             lbl.setText(f"{mark} {text}" + (f" -- {why}" if why else ""))
             lbl.setWordWrap(True)

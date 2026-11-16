@@ -48,7 +48,11 @@ def _classified_brain(tmp_path):
     """Extracted, registered, detected and classified; stopped before counting."""
     brain = tmp_path / "MOUSE_A" / "101_PROJ_01_02_2p5x_z5"
     _write(brain / "1_Extracted_Full" / "metadata.json", "{}")
-    _write(brain / "3_Registered_Atlas" / "brainreg.json", "{}")
+    # A finished registration: all of brainreg's output files, not only the
+    # brainreg.json it writes before it starts.
+    for name in ("brainreg.json", "registered_atlas.tiff", "boundaries.tiff",
+                 "deformation_field_0.tiff"):
+        _write(brain / "3_Registered_Atlas" / name, "{}")
     _write(brain / "4_Cell_Candidates" / "detected_cells.xml", "<Marker/>")
     _write(brain / "5_Classified_Cells" / "cells.xml", "<Marker/>")
     return brain

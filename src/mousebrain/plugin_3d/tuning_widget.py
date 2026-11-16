@@ -8124,7 +8124,7 @@ class TuningWidget(QWidget):
         # (mousebrain.registration_approval): an approval of an earlier
         # registration of the brain is shown as such, not as APPROVED.
         from mousebrain.registration_approval import (
-            APPROVED, NOT_REGISTERED, UNAPPROVED, approval_state)
+            APPROVED, NEEDS_REGISTRATION, NOT_REGISTERED, UNAPPROVED, approval_state)
         state, text = approval_state(self.current_brain / "3_Registered_Atlas")
         if state == APPROVED:
             self.approval_status.setText(f"Status: APPROVED ({text})")
@@ -8132,6 +8132,11 @@ class TuningWidget(QWidget):
         elif state == NOT_REGISTERED:
             self.approval_status.setText("Status: NOT REGISTERED")
             self.approval_status.setStyleSheet("color: gray;")
+        elif state in NEEDS_REGISTRATION:
+            # A registration is in the folder but does not count (it did not
+            # finish ...): nothing here can be approved; register again.
+            self.approval_status.setText(f"Status: NEEDS REGISTRATION -- {text}")
+            self.approval_status.setStyleSheet("color: red;")
         elif state == UNAPPROVED:
             self.approval_status.setText("Status: PENDING APPROVAL")
             self.approval_status.setStyleSheet("color: orange;")

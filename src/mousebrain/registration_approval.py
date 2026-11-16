@@ -28,6 +28,15 @@ registration, or an old marker that does not say which registration it was
 for, counts as NOT approved. Approving needs a person (the util script, the
 Approve buttons); no automated run writes one.
 
+WHEN A REGISTRATION COUNTS AS A REGISTRATION AT ALL
+brainreg writes ``brainreg.json`` FIRST, before it fits anything, so that file
+alone proves only that a registration STARTED. A run that failed or was killed
+left it behind and every reader took the brain as registered: step 3 skipped
+it as done, the overnight batch called it a failure every night, and a person
+could approve it. A registration is complete only when every one of its output
+files (FINGERPRINT_FILES) is there -- registration_complete(), the one test
+every reader uses. An incomplete registration cannot be approved.
+
 What happens to approvals:
   * approve()                    -- a person approved what is there now
   * retire_for_new_registration() -- registration is about to run again: the
@@ -57,13 +66,20 @@ FINGERPRINT_FILES = ("brainreg.json", "registered_atlas.tiff", "boundaries.tiff"
 
 # What approval_state() can say.
 NOT_REGISTERED = "not_registered"      # no brainreg.json: nothing to approve
+INCOMPLETE = "incomplete"              # started, but an output file is missing
 UNAPPROVED = "unapproved"              # registered, no marker
 APPROVED = "approved"                  # marker names this registration
 OTHER_REGISTRATION = "other_registration"  # marker names a different one
 UNRECORDED = "unrecorded"              # old-style marker: does not say which
 
+# The states in which the brain needs registering (again) before anything
+# else: there is nothing a person could approve.
+NEEDS_REGISTRATION = (NOT_REGISTERED, INCOMPLETE)
+
 _STATE_TEXT = {
     NOT_REGISTERED: "not registered yet",
+    INCOMPLETE: ("the registration did not finish (it failed or was stopped): "
+                 "register the brain again"),
     UNAPPROVED: "registered, waiting for a person to approve it",
     APPROVED: "approved",
     OTHER_REGISTRATION: ("the approval on file is for an EARLIER registration of this "
@@ -76,6 +92,19 @@ _STATE_TEXT = {
 
 def _reg(reg_folder) -> Path:
     return Path(reg_folder)
+
+
+def missing_registration_files(reg_folder) -> list:
+    """The registration output files (FINGERPRINT_FILES) not in this folder."""
+    reg = _reg(reg_folder)
+    return [n for n in FINGERPRINT_FILES if not (reg / n).is_file()]
+
+
+def registration_complete(reg_folder) -> bool:
+    """True only when a registration FINISHED in this folder: every output
+    file is there. brainreg.json alone is written before brainreg fits
+    anything, so it is no proof (see the module docstring)."""
+    return not missing_registration_files(reg_folder)
 
 
 def registration_fingerprint(reg_folder) -> Optional[Dict[str, Dict[str, int]]]:
@@ -133,10 +162,14 @@ def read_marker(reg_folder) -> Optional[dict]:
 
 def approval_state(reg_folder) -> Tuple[str, str]:
     """(state, explanation) for the registration in this folder. Only
-    APPROVED means a person approved the registration that is there now."""
+    APPROVED means a person approved the registration that is there now; the
+    states in NEEDS_REGISTRATION mean the brain has to be registered again."""
     current = registration_fingerprint(reg_folder)
     if current is None:
         return NOT_REGISTERED, _STATE_TEXT[NOT_REGISTERED]
+    missing = missing_registration_files(reg_folder)
+    if missing:
+        return INCOMPLETE, "%s (missing: %s)" % (_STATE_TEXT[INCOMPLETE], ", ".join(missing))
     marker = read_marker(reg_folder)
     if marker is None:
         return UNAPPROVED, _STATE_TEXT[UNAPPROVED]
@@ -164,14 +197,18 @@ def approve(reg_folder, approved_by: Optional[str] = None, note: str = "") -> di
     """Record that a person approved the registration in this folder.
 
     Call this only from something a person did (a button, the approval
-    script's yes/no question). Raises ValueError when there is no registration
-    to approve -- an approval written before the registration exists would be
-    inherited by whatever registration lands there later.
+    script's yes/no question). Raises ValueError when there is nothing a
+    person could approve: no registration (an approval written before the
+    registration exists would be inherited by whatever lands there later), or
+    a registration that did not finish.
     """
     reg = _reg(reg_folder)
     current = registration_fingerprint(reg)
     if current is None:
         raise ValueError("no registration to approve in %s (brainreg.json not found)" % reg)
+    state, text = approval_state(reg)
+    if state == INCOMPLETE:
+        raise ValueError("cannot approve the registration in %s: %s" % (reg, text))
     if approved_by is None:
         try:
             approved_by = getpass.getuser()

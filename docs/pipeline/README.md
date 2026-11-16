@@ -43,7 +43,7 @@ is the first item on this list that is not done yet:
 |---|---|
 | Extract | `1_Extracted_Full/metadata.json` exists (extraction writes it last, so it means every channel finished) |
 | Crop | `metadata.json` exists in `2_Cropped_For_Registration` or `2_Cropped_For_Registration_Manual`, or the brain was registered on its full extraction (it arrived already cut, so there is nothing to crop) |
-| Register | `3_Registered_Atlas/brainreg.json` exists |
+| Register | a FINISHED registration is in `3_Registered_Atlas`: all four of `brainreg.json`, `registered_atlas.tiff`, `boundaries.tiff` and `deformation_field_0.tiff` (see "A registration that did not finish" below) |
 | Approve | a person approved this registration (see "Registration QC & Approval" below) |
 | Detect | a candidates file is where step 5 will look: the top of `4_Cell_Candidates`, or `4_Cell_Candidates/from_<the folder the atlas was fitted to>` |
 | Pre-filter | optional (RUN_PIPELINE only). Done when any pre-filter output exists -- a `prefilter_report.json` in a `prefiltered_<time>` folder, or step 5's `prefiltered/interior_candidates.xml`. It is never shown once the brain is classified: step 5 pre-filters on its own by default |
@@ -656,6 +656,27 @@ python util_approve_registration.py --brain 001_CNT_01_01_1p625x_z4 --view
 # Check approval status
 python util_approve_registration.py --brain 001_CNT_01_01_1p625x_z4 --status
 ```
+
+**A registration that did not finish.** brainreg writes `brainreg.json` first,
+before it registers anything, so that file alone only says a registration
+STARTED. A brain counts as registered only when all four output files are there
+(`brainreg.json`, `registered_atlas.tiff`, `boundaries.tiff`,
+`deformation_field_0.tiff`). What you will see:
+
+- **Registration fails** (brainreg stops with an error, or its files are not all
+  there afterwards): step 3 prints `[FAIL]` and moves what the failed run wrote
+  into `3_Registered_Atlas/_archive/<date>_<time>_failed/` -- kept, so whoever
+  looks into the failure can see it. The brain is back at "Register".
+- **Registration was stopped part-way** (the window was closed, the computer
+  restarted): the leftovers stay in the folder. RUN_PIPELINE and the pipeline
+  dashboard show `[!] Registered to atlas -- the registration did not finish
+  ... (missing: ...)` and offer "Register" again; Setup & Tuning shows
+  `NEEDS REGISTRATION`. Step 3 lists the brain under `[INCOMPLETE/FAILED]`, and
+  `--batch` (also the dashboard's Run button and the overnight batch) registers
+  it again, first moving the leftovers into
+  `3_Registered_Atlas/_archive/<date>_<time>_incomplete/`.
+- **Nothing unfinished can be approved**: every Approve button and
+  `util_approve_registration.py` refuse, naming the missing files.
 
 **An approval belongs to ONE registration.** Approving writes
 `3_Registered_Atlas/.registration_approved`, and that file records which

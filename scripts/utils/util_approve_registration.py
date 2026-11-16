@@ -22,8 +22,8 @@ The script will:
 import argparse
 import sys
 from pathlib import Path
-from mousebrain.registration_approval import (APPROVED, NOT_REGISTERED, approval_state,
-                                              approve as record_approval)
+from mousebrain.registration_approval import (APPROVED, NEEDS_REGISTRATION, NOT_REGISTERED,
+                                              approval_state, approve as record_approval)
 
 # =============================================================================
 # CONFIGURATION
@@ -151,6 +151,15 @@ Examples:
     if approval_state(reg_folder)[0] == NOT_REGISTERED:
         print(f"\nError: No registration found for this brain")
         print(f"  Run registration first: python 3_register_to_atlas.py --brain {args.brain}")
+        sys.exit(1)
+
+    # A registration that is there but cannot be approved (it did not finish
+    # ...): say why and stop, instead of showing pictures and asking a
+    # question whose "yes" would be refused.
+    state, why = approval_state(reg_folder)
+    if state in NEEDS_REGISTRATION:
+        print(f"\n[!] Nothing to approve: {why}")
+        print(f"  Register it again: python 3_register_to_atlas.py --batch --brain {pipeline_folder.name}")
         sys.exit(1)
 
     # Check current status

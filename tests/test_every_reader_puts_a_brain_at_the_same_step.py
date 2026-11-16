@@ -46,7 +46,11 @@ def _brain(tmp_path, registered_on="cropped"):
     reg = b / "3_Registered_Atlas"
     record_registered_space(reg, registered_on, b / {"cropped": "2_Cropped_For_Registration",
                                                      "full": "1_Extracted_Full"}[registered_on])
-    (reg / "brainreg.json").write_text("{}")
+    # A finished registration: all of brainreg's output files, not only the
+    # brainreg.json it writes before it starts.
+    for name in ("brainreg.json", "registered_atlas.tiff", "boundaries.tiff",
+                 "deformation_field_0.tiff"):
+        (reg / name).write_text("{}")
     approve(reg, approved_by="tester")
     return b
 
