@@ -562,6 +562,17 @@ def _registry_root():
     return default_registry_root()
 
 
+def _project_code(base_folder, project=None):
+    """The project code a dataset's results are filed under.
+
+    --project when given, else the dataset folder's name. WHY the folder name
+    is only the default: the detection batch files its results under
+    <project>_Detection, and a dataset folder is not always named after its
+    project. When they differ, --project says which project to look under.
+    """
+    return project or Path(base_folder).name
+
+
 def _parse_sample_name(sample_name):
     """Parse sample name into (mouse, base_region).
 
@@ -578,20 +589,22 @@ def _parse_sample_name(sample_name):
     return mouse, base_region
 
 
-def _get_roi_output_dirs(data_folder):
+def _get_roi_output_dirs(data_folder, project=None):
     """Return (exports_dir, figures_dir) for this dataset under the registry root.
 
-    exports/{project}_ROI_Analysis and figures/{project}_ROI_Analysis, where
-    project is the dataset folder name (e.g. 'ENCR'). exports/ is created;
+    exports/{project}_ROI_Analysis and figures/{project}_ROI_Analysis (project:
+    see _project_code). exports/ is created;
     figures/ is returned as a path only -- nothing in this command writes
     figures, and an empty figures tree would look like an analysis that
     produced nothing. Returns (None, None) when no registry root is configured.
     """
+    from mousebrain.plugin_2d.sliceatlas.core.config import roi_analysis_name
+
     root = _registry_root()
     if root is None:
         return None, None
 
-    analysis = f'{Path(data_folder).name}_ROI_Analysis'
+    analysis = roi_analysis_name(_project_code(data_folder, project))
     exports = root / 'exports' / analysis
     figures = root / 'figures' / analysis
     exports.mkdir(parents=True, exist_ok=True)
@@ -602,67 +615,97 @@ def _get_roi_output_dirs(data_folder):
 # Subcommand: batch
 # ---------------------------------------------------------------------------
 
-def _find_detection_dir(base_folder):
-    """Find the detection results directory.
+def _detection_search_dirs(base_folder, project=None, detection_dir=None):
+    """Every folder the detection results may be in, in the order searched.
 
-    Checks <registry root>/exports/{project}_Detection/ first (where the
-    detection batch registers its outputs), falls back to
-    base_folder/batch_results/ for backward compat.
+    1. --detection-dir, when given (then nothing else is searched);
+    2. <registry root>/exports/<project>_Detection/ -- where the detection
+       batch registers each sample's measurements;
+    3. the detection batch's default --output folder
+       (core.config.DEFAULT_BATCH_OUTPUT), for results that never reached
+       the registry;
+    4. <dataset folder>/batch_results/, where older batches wrote.
+
+    WHY 2-3 come from the same definitions the batch uses: the counter used to
+    look under '<folder name>_Detection' while the batch registered under one
+    fixed name, and its fallback folder was not where the batch writes; it
+    found results only while the project and the folder happened to share
+    that name.
     """
-    base = Path(base_folder)
-    project = base.name  # e.g. 'ENCR'
+    from mousebrain.plugin_2d.sliceatlas.core.config import (
+        DEFAULT_BATCH_OUTPUT, detection_analysis_name,
+    )
 
-    # Primary: <registry root>/exports/{project}_Detection/
+    if detection_dir:
+        return [Path(detection_dir)]
+    dirs = []
     root = _registry_root()
     if root is not None:
-        det_dir = root / 'exports' / f'{project}_Detection'
-        if det_dir.exists():
-            return det_dir
-
-    # Fallback: batch_results/ in the data folder
-    fallback = base / 'batch_results'
-    if fallback.exists():
-        return fallback
-
-    return None
+        dirs.append(root / 'exports' /
+                    detection_analysis_name(_project_code(base_folder, project)))
+    if DEFAULT_BATCH_OUTPUT is not None:
+        dirs.append(Path(DEFAULT_BATCH_OUTPUT))
+    dirs.append(Path(base_folder) / 'batch_results')
+    return dirs
 
 
-def _discover_samples(base_folder, region=None):
+def _find_detection_dir(base_folder, project=None, detection_dir=None):
+    """Return (detection results folder or None, list of folders searched).
+
+    The first folder of _detection_search_dirs that exists is used.
+    """
+    searched = _detection_search_dirs(base_folder, project, detection_dir)
+    for d in searched:
+        if d.is_dir():
+            return d, searched
+    return None, searched
+
+
+def _discover_samples(base_folder, region=None, project=None, detection_dir=None):
     """Find all samples with measurements.csv and a matching ND2.
 
-    Looks for detection results in <registry root>/exports/{project}_Detection/
-    (falls back to base_folder/batch_results/), then searches the data
-    folder for matching ND2 files.
+    Looks for detection results in the folders _detection_search_dirs names,
+    then searches the data folder for matching ND2 files.
 
     Args:
-        base_folder: Path to dataset folder (e.g. .../ENCR/)
+        base_folder: Path to dataset folder (the project's image folder)
         region: Optional region suffix filter (e.g. 'DCN', 'VEST', 'RN')
+        project: Project code (default: the dataset folder's name)
+        detection_dir: Explicit detection results folder (overrides the search)
 
     Returns:
-        List of dicts with keys: sample, measurements_path, nd2_path, rois_path
-        Sorted by sample name.
+        (samples, left_out). samples: list of dicts with keys sample,
+        measurements_path, nd2_path, rois_path, sorted by sample name.
+        left_out: list of (sample name, reason) for every sample in the
+        detection folder that cannot be drawn or counted. WHY it is returned:
+        these samples used to be dropped without a word, and the totals then
+        counted only what survived, so a missing ND2 looked like a smaller
+        dataset. A sample excluded by --region is not "left out" -- the
+        operator asked for that.
     """
     base = Path(base_folder)
-    det_dir = _find_detection_dir(base_folder)
+    det_dir, searched = _find_detection_dir(base_folder, project, detection_dir)
 
     if det_dir is None:
-        print(f"Error: No detection results found for {base.name}")
-        return []
+        print(f"Error: No detection results found for "
+              f"{_project_code(base_folder, project)}. Folders searched:")
+        for d in searched:
+            print(f"    {d}")
+        print("  Run the detection batch first, or give --project / "
+              "--detection-dir.")
+        return [], []
 
     print(f"  Detection data: {det_dir}")
 
     samples = []
+    left_out = []
     for meas_dir in sorted(det_dir.iterdir()):
-        if not meas_dir.is_dir():
+        if not meas_dir.is_dir() or _is_not_a_sample_folder(meas_dir):
             continue
-
-        meas_file = meas_dir / 'measurements.csv'
-        if not meas_file.exists():
-            continue
-
         sample_name = meas_dir.name
 
-        # Apply region filter
+        # Apply region filter first: a sample outside the region was not
+        # asked for, so it is neither counted nor reported as left out.
         if region:
             parts = sample_name.rsplit('_', 1)
             if len(parts) < 2:
@@ -670,6 +713,11 @@ def _discover_samples(base_folder, region=None):
             suffix = parts[1]
             if not suffix.upper().startswith(region.upper()):
                 continue
+
+        meas_file = meas_dir / 'measurements.csv'
+        if not meas_file.exists():
+            left_out.append((sample_name, f"no measurements.csv in {meas_dir}"))
+            continue
 
         # Find matching ND2 in the data folder (not in detection results)
         nd2_path = None
@@ -679,6 +727,7 @@ def _discover_samples(base_folder, region=None):
                 break
 
         if nd2_path is None:
+            left_out.append((sample_name, f"no {sample_name}.nd2 under {base}"))
             continue
 
         # ROI JSON goes next to the ND2
@@ -691,7 +740,47 @@ def _discover_samples(base_folder, region=None):
             'rois_path': rois_path,
         })
 
-    return samples
+    return samples, left_out
+
+
+# Name of the folder, inside the dataset folder, that the counts go to when no
+# registry is configured (see cmd_batch).
+NO_REGISTRY_OUTPUT = 'roi_counts'
+
+
+def _is_not_a_sample_folder(folder):
+    """True for a folder in the detection results that is not a sample.
+
+    WHY: every other sub-folder without a measurements.csv is reported as a
+    left-out sample, so anything that is known not to be a sample must be
+    passed over here, or the "left out" count is wrong:
+    - names starting with '_' are the registry's own bookkeeping
+      (e.g. '_archived', where invalidated results are moved);
+    - a folder holding ROI counts (<sample>_roi_counts.csv, directly or one
+      level down) and no measurements.csv is this tool's own output, not
+      detection results. Older versions wrote the counts to
+      <dataset>/batch_results/<animal>/<region>/, which is also a folder
+      searched for detection results.
+    """
+    if folder.name.startswith('_'):
+        return True
+    if (folder / 'measurements.csv').exists():
+        return False
+    try:
+        return (any(folder.glob('*_roi_counts.csv'))
+                or any(folder.glob('*/*_roi_counts.csv')))
+    except OSError:
+        return False
+
+
+def _print_left_out(left_out):
+    """Print the samples that will not be drawn or counted, with the reason."""
+    if not left_out:
+        return
+    print(f"[!] {len(left_out)} sample(s) left out:")
+    for name, reason in left_out:
+        print(f"    {name}: {reason}")
+
 
 
 def cmd_batch(args):
@@ -712,11 +801,15 @@ def cmd_batch(args):
         print(f"Error: Folder not found: {base_folder}")
         return 1
 
+    project = _project_code(base_folder, getattr(args, 'project', None))
     region = args.region
-    samples = _discover_samples(base_folder, region)
+    samples, left_out = _discover_samples(
+        base_folder, region, project=project,
+        detection_dir=getattr(args, 'detection_dir', None))
 
     if not samples:
         region_msg = f" with region '{region}'" if region else ""
+        _print_left_out(left_out)
         print(f"No samples found in {base_folder}{region_msg}")
         return 1
 
@@ -725,8 +818,10 @@ def cmd_batch(args):
     pending = [s for s in samples if not s['rois_path'].exists()]
 
     region_label = f" [{region}]" if region else ""
-    print(f"Dataset: {base_folder.name}{region_label}")
-    print(f"  Total samples: {len(samples)}")
+    print(f"Dataset: {base_folder.name}{region_label}  (project {project})")
+    _print_left_out(left_out)
+    print(f"  Total samples: {len(samples)}"
+          + (f" (+{len(left_out)} left out, listed above)" if left_out else ""))
     print(f"  Already have ROIs: {len(done)}")
     print(f"  Need ROIs drawn: {len(pending)}")
 
@@ -822,25 +917,30 @@ def cmd_batch(args):
 
     if not done:
         print("\nNo ROIs saved. Nothing to count.")
+        _print_left_out(left_out)
         return 0
 
     # Resolve output directories (registry root preferred)
-    exports_dir, figures_dir = _get_roi_output_dirs(base_folder)
+    exports_dir, figures_dir = _get_roi_output_dirs(base_folder, project)
     registry = None
     if exports_dir is None:
+        # WHY not batch_results/ (where this used to write): that folder is
+        # searched for DETECTION results, so counts written there were read
+        # back on the next run as samples without measurements.
+        exports_dir = base_folder / NO_REGISTRY_OUTPUT
         print("[!] registry: no registry root configured (set MOUSEBRAIN_REGISTRY_ROOT "
-              "or CONNECTOME_ROOT). Saving to batch_results/ beside the data instead.")
-        exports_dir = base_folder / 'batch_results'
+              f"or CONNECTOME_ROOT). Saving to {exports_dir} instead; nothing is registered.")
         exports_dir.mkdir(exist_ok=True)
     else:
         # One registry for the whole batch. A registry failure is reported and
         # counting continues -- the counts on disk are the primary output.
         try:
             from mousebrain.analysis_registry import AnalysisRegistry
+            from mousebrain.plugin_2d.sliceatlas.core.config import roi_analysis_name
             # Follows the shared approved method unless the approved-method
             # file names this analysis (analysis_registry.approved_method_for;
             # docs/pipeline/ANALYSIS_REGISTRY.md).
-            registry = AnalysisRegistry(analysis_name=f'{base_folder.name}_ROI_Analysis',
+            registry = AnalysisRegistry(analysis_name=roi_analysis_name(project),
                                         follows_approved_method=True)
         except Exception as e:
             print(f"[!] registry: {e}")
@@ -932,7 +1032,9 @@ def cmd_batch(args):
         summary_df.to_csv(output_path, index=False)
 
         print(f"\n{'='*60}")
-        print(f"SUMMARY: {len(all_rows)} samples counted")
+        _print_left_out(left_out)
+        print(f"SUMMARY: {len(all_rows)} samples counted"
+              + (f", {len(left_out)} left out" if left_out else ""))
         print(f"Saved: {output_path}")
         print(f"{'='*60}")
 
@@ -1007,7 +1109,13 @@ If ROIs already exist, they're loaded as editable polygons.
 After all images, counts cells and saves a summary CSV.
 """,
     )
-    batch_p.add_argument('folder', help='Dataset folder (e.g. .../ENCR/)')
+    batch_p.add_argument('folder', help="Dataset folder: the project's image folder")
+    batch_p.add_argument('--project', default=None,
+                         help='Project code the detection batch filed the results under '
+                              "(default: the dataset folder's name)")
+    batch_p.add_argument('--detection-dir', default=None,
+                         help='Folder holding one sub-folder per sample with '
+                              'measurements.csv (default: searched; see the guide)')
     batch_p.add_argument('--region', default=None,
                          help='Filter by brain region suffix (e.g. DCN, VEST, RN, HYP, GRN)')
     batch_p.add_argument('--skip-done', action='store_true',
@@ -1015,7 +1123,9 @@ After all images, counts cells and saves a summary CSV.
     batch_p.add_argument('--count-only', action='store_true',
                          help='Skip drawing, just count samples that already have ROI files')
     batch_p.add_argument('-o', '--output', default=None,
-                         help='Output summary CSV path (default: batch_results/roi_summary.csv)')
+                         help='Output summary CSV path (default: roi_summary[_<region>].csv '
+                              'in the ROI analysis folder of the registry, or in '
+                              '<folder>/roi_counts/ when no registry is configured)')
 
     args = parser.parse_args()
 

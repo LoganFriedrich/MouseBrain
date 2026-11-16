@@ -48,7 +48,7 @@ def env(tmp_path, monkeypatch):
 
 
 def _earlier_entry(tmp_path, with_file=True):
-    reg = AnalysisRegistry(analysis_name="ENCR_Detection",
+    reg = AnalysisRegistry(analysis_name="PRJ_Detection",
                            registry_root=tmp_path / "registry")
     files = {}
     if with_file:
@@ -406,7 +406,7 @@ def test_a_library_that_does_not_import_stops_the_batch_first(env, monkeypatch, 
 def _retired_records(reg, sample):
     """The invalidate_entry records the registry's audit log holds for sample."""
     import json
-    log = (reg.logs_dir / "ENCR_Detection.log").read_text(encoding="utf-8")
+    log = (reg.logs_dir / "PRJ_Detection.log").read_text(encoding="utf-8")
     records = []
     for line in log.splitlines():
         fields = line.split("\t")

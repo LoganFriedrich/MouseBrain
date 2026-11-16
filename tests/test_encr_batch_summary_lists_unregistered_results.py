@@ -53,7 +53,7 @@ def _summary(monkeypatch, tmp_path, capsys):
 
 def test_a_completed_sample_that_could_not_be_registered_is_listed(env, monkeypatch, capsys):
     tmp_path = env
-    reg = AnalysisRegistry(analysis_name="ENCR_Detection",
+    reg = AnalysisRegistry(analysis_name="PRJ_Detection",
                            registry_root=tmp_path / "registry")
     reg.register_output(
         sample=SAMPLE, category="detection", files={},

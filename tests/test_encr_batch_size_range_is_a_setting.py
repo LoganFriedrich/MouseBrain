@@ -39,7 +39,7 @@ def _spy_detector(monkeypatch):
 
 
 def _entry_and_stale():
-    reg = AnalysisRegistry(analysis_name="ENCR_Detection")
+    reg = AnalysisRegistry(analysis_name="PRJ_Detection")
     stale = {e["sample"] for e in reg.check_staleness(get_approved_method())}
     return reg.get_entry(SAMPLE), stale
 
@@ -86,10 +86,10 @@ def test_a_typed_range_wins_and_is_recorded_as_not_approved(env, monkeypatch, ca
 
 @pytest.mark.parametrize("data", [
     # a per-analysis entry for the batch that leaves the range out
-    {"analyses": {"ENCR_Detection": {k: v for k, v in DEFAULT_METHOD.items()
+    {"analyses": {"PRJ_Detection": {k: v for k, v in DEFAULT_METHOD.items()
                                      if k != "size_filter_um"}}},
     # the batch's analysis is told it has no approved method at all
-    {"analyses": {"ENCR_Detection": None}},
+    {"analyses": {"PRJ_Detection": None}},
     # a flat approved method without the range
     {k: v for k, v in DEFAULT_METHOD.items() if k != "size_filter_um"},
 ])
@@ -125,7 +125,7 @@ def test_an_unusable_approved_range_stops(env, monkeypatch, capsys, bad):
 
 def test_a_typed_range_runs_when_the_batch_has_no_approved_method(env, monkeypatch):
     t, tmp_path = env
-    _write_approved(tmp_path, monkeypatch, {"analyses": {"ENCR_Detection": None}})
+    _write_approved(tmp_path, monkeypatch, {"analyses": {"PRJ_Detection": None}})
     _fake_loader(monkeypatch, *_synthetic_image())
     seen = _spy_detector(monkeypatch)
     _nd2(tmp_path)

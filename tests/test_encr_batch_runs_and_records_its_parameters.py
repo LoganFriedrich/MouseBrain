@@ -154,7 +154,7 @@ def test_banner_states_the_diameter_range_detection_uses(env, monkeypatch, capsy
     _run_main(monkeypatch, ["--project", PROJECT, "--dry-run", "--ignore-tracker",
                             "--output", str(tmp_path / "out")])
     out = capsys.readouterr().out
-    lo, hi = be.batch_approved_method()["size_filter_um"]   # no file: the registry's method
+    lo, hi = be.batch_approved_method("PRJ_Detection")["size_filter_um"]   # no file: the registry's method
     assert f"nucleus diameter {lo}-{hi} um" in out
     assert "px" not in out.split("Detection:")[1].split("\n")[0].replace("pixel", "")
 

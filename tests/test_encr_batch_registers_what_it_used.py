@@ -29,7 +29,7 @@ def _approve(tmp_path, monkeypatch, **overrides):
 
 
 def _stale_samples():
-    reg = AnalysisRegistry(analysis_name="ENCR_Detection")
+    reg = AnalysisRegistry(analysis_name="PRJ_Detection")
     return {e["sample"] for e in reg.check_staleness(get_approved_method())}, reg
 
 

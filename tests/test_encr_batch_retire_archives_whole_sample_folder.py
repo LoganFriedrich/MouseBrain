@@ -52,7 +52,7 @@ def env(tmp_path, monkeypatch):
 def _earlier_entry_with_strays(tmp_path):
     """An earlier entry listing one file, with two more files of the same
     run in its sample folder that the entry does not list."""
-    reg = AnalysisRegistry(analysis_name="ENCR_Detection",
+    reg = AnalysisRegistry(analysis_name="PRJ_Detection",
                            registry_root=tmp_path / "registry")
     csv_file = tmp_path / "measurements.csv"
     csv_file.write_text("label,is_positive\n1,True\n", encoding="utf-8")
@@ -132,7 +132,7 @@ def test_failed_rerun_of_an_entry_without_files_says_so(env, monkeypatch, capsys
     """A 0-nuclei entry lists no files; retiring it moves nothing, and the
     summary must not claim a move."""
     tmp_path = env
-    reg = AnalysisRegistry(analysis_name="ENCR_Detection",
+    reg = AnalysisRegistry(analysis_name="PRJ_Detection",
                            registry_root=tmp_path / "registry")
     reg.register_output(sample=SAMPLE, category="detection", files={},
                         results={"n_nuclei": 0}, method_params={}, source_files={})

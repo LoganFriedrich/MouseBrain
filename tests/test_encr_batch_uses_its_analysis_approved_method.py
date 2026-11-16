@@ -56,7 +56,7 @@ def test_unset_options_come_from_the_analysis_own_approved_method(env, monkeypat
 
     monkeypatch.setattr(ar, "approved_method_for", per_analysis, raising=False)
     be.main()
-    assert asked and set(asked) == {"ENCR_Detection"}
+    assert asked and set(asked) == {"PRJ_Detection"}
     assert env[0]["sigma_threshold"] == 1.5 and env[0]["soma_dilation"] == 4
     # The run uses exactly that method, so the banner raises no stale warning.
     assert "NOT the approved method" not in capsys.readouterr().out
@@ -73,4 +73,4 @@ def test_an_analysis_without_an_approved_method_runs_on_builtin_values(env, monk
     assert (env[0]["min_diameter_um"], env[0]["max_diameter_um"]) == (9, 24)
     out = capsys.readouterr().out
     assert "NOT the approved method" not in out
-    assert "Approved:  none for ENCR_Detection" in out
+    assert "Approved:  none for PRJ_Detection" in out

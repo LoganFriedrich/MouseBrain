@@ -71,7 +71,10 @@ from pathlib import Path
 
 import numpy as np
 
-from ..core.config import DATA_DIR, get_sample_dir, SampleDirs, parse_sample_name
+from ..core.config import (
+    DATA_DIR, get_sample_dir, SampleDirs, parse_sample_name,
+    DEFAULT_BATCH_OUTPUT, detection_analysis_name,
+)
 
 # WHY: the legacy layout lives one level ABOVE the 1_Subjects tree, so discovery
 # needs the 2D root itself, not only DATA_DIR (= <2D_Slices>/1_Subjects). Guarded
@@ -87,7 +90,8 @@ except ImportError:
 import os as _os
 PROJECT = _os.environ.get("MOUSEBRAIN_2D_PROJECT")
 ENCR_ROOT = (Path(DATA_DIR) / PROJECT) if (DATA_DIR and PROJECT) else None
-DEFAULT_OUTPUT = (Path(DATA_DIR).parent / "2_Data_Summary" / "batch_results") if DATA_DIR else None
+# Shared with the ROI counter (brainslice-roi), which looks here for results.
+DEFAULT_OUTPUT = DEFAULT_BATCH_OUTPUT
 
 # Default channel indices for ENCR ND2 files
 # Channel 0 = 488nm (green/eYFP signal)
@@ -124,17 +128,23 @@ BUILTIN_PARAMETERS = {
     "log_threshold": 0.005,
 }
 
-# The registry analysis the batch registers its outputs under.
-REGISTRY_ANALYSIS = "ENCR_Detection"
+# The registry analysis the batch registers its outputs under is
+# detection_analysis_name(<project>) (core/config.py), one per project: the
+# ROI counter (brainslice-roi) looks there. Every approved-method lookup below
+# takes that same name, so the batch is judged by the method the registry
+# judges its entries by.
 
 
-def batch_approved_method() -> dict:
+def batch_approved_method(analysis: str) -> dict:
     """The approved method this batch's registry entries are judged by.
+
+    *analysis* is the registry analysis the batch registers under
+    (detection_analysis_name of the project).
 
     WHY ask the registry module for THIS analysis: the approved method is
     what the registry compares each entry's method hash with. A registry that
     can give an analysis its own approved method (approved_method_for) may
-    judge REGISTRY_ANALYSIS by something other than the general approved
+    judge *analysis* by something other than the general approved
     method; filling unset options from, and comparing the banner against, the
     general one would then announce "approved" numbers the registry reports
     as stale. A registry without per-analysis methods has one approved method
@@ -147,22 +157,22 @@ def batch_approved_method() -> dict:
     from mousebrain import analysis_registry as ar
     per_analysis = getattr(ar, "approved_method_for", None)
     if per_analysis is not None:
-        return dict(per_analysis(REGISTRY_ANALYSIS) or {})
+        return dict(per_analysis(analysis) or {})
     return ar.get_approved_method()
 
 
-def approved_method_is_shared() -> bool:
+def approved_method_is_shared(analysis: str) -> bool:
     """True when the batch's approved method is the registry's SHARED one.
 
     WHY the batch asks: its banner tells a person how to make the batch's
     numbers approved -- by writing them into the approved-method file. When
     the file does not name this batch's analysis (no file, a flat file, or a
-    per-analysis file without an entry for REGISTRY_ANALYSIS), the batch is
+    per-analysis file without an entry for *analysis*), the batch is
     judged by the shared method, and so is every other analysis that follows
     it (the ROI analysis included): editing the shared method changes what
     their existing entries are judged against too, and their later runs
     record it. The person must be told that before editing the file, not
-    after. When the file gives REGISTRY_ANALYSIS its own entry, only that
+    after. When the file gives *analysis* its own entry, only that
     entry needs editing and the warning is not given.
 
     approved_method_for(..., follows_approved_method=False) answers exactly
@@ -178,7 +188,7 @@ def approved_method_is_shared() -> bool:
     per_analysis = getattr(ar, "approved_method_for", None)
     if per_analysis is None:
         return True
-    return per_analysis(REGISTRY_ANALYSIS, follows_approved_method=False) is None
+    return per_analysis(analysis, follows_approved_method=False) is None
 
 
 # command-line option (argparse dest) -> approved-method key
@@ -242,15 +252,15 @@ class SizeRangeNotSet(Exception):
     """
 
 
-def _size_range_how_to() -> str:
+def _size_range_how_to(analysis: str) -> str:
     return ("Set it in the approved-method file, e.g. "
             '"size_filter_um": [<min um>, <max um>] (inside the '
-            f'"{REGISTRY_ANALYSIS}" entry when the file names analyses, else '
+            f'"{analysis}" entry when the file names analyses, else '
             "at the top level), or type --diameter MIN MAX for this run. See "
             "plugin_2d/ALGORITHM_REFERENCE.md, section 6.")
 
 
-def _check_size_range(value, origin: str) -> tuple:
+def _check_size_range(value, origin: str, analysis: str) -> tuple:
     """(min, max) from a 2-number value, or SizeRangeNotSet naming *origin*."""
     ok = (isinstance(value, (list, tuple)) and len(value) == 2
           and all(isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -260,11 +270,11 @@ def _check_size_range(value, origin: str) -> tuple:
         raise SizeRangeNotSet(
             f"{origin} gives the nucleus diameter range as {value!r}; it must "
             "be two numbers in micrometers, smallest first, both above 0. "
-            + _size_range_how_to())
+            + _size_range_how_to(analysis))
     return value[0], value[1]
 
 
-def batch_size_range(typed, approved: dict) -> tuple:
+def batch_size_range(typed, approved: dict, analysis: str) -> tuple:
     """The nucleus diameter range (um) the batch detects with, and its source.
 
     A range typed on the command line (--diameter MIN MAX) wins; otherwise
@@ -285,16 +295,16 @@ def batch_size_range(typed, approved: dict) -> tuple:
         SizeRangeNotSet: nothing gives a range, or the one given is unusable.
     """
     if typed is not None:
-        return _check_size_range(list(typed), "--diameter"), "command line"
+        return _check_size_range(list(typed), "--diameter", analysis), "command line"
     if "size_filter_um" not in approved:
         why = ("there is no approved method for this batch"
                if not approved else
                "the approved method has no size_filter_um")
         raise SizeRangeNotSet(
             f"no nucleus diameter range is set: {why} and --diameter was not "
-            "typed. " + _size_range_how_to())
+            "typed. " + _size_range_how_to(analysis))
     return (_check_size_range(approved["size_filter_um"],
-                              "the approved method's size_filter_um"),
+                              "the approved method's size_filter_um", analysis),
             "approved method")
 
 
@@ -1118,13 +1128,6 @@ def main():
                              'the approved method')
     args = parser.parse_args()
 
-    try:
-        approved = batch_approved_method()
-    except ImportError:
-        approved = {}
-    except RuntimeError as e:   # an approved-method file is set but unreadable
-        parser.error(str(e))
-
     # Resolve the input BEFORE the banner so the banner reports what will
     # actually be read. WHY: it used to print 'Input: None' because the
     # default root was only filled in after the banner.
@@ -1136,6 +1139,25 @@ def main():
         parser.error("output folder unknown: set CONNECTOME_ROOT or pass --output")
     nd2_files, root_used, layout = discover_nd2_files(roots, args.project)
     searched = "; ".join(str(r) for r in roots)
+    # The project code the results are registered under (same rule as
+    # find_nd2_files): <project>_Detection is where brainslice-roi looks.
+    project_code = args.project or PROJECT or (root_used.name if root_used else None)
+    if not project_code:
+        # Only possible with --input and no ND2 file under it: nothing names
+        # the project, so there is no analysis to register under or to take
+        # the approved method from.
+        parser.error("cannot tell the project: no ND2 file was found under "
+                     f"{searched}; give --project")
+    analysis = detection_analysis_name(project_code)
+
+    # The approved method of the analysis the batch registers under, read
+    # only once that analysis is known (it follows the project).
+    try:
+        approved = batch_approved_method(analysis)
+    except ImportError:
+        approved = {}
+    except RuntimeError as e:   # an approved-method file is set but unreadable
+        parser.error(str(e))
 
     tuned = {}
     # Set when marked-best runs disagree and the typed numbers settle it, so
@@ -1188,7 +1210,7 @@ def main():
     # Before anything is read or written: without a range there is nothing
     # to detect with (batch_size_range says why there is no fallback).
     try:
-        size_range, size_source = batch_size_range(args.diameter, approved)
+        size_range, size_source = batch_size_range(args.diameter, approved, analysis)
     except SizeRangeNotSet as e:
         parser.error(str(e))
     method_params = batch_method_params(approved, values, size_range)
@@ -1204,6 +1226,7 @@ def main():
         print("Input:     (no ND2 files found)")
     print(f"Searched:  {searched}")
     print(f"Output:    {args.output}")
+    print(f"Registry:  {analysis}")
     d_min, d_max = size_range
     print(f"Detection: threshold+LoG, nucleus diameter {d_min}-{d_max} um "
           f"[{size_source}] (pixel area per image from its pixel size)")
@@ -1231,7 +1254,7 @@ def main():
         # Nothing to be stale against (the registry was told this analysis
         # has no approved method); listing every key as "different" would
         # only be noise.
-        print(f"Approved:  none for {REGISTRY_ANALYSIS}; entries are registered "
+        print(f"Approved:  none for {analysis}; entries are registered "
               "with the parameters above, with no approved method to compare")
     elif differs:
         print("[!] NOT the approved method -- these outputs will be registered as "
@@ -1262,7 +1285,7 @@ def main():
         print("    To make these numbers approved, write them into the "
               "approved-method file (see plugin_2d/ALGORITHM_REFERENCE.md, "
               "section 6).")
-        if approved_method_is_shared():
+        if approved_method_is_shared(analysis):
             print("    [!] On this registry that file is the approved method "
                   "of EVERY analysis it holds, not only this batch's: "
                   "editing it also changes what the other analyses' entries "
@@ -1305,7 +1328,11 @@ def main():
         from mousebrain.analysis_registry import AnalysisRegistry
         # Declared as following the shared approved method: its entries are
         # judged by it unless approved_method.json names this analysis.
-        registry = AnalysisRegistry(analysis_name=REGISTRY_ANALYSIS,
+        # WHY the name follows the project: it was one fixed name for every
+        # project, so a second project's results landed in the first one's
+        # analysis and the ROI counter (which looks under <project>_Detection)
+        # never found them.
+        registry = AnalysisRegistry(analysis_name=analysis,
                                     follows_approved_method=True)
     except Exception as _reg_init_err:
         registry = None

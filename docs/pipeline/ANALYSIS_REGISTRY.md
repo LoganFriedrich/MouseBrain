@@ -144,7 +144,8 @@ mousebrain-registry --name 3D_Orientation_Check --no-approved-method --stale
 - An analysis not named there is judged by `"default"` if it follows the
   shared method, and has no approved method otherwise. Leaving `"default"`
   out means the built-in parameters.
-- The slice DETECTION batch (`ENCR_Detection`) runs with the approved
+- The slice DETECTION batch (`<project>_Detection`, one analysis per
+  project code) runs with the approved
   method of its analysis (its own entry under `"analyses"` if you gave it
   one, else `"default"`) for every number not typed on its command line or
   taken from a run marked best, and records, as the parameters of each

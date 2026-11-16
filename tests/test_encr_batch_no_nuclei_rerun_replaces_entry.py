@@ -46,7 +46,7 @@ def env(tmp_path, monkeypatch):
 
 
 def _earlier_entry(tmp_path):
-    reg = AnalysisRegistry(analysis_name="ENCR_Detection",
+    reg = AnalysisRegistry(analysis_name="PRJ_Detection",
                            registry_root=tmp_path / "registry")
     csv_file = tmp_path / "measurements.csv"
     csv_file.write_text("label,is_positive\n1,True\n", encoding="utf-8")
@@ -75,7 +75,7 @@ def test_no_nuclei_rerun_replaces_the_earlier_count(env, monkeypatch, capsys):
     assert entry["results"]["positive_fraction"] is None
     assert entry["outputs"] == {}
     # Registered with the parameters this run used, like a completed sample.
-    assert entry["method_params"]["size_filter_um"] == be.batch_approved_method()["size_filter_um"]
+    assert entry["method_params"]["size_filter_um"] == be.batch_approved_method("PRJ_Detection")["size_filter_um"]
     # The earlier run's file is archived, not left beside the new entry.
     assert not old_file.exists()
     archived = list(old_file.parent.glob("_archived/*/" + old_file.name))
@@ -141,14 +141,14 @@ def test_no_nuclei_first_run_is_registered(env, monkeypatch):
     tmp_path = env
     _run(monkeypatch, tmp_path)
     manifest = json.loads(
-        (tmp_path / "registry" / "exports" / "ENCR_Detection" / "registry.json")
+        (tmp_path / "registry" / "exports" / "PRJ_Detection" / "registry.json")
         .read_text(encoding="utf-8"))
     assert manifest["entries"][SAMPLE]["results"]["n_nuclei"] == 0
 
 
 def _invalidate_entry_records(tmp_path):
     """The retired records in the registry's audit log, oldest first."""
-    log = tmp_path / "registry" / "logs" / "ENCR_Detection.log"
+    log = tmp_path / "registry" / "logs" / "PRJ_Detection.log"
     records = []
     for line in log.read_text(encoding="utf-8").splitlines():
         cols = line.split("\t")
@@ -179,7 +179,7 @@ def test_earlier_no_nuclei_entry_with_other_parameters_is_logged(env, monkeypatc
     """An earlier 0-nuclei entry lists no files. Re-running with different
     parameters must still leave the earlier parameters in the log."""
     tmp_path = env
-    reg = AnalysisRegistry(analysis_name="ENCR_Detection",
+    reg = AnalysisRegistry(analysis_name="PRJ_Detection",
                            registry_root=tmp_path / "registry")
     reg.register_output(
         sample=SAMPLE, category="detection", files={},
@@ -191,7 +191,7 @@ def test_earlier_no_nuclei_entry_with_other_parameters_is_logged(env, monkeypatc
 
     entry = reg.get_entry(SAMPLE)
     assert entry["is_current"] is True
-    assert entry["method_params"]["size_filter_um"] == be.batch_approved_method()["size_filter_um"]
+    assert entry["method_params"]["size_filter_um"] == be.batch_approved_method("PRJ_Detection")["size_filter_um"]
     records = _invalidate_entry_records(tmp_path)
     assert len(records) == 1
     assert records[0]["results"]["n_nuclei"] == 0
@@ -201,13 +201,13 @@ def test_earlier_no_nuclei_entry_with_other_parameters_is_logged(env, monkeypatc
 def test_record_is_printed_when_the_log_cannot_be_written(tmp_path, capsys):
     """A failed invalidate_entry log write is reported, with the record, so
     the retired counts are not lost without anyone knowing."""
-    reg = AnalysisRegistry(analysis_name="ENCR_Detection",
+    reg = AnalysisRegistry(analysis_name="PRJ_Detection",
                            registry_root=tmp_path / "registry")
     reg.register_output(
         sample=SAMPLE, category="detection", files={},
         results={"n_nuclei": 41}, method_params={"sigma_threshold": 3},
         source_files={})
-    log = tmp_path / "registry" / "logs" / "ENCR_Detection.log"
+    log = tmp_path / "registry" / "logs" / "PRJ_Detection.log"
     log.unlink()
     log.mkdir()   # a folder where the log should be: every write fails
     assert reg.invalidate(sample=SAMPLE) == [SAMPLE]

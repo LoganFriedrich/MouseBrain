@@ -30,7 +30,7 @@ def test_hint_says_the_shared_method_is_every_analysis(env, monkeypatch, capsys)
     out = capsys.readouterr().out
     assert "write them into the approved-method file" in out
     assert "EVERY analysis it holds" in out
-    assert be.approved_method_is_shared()
+    assert be.approved_method_is_shared("PRJ_Detection")
 
 
 def test_a_flat_file_is_shared_too(env, monkeypatch, capsys):
@@ -43,13 +43,13 @@ def test_a_flat_file_is_shared_too(env, monkeypatch, capsys):
 
 def test_hint_is_not_given_when_the_file_names_the_batch_analysis(env, monkeypatch, capsys):
     t, tmp_path, calls = env
-    _approved_file(tmp_path, {"analyses": {be.REGISTRY_ANALYSIS: dict(ar.DEFAULT_METHOD)}})
+    _approved_file(tmp_path, {"analyses": {"PRJ_Detection": dict(ar.DEFAULT_METHOD)}})
     _marked(t, SAMPLE, sigma=1.0)
     _main(monkeypatch, tmp_path)
     out = capsys.readouterr().out
     assert "write them into the approved-method file" in out
     assert "EVERY analysis it holds" not in out
-    assert not be.approved_method_is_shared()
+    assert not be.approved_method_is_shared("PRJ_Detection")
 
 
 def test_typed_numbers_alone_also_get_the_shared_file_warning(env, monkeypatch, capsys):

@@ -510,13 +510,15 @@ background-exclusion dilation and the two detector settings
   below; marking a run best in BrainSlice is one way to choose two of them.
 - **The approved method** is what the analysis registry judges the batch's
   results against: the approved method the registry holds for the batch's
-  analysis, `ENCR_Detection`. It is set in the approved-method file
+  analysis, `<project>_Detection` -- one per project, named after the
+  project code the batch was run for (`--project`, e.g. `ENCR_Detection` for
+  a project coded `ENCR`); the banner's `Registry:` line names it. It is set in the approved-method file
   (`approved_method.json` under the registry root, or the file named by
   `MOUSEBRAIN_APPROVED_METHOD`); without that file it is the built-in method.
   The batch asks the registry for exactly this method, so its banner compares
   with what the registry will compare with. A result made with any number
   that differs from it is registered as **stale**, and shows so in
-  `mousebrain-registry --name ENCR_Detection --stale` and in any database that
+  `mousebrain-registry --name <project>_Detection --stale` and in any database that
   pulls the registry.
 
 Marking a run best does **not** change the approved method. If you mark a run
@@ -531,9 +533,9 @@ approved-method file (next section) and the batch's next results are current.
 can hold one SHARED method, used by every analysis that follows it, and a
 separate entry per analysis (the per-analysis form, explained in
 `docs/pipeline/ANALYSIS_REGISTRY.md`, "Giving each analysis its own approved
-method"). Which one the batch (`ENCR_Detection`) is judged by:
+method"). Which one the batch (`<project>_Detection`) is judged by:
 
-- the file names `ENCR_Detection` under `"analyses"` -> that entry, and only
+- the file names `<project>_Detection` under `"analyses"` -> that entry, and only
   that entry is the batch's;
 - otherwise (no file, a file holding the parameters alone, or a per-analysis
   file that does not name it) -> the SHARED method, which is also the
@@ -557,7 +559,7 @@ typed, a marked run or the defaults -- it adds `[!] On this registry that
 file is the approved method of EVERY analysis it holds` when the batch is
 judged by the shared method. A banner with no difference listed says
 nothing either way; then look in the file for an `"analyses"` entry named
-`ENCR_Detection`.
+`<project>_Detection`.
 
 If you do not want to change the other analyses, give the batch its own
 entry instead of editing the shared method (step 2).
@@ -585,12 +587,12 @@ entry instead of editing the shared method (step 2).
    smallest first, in micrometers) especially, because the batch detects
    with exactly that range (see "The nucleus diameter range" below). To make it
    the batch's own approved method, leaving every other analysis as it is,
-   put that object under `"analyses"` as the entry for `ENCR_Detection`:
+   put that object under `"analyses"` as the entry for `<project>_Detection`:
 
    ```json
    {"default":  { ...the shared method, as before (or leave "default" out
                   for the built-in parameters)... },
-    "analyses": {"ENCR_Detection": { ...the object above... }}}
+    "analyses": {"<project>_Detection": { ...the object above... }}}
    ```
 
    If the file holds the parameters alone (the old form), move them under
@@ -609,7 +611,7 @@ entry instead of editing the shared method (step 2).
    two agree. An unreadable file stops the batch with a message naming it.
    Then refresh the header of the analysis you changed (and, if you edited
    the shared method, of every analysis that follows it):
-   `mousebrain-registry --name ENCR_Detection --refresh-approved --stale`.
+   `mousebrain-registry --name <project>_Detection --refresh-approved --stale`.
 
 Results registered before the change are judged against the new approved
 method too; any made with other numbers now show as stale.
@@ -725,7 +727,7 @@ type.
   pixel-area range the detector applied to that image and, in its notes, the
   diameter range and detector settings; and a colocalization row with the
   sigma threshold actually used.
-- **Registry** (`ENCR_Detection`): per sample, the counts and the method
+- **Registry** (`<project>_Detection`): per sample, the counts and the method
   parameters **this run used** (not simply the approved method): exactly the
   eleven names listed under "Making numbers the approved method", nothing
   else. When any of them differs from the approved method, or the approved
@@ -736,12 +738,12 @@ type.
   current entry with 0 nuclei, no files, a positive fraction and background of
   `null` (nothing was measured), and the parameters the run used. If the
   sample already had a current entry, every file in the sample's own
-  registry folder (`exports/ENCR_Detection/<sample>/`) is first moved to an
+  registry folder (`exports/<project>_Detection/<sample>/`) is first moved to an
   `_archived/<date_time>/` folder inside it -- not only the files the entry
   lists, but also any other file there (an older batch copied extra
   overlays and histograms it never listed); the `_archived/` folder itself
   is left alone. The earlier entry's record is replaced in `registry.json`,
-  but not lost: the registry's log (`logs/ENCR_Detection.log`) gets one
+  but not lost: the registry's log (`logs/<project>_Detection.log`) gets one
   `invalidate_entry` line for the retired entry carrying its counts, method
   hash and parameters (see "Where a retired entry's counts are kept" below),
   then a `register` line for the new one. This happens even when the earlier
@@ -864,7 +866,7 @@ type.
   and the registry's log records the retirement with the retired counts.
 
   **Where a retired entry's counts are kept.** Every time an entry is
-  retired, the registry writes one line for it to `logs/ENCR_Detection.log`
+  retired, the registry writes one line for it to `logs/<project>_Detection.log`
   in the registry folder. Open that file in Notepad and search for the
   sample name; the line you want has the word `invalidate_entry` in it.
   The columns are separated by tabs: the time, the computer, the word
@@ -881,7 +883,7 @@ type.
   program, the share drops out at that moment), the entry is still retired
   -- writing the log never stops the batch -- and the registry prints
   `[!] <key> was invalidated, but its record could not be written to
-  logs/ENCR_Detection.log (<error>). Its record is: {...}` with the same
+  logs/<project>_Detection.log (<error>). Its record is: {...}` with the same
   record as the log line would have held. That printed line is then the
   ONLY place the retired counts and parameters are kept (the next
   registration of the sample overwrites them in `registry.json`): copy it
@@ -920,7 +922,7 @@ magnification; it is a setting, and the code carries no range of its own.
   became at that image's pixel size, and each registry entry records it as
   `size_filter_um`.
 - **When nothing gives a range** (the approved method has no `size_filter_um`,
-  or the approved-method file gives `ENCR_Detection` no approved method at
+  or the approved-method file gives `<project>_Detection` no approved method at
   all) and `--diameter` was not typed, the batch stops before reading any
   image and says how to set it. Nothing is written.
 - **When the range is unusable** (not two numbers, the larger first, or 0 or

@@ -25,7 +25,7 @@ def test_batch_detection_records_its_own_approved_method(tmp_path, monkeypatch, 
     # entries match that method and are current.
     own = dict(DEFAULT_METHOD, threshold_fraction=0.3, size_filter_um=[10, 25])
     (root / "approved_method.json").write_text(
-        json.dumps({"analyses": {"ENCR_Detection": own}}), encoding="utf-8")
+        json.dumps({"analyses": {"PRJ_Detection": own}}), encoding="utf-8")
 
     raw = tmp_path / "raw" / "PRJ_01_01_HD_Regions"
     raw.mkdir(parents=True)
@@ -45,7 +45,7 @@ def test_batch_detection_records_its_own_approved_method(tmp_path, monkeypatch, 
                                       "--output", str(out)])
     be.main()
 
-    manifest = json.loads((root / "exports" / "ENCR_Detection" / "registry.json")
+    manifest = json.loads((root / "exports" / "PRJ_Detection" / "registry.json")
                           .read_text(encoding="utf-8"))
     entry = manifest["entries"]["P01_01_S01_DCN"]
     assert entry["method_params"] == own

@@ -49,6 +49,32 @@ BRAINSLICE_ROOT = SLICES_2D_DIR or Path(__file__).resolve().parent.parent.parent
 
 
 # =============================================================================
+# WHERE THE 2D BATCH TOOLS PUT AND FIND THEIR RESULTS
+# =============================================================================
+# The detection batch (batch/batch_encr.py) writes these and the ROI counter
+# (cli/run_roi.py) reads them. WHY both take them from here: they used to be
+# written out separately and drifted apart -- the batch registered every
+# project's results under one fixed analysis name while the ROI counter looked
+# under '<project>_Detection', and the counter's fallback folder was not the
+# folder the batch writes to. Defined once, they cannot disagree.
+
+# Default --output folder of the detection batch (one sub-folder per sample,
+# each holding measurements.csv, plus summary.csv). None when no data root is
+# configured.
+DEFAULT_BATCH_OUTPUT = (Path(DATA_DIR).parent / "2_Data_Summary" / "batch_results") if DATA_DIR else None
+
+
+def detection_analysis_name(project: str) -> str:
+    """Registry analysis that holds a project's 2D detection results."""
+    return f"{project}_Detection"
+
+
+def roi_analysis_name(project: str) -> str:
+    """Registry analysis that holds a project's ROI counts."""
+    return f"{project}_ROI_Analysis"
+
+
+# =============================================================================
 # SAMPLE NAME PARSING
 # =============================================================================
 
