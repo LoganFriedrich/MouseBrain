@@ -1202,7 +1202,11 @@ def main():
 
     args.output.mkdir(parents=True, exist_ok=True)
 
-    # Instantiate AnalysisRegistry once for the batch run
+    # Instantiate AnalysisRegistry once for the batch run. When it cannot be
+    # opened the samples are still processed (their files and summary.csv
+    # are written), but nothing is registered -- said again in the
+    # end-of-batch summary, where a person looks.
+    registry_unavailable = None
     try:
         from mousebrain.analysis_registry import AnalysisRegistry
         # Declared as following the shared approved method: its entries are
@@ -1211,6 +1215,7 @@ def main():
                                     follows_approved_method=True)
     except Exception as _reg_init_err:
         registry = None
+        registry_unavailable = f"{type(_reg_init_err).__name__}: {_reg_init_err}"
         print(f"  Registry warning: {_reg_init_err}")
 
     # Process each file
@@ -1223,6 +1228,7 @@ def main():
     kept_unproven = []           # (sample, step): no other sample got past the step
     sample_failures = []         # (sample, step) of runs that failed on the sample
     registry_errors = []         # (sample, message): a registry call that raised
+    not_registered = []          # (sample, message): completed, registering raised
     retired_not_registered = []  # (sample, earlier n, files archived, message):
                                  # no nuclei; earlier entry retired, new one not written
     start_time = time.time()
@@ -1272,7 +1278,11 @@ def main():
                     source_files={'nd2': str(nd2_path)},
                 )
             except Exception as _reg_err:
+                # WHY listed in the summary too: this line scrolls past among
+                # the per-sample output, and without the summary line a
+                # person reads "Completed: n" as "n results registered".
                 print(f"  Registry warning: {_reg_err}")
+                not_registered.append((nd2_path.stem, str(_reg_err)))
 
         # A finished run that found no nuclei is a result, and it is
         # registered like one: 0 nuclei, no files, the parameters it ran with.
@@ -1413,6 +1423,11 @@ def main():
     print(f"BATCH COMPLETE")
     print(f"  Processed: {len(all_results)} files in {elapsed/60:.1f} min")
     print(f"  Completed: {completed}")
+    for sample_id, message in not_registered:
+        print(f"    [!] {sample_id}: completed, but this run's result was NOT "
+              f"registered ({message}); an earlier registry entry of this "
+              "sample, if it has one, is still the current one. Its files "
+              "are in the output folder; run the batch again to register it.")
     print(f"  No nuclei: {no_nuclei}")
     for sample_id, earlier_n, archived in replaced_by_no_nuclei:
         what = (f"{archived} file(s) moved to _archived/" if archived
@@ -1456,6 +1471,11 @@ def main():
         print(f"    [!] {sample_id}: the registry could not be read or updated "
               f"for this sample ({message}); its entry is as it was before "
               "this run unless a line above says otherwise")
+    if registry_unavailable:
+        print("  [!] Registry: could not be opened "
+              f"({registry_unavailable}). NO result of this run was "
+              "registered and no earlier entry was changed. The files are in "
+              "the output folder; fix the cause and run the batch again.")
     print(f"  Summary:   {summary_path}")
     print(f"{'=' * 60}")
 

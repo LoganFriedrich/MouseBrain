@@ -826,9 +826,22 @@ banner before the real run.
 
   Either way, fix the cause and run the batch again: a successful re-run
   registers a new current entry. A retired entry's files stay in `_archived/`
-  and the registry's log records the retirement. If the registry itself
-  could not be read or written for a sample, the summary lists it as
-  `[!] <sample>: the registry could not be read or updated for this sample`.
+  and the registry's log records the retirement.
+- **When the registry itself cannot be read or written** (its file is open
+  in another program, the share drops out), the samples are still processed
+  and their files and `summary.csv` are written. The end-of-batch summary
+  says what did not reach the registry, one line per case:
+
+  | Summary line | What happened | The sample's registry entry now |
+  |---|---|---|
+  | `[!] <sample>: completed, but this run's result was NOT registered (<error>)` (under `Completed:`) | the sample finished with nuclei, and writing its entry failed | whatever it was before this run: an earlier entry, if the sample has one, is still the current one |
+  | `[!] <sample>: the registry could not be read or updated for this sample (<error>)` (under `Errors:`) | a sample that found no nuclei, or failed, and the registry could not be read or changed for it | as it was before this run, unless another line of the summary says otherwise |
+  | `[!] Registry: could not be opened (<error>). NO result of this run was registered` (last line before `Summary:`) | the registry could not be opened when the batch started | every entry is as it was before this run |
+
+  In each case fix the cause (close the program that has the registry file
+  open, reconnect the share) and run the batch again. `Completed: <n>`
+  counts samples that were processed, not entries that were written: a
+  sample is registered only if none of these lines names it.
 
 ### Open question: the nucleus diameter range
 
