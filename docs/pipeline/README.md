@@ -175,10 +175,19 @@ line for every folder in the brains root passed over because of a skip word:
 `[i] Not treated as a mouse folder: <name> (its name has the word '<word>' ...)`.
 Asking for a brain by name (`--brain`, or `mousebrain --crop <brain>`) that sits
 in such a folder, or in a folder starting with `_`, prints why it was not found:
-`[i] <brain> is in <folder>, which is not treated as a mouse folder (...)`. Every
-step (2 to 6), the pre-filter and every `util_*.py` script that takes `--brain`
-does this. To bring such brains back, rename the mouse folder. (The napari lists do not print these lines; check the
-names there by hand.)
+`[i] <brain> is in <folder>, which is not treated as a mouse folder (...)`.
+These print that line: every step (2 to 6), the pre-filter, the orientation
+check, `mousebrain --crop`, and `util_registration_qc.py`,
+`util_manual_crop.py`, `util_approve_registration.py`,
+`util_apply_crop_from_reference.py`, `util_compare_to_published.py`,
+`util_pipeline_comparison.py`, `util_visualize_3d.py`, `util_optimize_crop.py`
+and `util_create_training_cubes.py`. Two options only FILTER a list by part of
+a name and print no such reason: `overnight_batch.py --brain` (a brain it
+leaves out is still named with its own reason, see "The overnight batch") and
+`util_generate_elife_report.py --brains` (it filters the brains already in the
+counts file; a name that fits none simply gives an empty report). To bring
+such brains back, rename the mouse folder. (The napari lists do not print
+these lines; check the names there by hand.)
 
 What a step needs INSIDE a brain is still its own business: extraction lists
 brains with a `.ims` in `0_Raw_IMS`, registration brains with images to register,
@@ -187,9 +196,7 @@ and so on.
 The same rule decides what the napari brain lists offer (the Pipeline Dashboard,
 Setup & Tuning, Manual Crop, the 3D cell viewer and the cross-brain comparison)
 and which folder a utility acts on when you give it a brain by name
-(`util_registration_qc.py`, `util_manual_crop.py`, `util_approve_registration.py`,
-the pre-filter, the orientation check and the other `util_*.py` scripts that
-take `--brain`). Before this, those lists offered an archive kept beside a brain
+(the scripts named above). Before this, those lists offered an archive kept beside a brain
 as if it were a brain, and a utility could act on it instead of the real one.
 
 **Giving a brain by name.** The exact brain folder name always works (and
