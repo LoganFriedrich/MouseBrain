@@ -199,7 +199,7 @@ def print_progress(current, total, prefix="", width=30):
 # =============================================================================
 # DEFAULT PATHS AND SETTINGS
 # =============================================================================
-from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, is_pipeline_candidate
+from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, iter_brains
 
 # Camera pixel size in microns (Andor Neo/Zyla sCMOS)
 CAMERA_PIXEL_SIZE = 6.5
@@ -328,29 +328,19 @@ def find_organized_pipelines(root_path):
     root_path = Path(root_path)
     pipelines = []
     
-    for mouse_dir in root_path.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-            continue
-        if any(skip in mouse_dir.name.lower() for skip in ['script', 'backup', 'archive']):
+    # Which folders are brains is ONE rule, config.iter_brains.
+    for mouse_dir, pipeline_dir in iter_brains(root_path, report_skipped=True):
+        raw_folder = pipeline_dir / FOLDER_RAW_IMS
+        if not raw_folder.exists():
             continue
         
-        for pipeline_dir in mouse_dir.iterdir():
-            # Not every directory beside a brain is a brain: see
-            # config.is_pipeline_candidate for why a leading underscore excludes one.
-            if not is_pipeline_candidate(pipeline_dir):
-                continue
-            
-            raw_folder = pipeline_dir / FOLDER_RAW_IMS
-            if not raw_folder.exists():
-                continue
-            
-            # Look for IMS file
-            ims_files = list(raw_folder.glob('*.ims'))
-            if len(ims_files) == 1:
-                pipelines.append((ims_files[0], pipeline_dir, mouse_dir))
-            elif len(ims_files) > 1:
-                print(f"  Warning: Multiple IMS files in {raw_folder}, skipping")
-    
+        # Look for IMS file
+        ims_files = list(raw_folder.glob('*.ims'))
+        if len(ims_files) == 1:
+            pipelines.append((ims_files[0], pipeline_dir, mouse_dir))
+        elif len(ims_files) > 1:
+            print(f"  Warning: Multiple IMS files in {raw_folder}, skipping")
+
     return pipelines
 
 

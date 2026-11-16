@@ -17,7 +17,7 @@ from pathlib import Path
 from datetime import datetime
 
 SCRIPT_DIR = Path(__file__).parent
-from mousebrain.config import BRAINS_ROOT, find_script, is_pipeline_candidate
+from mousebrain.config import BRAINS_ROOT, find_script, iter_brains
 from mousebrain.pipeline_status import brain_status
 
 
@@ -60,30 +60,20 @@ def find_brains():
     if not BRAINS_ROOT.exists():
         return brains
 
-    for mouse_dir in BRAINS_ROOT.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-            continue
-        if any(skip in mouse_dir.name.lower() for skip in ['script', 'backup', 'archive', 'summary']):
-            continue
+    # Which folders are brains is ONE rule, config.iter_brains.
+    for mouse_dir, pipeline_dir in iter_brains(BRAINS_ROOT, report_skipped=True):
+        # Check if this looks like a pipeline
+        has_raw = (pipeline_dir / "0_Raw_IMS").exists()
+        has_extracted = (pipeline_dir / "1_Extracted_Full").exists()
+        has_cropped = (pipeline_dir / "2_Cropped_For_Registration").exists()
 
-        for pipeline_dir in mouse_dir.iterdir():
-            # Not every directory beside a brain is a brain: see
-            # config.is_pipeline_candidate for why a leading underscore excludes one.
-            if not is_pipeline_candidate(pipeline_dir):
-                continue
-
-            # Check if this looks like a pipeline
-            has_raw = (pipeline_dir / "0_Raw_IMS").exists()
-            has_extracted = (pipeline_dir / "1_Extracted_Full").exists()
-            has_cropped = (pipeline_dir / "2_Cropped_For_Registration").exists()
-
-            if has_raw or has_extracted or has_cropped:
-                brains.append({
-                    'name': pipeline_dir.name,
-                    'full_name': f"{mouse_dir.name}/{pipeline_dir.name}",
-                    'path': pipeline_dir,
-                    'mouse': mouse_dir.name,
-                })
+        if has_raw or has_extracted or has_cropped:
+            brains.append({
+                'name': pipeline_dir.name,
+                'full_name': f"{mouse_dir.name}/{pipeline_dir.name}",
+                'path': pipeline_dir,
+                'mouse': mouse_dir.name,
+            })
 
     return brains
 

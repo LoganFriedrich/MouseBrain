@@ -149,7 +149,8 @@ check_cellfinder_api_available()
 
 SCRIPT_VERSION = "1.0.1"
 
-from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, parse_brain_name, is_pipeline_candidate
+from mousebrain.config import (BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, parse_brain_name, iter_brains,
+                               explain_brain_not_found)
 
 # Pipeline folders (must match other scripts)
 FOLDER_FULL = "1_Extracted_Full"
@@ -323,33 +324,29 @@ def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT,
     """
     root = Path(root)
 
-    for mouse_dir in root.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-            continue
+    # Which folders are brains is ONE rule, config.iter_brains.
+    for mouse_dir, pipeline_dir in iter_brains(root):
+        # Match by pipeline name or full path
+        full_name = f"{mouse_dir.name}/{pipeline_dir.name}"
+        if brain_name in [pipeline_dir.name, full_name]:
+            source_name, input_folder, metadata = resolve_input(pipeline_dir, source)
+            if source_name is None:
+                print(f"ERROR: no images to detect on for {brain_name}")
+                if source == "auto":
+                    print(f"  Looked for a ch0 folder of .tif files in: "
+                          f"{', '.join(INPUT_SOURCES[s] for s in INPUT_PRIORITY)}")
+                    print("  Run Script 2 (2_extract_and_analyze.py) first.")
+                else:
+                    print(f"  --source {source} means {INPUT_SOURCES[source]}, "
+                          f"and there are no .tif files in its ch0 folder.")
+                return None, None, None, None, None
 
-        for pipeline_dir in mouse_dir.iterdir():
-            # Not every directory beside a brain is a brain: see
-            # config.is_pipeline_candidate for why a leading underscore excludes one.
-            if not is_pipeline_candidate(pipeline_dir):
-                continue
+            return pipeline_dir, mouse_dir, source_name, input_folder, metadata
 
-            # Match by pipeline name or full path
-            full_name = f"{mouse_dir.name}/{pipeline_dir.name}"
-            if brain_name in [pipeline_dir.name, full_name]:
-                source_name, input_folder, metadata = resolve_input(pipeline_dir, source)
-                if source_name is None:
-                    print(f"ERROR: no images to detect on for {brain_name}")
-                    if source == "auto":
-                        print(f"  Looked for a ch0 folder of .tif files in: "
-                              f"{', '.join(INPUT_SOURCES[s] for s in INPUT_PRIORITY)}")
-                        print("  Run Script 2 (2_extract_and_analyze.py) first.")
-                    else:
-                        print(f"  --source {source} means {INPUT_SOURCES[source]}, "
-                              f"and there are no .tif files in its ch0 folder.")
-                    return None, None, None, None, None
-
-                return pipeline_dir, mouse_dir, source_name, input_folder, metadata
-
+    # Say why, when the brain is there but in a folder the rule passes over.
+    why = explain_brain_not_found(brain_name, root)
+    if why:
+        print(why)
     return None, None, None, None, None
 
 
@@ -364,36 +361,26 @@ def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT, source: str = "a
     root = Path(root)
     brains = []
 
-    for mouse_dir in root.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
+    # Which folders are brains is ONE rule, config.iter_brains.
+    for mouse_dir, pipeline_dir in iter_brains(root, report_skipped=True):
+        source_name, input_folder, metadata = resolve_input(pipeline_dir, source)
+        if source_name is None:
             continue
-        if any(skip in mouse_dir.name.lower() for skip in ['script', 'backup', 'archive', 'summary']):
-            continue
 
-        for pipeline_dir in mouse_dir.iterdir():
-            # Not every directory beside a brain is a brain: see
-            # config.is_pipeline_candidate for why a leading underscore excludes one.
-            if not is_pipeline_candidate(pipeline_dir):
-                continue
+        reg_folder = pipeline_dir / FOLDER_REGISTRATION
+        det_folder = pipeline_dir / FOLDER_DETECTION
 
-            source_name, input_folder, metadata = resolve_input(pipeline_dir, source)
-            if source_name is None:
-                continue
-
-            reg_folder = pipeline_dir / FOLDER_REGISTRATION
-            det_folder = pipeline_dir / FOLDER_DETECTION
-
-            brains.append({
-                'name': f"{mouse_dir.name}/{pipeline_dir.name}",
-                'pipeline': pipeline_dir,
-                'mouse': mouse_dir,
-                'source': source_name,
-                'input_folder': input_folder,
-                'metadata': metadata,
-                'registered': (reg_folder / "brainreg.json").exists(),
-                'approved': is_registration_approved(reg_folder),
-                'detected': det_folder.exists() and len(list(det_folder.glob("*.xml"))) > 0,
-            })
+        brains.append({
+            'name': f"{mouse_dir.name}/{pipeline_dir.name}",
+            'pipeline': pipeline_dir,
+            'mouse': mouse_dir,
+            'source': source_name,
+            'input_folder': input_folder,
+            'metadata': metadata,
+            'registered': (reg_folder / "brainreg.json").exists(),
+            'approved': is_registration_approved(reg_folder),
+            'detected': det_folder.exists() and len(list(det_folder.glob("*.xml"))) > 0,
+        })
 
     return brains
 

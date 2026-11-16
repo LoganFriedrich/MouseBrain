@@ -111,7 +111,8 @@ def timestamp():
 # =============================================================================
 # DEFAULT PATHS - edit for your setup
 # =============================================================================
-from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT
+from mousebrain.config import (BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT,
+                               is_mouse_folder, is_pipeline_candidate)
 
 # =============================================================================
 # PIPELINE FOLDER NAMES
@@ -343,12 +344,11 @@ def find_ims_files(root_path):
     root_path = Path(root_path)
     ims_files = []
     
-    for subdir in root_path.iterdir():
-        if not subdir.is_dir() or subdir.name.startswith('.'):
-            continue
-        
-        # Skip obvious non-mouse folders
-        if any(skip in subdir.name.lower() for skip in ['script', 'backup', 'archive', 'old']):
+    for subdir in sorted(root_path.iterdir()):
+        # Which folders are mice and brains is ONE rule (config.iter_brains):
+        # an archive, backup or underscore folder is never searched, so a
+        # superseded delivery kept in one is never moved into a brain.
+        if not is_mouse_folder(subdir):
             continue
         
         # Check directly in mouse folder
@@ -362,8 +362,8 @@ def find_ims_files(root_path):
                 ims_files.append(ims_file)
         
         # Check pipeline subfolders for various raw folder names
-        for pipeline_folder in subdir.iterdir():
-            if pipeline_folder.is_dir():
+        for pipeline_folder in sorted(subdir.iterdir()):
+            if is_pipeline_candidate(pipeline_folder):
                 # Check all possible raw folder names
                 for raw_name in [FOLDER_RAW_IMS, "0_Raw_IMS_From_Miami"]:
                     raw_folder = pipeline_folder / raw_name

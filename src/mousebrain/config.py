@@ -425,6 +425,174 @@ def is_pipeline_candidate(folder) -> bool:
     return not folder.name.startswith(("_", "."))
 
 
+# Words that mark a folder in the brains root as NOT a mouse folder, ignoring
+# case (see mouse_folder_skip_word for how each is matched).
+#
+# WHY ONE LIST
+# Each step used to carry its own copy, and the copies differed: extraction and
+# registration skipped script/backup/archive, detection, classification, counting
+# and RUN_PIPELINE also skipped summary, the organizer also skipped old, and the
+# napari widgets, the overnight batch and several utilities skipped nothing. So a
+# folder such as "backup_2" in the brains root was a mouse to some steps and not
+# to others, and the steps disagreed about which brains exist. The list is the
+# union of the old copies: a folder any step already refused to treat as a mouse
+# is refused by all of them, so no step starts touching a folder it used to leave
+# alone -- with one exception: the organizer (step 1) used to skip any name that
+# merely contained the letters o-l-d, and now treats such a name ("GOLD_01",
+# "HOLDOUT_A", "Threshold_Test", "oldbrains") as a mouse folder, so it may move a
+# .ims out of one into the brain layout. See HOW EACH WORD IS MATCHED for why.
+# The organizer also gained two refusals it did not have: it no longer searches
+# a folder in the brains root whose name starts with "_" or ".", nor one whose
+# name holds the word "summary" (it used to search both for .ims files). Both
+# were already "not a mouse" to the later steps, so a .ims the organizer placed
+# from one would have gone nowhere; "_" is the documented way to keep a folder
+# from being searched.
+#
+# HOW EACH WORD IS MATCHED
+# - script, backup, archive, summary: ANYWHERE in the name, as every step that
+#   had them always matched them -- so "brainbackup", "archivedmice" and
+#   "Mouse_Backup" are all passed over. These words are long enough that a name
+#   holding the letters by accident is not a real risk, and matching them less
+#   widely would make a whole-mouse backup copy a mouse again (listed,
+#   extracted, registered, detected and counted, and searched by the organizer).
+#   A whole-word plural is also caught ("Summaries", which does not contain the
+#   letters "summary").
+# - old: only as a WHOLE WORD. Only the organizer used to skip it, and matched
+#   anywhere it would drop, from every step and with no message, a mouse folder
+#   whose name merely holds the letters -- a project prefix such as "GOLD" or
+#   "HOLD", or "threshold", "scaffold". A word is a run of letters or of digits
+#   split at "_", "-", spaces, dots and lower-to-upper case changes, so
+#   "old_deliveries", "Old copies" and "mouseOld" are passed over and "GOLD_01"
+#   is not. The trade-off: a name with "old" glued to other lower-case letters
+#   ("oldbrains") IS a mouse folder; write it "old_brains", or start it with "_".
+MOUSE_FOLDER_SKIP_WORDS = ("script", "backup", "archive", "summary", "old")
+_SKIP_ANYWHERE = ("script", "backup", "archive", "summary")
+_SKIP_WORD_FORMS = {form: word for word in MOUSE_FOLDER_SKIP_WORDS
+                    for form in (word, word + "s", word + "es", word + "d", word + "ed",
+                                 word[:-1] + "ies" if word.endswith("y") else word)}
+
+
+def _name_words(name: str):
+    """The words of a folder name, lower case: runs of letters or digits,
+    split at any other character and where lower case turns to upper case."""
+    import re as _re
+    return [w.lower() for w in _re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", name)]
+
+
+def mouse_folder_skip_word(folder):
+    """The MOUSE_FOLDER_SKIP_WORDS entry that makes a folder not a mouse
+    folder, or None: one of the long words anywhere in the name, or any skip
+    word (plural and past forms included) as a whole word of it."""
+    from pathlib import Path as _Path
+    name = _Path(folder).name
+    lowered = name.lower()
+    for word in _SKIP_ANYWHERE:
+        if word in lowered:
+            return word
+    for word in _name_words(name):
+        if word in _SKIP_WORD_FORMS:
+            return _SKIP_WORD_FORMS[word]
+    return None
+
+
+def is_mouse_folder(folder) -> bool:
+    """Whether a directory in the brains root holds brains.
+
+    Same leading underscore / dot rule as is_pipeline_candidate, plus the
+    MOUSE_FOLDER_SKIP_WORDS that have always kept backup and archive copies of
+    whole mice out of the scans.
+    """
+    from pathlib import Path as _Path
+    folder = _Path(folder)
+    if not is_pipeline_candidate(folder):
+        return False
+    return mouse_folder_skip_word(folder) is None
+
+
+def iter_brains(root=None, report_skipped: bool = False):
+    """Every brain folder under the brains root, as (mouse_dir, brain_dir).
+
+    THE rule for "which folders are brains", used by every step, widget and
+    utility that lists or looks up brains: a brain is
+    ``<root>/<mouse>/<brain>`` where the mouse folder passes is_mouse_folder and
+    the brain folder passes is_pipeline_candidate. Both levels are sorted by
+    name, so every listing shows brains in the same order.
+
+    WHY IT EXISTS
+    Before it, each listing decided for itself, and most decided "any
+    directory". An archive kept beside a brain (``_superseded_<date>``) was then
+    offered as a brain in the napari brain lists, loaded by name in the
+    utilities, and -- because it looks complete -- reported as the brain being
+    done. A rule written out in twenty places is twenty rules; this is one.
+
+    ``report_skipped``: print one line for each folder passed over because its
+    name holds a skip word, so a brain missing from a list is explained where
+    the list is printed. (Folders starting with "_" or "." are passed over
+    silently: that is the documented way to keep something beside the brains.)
+    The command-line listings pass True; the napari lists, which refresh
+    often, do not.
+
+    Callers still apply their own test of what a brain must CONTAIN for their
+    purpose (extracted images, registration, counts ...); this only answers
+    which folders are brains at all. A root that does not exist yields nothing.
+    """
+    from pathlib import Path as _Path
+    root = _Path(root) if root is not None else BRAINS_ROOT
+    try:
+        mice = sorted(root.iterdir())
+    except OSError:
+        return
+    for mouse_dir in mice:
+        if not is_mouse_folder(mouse_dir):
+            if report_skipped and mouse_dir.is_dir() and is_pipeline_candidate(mouse_dir):
+                print("[i] Not treated as a mouse folder: %s (its name has the word '%s', "
+                      "which marks backup or archive copies). Rename it if it holds brains."
+                      % (mouse_dir.name, mouse_folder_skip_word(mouse_dir)))
+            continue
+        try:
+            brains = sorted(mouse_dir.iterdir())
+        except OSError:
+            continue
+        for brain_dir in brains:
+            if is_pipeline_candidate(brain_dir):
+                yield mouse_dir, brain_dir
+
+
+
+def explain_brain_not_found(brain_name: str, root=None) -> str:
+    """Why a brain asked for by name is not found, when the reason is the
+    folder rule: a folder of that name exists, but inside a mouse folder that
+    is passed over (its name has a skip word, or starts with "_" or "."), or it
+    itself starts with "_" or ".". "" when no such folder exists.
+
+    WHY: a lookup by name used to fail with only "not found", so a brain kept
+    in a folder the rule passes over was missing with no reason given.
+    """
+    from pathlib import Path as _Path
+    root = _Path(root) if root is not None else BRAINS_ROOT
+    name = str(brain_name).replace("\\", "/").strip("/")
+    brain_part = name.split("/")[-1]
+    try:
+        mice = sorted(p for p in root.iterdir() if p.is_dir())
+    except OSError:
+        return ""
+    for mouse_dir in mice:
+        candidate = mouse_dir / brain_part
+        if not candidate.is_dir():
+            continue
+        if not is_mouse_folder(mouse_dir):
+            word = mouse_folder_skip_word(mouse_dir)
+            reason = ("its name has the word '%s', which marks backup or archive copies" % word
+                      if word else "its name starts with '_' or '.', which marks folders kept "
+                      "beside the brains")
+            return ("[i] %s is in %s, which is not treated as a mouse folder (%s). Rename "
+                    "that folder if it holds brains." % (brain_part, mouse_dir.name, reason))
+        if not is_pipeline_candidate(candidate):
+            return ("[i] %s/%s starts with '_' or '.', which marks folders kept beside the "
+                    "brains, so it is not a brain." % (mouse_dir.name, brain_part))
+    return ""
+
+
 # Where a step may read a brain's images from, best first.
 #
 # WHY THE FULL EXTRACTION IS IN THIS LIST

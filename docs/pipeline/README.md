@@ -62,6 +62,64 @@ A trial detection run kept in `from_1_Extracted_Full` on a brain that was
 registered on its crop does NOT count as detection: those coordinates are not
 in the space the atlas was fitted to, and step 5 will not read them.
 
+## Which folders are brains?
+
+Every script, the napari plugins and the utilities use the same rule
+(`mousebrain.config.iter_brains`) to decide which folders are brains, so they
+always agree on which brains exist. A brain is a folder two levels down,
+`1_Brains/<mouse folder>/<brain folder>`, where:
+
+- the **mouse folder** does not start with `_` or `.`, and its name (in any
+  case) does not contain a skip word:
+  - `script`, `backup`, `archive` or `summary` **anywhere** in the name, even
+    glued to other letters: `Mouse_Backup`, `brainbackup`, `archivedmice`,
+    `Archive2024`, `scripts` and `Summaries` are all passed over. This is how
+    the steps have always matched these words, and it keeps a backup copy of a
+    whole mouse from being processed as brains.
+  - `old` only as a whole **word**: `old_deliveries`, `Old copies` and
+    `mouseOld` are passed over, but `GOLD_01`, `HOLDOUT_A`, `Threshold_Test`
+    and `scaffold-3` (which only contain the letters) are mice. The words of a
+    name are split at `_`, `-`, spaces, dots, between letters and digits, and
+    where lower case turns to upper case. One consequence: `oldbrains` (the
+    word glued to other lower-case letters) IS a mouse folder -- name such a
+    folder `old_brains`, or start it with `_`;
+- the **brain folder** does not start with `_` or `.`.
+
+**To keep something beside a brain without it being treated as one, start its
+name with an underscore** -- for example `_superseded_<date>` for the outputs of
+an earlier delivery. Such a folder is never listed, never processed and never
+found by name.
+
+**When a brain is missing from a list.** The command-line listings (each step's
+scan or list of brains when it is run without `--brain`, `RUN_PIPELINE.py`,
+`overnight_batch.py`) print one
+line for every folder in the brains root passed over because of a skip word:
+`[i] Not treated as a mouse folder: <name> (its name has the word '<word>' ...)`.
+Asking a step or utility for a brain by name that sits in such a folder (or in a
+folder starting with `_`) prints why it was not found. To bring such brains back,
+rename the mouse folder. (The napari lists do not print these lines; check the
+names there by hand.)
+
+What a step needs INSIDE a brain is still its own business: extraction lists
+brains with a `.ims` in `0_Raw_IMS`, registration brains with images to register,
+and so on.
+
+**The overnight batch** (`overnight_batch.py`) takes every brain that is already
+registered (on whatever images) or has a crop to register -- a hand crop in
+`2_Cropped_For_Registration_Manual` or an automatic one in
+`2_Cropped_For_Registration`. Before it starts it lists every brain it leaves
+out, with the reason:
+
+- `not cropped and not registered yet` -- the brain has only its full
+  extraction. Crop it (Plugins -> BrainTools -> 3D: 3. Manual Crop), or, if it
+  arrived already cut, register it once on the full extraction with
+  `3_register_to_atlas.py`; the next overnight run then takes it.
+- `no extracted images yet` -- run `2_extract_and_analyze.py` first.
+
+(It used to take only brains with images in `2_Cropped_For_Registration`, so a
+hand-cropped brain, or one registered uncropped, never ran overnight and nothing
+said so.)
+
 ## Utility Scripts
 
 ```

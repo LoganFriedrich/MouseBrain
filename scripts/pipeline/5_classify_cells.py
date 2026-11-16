@@ -59,7 +59,7 @@ except ImportError as e:
 
 SCRIPT_VERSION = "1.0.0"
 
-from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, is_pipeline_candidate
+from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, iter_brains, explain_brain_not_found
 from mousebrain.config import MODELS_DIR as DEFAULT_MODELS_DIR
 from mousebrain.config import parse_brain_name
 from mousebrain.config import registered_candidate_folders, registered_input
@@ -85,20 +85,16 @@ def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT):
     """Find pipeline folder for a brain."""
     root = Path(root)
     
-    for mouse_dir in root.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-            continue
-        
-        for pipeline_dir in mouse_dir.iterdir():
-            # Not every directory beside a brain is a brain: see
-            # config.is_pipeline_candidate for why a leading underscore excludes one.
-            if not is_pipeline_candidate(pipeline_dir):
-                continue
-            
-            full_name = f"{mouse_dir.name}/{pipeline_dir.name}"
-            if brain_name in [pipeline_dir.name, full_name]:
-                return pipeline_dir, mouse_dir
-    
+    # Which folders are brains is ONE rule, config.iter_brains.
+    for mouse_dir, pipeline_dir in iter_brains(root):
+        full_name = f"{mouse_dir.name}/{pipeline_dir.name}"
+        if brain_name in [pipeline_dir.name, full_name]:
+            return pipeline_dir, mouse_dir
+
+    # Say why, when the brain is there but in a folder the rule passes over.
+    why = explain_brain_not_found(brain_name, root)
+    if why:
+        print(why)
     return None, None
 
 
@@ -199,36 +195,26 @@ def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT):
     root = Path(root)
     brains = []
     
-    for mouse_dir in root.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-            continue
-        if any(skip in mouse_dir.name.lower() for skip in ['script', 'backup', 'archive', 'summary']):
-            continue
+    # Which folders are brains is ONE rule, config.iter_brains.
+    for mouse_dir, pipeline_dir in iter_brains(root, report_skipped=True):
+        det_folder = pipeline_dir / FOLDER_DETECTION
+        class_folder = pipeline_dir / FOLDER_CLASSIFICATION
         
-        for pipeline_dir in mouse_dir.iterdir():
-            # Not every directory beside a brain is a brain: see
-            # config.is_pipeline_candidate for why a leading underscore excludes one.
-            if not is_pipeline_candidate(pipeline_dir):
-                continue
-            
-            det_folder = pipeline_dir / FOLDER_DETECTION
-            class_folder = pipeline_dir / FOLDER_CLASSIFICATION
-            
-            candidates = find_detection_output(pipeline_dir)
-            has_detection = candidates is not None
-            has_classification = class_folder.exists() and len(list(class_folder.glob("cells.xml"))) > 0
-            
-            if has_detection:
-                n_candidates = count_cells_in_xml(candidates) if candidates else 0
-                brains.append({
-                    'name': f"{mouse_dir.name}/{pipeline_dir.name}",
-                    'pipeline': pipeline_dir,
-                    'mouse': mouse_dir,
-                    'candidates': candidates,
-                    'n_candidates': n_candidates,
-                    'classified': has_classification,
-                })
-    
+        candidates = find_detection_output(pipeline_dir)
+        has_detection = candidates is not None
+        has_classification = class_folder.exists() and len(list(class_folder.glob("cells.xml"))) > 0
+        
+        if has_detection:
+            n_candidates = count_cells_in_xml(candidates) if candidates else 0
+            brains.append({
+                'name': f"{mouse_dir.name}/{pipeline_dir.name}",
+                'pipeline': pipeline_dir,
+                'mouse': mouse_dir,
+                'candidates': candidates,
+                'n_candidates': n_candidates,
+                'classified': has_classification,
+            })
+
     return brains
 
 

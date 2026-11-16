@@ -187,7 +187,7 @@ _brainreg_path = check_brainreg_available()
 # =============================================================================
 from mousebrain.config import (BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT,
                               import_util,
-                              is_pipeline_candidate,
+                              iter_brains,
                               resolve_pipeline_input,
                               record_registered_space,
                               PIPELINE_INPUT_FOLDERS)
@@ -237,26 +237,16 @@ def find_extracted_pipelines(root_path):
     root_path = Path(root_path)
     pipelines = []
     
-    for mouse_dir in root_path.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-            continue
-        if any(skip in mouse_dir.name.lower() for skip in ['script', 'backup', 'archive']):
-            continue
-        
-        for pipeline_dir in mouse_dir.iterdir():
-            # Not every directory beside a brain is a brain: see
-            # config.is_pipeline_candidate for why a leading underscore excludes one.
-            if not is_pipeline_candidate(pipeline_dir):
-                continue
-            
-            # The images to register: a hand crop, else an automatic crop, else
-            # the full extraction. The last case is a delivery that arrived
-            # already cut, where the crop step has nothing to do and the
-            # extraction IS the volume the atlas should be fitted to.
-            source, folder, metadata = resolve_pipeline_input(pipeline_dir)
-            if source and metadata:
-                pipelines.append((pipeline_dir, mouse_dir, metadata))
-    
+    # Which folders are brains is ONE rule, config.iter_brains.
+    for mouse_dir, pipeline_dir in iter_brains(root_path, report_skipped=True):
+        # The images to register: a hand crop, else an automatic crop, else
+        # the full extraction. The last case is a delivery that arrived
+        # already cut, where the crop step has nothing to do and the
+        # extraction IS the volume the atlas should be fitted to.
+        source, folder, metadata = resolve_pipeline_input(pipeline_dir)
+        if source and metadata:
+            pipelines.append((pipeline_dir, mouse_dir, metadata))
+
     return pipelines
 
 

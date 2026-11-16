@@ -2,7 +2,8 @@
 """
 overnight_batch.py - Overnight Batch Processing for the MouseBrain Pipeline
 
-Processes all cropped brains through the full pipeline (registration -> detection ->
+Processes every brain that is registered or has a crop (by hand or automatic)
+through the full pipeline (registration -> detection ->
 classification -> counting) using the settled detection method, then generates
 comparison reports and representative images.
 
@@ -13,7 +14,8 @@ Usage:
     python overnight_batch.py --skip-complete  # Skip already completed steps
 
 The script will:
-1. Find all brains with completed cropping (2_Cropped_For_Registration/)
+1. Find every brain that is registered or has a crop to register (a brain with
+   only its full extraction is listed as left out, with the reason)
 2. Use the settled detection method for each brain's imaging setup
 3. Run each pipeline step with automatic retry on failure
 4. Generate comparison report when complete
@@ -31,7 +33,7 @@ import logging
 import subprocess
 import sys
 
-from mousebrain.config import is_pipeline_candidate
+from mousebrain.config import iter_brains, registered_input, resolve_pipeline_input
 from mousebrain.pipeline_status import brain_status
 from mousebrain.registration_approval import (approval_state,
                                               is_approved as is_registration_approved)
@@ -74,7 +76,6 @@ SCRIPT_VERSION = "1.0.0"
 REFERENCE_BRAIN = "349_CNT_01_02_1p625x_z4"
 
 # Pipeline folder names
-FOLDER_CROPPED = "2_Cropped_For_Registration"
 FOLDER_REGISTRATION = "3_Registered_Atlas"
 FOLDER_DETECTION = "4_Cell_Candidates"
 FOLDER_CLASSIFICATION = "5_Classified_Cells"
@@ -98,28 +99,46 @@ def timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def find_cropped_brains() -> List[Tuple[Path, str]]:
-    """Find all brains with completed cropping."""
-    brains = []
+def find_brains_to_process() -> Tuple[List[Tuple[Path, str]], List[Tuple[str, str]]]:
+    """The brains this batch takes, and the brains it leaves out with the reason.
 
-    for mouse_dir in BRAINS_ROOT.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-            continue
+    Returns (ready, left_out): ready is [(pipeline_dir, brain_name)], left_out
+    is [(brain_name, why)]. Brains are listed by config.iter_brains, the one
+    rule every step uses.
 
-        for pipeline_dir in mouse_dir.iterdir():
-            # Not every directory beside a brain is a brain: see
-            # config.is_pipeline_candidate for why a leading underscore excludes one.
-            if not is_pipeline_candidate(pipeline_dir):
-                continue
+    A brain is taken when it is already registered (whatever images the atlas
+    was fitted to) or has a crop to register -- a hand crop
+    (2_Cropped_For_Registration_Manual) or an automatic one
+    (2_Cropped_For_Registration), whichever config.resolve_pipeline_input picks,
+    the same choice step 3 makes.
 
-            cropped = pipeline_dir / FOLDER_CROPPED
-            if cropped.exists():
-                # Check for actual data
-                ch0 = cropped / "ch0"
-                if ch0.exists() and list(ch0.glob("Z*.tif")):
-                    brains.append((pipeline_dir, pipeline_dir.name))
+    WHY NOT "HAS AN AUTOMATIC CROP" ANY MORE
+    The batch used to take only brains with images in
+    2_Cropped_For_Registration. A brain cropped by hand, or registered on its
+    full extraction because it arrived already cut, was left out without a
+    word: it never reached detection, classification or counting overnight,
+    and nothing said so.
 
-    return sorted(brains, key=lambda x: x[1])
+    WHY A BRAIN WITH ONLY ITS FULL EXTRACTION IS LEFT OUT (AND SAID SO)
+    Nothing in the folder tells a brain that arrived already cut from one still
+    waiting for its hand crop. Registering the second kind overnight would fit
+    the atlas to images that still contain the cord. So such a brain is listed
+    as left out, with the reason: crop it, or register it once by hand on the
+    full extraction (step 3), and the next run takes it.
+    """
+    ready, left_out = [], []
+    for _mouse_dir, pipeline_dir in iter_brains(BRAINS_ROOT, report_skipped=True):
+        name = pipeline_dir.name
+        registered = (pipeline_dir / FOLDER_REGISTRATION / "brainreg.json").exists()
+        source, _folder, _meta = resolve_pipeline_input(pipeline_dir)
+        if registered or source in ("manual", "cropped"):
+            ready.append((pipeline_dir, name))
+        elif source == "full":
+            left_out.append((name, "not cropped and not registered yet (crop it, or "
+                                   "register it on its full extraction with step 3)"))
+        else:
+            left_out.append((name, "no extracted images yet (run step 2)"))
+    return sorted(ready, key=lambda x: x[1]), sorted(left_out)
 
 
 def get_brain_status(pipeline_dir: Path) -> Dict[str, bool]:
@@ -553,14 +572,11 @@ def generate_representative_images(results: List[Dict]) -> List[Path]:
 
         brain_name = r['brain']
 
-        # Find pipeline directory
+        # Find pipeline directory (the same brain listing the batch used)
         pipeline_dir = None
-        for mouse_dir in BRAINS_ROOT.iterdir():
-            for pd in mouse_dir.iterdir():
-                if pd.name == brain_name:
-                    pipeline_dir = pd
-                    break
-            if pipeline_dir:
+        for _mouse_dir, pd in iter_brains(BRAINS_ROOT):
+            if pd.name == brain_name:
+                pipeline_dir = pd
                 break
 
         if not pipeline_dir:
@@ -635,10 +651,13 @@ def generate_cell_detection_images(pipeline_dir: Path, output_dir: Path) -> List
         import tifffile
         from matplotlib import pyplot as plt
 
-        # Find signal channel
-        cropped_dir = pipeline_dir / FOLDER_CROPPED / "ch0"
+        # Find signal channel, in the images the atlas was fitted to: the
+        # cells are positions in THOSE images, which are not always the
+        # automatic crop (a hand crop, or a brain registered uncropped).
+        _source, image_folder, _meta = registered_input(pipeline_dir)
+        cropped_dir = image_folder / "ch0"
         if not cropped_dir.exists():
-            cropped_dir = pipeline_dir / FOLDER_CROPPED / "ch1"
+            cropped_dir = image_folder / "ch1"
 
         if not cropped_dir.exists():
             return []
@@ -808,12 +827,20 @@ def main():
     log.info("=" * 70)
 
     # Find brains to process
-    brains = find_cropped_brains()
+    brains, left_out = find_brains_to_process()
 
     if args.brain:
         brains = [(p, n) for p, n in brains if args.brain in n]
+        left_out = [(n, why) for n, why in left_out if args.brain in n]
 
-    log.info(f"Found {len(brains)} brain(s) with cropping complete:")
+    # Every brain the batch does not take is named, with the reason: a brain
+    # that silently never runs looks exactly like one that is not there.
+    if left_out:
+        log.info(f"Left out {len(left_out)} brain(s):")
+        for name, why in left_out:
+            log.info(f"  - {name}: {why}")
+
+    log.info(f"Found {len(brains)} brain(s) registered or with a crop to register:")
     for pipeline_dir, name in brains:
         status = get_brain_status(pipeline_dir)
         status_str = " | ".join(f"{k}:{'+' if v else '-'}" for k, v in status.items())

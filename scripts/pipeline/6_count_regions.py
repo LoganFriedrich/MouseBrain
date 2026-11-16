@@ -78,7 +78,7 @@ _has_brainglobe_utils = check_brainglobe_env()
 
 SCRIPT_VERSION = "1.0.1"
 
-from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, is_pipeline_candidate
+from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, iter_brains, explain_brain_not_found
 from mousebrain.config import DATA_SUMMARY_DIR as SUMMARY_DATA_DIR
 from mousebrain.region_counts_io import (append_archive_row, detection_provenance,
                                          write_rows_atomic)
@@ -105,20 +105,16 @@ def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT):
     """Find pipeline folder for a brain."""
     root = Path(root)
     
-    for mouse_dir in root.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-            continue
-        
-        for pipeline_dir in mouse_dir.iterdir():
-            # Not every directory beside a brain is a brain: see
-            # config.is_pipeline_candidate for why a leading underscore excludes one.
-            if not is_pipeline_candidate(pipeline_dir):
-                continue
-            
-            full_name = f"{mouse_dir.name}/{pipeline_dir.name}"
-            if brain_name in [pipeline_dir.name, full_name]:
-                return pipeline_dir, mouse_dir
-    
+    # Which folders are brains is ONE rule, config.iter_brains.
+    for mouse_dir, pipeline_dir in iter_brains(root):
+        full_name = f"{mouse_dir.name}/{pipeline_dir.name}"
+        if brain_name in [pipeline_dir.name, full_name]:
+            return pipeline_dir, mouse_dir
+
+    # Say why, when the brain is there but in a folder the rule passes over.
+    why = explain_brain_not_found(brain_name, root)
+    if why:
+        print(why)
     return None, None
 
 
@@ -153,35 +149,25 @@ def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT):
     root = Path(root)
     brains = []
     
-    for mouse_dir in root.iterdir():
-        if not mouse_dir.is_dir() or mouse_dir.name.startswith('.'):
-            continue
-        if any(skip in mouse_dir.name.lower() for skip in ['script', 'backup', 'archive', 'summary']):
-            continue
+    # Which folders are brains is ONE rule, config.iter_brains.
+    for mouse_dir, pipeline_dir in iter_brains(root, report_skipped=True):
+        cells_xml = find_classified_cells(pipeline_dir)
+        analysis_folder = pipeline_dir / FOLDER_ANALYSIS
         
-        for pipeline_dir in mouse_dir.iterdir():
-            # Not every directory beside a brain is a brain: see
-            # config.is_pipeline_candidate for why a leading underscore excludes one.
-            if not is_pipeline_candidate(pipeline_dir):
-                continue
-            
-            cells_xml = find_classified_cells(pipeline_dir)
-            analysis_folder = pipeline_dir / FOLDER_ANALYSIS
-            
-            has_classification = cells_xml is not None
-            has_counts = analysis_folder.exists() and len(list(analysis_folder.glob("*.csv"))) > 0
-            
-            if has_classification:
-                n_cells = count_cells_in_xml(cells_xml) if cells_xml else 0
-                brains.append({
-                    'name': f"{mouse_dir.name}/{pipeline_dir.name}",
-                    'pipeline': pipeline_dir,
-                    'mouse': mouse_dir,
-                    'cells_xml': cells_xml,
-                    'n_cells': n_cells,
-                    'has_counts': has_counts,
-                })
-    
+        has_classification = cells_xml is not None
+        has_counts = analysis_folder.exists() and len(list(analysis_folder.glob("*.csv"))) > 0
+        
+        if has_classification:
+            n_cells = count_cells_in_xml(cells_xml) if cells_xml else 0
+            brains.append({
+                'name': f"{mouse_dir.name}/{pipeline_dir.name}",
+                'pipeline': pipeline_dir,
+                'mouse': mouse_dir,
+                'cells_xml': cells_xml,
+                'n_cells': n_cells,
+                'has_counts': has_counts,
+            })
+
     return brains
 
 
