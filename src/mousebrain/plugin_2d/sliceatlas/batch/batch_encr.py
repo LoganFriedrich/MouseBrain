@@ -41,6 +41,10 @@ PARAMETERS (chosen per run; the banner shows each value and where it came from)
   unless --soma-dilation / --dilation are typed (dilation_mismatches). With
   both --threshold and --bg-percentile typed the marked run supplies nothing
   and is not checked.
+  Marking a run best CHOOSES the batch's numbers; it does not change the
+  approved method. The registry judges every entry against the approved method
+  only, so numbers taken from a marked run that differ from it are registered
+  as stale until the same numbers are written into the approved method.
 
 How background_mean works:
   1. Detect nuclei in the nuclear channel (threshold + LoG, diameter range above).
@@ -97,6 +101,22 @@ GREEN_IDX = 0
 # not matching an approved method that says otherwise.
 BATCH_NUCLEUS_DIAMETER_UM = (10, 25)
 
+# The method the batch runs. These are fixed by the code; they are recorded in
+# each registry entry so an approved method naming something else shows the
+# entry as not produced with it.
+# NOT recorded yet: the region each cell's signal is measured in. The batch
+# measures a non-overlapping ring around each nucleus that leaves the nucleus
+# out (ColocalizationAnalyzer.measure_cytoplasm_intensities). Adding a key for
+# it changes every entry's method hash, and what the key and its approved value
+# should be is the lab's decision: a second open question, written up with the
+# size range in plugin_2d/ALGORITHM_REFERENCE.md, section 6.
+BATCH_FIXED_METHOD = {
+    "detection": "threshold+log",
+    "log_decision_tree": True,
+    "colocalization": "background_mean",
+    "background": "gmm",
+}
+
 # Last-resort values, used only when neither the command line, a marked-best
 # run nor the approved method gives one. Equal to the detector's and the
 # registry's built-in defaults.
@@ -134,6 +154,36 @@ def batch_approved_method() -> dict:
     if per_analysis is not None:
         return dict(per_analysis(REGISTRY_ANALYSIS) or {})
     return ar.get_approved_method()
+
+
+def approved_method_is_shared() -> bool:
+    """True when the batch's approved method is the registry's SHARED one.
+
+    WHY the batch asks: its banner tells a person how to make the batch's
+    numbers approved -- by writing them into the approved-method file. When
+    the file does not name this batch's analysis (no file, a flat file, or a
+    per-analysis file without an entry for REGISTRY_ANALYSIS), the batch is
+    judged by the shared method, and so is every other analysis that follows
+    it (the ROI analysis included): editing the shared method changes what
+    their existing entries are judged against too, and their later runs
+    record it. The person must be told that before editing the file, not
+    after. When the file gives REGISTRY_ANALYSIS its own entry, only that
+    entry needs editing and the warning is not given.
+
+    approved_method_for(..., follows_approved_method=False) answers exactly
+    "does the file name this analysis with a method": it returns that method,
+    or None when the analysis is not named (or named with null, in which case
+    the batch has no approved method and the banner lists no difference). A
+    registry module without approved_method_for has only the shared method.
+    """
+    try:
+        from mousebrain import analysis_registry as ar
+    except ImportError:
+        return False
+    per_analysis = getattr(ar, "approved_method_for", None)
+    if per_analysis is None:
+        return True
+    return per_analysis(REGISTRY_ANALYSIS, follows_approved_method=False) is None
 
 
 # command-line option (argparse dest) -> approved-method key
@@ -188,6 +238,31 @@ def resolve_parameters(cli: dict, tuned: dict, approved: dict) -> tuple:
         else:
             values[key], sources[key] = builtin, "built-in default"
     return values, sources
+
+
+def batch_method_params(approved: dict, values: dict) -> dict:
+    """The method parameters a batch run actually used, for the registry.
+
+    Exactly what the batch decides: the resolved values, the fixed method
+    names and the diameter range -- nothing else.
+
+    WHY: entries used to record the approved method whatever the run used, so
+    a run with --threshold 1.5 hashed like an approved run and could never be
+    found stale. WHY nothing else: a key of the approved method that the
+    batch does not control (say an approved-method file naming another
+    detection method under its own key) was not used by the run, and copying
+    it in would record it as if it had been. Leaving it out makes the entry
+    differ from that approved method, so it is reported stale and the banner
+    lists the key (main()). A value equal to the approved one keeps the
+    approved spelling (10 vs 10.0) so an approved run hashes exactly like the
+    approved method.
+    """
+    used = dict(BATCH_FIXED_METHOD)
+    used.update(values)
+    used["size_filter_um"] = list(BATCH_NUCLEUS_DIAMETER_UM)
+    return {key: (approved[key] if key in approved and approved[key] == value
+                  else value)
+            for key, value in used.items()}
 
 
 class TunedParameterConflict(Exception):
@@ -878,6 +953,12 @@ def main():
             + " to run at the marked run's dilations (or type the batch's own "
             "value to keep it), or mark a run made at the batch's dilations, "
             "or use --ignore-tracker.")
+    # What this run will record in the registry, and where it parts from the
+    # approved method (those entries are reported stale by check_staleness).
+    method_params = batch_method_params(approved, values)
+    differs = sorted(k for k in set(method_params) | set(approved)
+                     if method_params.get(k) != approved.get(k))
+
     print("=" * 60)
     print("ENCR Batch Colocalization Analysis")
     print(f"Project:   {args.project}")
@@ -910,6 +991,46 @@ def main():
         print("Tracker:   no run of this project is marked best for the batch's "
               "method; mark one in the BrainSlice Run History panel to have the "
               "batch use its sigma and percentile")
+    if not approved:
+        # Nothing to be stale against (the registry was told this analysis
+        # has no approved method); listing every key as "different" would
+        # only be noise.
+        print(f"Approved:  none for {REGISTRY_ANALYSIS}; entries are registered "
+              "with the parameters above, with no approved method to compare")
+    elif differs:
+        print("[!] NOT the approved method -- these outputs will be registered as "
+              "stale against it:")
+        for k in differs:
+            print(f"      {k}: this run {method_params.get(k)!r}, "
+                  f"approved {approved.get(k)!r}")
+        # Approved keys the batch has no setting for: no command-line option
+        # or code path changes them, so they will differ on every run until
+        # the approved method stops naming them.
+        uncontrolled = sorted(set(approved) - set(method_params))
+        if uncontrolled:
+            print(f"    The batch has no setting for {', '.join(uncontrolled)}; "
+                  "it never runs with them, so its entries stay stale until the "
+                  "approved method leaves them out.")
+        # WHY spelled out: marking a run best looks like approving it, but
+        # the registry only knows the approved method; without this line a
+        # person who marked a run gets stale entries and no reason.
+        if any(sources[k].startswith("marked-best") for k in sources):
+            print("    A marked-best run chooses the batch's numbers; it does not "
+                  "change the approved method.")
+        # Printed whatever the numbers came from (typed, a marked run or the
+        # defaults): any difference listed above is one a person may copy
+        # into the approved-method file, and on a shared registry that edit
+        # changes every analysis's approved method. WHY always: the warning
+        # used to appear only for marked-run numbers, so its absence after a
+        # typed-only run read as "this file is the batch's alone".
+        print("    To make these numbers approved, write them into the "
+              "approved-method file (see plugin_2d/ALGORITHM_REFERENCE.md, "
+              "section 6).")
+        if approved_method_is_shared():
+            print("    [!] On this registry that file is the approved method "
+                  "of EVERY analysis it holds, not only this batch's: "
+                  "editing it also changes what the other analyses' entries "
+                  "are judged against. Read section 6 before editing it.")
     print("=" * 60)
 
     print(f"\nFound {len(nd2_files)} ND2 files")
@@ -929,7 +1050,7 @@ def main():
 
     # Instantiate AnalysisRegistry once for the batch run
     try:
-        from mousebrain.analysis_registry import AnalysisRegistry, get_approved_method
+        from mousebrain.analysis_registry import AnalysisRegistry
         # Declared as following the shared approved method: its entries are
         # judged by it unless approved_method.json names this analysis.
         registry = AnalysisRegistry(analysis_name=REGISTRY_ANALYSIS,
@@ -981,12 +1102,9 @@ def main():
                         'positive_fraction': result.get('positive_fraction', 0),
                         'background': result.get('background', 0),
                     },
-                    # The method THIS analysis is judged by (its own entry in
-                    # approved_method.json if the lab gave it one): recording
-                    # the shared method here while the header holds a
-                    # per-analysis one would leave every entry stale forever.
-                    method_params=(registry.approved_method()
-                                   or get_approved_method(registry.registry_root)),
+                    # What this run used, not the approved method: see
+                    # batch_method_params for why.
+                    method_params=method_params,
                     source_files={'nd2': str(nd2_path)},
                 )
             except Exception as _reg_err:

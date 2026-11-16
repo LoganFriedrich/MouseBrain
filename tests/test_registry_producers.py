@@ -20,7 +20,11 @@ def test_batch_detection_records_its_own_approved_method(tmp_path, monkeypatch, 
     root = tmp_path / "Registry"
     root.mkdir()
     monkeypatch.setenv("MOUSEBRAIN_REGISTRY_ROOT", str(root))
-    own = dict(DEFAULT_METHOD, threshold_fraction=0.3)
+    # The batch records the parameters it ran with; it runs with this
+    # analysis's own approved method (its diameter range is the batch's
+    # fixed one), so its entries match that method and are current.
+    own = dict(DEFAULT_METHOD, threshold_fraction=0.3,
+               size_filter_um=list(be.BATCH_NUCLEUS_DIAMETER_UM))
     (root / "approved_method.json").write_text(
         json.dumps({"analyses": {"ENCR_Detection": own}}), encoding="utf-8")
 
