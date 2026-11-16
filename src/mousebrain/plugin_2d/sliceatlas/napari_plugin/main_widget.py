@@ -1582,6 +1582,27 @@ class BrainSliceWidget(QWidget):
         self.load_run_btn.clicked.connect(self._load_selected_run)
         history_btn_layout.addWidget(self.load_run_btn)
 
+        # WHY: marking a run best is how a person chooses the batch's sigma
+        # and percentile (batch_encr reads only marked-best runs); without
+        # this button no 2D run could ever be marked. It does NOT change the
+        # approved method the registry judges outputs against.
+        self.mark_best_btn = QPushButton("Mark Selected as Best")
+        self.mark_best_btn.setToolTip(
+            "The batch script uses the sigma threshold and background "
+            "percentile of this project's runs marked best. This does not "
+            "change the approved method (see the message after marking).")
+        self.mark_best_btn.clicked.connect(self._mark_selected_run_best)
+        history_btn_layout.addWidget(self.mark_best_btn)
+
+        # WHY: marking another run only clears the mark of the SAME sample, so
+        # a mark on another sample that disagrees (which stops the batch)
+        # could otherwise only be cleared from a terminal.
+        self.unmark_best_btn = QPushButton("Unmark Best")
+        self.unmark_best_btn.setToolTip(
+            "Clear the selected run's best mark, so the batch no longer uses it.")
+        self.unmark_best_btn.clicked.connect(self._unmark_selected_run_best)
+        history_btn_layout.addWidget(self.unmark_best_btn)
+
         self.refresh_history_btn = QPushButton("Refresh")
         self.refresh_history_btn.clicked.connect(self._refresh_run_history)
         history_btn_layout.addWidget(self.refresh_history_btn)
@@ -5671,6 +5692,22 @@ class BrainSliceWidget(QWidget):
             status='completed',
             limit=20,
         )
+        # The sample's marked-best runs are always listed, however old.
+        # WHY: the batch reads every marked run of its project and stops when
+        # they disagree, telling the person to clear the unwanted mark here
+        # with "Unmark Best". A mark older than the 20 newest runs could not
+        # be selected, so that stop could not be cleared from the GUI.
+        # Only runs of exactly this sample: tracker.search matches sample ids
+        # by substring, so without the equality test opening a sample whose
+        # name is the start of another's would list -- and offer to unmark --
+        # the other sample's starred run as if it were this one's.
+        shown = {r.get('run_id') for r in runs}
+        runs = runs + [
+            r for r in self.tracker.search(
+                sample_id=sample_id, run_type='colocalization', limit=None)
+            if r.get('marked_best') == 'True' and r.get('run_id') not in shown
+            and r.get('sample_id') == sample_id
+        ]
 
         for run in runs:
             row = self.run_history_table.rowCount()
@@ -5701,6 +5738,108 @@ class BrainSliceWidget(QWidget):
             self.run_history_table.setItem(row, 4, QTableWidgetItem(method))
 
         self.run_history_table.resizeColumnsToContents()
+
+    def _mark_selected_run_best(self):
+        """Mark the selected run best for its sample and say whether the batch uses it.
+
+        mark_as_best keeps one best run per sample: it clears the mark of the
+        sample's previous best run of the same type. The batch only takes a
+        marked run that used its own method (batch_encr.batch_approval_problem);
+        the person is told at once when that is not so, instead of finding out
+        from the batch's console output.
+
+        WHY the check comes BEFORE marking: marking a run the batch refuses
+        would clear a mark the batch does use, and the batch would then
+        silently take other numbers (the approved method's) -- a person's
+        earlier choice lost without a word. So when the new run is refused and
+        the sample already has a usable mark, the person is asked first, with
+        the run whose mark would be cleared named. Every confirmation names
+        the run(s) whose mark was cleared.
+        """
+        selected = self.run_history_table.selectedItems()
+        if not selected:
+            QMessageBox.warning(self, "No Selection", "Select a run from the history table.")
+            return
+        if not self.tracker:
+            QMessageBox.warning(self, "No Tracker", "The run tracker is not available.")
+            return
+        row = selected[0].row()
+        run_id = self.run_history_table.item(row, 0).text().lstrip('● ★ ').strip()
+        run = self.tracker.get_run(run_id)
+        if not run:
+            QMessageBox.warning(self, "Error", f"Run {run_id} not found in tracker.")
+            return
+        from ..batch.batch_encr import batch_approval_problem
+        problem = batch_approval_problem(run)
+        # The marks mark_as_best is about to clear: same sample, same run type.
+        cleared = [r for r in self.tracker.search(run_type=run.get('run_type'), limit=None)
+                   if r.get('sample_id') == run.get('sample_id')
+                   and r.get('marked_best') == 'True' and r.get('run_id') != run_id]
+        cleared_ids = ", ".join(r.get('run_id', '') for r in cleared)
+        usable = [r for r in cleared if batch_approval_problem(r) is None]
+        if problem and usable:
+            reply = QMessageBox.question(
+                self, "Replace a mark the batch uses?",
+                f"The batch script will NOT use run {run_id}: {problem}.\n\n"
+                f"Marking it clears the mark on run "
+                f"{', '.join(r.get('run_id', '') for r in usable)}, whose "
+                "sigma threshold and background percentile the batch uses now. "
+                "The batch would then take them from elsewhere (another "
+                "sample's mark, or the approved method).\n\n"
+                "Mark it anyway?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
+        if not self.tracker.mark_as_best(run_id):
+            QMessageBox.warning(self, "Error", f"Run {run_id} not found in tracker.")
+            return
+        cleared_note = (f"\n\nThe mark on run {cleared_ids} was cleared."
+                        if cleared_ids else "")
+        if problem:
+            QMessageBox.information(
+                self, "Marked as Best",
+                f"Run {run_id} is marked best for its sample.{cleared_note}\n\n"
+                f"The batch script will NOT use its parameters: {problem}.")
+        else:
+            QMessageBox.information(
+                self, "Marked as Best",
+                f"Run {run_id} is marked best for its sample.{cleared_note}\n\n"
+                "The batch script will use its sigma threshold and background "
+                "percentile for this project.\n\n"
+                "Note: the batch measures each cell in a ring around the "
+                "nucleus that neighbors do not share; this window measures a "
+                "disk around the nucleus. The same sigma is applied to a "
+                "related, not identical, measurement.\n\n"
+                "Marking does not change the approved method: if these numbers "
+                "differ from it, the batch's results are registered as stale "
+                "until the same numbers are written into the approved-method "
+                "file.")
+        self._refresh_run_history()
+
+    def _unmark_selected_run_best(self):
+        """Clear the selected run's best mark.
+
+        WHY: marking another run clears only the same sample's previous mark,
+        so this is the only way, short of a terminal, to take back a mark on
+        another sample -- e.g. when the batch stops because two marked runs of
+        one project give different numbers.
+        """
+        selected = self.run_history_table.selectedItems()
+        if not selected:
+            QMessageBox.warning(self, "No Selection", "Select a run from the history table.")
+            return
+        if not self.tracker:
+            QMessageBox.warning(self, "No Tracker", "The run tracker is not available.")
+            return
+        row = selected[0].row()
+        run_id = self.run_history_table.item(row, 0).text().lstrip('● ★ ').strip()
+        if not self.tracker.unmark_best(run_id):
+            QMessageBox.warning(self, "Error", f"Run {run_id} not found in tracker.")
+            return
+        QMessageBox.information(
+            self, "Best Mark Cleared",
+            f"Run {run_id} is no longer marked best; the batch will not use it.")
+        self._refresh_run_history()
 
     def _load_selected_run(self):
         """Load a historical run's measurements from disk and visualize."""
