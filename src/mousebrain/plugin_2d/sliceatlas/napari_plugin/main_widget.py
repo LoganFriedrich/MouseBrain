@@ -5135,14 +5135,33 @@ class BrainSliceWidget(QWidget):
         # Log to tracker
         if self.tracker:
             sample_id = self.sample_id_edit.text() or self.current_file.stem
+            from ..tracker.schema import COLOC_SIGMA_RECORDED_VERSION
+            # WHY: background_mean classifies with the sigma spin box, not the
+            # fold-change one, so the row records the sigma for that method.
+            # Logging the fold-change value here made a marked-best run hand
+            # the batch a fold change as its sigma threshold.
+            if params['threshold_method'] == 'background_mean':
+                used_threshold = params['sigma_threshold']
+            else:
+                used_threshold = params['threshold_value']
+            # A local (block-wise) background is a different estimator from the
+            # global one of the same name; the row says so, so the run is not
+            # mistaken for the batch's global GMM method.
+            bg_logged = params['background_method']
+            if params['use_local_background']:
+                bg_logged = f"{bg_logged}+local"
             self.last_run_id = self.tracker.log_colocalization(
                 sample_id=sample_id,
                 signal_channel='green',
-                background_method=params['background_method'],
+                background_method=bg_logged,
                 background_percentile=params['background_percentile'],
                 threshold_method=params['threshold_method'],
-                threshold_value=params['threshold_value'],
+                threshold_value=used_threshold,
                 status='started',
+                script_version=COLOC_SIGMA_RECORDED_VERSION,
+                # No column holds these two; the note keeps them with the run.
+                notes=(f"soma_dilation={params['soma_dilation']}; "
+                       f"bg_exclusion_dilation={params['dilation_iterations']}"),
             )
 
         from .workers import ColocalizationWorker
@@ -5729,7 +5748,10 @@ class BrainSliceWidget(QWidget):
             # Store and visualize
             self.cell_measurements = measurements
             self._coloc_background = float(run.get('coloc_background_value', 0))
-            self._coloc_threshold = float(run.get('coloc_threshold_value', 2.0))
+            # A sigma (background_mean rows) is not a fold change; the
+            # plots then use the fold-change spin box, as after a live run.
+            from ..tracker.schema import coloc_fold_change_threshold
+            self._coloc_threshold = coloc_fold_change_threshold(run)
             self._coloc_summary = {
                 'total_cells': len(measurements),
                 'positive_cells': int(measurements['is_positive'].sum()),
