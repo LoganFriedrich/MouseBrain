@@ -204,6 +204,30 @@ counts file; a name that fits none simply gives an empty report). To bring
 such brains back, rename the mouse folder. (The napari lists do not print
 these lines; check the names there by hand.)
 
+**When a folder cannot be read.** Two more lines are printed by EVERY listing
+and every lookup by name -- the command-line ones and the napari lists alike
+(for napari, in the terminal window it was started from):
+
+- `[!] Could not read the brains folder <folder>: <error> ...` -- the brains
+  folder itself is missing or cannot be opened. Nothing can be listed or found.
+  The usual causes: the data drive is not connected, or the root folder is set
+  to the wrong place (`mousebrain --paths` shows where it points). Steps 4, 5
+  and 6 and `util_optimize_crop.py`, given `--brain`, stop with
+  `ERROR: Could not read the brains folder ...` instead of calling the brain
+  "not found"; `overnight_batch.py` writes the same line to its log, then
+  `Nothing was processed.`, and ends as a failure instead of reporting
+  "Found 0 brain(s)". Fix the drive or the setting and run again.
+- `[!] Could not read the mouse folder <folder>: <error>. Its brains are missing
+  from this list.` -- one mouse folder cannot be opened (usually its
+  permissions). The other mice are listed as usual; the brains of that one are
+  not listed, not found by name, and not processed, until the folder can be
+  read. `overnight_batch.py` also writes this to its log as a warning
+  (`Could not read <folder> ... were NOT listed and will not be processed by
+  this run`).
+
+A brain that silently drops out of a list looks exactly like a brain that is
+not there, so these lines are never switched off.
+
 What a step needs INSIDE a brain is still its own business: extraction lists
 brains with a `.ims` in `0_Raw_IMS`, registration brains with images to register,
 and so on.
@@ -261,6 +285,11 @@ A folder in a mouse folder that is not a brain at all -- a `training_data`
 folder, a stray copy of a numbered output folder -- has none of `0_Raw_IMS`,
 `1_Extracted_Full` or a crop or registration, and is not listed: the overnight
 batch passes over it without a word, as `RUN_PIPELINE.py` does.
+
+If the brains folder itself cannot be read, the batch logs
+`Could not read the brains folder ...` and `Nothing was processed.` and ends as
+a failure; if one mouse folder cannot be read, it logs a warning naming it and
+carries on with the others (see "When a folder cannot be read" above).
 
 (It used to take only brains with images in `2_Cropped_For_Registration`, so a
 hand-cropped brain, or one registered uncropped, never ran overnight and nothing

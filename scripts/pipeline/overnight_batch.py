@@ -33,7 +33,8 @@ import logging
 import subprocess
 import sys
 
-from mousebrain.config import iter_brains, registered_input, resolve_pipeline_input
+from mousebrain.config import (brains_root_problem, iter_brains, registered_input,
+                               resolve_pipeline_input)
 from mousebrain.pipeline_status import brain_status, find_candidates
 from mousebrain.registration_approval import (approval_state,
                                               is_approved as is_registration_approved)
@@ -125,9 +126,15 @@ def find_brains_to_process() -> Tuple[List[Tuple[Path, str]], List[Tuple[str, st
     the atlas to images that still contain the cord. So such a brain is listed
     as left out, with the reason: crop it, or register it once by hand on the
     full extraction (step 3), and the next run takes it.
+
+    A MOUSE FOLDER THAT CANNOT BE READ is written to the batch log as a
+    warning (its brains cannot be listed, so they cannot be named one by one):
+    the brains in it did not run, and the log must say so.
     """
     ready, left_out = [], []
-    for _mouse_dir, pipeline_dir in iter_brains(BRAINS_ROOT, report_skipped=True):
+    unreadable = []
+    for _mouse_dir, pipeline_dir in iter_brains(BRAINS_ROOT, report_skipped=True,
+                                                problems=unreadable):
         name = pipeline_dir.name
         registered = (pipeline_dir / FOLDER_REGISTRATION / "brainreg.json").exists()
         source, _folder, _meta = resolve_pipeline_input(pipeline_dir)
@@ -143,6 +150,9 @@ def find_brains_to_process() -> Tuple[List[Tuple[Path, str]], List[Tuple[str, st
         # numbered output folder): passed over without a word, as
         # RUN_PIPELINE.find_brains does. Listing it as "run step 2" sent the
         # operator to extract a folder that holds no brain.
+    for folder, error in unreadable:
+        log.warning(f"Could not read {folder}: {error}. Any brains in it were NOT "
+                    "listed and will not be processed by this run.")
     return sorted(ready, key=lambda x: x[1]), sorted(left_out)
 
 
@@ -824,6 +834,15 @@ def main():
     log.info(f"OVERNIGHT BATCH PROCESSING - v{SCRIPT_VERSION}")
     log.info(f"Started: {timestamp()}")
     log.info("=" * 70)
+
+    # A brains folder that is missing or cannot be read (a data drive that is
+    # not connected) is an error, not a night with no brains to process: say
+    # so and end with a failure, instead of "Found 0 brain(s)" and a normal end.
+    problem = brains_root_problem(BRAINS_ROOT)
+    if problem:
+        log.error(problem)
+        log.error("Nothing was processed.")
+        return 1
 
     # Find brains to process
     brains, left_out = find_brains_to_process()

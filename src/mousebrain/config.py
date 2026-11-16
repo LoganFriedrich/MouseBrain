@@ -509,7 +509,30 @@ def is_mouse_folder(folder) -> bool:
     return mouse_folder_skip_word(folder) is None
 
 
-def iter_brains(root=None, report_skipped: bool = False):
+def brains_root_problem(root=None) -> str:
+    """Why the brains root cannot be listed, as one line; "" when it can.
+
+    WHY: a brains folder that is missing or cannot be read (a data share that
+    is not connected) must never look like a folder with no brains in it. A
+    command that would then report "0 brains" or "brain not found" asks this
+    first and says what is actually wrong.
+    """
+    from pathlib import Path as _Path
+    root = _Path(root) if root is not None else BRAINS_ROOT
+    try:
+        next(iter(root.iterdir()), None)
+    except OSError as e:
+        return _brains_root_problem_text(root, e)
+    return ""
+
+
+def _brains_root_problem_text(root, error) -> str:
+    return ("Could not read the brains folder %s: %s. No brain can be listed "
+            "or found until it can be read (is the data drive connected, and "
+            "is the root folder set correctly?)." % (root, error))
+
+
+def iter_brains(root=None, report_skipped: bool = False, problems=None):
     """Every brain folder under the brains root, as (mouse_dir, brain_dir).
 
     THE rule for "which folders are brains", used by every step, widget and
@@ -534,13 +557,25 @@ def iter_brains(root=None, report_skipped: bool = False):
 
     Callers still apply their own test of what a brain must CONTAIN for their
     purpose (extracted images, registration, counts ...); this only answers
-    which folders are brains at all. A root that does not exist yields nothing.
+    which folders are brains at all.
+
+    A FOLDER THAT CANNOT BE READ IS ALWAYS REPORTED
+    A brains root that is missing or cannot be listed yields nothing, and a
+    mouse folder that cannot be listed yields none of its brains -- and each
+    prints one ``[!] Could not read ...`` line, whatever ``report_skipped`` is.
+    A brain that silently drops out of a list looks exactly like a brain that
+    is not there, so the listing never stays quiet about it. ``problems``, if
+    a list is given, also receives ``(folder, error text)`` for each, for a
+    caller that reports through its own log.
     """
     from pathlib import Path as _Path
     root = _Path(root) if root is not None else BRAINS_ROOT
     try:
         mice = sorted(root.iterdir())
-    except OSError:
+    except OSError as e:
+        print("[!] " + _brains_root_problem_text(root, e))
+        if problems is not None:
+            problems.append((root, str(e)))
         return
     for mouse_dir in mice:
         if not is_mouse_folder(mouse_dir):
@@ -551,7 +586,11 @@ def iter_brains(root=None, report_skipped: bool = False):
             continue
         try:
             brains = sorted(mouse_dir.iterdir())
-        except OSError:
+        except OSError as e:
+            print("[!] Could not read the mouse folder %s: %s. Its brains are "
+                  "missing from this list." % (mouse_dir, e))
+            if problems is not None:
+                problems.append((mouse_dir, str(e)))
             continue
         for brain_dir in brains:
             if is_pipeline_candidate(brain_dir):

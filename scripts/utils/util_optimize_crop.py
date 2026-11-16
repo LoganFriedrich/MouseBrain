@@ -139,6 +139,14 @@ def format_duration(seconds):
 
 def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT):
     """Find pipeline folder for a brain."""
+    # A brains folder that is missing or cannot be read is not "brain not
+    # found": stop and name the folder, so an unconnected data drive is not
+    # mistaken for a brain that does not exist.
+    from mousebrain.config import brains_root_problem
+    problem = brains_root_problem(root)
+    if problem:
+        sys.exit("ERROR: " + problem)
+
     # Which folders are brains is ONE rule, config.iter_brains.
     from mousebrain.config import iter_brains
     for mouse_dir, pipeline_dir in iter_brains(root):
