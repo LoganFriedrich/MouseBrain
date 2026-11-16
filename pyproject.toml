@@ -66,6 +66,7 @@ Repository = "https://github.com/LoganFriedrich/MouseBrain"
     "brainglobe-atlasapi",
     "pillow>=9.0",
     "nd2",
+    "scikit-learn",  # GMM background estimate (colocalization); the 2D batch checks it imports before its first sample
     "dask>=2022.1",
 ]
 2d-cellpose = [
