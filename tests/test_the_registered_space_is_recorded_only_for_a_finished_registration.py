@@ -66,19 +66,29 @@ def _step3(monkeypatch):
     return mod
 
 
-class _Result:
-    def __init__(self, code):
-        self.returncode = code
+class _Brainreg:
+    """Stands in for subprocess.Popen: does what ``write`` says to the
+    output folder (cmd[2]) and ends with ``code``."""
+    pid = 999_999_999  # no such process
+
+    def __init__(self, write, code):
+        self._write, self._code = write, code
+
+    def __call__(self, cmd, **k):
+        self._write(Path(cmd[2]))
+        return self
+
+    def wait(self, *a, **k):
+        return self._code
 
 
 def test_a_failed_brainreg_leaves_no_record_of_a_registered_space(tmp_path, monkeypatch):
     step3 = _step3(monkeypatch)
     b = _brain(tmp_path)
 
-    def failing(cmd, **k):
-        (Path(cmd[2]) / "brainreg.json").write_text("{}")  # what brainreg writes first
-        return _Result(1)
-    monkeypatch.setattr(step3.subprocess, "run", failing)
+    def first_file(out):
+        (out / "brainreg.json").write_text("{}")  # what brainreg writes first
+    monkeypatch.setattr(step3.subprocess, "Popen", _Brainreg(first_file, 1))
     with pytest.raises(RuntimeError):
         step3.run_brainreg(b, {})
     assert not (b / "3_Registered_Atlas" / REGISTERED_SPACE_FILE).exists()
@@ -88,11 +98,36 @@ def test_a_finished_registration_records_its_images(tmp_path, monkeypatch):
     step3 = _step3(monkeypatch)
     b = _brain(tmp_path)
 
-    def finishing(cmd, **k):
+    def every_file(out):
         for name in ra.FINGERPRINT_FILES:
-            (Path(cmd[2]) / name).write_text("{}")
-        return _Result(0)
-    monkeypatch.setattr(step3.subprocess, "run", finishing)
+            (out / name).write_text("{}")
+    monkeypatch.setattr(step3.subprocess, "Popen", _Brainreg(every_file, 0))
     assert step3.run_brainreg(b, {})
     assert (b / "3_Registered_Atlas" / REGISTERED_SPACE_FILE).exists()
     assert registered_input(b)[1] == b / "2_Cropped_For_Registration"
+
+
+def test_step_3_finishes_a_registration_it_ran_itself(tmp_path, monkeypatch, capsys):
+    """End to end through main(), with only brainreg's process faked. Step 3
+    holds the running-marker while brainreg runs; its own check afterwards
+    must not read that marker as "being registered by another run" -- it did,
+    and every finished registration was archived as failed."""
+    step3 = _step3(monkeypatch)
+    root = tmp_path / "1_Brains"
+    b = _brain(root)
+    reg = b / "3_Registered_Atlas"
+    seen = []
+
+    def every_file(out):
+        seen.append((out / ra.RUNNING_MARKER).exists())
+        for name in ra.FINGERPRINT_FILES:
+            (out / name).write_text("{}")
+    monkeypatch.setattr(step3.subprocess, "Popen", _Brainreg(every_file, 0))
+    monkeypatch.setattr(sys, "argv", ["3", str(root), "--batch", "--brain", BRAIN])
+    assert step3.main() == 0, capsys.readouterr().out
+    assert seen == [True]  # the marker was held while brainreg ran
+    assert step3.check_registration_status(b)[0] == "complete"
+    assert not ra.missing_registration_files(reg)
+    assert (reg / REGISTERED_SPACE_FILE).exists()
+    assert not (reg / ra.RUNNING_MARKER).exists()
+    assert not (reg / "_archive").exists()

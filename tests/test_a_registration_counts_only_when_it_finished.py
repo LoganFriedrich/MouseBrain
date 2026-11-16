@@ -96,14 +96,16 @@ def test_step_3_takes_an_unfinished_registration_up_again(tmp_path, monkeypatch,
     seen = []
 
     def fake_brainreg(pipeline_folder, *a, **k):
-        # brainreg is given an empty folder: the leftovers went to _archive first
+        # brainreg is given an empty folder: the leftovers went to _archive
+        # first. Only step 3's own running-marker is there while it works.
         reg = Path(pipeline_folder) / "3_Registered_Atlas"
         seen.append(sorted(p.name for p in reg.iterdir() if p.name != "_archive"))
         _finished(reg)
     monkeypatch.setattr(step3, "run_brainreg", fake_brainreg)
     monkeypatch.setattr(sys, "argv", ["3", str(tmp_path / "1_Brains"), "--batch", "--brain", BRAIN])
     assert step3.main() == 0, capsys.readouterr().out
-    assert seen == [[]]
+    assert seen == [[ra.RUNNING_MARKER]]
+    assert not (b / "3_Registered_Atlas" / ra.RUNNING_MARKER).exists()
     leftovers = list((b / "3_Registered_Atlas" / "_archive").glob("*_incomplete/brainreg.json"))
     assert len(leftovers) == 1
     assert step3.check_registration_status(b)[0] == "complete"

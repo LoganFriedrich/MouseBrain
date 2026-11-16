@@ -17,6 +17,11 @@ Usage:
                                                # waits for a person's approval
                                                # before detection
 
+A brain whose registration a person REJECTED is never registered again by
+this batch, --force included: it is listed under "Not started" in the report
+with who rejected it, when, and what to change. Neither is a brain that is
+being registered right now by another run.
+
 The script will:
 1. Find every brain that is registered or has a crop to register (a brain with
    only its full extraction is listed as left out, with the reason)
@@ -40,7 +45,7 @@ import sys
 from mousebrain.config import (brains_root_problem, iter_brains, registered_input,
                                resolve_pipeline_input)
 from mousebrain.pipeline_status import brain_status, find_candidates
-from mousebrain.registration_approval import (approval_state,
+from mousebrain.registration_approval import (REJECTED, RUNNING, approval_state,
                                               is_approved as is_registration_approved,
                                               missing_registration_files,
                                               registration_complete,
@@ -172,7 +177,8 @@ def get_brain_status(pipeline_dir: Path) -> Dict[str, bool]:
     """
     s = brain_status(pipeline_dir)
     return {k: s[k] for k in ('cropped', 'registered', 'approved',
-                              'detected', 'classified', 'counted')}
+                              'detected', 'classified', 'counted',
+                              'approval', 'approval_text')}
 
 
 def run_with_retry(func, *args, max_retries: int = MAX_RETRIES, **kwargs) -> Tuple[bool, str]:
@@ -452,6 +458,19 @@ def process_brain(brain_name: str, pipeline_dir: Path, skip_complete: bool = Tru
 
     status = get_brain_status(pipeline_dir)
 
+    # A brain a person REJECTED, or one another run is registering right now,
+    # is not registered by this batch -- not even with --force. Rejected: the
+    # same images and settings would take hours to give the same fit and ask
+    # the same question again; a person registers it again once something is
+    # changed (a re-crop makes it registrable here again by itself). Running:
+    # a second brainreg into the same folder would wreck both.
+    if status.get('approval') in (REJECTED, RUNNING):
+        why = status.get('approval_text') or status['approval']
+        log.info(f"[{brain_name}] Not started: {why}")
+        result['status'] = 'not_started'
+        result['error'] = why
+        return result
+
     # Step 1: Registration. Without skip_complete (--force) a registered brain
     # is registered AGAIN (step 3 --reprocess); the new registration has no
     # approval, so the brain then stops below at "awaiting approval".
@@ -554,6 +573,8 @@ def generate_comparison_report(results: List[Dict]) -> Path:
         f"- **Failed:** {sum(1 for r in results if r['status'] == 'failed')}",
         f"- **Waiting for a person to approve the registration:** "
         f"{sum(1 for r in results if r['status'] == 'awaiting_approval')}",
+        f"- **Not started (registration rejected by a person, or being registered "
+        f"by another run):** {sum(1 for r in results if r['status'] == 'not_started')}",
         "",
         "## Detection method",
         "- The settled method for each brain's imaging setup (the tracker run",
@@ -575,10 +596,20 @@ def generate_comparison_report(results: List[Dict]) -> Path:
         else:
             vs_ref = "N/A"
 
-        status_icon = {"success": "+", "awaiting_approval": "approve"}.get(r['status'], "X")
+        status_icon = {"success": "+", "awaiting_approval": "approve",
+                       "not_started": "not started"}.get(r['status'], "X")
         steps = ", ".join(f"{k}:{v[0]}" for k, v in r['steps'].items())
 
         lines.append(f"| {r['brain']} | {cells} | {vs_ref} | {status_icon} | {steps} |")
+
+    # Brains held back for a person, with why and what to do
+    not_started = [r for r in results if r['status'] == 'not_started']
+    if not_started:
+        lines.extend(["", "## Not Started", ""])
+        for r in not_started:
+            lines.append(f"### {r['brain']}")
+            lines.append(f"- **Why:** {r['error']}")
+            lines.append("")
 
     # Add failed brain details
     failed = [r for r in results if r['status'] == 'failed']
@@ -855,7 +886,9 @@ def main():
                        help='Redo every step even if complete. A registered brain is '
                             'REGISTERED AGAIN (its old registration and approval are '
                             'archived) and then waits for a person to approve the new '
-                            'registration before detection, classification and counting')
+                            'registration before detection, classification and counting. '
+                            'A brain whose registration was REJECTED is not registered '
+                            'again (see the report\'s "Not Started")')
 
     args = parser.parse_args()
 
@@ -953,6 +986,8 @@ def main():
     log.info(f"Failed: {sum(1 for r in results if r['status'] == 'failed')}")
     log.info(f"Waiting for registration approval: "
              f"{sum(1 for r in results if r['status'] == 'awaiting_approval')}")
+    log.info(f"Not started (rejected registration, or being registered elsewhere): "
+             f"{sum(1 for r in results if r['status'] == 'not_started')}")
     log.info(f"Report: {report_path}")
     log.info(f"Images: {IMAGES_DIR}")
     log.info("=" * 70)

@@ -231,7 +231,23 @@ def show_brain_status(brain):
         subprocess.run(['napari'])
 
     elif status['step'] == 'register':
-        run_script('3_register_to_atlas.py')
+        from mousebrain.registration_approval import REJECTED, RUNNING
+        if status.get('approval') == RUNNING:
+            print(f"\n{status['approval_text']}")
+            input("Press Enter to continue...")
+        elif status.get('approval') == REJECTED:
+            # The batches never register a rejected brain again; a person
+            # decides. --reprocess registers this one brain again.
+            print(f"\nThis registration was {status['approval_text']}")
+            choice = ask("Register it again now?", [
+                "Yes, register it again (the rejected one goes into _archive)",
+                "No, not yet",
+            ])
+            if choice == 0:
+                run_script('3_register_to_atlas.py',
+                           ['--batch', '--brain', brain_name, '--reprocess'])
+        else:
+            run_script('3_register_to_atlas.py')
 
     elif status['step'] == 'approve':
         # Show where the QC images are
@@ -274,10 +290,13 @@ def show_brain_status(brain):
                 print("\n[OK] Registration rejected (recorded). The brain is back at 'Register'.")
             except ValueError as e:
                 print(f"\n[FAIL] {e}")
+            # Not registered again here: on the same images and settings it
+            # would take hours to give the same fit. Once something is changed
+            # the brain's "Register" step offers it (a re-crop makes the
+            # batches register it again by themselves).
             print("Change what made it bad first (crop, orientation, voxel size),")
-            print("then register it again.")
-            print("\nRe-running registration...")
-            run_script('3_register_to_atlas.py')
+            print("then choose this brain's 'Register' step to register it again.")
+            input("Press Enter to continue...")
 
     elif status['step'] == 'detect':
         # No choice to make: step 4 uses the settled method for this brain's

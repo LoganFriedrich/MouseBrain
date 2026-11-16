@@ -596,6 +596,22 @@ def process_brain(brain_path: Path, brain_name: str, skip_finished: bool = False
 
     # Step 3: Register
     print("\n[3/6] Registering to atlas...")
+    # A registration a person REJECTED is not registered again by this batch:
+    # the same images and settings would take hours to give the same fit and
+    # ask the same question. The brain stops for a person, with who rejected
+    # it, when and what to change. (A re-crop after the rejection makes it
+    # "out of date" instead, which is registered again.) A registration that
+    # another run is making right now is not started a second time either.
+    from mousebrain.registration_approval import REJECTED, RUNNING, approval_state
+    reg_state, reg_text = approval_state(brain_path / "3_Registered_Atlas")
+    if reg_state in (REJECTED, RUNNING):
+        print(f"    Not registered: {reg_text}")
+        results['qc_register'] = (f"{QCStatus.REVIEW}: {reg_text}" if reg_state == REJECTED
+                                  else f"{QCStatus.FAIL}: {reg_text}")
+        results['status'] = QCStatus.REVIEW if reg_state == REJECTED else QCStatus.FAIL
+        results['failed_step'] = 'register'
+        update_brain_status(brain_name, results)
+        return results
     # Same for step 3: --batch replaces the --yes it never accepted.
     mark_step_started(brain_name, brain_path, 'register')
     success, msg = run_unless_done(results, brain_path, 'register', redo_from,

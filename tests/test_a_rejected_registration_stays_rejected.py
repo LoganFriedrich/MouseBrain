@@ -5,8 +5,9 @@ registration never approved it wrote nothing at all. The next reader showed
 the registration as "waiting for approval", and anyone could approve what had
 just been turned down. Now the "no" of every path (the approval script, the
 RUN_PIPELINE menu, the dashboard, Setup & Tuning) is recorded, every reader
-puts the brain back at "register", and step 3 registers it again. Identifiers
-are invented.
+puts the brain back at "register", and nothing unattended registers it again:
+a person asks for that (--reprocess), or re-crops it. Identifiers are
+invented.
 """
 import builtins
 import importlib.util
@@ -52,7 +53,12 @@ def _brain(root):
 
 def _say(monkeypatch, *answers):
     queue = list(answers)
-    monkeypatch.setattr(builtins, "input", lambda *a, **k: queue.pop(0))
+
+    def answer(*a, **k):
+        if not queue:
+            raise EOFError  # nobody left to answer
+        return queue.pop(0)
+    monkeypatch.setattr(builtins, "input", answer)
 
 
 def _approval_script(monkeypatch, b):
@@ -111,28 +117,93 @@ def test_a_rejection_overruled_in_the_approval_script_is_archived(tmp_path, monk
     assert list((reg / "_archive").glob("*/" + ra.REJECTION_MARKER))
 
 
-def test_step_3_registers_a_rejected_registration_again(tmp_path, monkeypatch, capsys):
+def _step3_with(monkeypatch, tmp_path, *extra):
     pytest.importorskip("brainreg", reason="3_register_to_atlas checks for brainreg on import")
     step3 = _load("register_rejected", "scripts/pipeline/3_register_to_atlas.py")
-    b = _brain(tmp_path / "1_Brains")
-    reg = b / "3_Registered_Atlas"
-    ra.reject(reg, rejected_by="tester")
-    assert step3.check_registration_status(b)[0] == "rejected"
     registered = []
 
     def fake_brainreg(pipeline_folder, *a, **k):
+        reg = Path(pipeline_folder) / "3_Registered_Atlas"
         assert not (reg / ra.REJECTION_MARKER).exists()
         registered.append(Path(pipeline_folder).name)
         for name in ra.FINGERPRINT_FILES:
             (reg / name).write_bytes(b"new")
     monkeypatch.setattr(step3, "run_brainreg", fake_brainreg)
-    monkeypatch.setattr(sys, "argv", ["3", str(tmp_path / "1_Brains"), "--batch", "--brain", BRAIN])
+    monkeypatch.setattr(sys, "argv", ["3", str(tmp_path / "1_Brains"), "--batch",
+                                      "--brain", BRAIN, *extra])
+    return step3, registered
+
+
+def test_step_3_batch_does_not_register_a_rejected_brain_again(tmp_path, monkeypatch, capsys):
+    b = _brain(tmp_path / "1_Brains")
+    reg = b / "3_Registered_Atlas"
+    ra.reject(reg, rejected_by="tester")
+    step3, registered = _step3_with(monkeypatch, tmp_path)
+    assert step3.check_registration_status(b)[0] == "rejected"
+    # Not done what was asked: a caller must not read it as "registered".
+    assert step3.main() == 1
+    out = capsys.readouterr().out
+    assert registered == []
+    assert "tester" in out and "--reprocess" in out
+    assert (reg / ra.REJECTION_MARKER).exists() and not (reg / "_archive").exists()
+
+
+def test_a_person_registers_a_rejected_brain_again_with_reprocess(tmp_path, monkeypatch, capsys):
+    b = _brain(tmp_path / "1_Brains")
+    reg = b / "3_Registered_Atlas"
+    ra.reject(reg, rejected_by="tester")
+    step3, registered = _step3_with(monkeypatch, tmp_path, "--reprocess")
     assert step3.main() == 0, capsys.readouterr().out
     assert registered == [BRAIN]
     # The rejection went into _archive WITH the registration it rejected.
     rejected = list((reg / "_archive").glob("*_rejected/" + ra.REJECTION_MARKER))
     assert len(rejected) == 1 and (rejected[0].parent / "brainreg.json").exists()
     assert ra.approval_state(reg)[0] == ra.UNAPPROVED
+
+
+def test_a_re_crop_after_the_rejection_makes_it_registrable_by_the_batch(tmp_path, monkeypatch,
+                                                                       capsys):
+    b = _brain(tmp_path / "1_Brains")
+    reg = b / "3_Registered_Atlas"
+    ra.reject(reg, rejected_by="tester")
+    tif = b / "2_Cropped_For_Registration" / "ch0" / "Z0000.tif"
+    os.utime(tif, (T0 + 500, T0 + 500))  # the crop was made again after it
+    assert ra.approval_state(reg)[0] == ra.OUT_OF_DATE
+    step3, registered = _step3_with(monkeypatch, tmp_path)
+    assert step3.main() == 0, capsys.readouterr().out
+    assert registered == [BRAIN]
+
+
+def test_the_overnight_batch_does_not_register_a_rejected_brain(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # it opens its log file in the working directory
+    ob = _load("overnight_rejected", "scripts/pipeline/overnight_batch.py")
+    b = _brain(tmp_path / "data")
+    ra.reject(b / "3_Registered_Atlas", rejected_by="tester")
+    started = []
+    monkeypatch.setattr(ob.subprocess, "run", lambda cmd, *a, **k: started.append(cmd))
+    monkeypatch.setattr(ob, "RETRY_DELAY", 0)
+    for force in (False, True):
+        result = ob.process_brain(BRAIN, b, skip_complete=not force)
+        assert started == [], "step 3 was started for a rejected brain"
+        assert result["status"] == "not_started"
+        assert "tester" in result["error"]
+    assert (b / "3_Registered_Atlas" / ra.REJECTION_MARKER).exists()
+
+
+def test_batch_process_does_not_register_a_rejected_brain(tmp_path, monkeypatch):
+    bp = _load("batch_process_rejected", "scripts/pipeline/batch_process.py")
+    monkeypatch.setattr(bp, "PIPELINE_STATUS_CSV", tmp_path / "pipeline_status.csv")
+    b = _brain(tmp_path)
+    ra.reject(b / "3_Registered_Atlas", rejected_by="tester")
+    ran = []
+    monkeypatch.setattr(bp, "run_step",
+                        lambda script, args, timeout=7200: ran.append(script) or (True, "OK"))
+    monkeypatch.setattr(bp, "qc_check_extraction", lambda p: (bp.QCStatus.PASS, "OK"))
+    monkeypatch.setattr(bp, "qc_check_crop", lambda p: (bp.QCStatus.PASS, "OK"))
+    result = bp.process_brain(b, MOUSE + "/" + BRAIN)
+    assert "3_register_to_atlas.py" not in ran
+    assert result["failed_step"] == "register" and result["status"] == bp.QCStatus.REVIEW
+    assert "tester" in result["qc_register"]
 
 
 def test_counts_made_on_a_rejected_registration_are_stale(tmp_path):

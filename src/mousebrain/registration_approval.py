@@ -46,6 +46,30 @@ to, or whose recorded images are gone, is OUT_OF_DATE: no reader counts it as
 registered, nobody can approve it, step 4's approval gate is closed, and the
 brain is at "register" again (step 3's --batch registers it).
 
+A REGISTRATION THAT IS RUNNING IS NOT "INCOMPLETE"
+Because brainreg.json comes first, a registration that is running right now
+looks exactly like one that stopped half-way. Step 3 used to take it for the
+latter: its --batch archived the running brainreg's folder and started a
+second brainreg into it. Step 3 now writes ``.registration_running`` (which
+computer, which process, when) before brainreg starts and removes it when it
+ends, however it ends. While that marker is LIVE every reader says RUNNING and
+step 3 refuses to archive or register the brain. A marker whose process has
+gone (the computer restarted, the window was closed) is not live: the
+registration is INCOMPLETE and is registered again. See running_registration()
+for how "live" is decided.
+
+The marker names TWO processes: step 3 itself and, once it has started it,
+brainreg. Killing step 3 (a batch's time limit, a closed dashboard) does not
+stop brainreg, which goes on writing into the folder. Judged by step 3's
+process alone, the marker then looked dead, a retry archived the folder under
+the still-running brainreg and started a second one into it. The marker stays
+live while EITHER process is alive.
+
+Step 3's own check after brainreg passes its claim (``own=``): the marker is
+its own, so to that check the brain is not "being registered by someone
+else". Without that, every finished registration read as RUNNING to the run
+that made it, failed its verification and was archived as failed.
+
 A REJECTED REGISTRATION STAYS REJECTED
 Rejecting used to only move an existing approval away (and do nothing at all
 for a registration never approved), so the next reader showed the
@@ -56,6 +80,15 @@ it as REJECTED, the brain is back at the register step, and approve() refuses
 it -- except the approval script, which asks the person whether they mean to
 overrule the rejection. Registering again archives the rejection with the
 registration it was for.
+
+NOTHING UNATTENDED REGISTERS A REJECTED BRAIN AGAIN. The batches (step 3
+--batch, overnight_batch, batch_process) skip it and report who rejected it,
+when, and what to change: registering it again on the same images and the
+same settings would only take hours to produce the same fit and ask the same
+question again. A person asks for it (the dashboard's "Register again",
+step 3 --batch --brain <brain> --reprocess, or step 3's interactive menu).
+A re-crop made after the rejection makes the registration OUT_OF_DATE, which
+the batches do register again: the change a rejection asks for has been made.
 
 What happens to approvals:
   * approve()                    -- a person approved what is there now
@@ -81,6 +114,13 @@ from typing import Dict, Optional, Tuple
 
 APPROVAL_MARKER = ".registration_approved"
 REJECTION_MARKER = ".registration_rejected"
+RUNNING_MARKER = ".registration_running"
+
+# A running-marker written on ANOTHER computer cannot be checked against that
+# computer's processes, so it is taken as live until it is this old. Longer
+# than any registration takes; a registration that is still really running
+# after this long is better looked at by a person anyway.
+RUNNING_MAX_HOURS_OTHER_HOST = 24
 
 # The registration's own output files. Their sizes and modification times
 # identify one registration: a new run rewrites all of them. QC pictures and
@@ -91,6 +131,7 @@ FINGERPRINT_FILES = ("brainreg.json", "registered_atlas.tiff", "boundaries.tiff"
 
 # What approval_state() can say.
 NOT_REGISTERED = "not_registered"      # no brainreg.json: nothing to approve
+RUNNING = "running"                    # step 3 is registering it right now
 INCOMPLETE = "incomplete"              # started, but an output file is missing
 REJECTED = "rejected"                  # a person rejected THIS registration
 OUT_OF_DATE = "out_of_date"            # its images were made again, or are gone
@@ -99,9 +140,18 @@ APPROVED = "approved"                  # marker names this registration
 OTHER_REGISTRATION = "other_registration"  # marker names a different one
 UNRECORDED = "unrecorded"              # old-style marker: does not say which
 
-# The states in which the brain needs registering (again) before anything
-# else: there is nothing a person could approve.
-NEEDS_REGISTRATION = (NOT_REGISTERED, INCOMPLETE, REJECTED, OUT_OF_DATE)
+# The states in which the brain is at the register step: there is nothing a
+# person could approve. (RUNNING is among them: the registration is not there
+# yet. Step 3 refuses to start a second one; see running_registration.)
+NEEDS_REGISTRATION = (NOT_REGISTERED, RUNNING, INCOMPLETE, REJECTED, OUT_OF_DATE)
+
+# What a person does about a rejected registration. Said wherever a rejected
+# brain is skipped, so nobody has to look it up.
+REJECTED_ADVICE = ("change what made it bad, then register it again: a re-crop "
+                   "(after which the batches register it again by themselves), or "
+                   "the orientation / voxel sizes in the crop's metadata.json and "
+                   "then 'Register again' in the pipeline dashboard or "
+                   "3_register_to_atlas.py --batch --brain <brain> --reprocess")
 
 _STATE_TEXT = {
     NOT_REGISTERED: "not registered yet",
@@ -253,28 +303,227 @@ def read_rejection(reg_folder) -> Optional[dict]:
         return {}
 
 
-def approval_state(reg_folder, images_time=_UNSET) -> Tuple[str, str]:
+class RegistrationRunning(RuntimeError):
+    """Step 3 refused a brain: another run is registering it right now."""
+
+
+def _pid_alive(pid, started_epoch: Optional[float]) -> bool:
+    """Whether process ``pid`` on THIS computer is still the one that wrote the
+    marker. A process id can be reused after the process ends, so on Windows a
+    process created after the marker was written is not it.
+
+    WHY NOT os.kill(pid, 0) ON WINDOWS: there os.kill with any signal other
+    than the two console events TERMINATES the process."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            # Access denied means the process exists (another user's); any
+            # other error (invalid parameter) means there is no such process.
+            return ctypes.get_last_error() == 5
+        try:
+            code = wintypes.DWORD()
+            if k32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259:
+                return False  # it has ended (259 = STILL_ACTIVE)
+            if started_epoch is not None:
+                times = [wintypes.FILETIME() for _ in range(4)]
+                if k32.GetProcessTimes(handle, *[ctypes.byref(t) for t in times]):
+                    ft = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+                    created = (ft - 116444736000000000) / 1e7
+                    if created > started_epoch + _SLACK_SECONDS:
+                        return False  # the id now belongs to a newer process
+            return True
+        finally:
+            k32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def running_registration(reg_folder, own: Optional[dict] = None) -> Optional[dict]:
+    """The running-marker in this folder, or None when there is none.
+
+    ``own``: the caller's claim (claim_registration()'s result). A marker
+    with the same token is the caller's own run, and is reported as None:
+    to the run that wrote it, the folder is not being registered by anyone
+    else.
+
+    The returned dict is the marker's content plus ``live`` (True while the
+    registration that wrote it can still be running) and ``text`` (what to
+    tell a person). LIVE means:
+      * written on THIS computer: its process is still running (and is the
+        same process, not a later one given the same id);
+      * written on ANOTHER computer: written less than
+        RUNNING_MAX_HOURS_OTHER_HOST hours ago (that computer's processes
+        cannot be seen from here);
+      * unreadable: the file is less than that many hours old.
+    On this computer the marker is live while step 3's process OR the
+    brainreg it started (``child_pid``, see record_registration_child) is
+    alive: brainreg outlives a step 3 that was killed.
+    A marker that is not live was left by a run that ended without removing
+    it: the computer restarted, or the window was closed."""
+    marker = _reg(reg_folder) / RUNNING_MARKER
+    try:
+        mtime = marker.stat().st_mtime
+    except OSError:
+        return None
+    try:
+        info = json.loads(marker.read_text(encoding="utf-8"))
+        if not isinstance(info, dict):
+            info = {}
+    except (OSError, ValueError):
+        info = {}
+    if own is not None and own.get("token") and info.get("token") == own.get("token"):
+        return None
+    host = str(info.get("host") or "")
+
+    def _epoch(key):
+        value = info.get(key)
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    started = _epoch("started_epoch")
+    age_h = (datetime.now().timestamp() - (started if started is not None else mtime)) / 3600.0
+    if host and host.lower() == socket.gethostname().lower():
+        live = (_pid_alive(info.get("pid"), started)
+                 or (info.get("child_pid") is not None
+                     and _pid_alive(info.get("child_pid"), _epoch("child_started_epoch"))))
+    else:
+        live = age_h < RUNNING_MAX_HOURS_OTHER_HOST
+    where = "on %s, process %s%s, started %s" % (
+        host or "an unknown computer", info.get("pid", "?"),
+        (" (brainreg: process %s)" % info["child_pid"]) if info.get("child_pid") else "",
+        info.get("started_at", "?"))
+    if live:
+        text = ("being registered right now (%s); wait for it to finish. If you are "
+                "sure that run is no longer going, delete %s in the registration "
+                "folder" % (where, RUNNING_MARKER))
+    else:
+        text = ("the registration did not finish: the run %s is no longer running "
+                "-- register the brain again" % where)
+    info.update(live=live, text=text)
+    return info
+
+
+def claim_registration(reg_folder) -> dict:
+    """Step 3 is about to register this brain: write the running-marker.
+
+    Created exclusively, so of two runs starting together only one gets it.
+    A marker that is no longer live (see running_registration) is replaced.
+    Raises RegistrationRunning when a live run holds it. Returns the marker's
+    content; hand it to release_registration() when the run ends."""
+    reg = _reg(reg_folder)
+    reg.mkdir(parents=True, exist_ok=True)
+    now = datetime.now()
+    record = {"host": socket.gethostname(), "pid": os.getpid(),
+              "started_at": now.isoformat(timespec="seconds"),
+              "started_epoch": now.timestamp(),
+              "token": "%s-%d-%f" % (socket.gethostname(), os.getpid(), now.timestamp())}
+    path = reg / RUNNING_MARKER
+    text = json.dumps(record, indent=1)
+    try:
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        held = running_registration(reg)
+        if held is not None and held["live"]:
+            raise RegistrationRunning(held["text"])
+        _write_atomic(path, text)  # a dead run's marker: take it over
+        mine = running_registration(reg)
+        if mine is None or mine.get("token") != record["token"]:
+            raise RegistrationRunning(
+                (mine or {}).get("text") or "another run took this brain at the same moment")
+        return record
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    return record
+
+
+def record_registration_child(reg_folder, record: dict, child_pid: int) -> None:
+    """Step 3 has started brainreg (process ``child_pid``): add it to the
+    run's running-marker, so the marker stays live while brainreg runs even
+    when step 3 itself is killed (see running_registration).
+
+    ``record`` is claim_registration()'s result; it is updated in place. Only
+    the caller's OWN marker is rewritten (same token), never another run's.
+    Call it right after the process is created: the time written here is the
+    one a reused process id is checked against."""
+    path = _reg(reg_folder) / RUNNING_MARKER
+    try:
+        current = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(current, dict) or current.get("token") != record.get("token"):
+        return
+    record["child_pid"] = int(child_pid)
+    record["child_started_epoch"] = datetime.now().timestamp()
+    _write_atomic(path, json.dumps(record, indent=1))
+
+
+def release_registration(reg_folder, record: dict) -> None:
+    """The run that wrote ``record`` has ended: remove its running-marker --
+    only its OWN (a marker another run wrote since is left alone)."""
+    held = running_registration(reg_folder)
+    if held is not None and held.get("token") == record.get("token"):
+        try:
+            (_reg(reg_folder) / RUNNING_MARKER).unlink()
+        except OSError:
+            pass
+
+
+def approval_state(reg_folder, images_time=_UNSET, own: Optional[dict] = None) -> Tuple[str, str]:
     """(state, explanation) for the registration in this folder. Only
     APPROVED means a person approved the registration that is there now; the
     states in NEEDS_REGISTRATION mean the brain has to be registered again.
 
-    ``images_time``: see images_problem()."""
+    ``images_time``: see images_problem(). ``own``: the caller's claim,
+    see running_registration() -- only step 3 checking its own run passes it."""
+    # Running first: a registration being made right now has a brainreg.json
+    # and no other output yet, which is exactly what a stopped one looks like.
+    running = running_registration(reg_folder, own=own)
+    if running is not None:
+        if running["live"]:
+            return RUNNING, running["text"]
+        # Its run ended without removing the marker: whatever is in the folder
+        # was not checked by step 3 after brainreg, even if every file is there.
+        return INCOMPLETE, running["text"]
     current = registration_fingerprint(reg_folder)
     if current is None:
         return NOT_REGISTERED, _STATE_TEXT[NOT_REGISTERED]
     missing = missing_registration_files(reg_folder)
     if missing:
         return INCOMPLETE, "%s (missing: %s)" % (_STATE_TEXT[INCOMPLETE], ", ".join(missing))
+    # Out of date BEFORE rejected: a re-crop made after the rejection is the
+    # change the rejection asked for, so the brain is registrable again (by
+    # the batches too) instead of still "rejected".
+    problem = images_problem(reg_folder, images_time)
+    if problem:
+        return OUT_OF_DATE, "out of date: %s -- register the brain again" % problem
     rejection = read_rejection(reg_folder)
     if rejection is not None and rejection.get("registration") in (None, current):
         # A rejection that cannot be read, or does not say which registration
         # it was for, is still a person's "no" about what is in this folder.
-        return REJECTED, "rejected by %s at %s%s -- register the brain again" % (
+        return REJECTED, "rejected by %s at %s%s -- %s" % (
             rejection.get("rejected_by") or "someone", rejection.get("rejected_at") or "?",
-            (" (" + rejection["note"] + ")") if rejection.get("note") else "")
-    problem = images_problem(reg_folder, images_time)
-    if problem:
-        return OUT_OF_DATE, "out of date: %s -- register the brain again" % problem
+            (" (" + rejection["note"] + ")") if rejection.get("note") else "",
+            REJECTED_ADVICE)
     marker = read_marker(reg_folder)
     if marker is None:
         return UNAPPROVED, _STATE_TEXT[UNAPPROVED]
@@ -326,7 +575,7 @@ def approve(reg_folder, approved_by: Optional[str] = None, note: str = "",
     if current is None:
         raise ValueError("no registration to approve in %s (brainreg.json not found)" % reg)
     state, text = approval_state(reg)
-    if state in (INCOMPLETE, OUT_OF_DATE):
+    if state in (RUNNING, INCOMPLETE, OUT_OF_DATE):
         raise ValueError("cannot approve the registration in %s: %s" % (reg, text))
     if state == REJECTED:
         if not allow_rejected:
@@ -354,6 +603,9 @@ def reject(reg_folder, rejected_by: Optional[str] = None, note: str = "") -> dic
     current = registration_fingerprint(reg)
     if current is None:
         raise ValueError("no registration to reject in %s (brainreg.json not found)" % reg)
+    running = running_registration(reg)
+    if running is not None and running["live"]:
+        raise ValueError("nothing to reject yet in %s: %s" % (reg, running["text"]))
     _move_marker(reg, "withdrawn_rejected")
     record = {
         "rejected_at": datetime.now().isoformat(timespec="seconds"),

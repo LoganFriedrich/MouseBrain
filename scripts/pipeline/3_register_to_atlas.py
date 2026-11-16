@@ -73,6 +73,20 @@ finished one. A registration left half-written by a run that was killed (the
 window closed, the computer restarted) is listed as INCOMPLETE; registering it
 again first moves it into _archive/<time>_incomplete/.
 
+A registration RUNNING right now looks like a half-written one (brainreg.json
+first, the rest later). So before brainreg starts this script writes
+3_Registered_Atlas/.registration_running (computer, process, start time) and
+removes it when the run ends, however it ends. While it is there and its
+process is alive, the brain is listed as RUNNING and this script refuses to
+archive or register it -- also with --batch and --reprocess. A marker whose
+process is gone counts as INCOMPLETE (mousebrain.registration_approval).
+
+A registration a person REJECTED is not registered again by --batch: it is
+listed with who rejected it, when, and what to change. A person registers it
+again with --batch --brain BRAIN --reprocess, the interactive menu, or the
+dashboard's "Register again". A re-crop after the rejection makes it OUT OF
+DATE, which --batch does register again.
+
 WHEN IS A BRAIN "REGISTERED"? Only when every output file brainreg writes is
 there (brainreg.json, registered_atlas.tiff, boundaries.tiff,
 deformation_field_0.tiff). brainreg writes brainreg.json first, before it
@@ -238,9 +252,13 @@ FOLDER_REGISTRATION = "3_Registered_Atlas"
 
 from mousebrain.registration_approval import (APPROVAL_MARKER, FINGERPRINT_FILES,
                                               OUT_OF_DATE, REJECTED, REJECTION_MARKER,
-                                              approval_state,
+                                              RegistrationRunning, approval_state,
+                                              claim_registration,
                                               missing_registration_files,
-                                              retire_for_new_registration)
+                                              record_registration_child,
+                                              release_registration,
+                                              retire_for_new_registration,
+                                              running_registration)
 
 # Files that indicate a complete registration: ALL of brainreg's outputs.
 # brainreg.json alone used to be the test, but brainreg writes it before it
@@ -296,16 +314,21 @@ def brain_filter_matches(brain, pipelines):
     return [i for i, p in enumerate(pipelines) if name and name in p[0].name]
 
 
-def check_registration_status(pipeline_folder):
+def check_registration_status(pipeline_folder, own_claim=None):
     """
     Check if registration has been done.
+
+    ``own_claim``: the running-marker record of the run asking (only
+    run_brainreg's check of its own finished registration passes it). That
+    marker is the asker's own, so it does not make the brain "running" to it.
     
     Returns:
         (status, reason)
         
         Status:
         - "needs_registration": Not registered yet
-        - "incomplete": Started but failed/incomplete
+        - "running": Being registered right now (a live .registration_running)
+        - "incomplete": Started but failed/incomplete (or its run is gone)
         - "rejected": Finished, but a person rejected it
         - "out_of_date": Finished, but its images were made again since
         - "complete": Successfully registered
@@ -315,7 +338,15 @@ def check_registration_status(pipeline_folder):
     
     if not reg_folder.exists():
         return "needs_registration", "registration folder missing"
-    
+
+    # Running first: brainreg writes brainreg.json and then fits for a long
+    # time, so a running registration has the same files as one that stopped.
+    # Taking it for "incomplete" archived it under the running brainreg and
+    # started a second one into the same folder.
+    running = running_registration(reg_folder, own=own_claim)
+    if running is not None:
+        return ("running" if running["live"] else "incomplete"), running["text"]
+
     # Get contents, ignoring hidden files and archive
     contents = [f for f in reg_folder.iterdir() 
                 if not f.name.startswith('.') 
@@ -332,7 +363,7 @@ def check_registration_status(pipeline_folder):
 
     # A person looked at it and turned it down: it has to be registered again
     # (after whatever made it bad is changed -- crop, orientation, voxel size).
-    state, text = approval_state(reg_folder)
+    state, text = approval_state(reg_folder, own=own_claim)
     if state == REJECTED:
         return "rejected", text
     # Its images were made again after it (a re-crop), or are gone: it
@@ -415,9 +446,14 @@ def draw_registration_qc(pipeline_folder):
     return qc.create_qc_visualization(qc_data, num_levels=5)
 
 
-def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLAS):
+def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLAS,
+                 claim=None):
     """
     Run brainreg on a pipeline.
+
+    ``claim``: this run's running-marker (claim_registration()'s result). The
+    brainreg process is added to it as soon as it starts, and the check after
+    brainreg treats it as this run's own (see check_registration_status).
 
     Uses metadata from Script 2 to determine:
     - Which channel to register (background channel preferred)
@@ -551,7 +587,29 @@ def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLA
 
         # Run brainreg
         start_time = datetime.now()
-        result = subprocess.run(cmd, capture_output=False)
+        # Popen, not subprocess.run: brainreg's process id goes into the
+        # running-marker the moment it exists. When step 3 is killed (a batch's
+        # time limit, a closed dashboard) brainreg keeps writing into the
+        # folder; the marker stays live while it does, so a retry refuses the
+        # brain instead of archiving the folder under it and starting a second
+        # brainreg into it.
+        proc = subprocess.Popen(cmd)
+        if claim is not None:
+            try:
+                record_registration_child(reg_folder, claim, proc.pid)
+            except Exception as e:
+                print(f"    [!] Could not record brainreg's process in the running-marker: {e}")
+        try:
+            returncode = proc.wait()
+        except BaseException:
+            # Step 3 itself is being stopped from inside (Ctrl+C): stop
+            # brainreg with it. Its marker is removed as step 3 ends, so a
+            # brainreg left running would be writing into a folder nothing
+            # marks as busy.
+            proc.kill()
+            proc.wait()
+            raise
+        result = subprocess.CompletedProcess(cmd, returncode)
         elapsed = (datetime.now() - start_time).total_seconds()
 
         print(f"    {'='*50}")
@@ -567,7 +625,7 @@ def run_brainreg(pipeline_folder, metadata, n_free_cpus=None, atlas=DEFAULT_ATLA
         print(f"    [{timestamp()}] Registration completed in {elapsed/60:.1f} minutes")
 
         # Verify output
-        status, reason = check_registration_status(pipeline_folder)
+        status, reason = check_registration_status(pipeline_folder, own_claim=claim)
         if status != "complete":
             # Update tracker with failure
             if tracker and exp_id:
@@ -632,13 +690,16 @@ def interactive_select_pipelines(pipelines, statuses):
     ready = []
     complete = []
     incomplete = []
-    
+    running = []
+
     for i, ((pipeline_folder, mouse_folder, metadata), (status, reason)) in enumerate(zip(pipelines, statuses)):
         display_name = f"{mouse_folder.name}/{pipeline_folder.name}"
         if status == "needs_registration":
             ready.append((i, display_name))
         elif status == "complete":
             complete.append((i, display_name))
+        elif status == "running":
+            running.append((i, display_name, reason))
         else:
             incomplete.append((i, display_name, reason))
     
@@ -660,6 +721,12 @@ def interactive_select_pipelines(pipelines, statuses):
     if incomplete:
         print("\n[INCOMPLETE/FAILED]")
         for idx, name, reason in incomplete:
+            print(f"  {idx + 1}. {name} ({reason})")
+
+    if running:
+        # Shown so nobody wonders where they went; picking one is refused.
+        print("\n[BEING REGISTERED RIGHT NOW]")
+        for idx, name, reason in running:
             print(f"  {idx + 1}. {name} ({reason})")
     
     print("\n" + "-" * 60)
@@ -824,10 +891,15 @@ Examples:
             return 1
         to_process = asked
     elif args.batch:
-        # Non-interactive: process all pending
+        # Non-interactive: process all pending. NOT "rejected": a person
+        # turned that registration down, and registering it again unattended,
+        # on the same images and settings, takes hours to make the same fit
+        # and ask the same question (reported below; a person asks for it with
+        # --reprocess). NOT "running" either: another run is making it now.
         to_process = [i for i, (status, _) in enumerate(statuses)
-                      if status in ["needs_registration", "incomplete", "rejected",
-                                    "out_of_date"]]
+                      if status in ["needs_registration", "incomplete", "out_of_date"]]
+        held_back = [i for i, (status, _) in enumerate(statuses)
+                     if status in ("rejected", "running")]
 
         # Filter by brain name if specified. An exact folder name (or
         # <mouse folder>/<brain folder>) means that brain only: a part of a
@@ -837,15 +909,30 @@ Examples:
         if args.brain:
             asked = brain_filter_matches(args.brain, pipelines)
             to_process = [i for i in to_process if i in asked]
-            if not to_process:
-                # Also check if already complete and just needs to be reported
-                for i in asked:
-                    status, _ = statuses[i]
-                    if status == "complete":
-                        print(f"\nBrain '{args.brain}' is already registered.")
-                        return
-                print(f"\nNo pending registration found for brain matching '{args.brain}'")
-                return
+            held_back = [i for i in held_back if i in asked]
+
+        # Say which brains are not registered and why, with what to do.
+        for i in held_back:
+            status, reason = statuses[i]
+            name = f"{pipelines[i][1].name}/{pipelines[i][0].name}"
+            if status == "rejected":
+                print(f"\n[!] {name}: NOT registered again -- {reason}")
+            else:
+                print(f"\n[!] {name}: NOT started -- {reason}")
+
+        if args.brain and not to_process:
+            if held_back:
+                # What was asked for is not done: the caller must not read
+                # this as "registered" (the batches check the exit code).
+                return 1
+            # Also check if already complete and just needs to be reported
+            for i in asked:
+                status, _ = statuses[i]
+                if status == "complete":
+                    print(f"\nBrain '{args.brain}' is already registered.")
+                    return
+            print(f"\nNo pending registration found for brain matching '{args.brain}'")
+            return
 
         if not to_process:
             print("\nNo pipelines need registration. All complete!")
@@ -879,14 +966,33 @@ Examples:
     
     success = 0
     failed = 0
-    
+    refused = 0
+
     for i, idx in enumerate(to_process):
         pipeline_folder, mouse_folder, metadata = pipelines[idx]
         status, _ = statuses[idx]
-        
+        reg_folder = pipeline_folder / FOLDER_REGISTRATION
+
         print(f"\n[{i+1}/{len(to_process)}] {mouse_folder.name}/{pipeline_folder.name}")
         print("-" * 50)
-        
+
+        # The running-marker is taken FIRST, before anything in the folder is
+        # touched: another run registering this brain right now (started from
+        # another window, the dashboard, a batch) keeps it, and this one stops
+        # here -- whatever the status read above said, and also with
+        # --reprocess. A marker left by a run that is gone is taken over.
+        try:
+            claim = claim_registration(reg_folder)
+        except RegistrationRunning as e:
+            refused += 1
+            print(f"    [!] Not started: {e}")
+            continue
+
+        # Set once brainreg has been started: only then is what is in the
+        # folder after an error the failed run's output. Before that it is the
+        # PREVIOUS registration (perhaps an approved one), and an error while
+        # archiving it must not label it "failed" or split it further.
+        brainreg_started = False
         try:
             # Whatever is in the folder goes into _archive first, so brainreg
             # writes into an empty folder: a finished registration (being
@@ -900,11 +1006,13 @@ Examples:
                     print("    [OK] Previous registration archived")
 
             # Run registration
+            brainreg_started = True
             run_brainreg(
                 pipeline_folder,
                 metadata,
                 n_free_cpus=args.n_free_cpus,
-                atlas=args.atlas
+                atlas=args.atlas,
+                claim=claim,
             )
 
             success += 1
@@ -915,18 +1023,29 @@ Examples:
             print(f"\n    [FAIL] Error: {e}")
             import traceback
             traceback.print_exc()
-            # What the failed run wrote is not a registration. Left in place,
-            # its brainreg.json made it look like one to every reader; it goes
-            # into _archive/<time>_failed/, kept for whoever investigates.
-            try:
-                if archive_existing_registration(pipeline_folder, label="failed"):
-                    print("    The failed run's output was moved to "
-                          "3_Registered_Atlas/_archive/ (folder name ends in _failed)")
-            except Exception as archive_error:
-                print(f"    [!] Could not move the failed run's output aside: {archive_error}")
+            if brainreg_started:
+                # What the failed run wrote is not a registration. Left in
+                # place, its brainreg.json made it look like one to every
+                # reader; it goes into _archive/<time>_failed/, kept for
+                # whoever investigates.
+                try:
+                    if archive_existing_registration(pipeline_folder, label="failed"):
+                        print("    The failed run's output was moved to "
+                              "3_Registered_Atlas/_archive/ (folder name ends in _failed)")
+                except Exception as archive_error:
+                    print(f"    [!] Could not move the failed run's output aside: {archive_error}")
+            else:
+                print("    [!] Moving the PREVIOUS registration into 3_Registered_Atlas/_archive/ "
+                      "failed part-way; nothing was registered. Whatever was not moved is "
+                      "still in 3_Registered_Atlas, the rest is in the newest _archive "
+                      "folder. Put it back together before registering again.")
+        finally:
+            # However the run ended, the brain is no longer being registered.
+            release_registration(reg_folder, claim)
     
     print("\n" + "=" * 60)
-    print(f"Complete: {success} succeeded, {failed} failed")
+    print(f"Complete: {success} succeeded, {failed} failed"
+          + (f", {refused} not started (being registered by another run)" if refused else ""))
     print("=" * 60)
 
     if success > 0:
@@ -947,8 +1066,9 @@ Examples:
         print("   (it will guide you through everything)")
         print("=" * 60)
 
-    # Return non-zero exit code if any failures
-    return 1 if failed > 0 else 0
+    # Return non-zero exit code if any failures, or a brain was not started
+    # because another run holds it (what was asked for is not done)
+    return 1 if (failed > 0 or refused > 0) else 0
 
 
 if __name__ == '__main__':

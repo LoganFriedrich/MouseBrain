@@ -39,7 +39,10 @@ THE RULES (first missing item, in this order, is the brain's step)
             A registration a person REJECTED does not count either, nor one
             that is OUT OF DATE (its images were made again after it, or are
             gone): the brain is back at "register"
-            (registration_approval).
+            (registration_approval). Nor one that is RUNNING right now
+            (step 3 holds .registration_running): the brain is at
+            "register" with "being registered right now", and step 3
+            refuses to start a second registration of it.
   approve   a person's approval of THIS registration (see
             ``mousebrain.registration_approval``). An approval of an earlier
             registration, or one that does not say which registration it was

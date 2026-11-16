@@ -43,7 +43,7 @@ is the first item on this list that is not done yet:
 |---|---|
 | Extract | `1_Extracted_Full/metadata.json` exists (extraction writes it last, so it means every channel finished) |
 | Crop | `metadata.json` exists in `2_Cropped_For_Registration` or `2_Cropped_For_Registration_Manual`, or the brain was registered on its full extraction (it arrived already cut, so there is nothing to crop) |
-| Register | a FINISHED registration is in `3_Registered_Atlas`: all four of `brainreg.json`, `registered_atlas.tiff`, `boundaries.tiff` and `deformation_field_0.tiff` (see "A registration that did not finish" below) -- and not rejected by a person, and not out of date (see "Stale outputs") |
+| Register | a FINISHED registration is in `3_Registered_Atlas`: all four of `brainreg.json`, `registered_atlas.tiff`, `boundaries.tiff` and `deformation_field_0.tiff` (see "A registration that did not finish" below) -- and not rejected by a person, and not out of date (see "Stale outputs"). A registration that is running right now is not finished either: the brain stays at Register with "being registered right now", and nothing starts a second one |
 | Approve | a person approved this registration (see "Registration QC & Approval" below) |
 | Detect | a candidates file is where step 5 will look: the top of `4_Cell_Candidates`, or `4_Cell_Candidates/from_<the folder the atlas was fitted to>` |
 | Pre-filter | optional (RUN_PIPELINE only). Done when any pre-filter output exists -- a `prefilter_report.json` in a `prefiltered_<time>` folder, or step 5's `prefiltered/interior_candidates.xml`. It is never shown once the brain is classified: step 5 pre-filters on its own by default |
@@ -332,9 +332,17 @@ registered again. (Before, `--force` never registered anything -- step 3 said
 "already registered" -- yet the batch logged "Registration complete" and redid
 every later step on the old registration.)
 
+**The overnight batch never registers a REJECTED brain again** -- not even with
+`--force` -- and never starts a second registration of a brain that is being
+registered right now. Such a brain is counted under "Not started" in the summary
+and listed in the report's **Not Started** section with the reason: for a
+rejection, who rejected it, when, and what to change. See "Rejecting is
+recorded".
+
 To register ONE brain again by hand: `python 3_register_to_atlas.py --batch
 --brain <brain folder name> --reprocess`. It refuses a name that fits more than
-one brain (it lists them), and needs `--batch`.
+one brain (it lists them), and needs `--batch`. It also refuses a brain that is
+being registered right now (see "A registration that did not finish").
 
 ## The Pipeline Dashboard's Run button
 
@@ -413,10 +421,16 @@ needs a crop -- `ch0/` TIFFs plus `metadata.json` in
 the brain stops as "needs manual crop": crop it by hand and run it again. Then
 registration (`3_register_to_atlas.py --batch --brain <brain>`), after which the
 brain always stops at "needs registration approval" until a person approves it.
-A registration that did not produce its files (`3_Registered_Atlas/brainreg.json`
-and `deformation_field_0.tiff`) stops the brain as FAILED at `register`, with the
-missing file named in `qc_register`; look at the registration step's output for
-that brain, fix the cause, and run it again with `--resume --retry-failed`.
+A registration that did not produce ALL four of its output files
+(`3_Registered_Atlas/brainreg.json`, `registered_atlas.tiff`, `boundaries.tiff`
+and `deformation_field_0.tiff`; see "A registration that did not finish") stops
+the brain as FAILED at `register`, with the missing files named in
+`qc_register`; look at the registration step's output for that brain, fix the
+cause, and run it again with `--resume --retry-failed`. A registration a person
+REJECTED is not registered again: the brain stops as REVIEW at `register`, and
+`qc_register` says who rejected it, when, and what to change (see "Rejecting is
+recorded"). A brain another run is registering right now stops as FAILED at
+`register` with "being registered right now"; run it again later.
 (Until this was fixed every brain failed at extraction: the batch passed steps 2
 and 3 an option they do not accept, and the checks looked for files the steps do
 not write.)
@@ -728,6 +742,12 @@ STARTED. A brain counts as registered only when all four output files are there
   there afterwards): step 3 prints `[FAIL]` and moves what the failed run wrote
   into `3_Registered_Atlas/_archive/<date>_<time>_failed/` -- kept, so whoever
   looks into the failure can see it. The brain is back at "Register".
+  Only a run that got as far as starting brainreg is archived as `_failed`. If
+  step 3 cannot move the PREVIOUS registration aside before it starts (a file
+  in use, a full disk), nothing is registered, nothing is labelled `_failed`,
+  and step 3 says that moving the previous registration failed part-way: what
+  was moved is in the newest `_archive/` folder, the rest is still in
+  `3_Registered_Atlas`. Put it back together before registering again.
 - **Registration was stopped part-way** (the window was closed, the computer
   restarted): the leftovers stay in the folder. RUN_PIPELINE and the pipeline
   dashboard show `[!] Registered to atlas -- the registration did not finish
@@ -738,6 +758,31 @@ STARTED. A brain counts as registered only when all four output files are there
   `3_Registered_Atlas/_archive/<date>_<time>_incomplete/`.
 - **Nothing unfinished can be approved**: every Approve button and
   `util_approve_registration.py` refuse, naming the missing files.
+- **A registration that is RUNNING is not "did not finish".** While brainreg
+  works, the folder holds `brainreg.json` and nothing else for a long time --
+  exactly what a stopped run leaves. So step 3 writes
+  `3_Registered_Atlas/.registration_running` (which computer, which process,
+  when it started) before brainreg starts, and deletes it when the run ends,
+  whether it succeeded, failed or was stopped with Ctrl-C. While that file is
+  there and its run is still going, every reader shows `being registered right
+  now (on <computer>, process <n>, started <time>)`; step 3 -- `--batch`,
+  `--reprocess`, the interactive menu, the dashboard's Run button, the
+  overnight batch and batch_process -- refuses to touch the brain (nothing is
+  archived, no second brainreg starts) and says so. "Still going" means: on the
+  same computer, step 3's process OR the brainreg it started is still running
+  (the file names both: `process <n> (brainreg: process <m>)`); on another
+  computer, the file is less than 24 hours old (another computer's processes
+  cannot be seen). brainreg is named because stopping step 3 does not stop it:
+  when the overnight batch or batch_process gives up on step 3 after its 2-hour
+  limit, or the dashboard is closed, brainreg keeps writing into the folder,
+  and a retry must wait for it rather than start a second brainreg on top.
+  Pressing Ctrl-C in step 3's own window stops brainreg too.
+  If both are gone (the computer restarted, brainreg ended after step 3 was
+  stopped) the registration counts as did-not-finish -- step 3 never checked
+  it, nor recorded which images it was fitted to: the brain shows "the registration did
+  not finish: the run ... is no longer running" and the next registration
+  replaces the file. If you KNOW a run on another computer has stopped and do
+  not want to wait 24 hours, delete `.registration_running` by hand.
 
 **An approval belongs to ONE registration.** Approving writes
 `3_Registered_Atlas/.registration_approved`, and that file records which
@@ -772,12 +817,23 @@ folder now. What that means for you:
   `3_Registered_Atlas/.registration_rejected` (who, when, which registration).
   Any approval goes into `_archive/` (kept, not deleted). From then on every
   reader shows `[!] Registered to atlas -- rejected by <who> at <when> --
-  register the brain again` and offers "Register"; region counts made on it are
-  shown as STALE. No Approve button accepts a rejected registration. Fix what
-  made it bad (the crop, the orientation, the voxel size) and register again:
-  step 3 lists the brain as `rejected` under `[INCOMPLETE/FAILED]`, `--batch`
-  registers it again, and the rejection goes into
-  `_archive/<date>_<time>_rejected/` together with the registration it was for.
+  change what made it bad, then register it again ...` and the brain is at
+  "Register"; region counts made on it are shown as STALE. No Approve button
+  accepts a rejected registration.
+- **Nothing unattended registers a rejected brain again.** Step 3 `--batch`
+  (without `--reprocess`), `overnight_batch.py` (also with `--force`) and
+  `batch_process.py` skip it and print who rejected it, when, and what to
+  change: on the same images and settings brainreg would only spend hours
+  making the same fit. What to do:
+  - **Re-crop it.** A crop made after the rejection makes the registration
+    "out of date", and from then on every batch registers it again by itself.
+  - **Or change its orientation or voxel sizes** (in the crop's
+    `metadata.json`) and ask for the registration yourself: RUN_PIPELINE's
+    "Register" step asks "Register it again now?", or run
+    `python 3_register_to_atlas.py --batch --brain <brain> --reprocess`
+    (step 3's interactive menu lists it under `[INCOMPLETE/FAILED]` too).
+  Registering again moves the rejection into `_archive/<date>_<time>_rejected/`
+  together with the registration it was for.
 - **Rejected by mistake?** Run `util_approve_registration.py --brain <brain>`:
   it says who rejected it and asks "Approve it anyway, overruling the
   rejection?". Answering yes approves it and moves the rejection into

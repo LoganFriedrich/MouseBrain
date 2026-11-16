@@ -23,7 +23,7 @@ import argparse
 import sys
 from pathlib import Path
 from mousebrain.registration_approval import (APPROVED, NEEDS_REGISTRATION, NOT_REGISTERED,
-                                              REJECTED, approval_state,
+                                              REJECTED, RUNNING, approval_state,
                                               approve as record_approval, reject)
 
 # =============================================================================
@@ -173,6 +173,9 @@ Examples:
             print("Rejection kept. Register the brain again.")
             sys.exit(1)
         overrule = True
+    elif state == RUNNING and not args.view:
+        print(f"\n[!] Nothing to approve yet: {why}")
+        sys.exit(1)
     elif state in NEEDS_REGISTRATION and not args.view:
         print(f"\n[!] Nothing to approve: {why}")
         print(f"  Register it again: python 3_register_to_atlas.py --batch --brain {pipeline_folder.name}")
