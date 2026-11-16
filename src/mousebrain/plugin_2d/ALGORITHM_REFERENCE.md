@@ -724,23 +724,31 @@ banner before the real run.
 - **A sample with no nuclei** is a result and is registered like one: a
   current entry with 0 nuclei, no files, a positive fraction and background of
   `null` (nothing was measured), and the parameters the run used. If the
-  sample already had a current entry with files, those files are first moved
-  to an `_archived/<date_time>/` folder beside them (the earlier entry's record
-  is replaced; the registry's log keeps both events). The end-of-batch summary
-  lists each such sample as `earlier registry entry (<n> nuclei) replaced by
-  this run's 0 nuclei;` followed by `<k> file(s) moved to _archived/` when
-  files were moved, or `no files to archive` when the earlier entry had none
-  (or was already retired, that is, no longer current).
+  sample already had a current entry, every file in the sample's own
+  registry folder (`exports/ENCR_Detection/<sample>/`) is first moved to an
+  `_archived/<date_time>/` folder inside it -- not only the files the entry
+  lists, but also any other file there (an older batch copied extra
+  overlays and histograms it never listed); the `_archived/` folder itself
+  is left alone. The earlier entry's record is replaced; the registry's log
+  keeps both events. The end-of-batch summary lists each such sample as
+  `earlier registry entry (<n> nuclei) replaced by this run's 0 nuclei;`
+  followed by `<k> file(s) moved to _archived/` when files were moved, or
+  `no files to archive` when there were none (or the earlier entry was
+  already retired, that is, no longer current).
 
-  **If those files cannot be moved** (one is open in another program, or the
-  share drops out), nothing is replaced: the 0-nuclei result is NOT
+  **If those files cannot be moved** (any ONE of them is open in another
+  program, or the share drops out), the ones already moved are put back and
+  nothing is replaced: the 0-nuclei result is NOT
   registered, the earlier entry stays current with its files where they
   were, and the summary says `[!] <sample>: this run found 0 nuclei, but the
   earlier registry entry (<n> nuclei) is KEPT CURRENT: its files could not be
   moved to _archived/`. Close whatever has the files open and run the batch
-  again. WHY it is not registered anyway: the earlier run's files would stay
-  in the active folder with no entry naming them, and anything that copies
-  that folder would take them for current results.
+  again. WHY it is not registered anyway, and WHY every file in the folder
+  moves and not only the listed ones: otherwise files of the earlier run
+  would stay in the active folder beside an entry that is not theirs (or
+  beside no current entry at all), and anything that copies that folder --
+  an integrator that mirrors the registry does -- would take them for
+  current results.
 
   **If the files were moved and the 0-nuclei result then cannot be written**
   (the registry file is open in another program, or the share drops out at
@@ -759,7 +767,7 @@ banner before the real run.
 
   | The failure | Examples | Earlier registry entry |
   |---|---|---|
-  | **The sample's**: while taking the two channels out of the image (after the file has been read), detecting nuclei or measuring cells, a data error (`ValueError`, `KeyError` or `IndexError`) -- and some OTHER sample of the same run got past that same step | the image has the wrong number of channels or dimensions, the detector rejects it | **retired**: no longer current, its files moved to an `_archived/<date_time>/` folder beside them (nothing is deleted). The summary says `earlier registry entry retired`. |
+  | **The sample's**: while taking the two channels out of the image (after the file has been read), detecting nuclei or measuring cells, a data error (`ValueError`, `KeyError` or `IndexError`) -- and some OTHER sample of the same run got past that same step | the image has the wrong number of channels or dimensions, the detector rejects it | **retired**: no longer current, and every file in the sample's own registry folder moved to an `_archived/<date_time>/` folder inside it, listed or not, as for a sample with no nuclei above (nothing is deleted). The summary says `earlier registry entry retired (no longer current; <k> file(s) moved to _archived/)`, or `no files to archive` when there were none (an entry with 0 nuclei has no files). |
   | **Infrastructure**: ANY error while reading the file from disk (`read`), and anything else at any step | the share cannot be reached, **the file is not recognized as an ND2** (empty or damaged), **the file's end is missing** (cut off, or still being copied), the tracker file is open in another program, the disk is full, memory runs out, **a missing library or the wrong environment** (an import error), a library or code defect that raises a type, attribute or runtime error | **kept current**, unchanged. The summary says `earlier registry entry kept current -- the failure was not shown to be the sample's`. |
   | **A data error at a step no other sample of the run got past** | the same software fault hit every file; or every sample that has nuclei failed while measuring | **kept current**. The summary says `earlier registry entry kept current -- no other sample of this run got past the '<step>' step, so the failure may be the software's, not the sample's`. |
 
@@ -775,9 +783,10 @@ banner before the real run.
   finished WITH nuclei -- a sample with no nuclei is never measured, so it
   shows nothing about that step.
 
-  **If a retirement cannot be carried out** because the earlier entry's
-  files cannot be moved (one is open in another program, or the share drops
-  out), the entry stays current and the summary says `[!] <sample>: the
+  **If a retirement cannot be carried out** because one of the files in the
+  sample's folder cannot be moved (it is open in another program, or the
+  share drops out), the files already moved are put back, the entry stays
+  current and the summary says `[!] <sample>: the
   sample's own re-run failed, but its earlier registry entry could not be
   retired and is STILL CURRENT`. Close whatever has the files open and run
   the batch again.
@@ -809,9 +818,15 @@ banner before the real run.
   image is caught by the "another sample got past that step" condition. A
   defect that hits only SOME images, in a run where another sample got past
   the step, is taken for those samples' own failure and their earlier
-  entries ARE retired. Nothing is lost when that happens: the files are in
-  `_archived/`, the registry's log records the retirement, and running the
-  batch again once the defect is fixed registers the samples again. One more
+  entries ARE retired. The earlier files are kept when that happens: they
+  are in `_archived/`, and the registry's log records the retirement. Running
+  the batch again once the defect is fixed registers each sample again, and
+  that registration OVERWRITES the retired entry's record in `registry.json`
+  -- its counts and parameters are not kept there. If the re-run does not
+  reproduce the earlier counts exactly (the batch's detection is not yet
+  guaranteed to), the earlier counts then survive only in the archived
+  `measurements.csv` and in the registry's log (`logs/ENCR_Detection.log`),
+  not in the registry itself. One more
   consequence: a batch run on a single sample never retires its entry,
   because nothing else in the run shows the software works; run it together
   with a sample known to be good.

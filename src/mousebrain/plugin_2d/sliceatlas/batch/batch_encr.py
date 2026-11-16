@@ -994,6 +994,24 @@ def process_single(
     return result
 
 
+def _files_to_archive(registry, entry) -> int:
+    """How many files retiring *entry* would move to _archived/: its listed
+    outputs that are still there, plus every other file in the sample's own
+    registry folder (registry.own_folder_files).
+
+    Counted BEFORE invalidate runs (afterwards they are gone from the active
+    folder) and reported only once invalidate says it moved them all, so the
+    summary states what really moved -- "no files to archive" when there
+    were none (a 0-nuclei entry lists no outputs), never a move that did not
+    happen.
+    """
+    root = Path(registry.registry_root)
+    listed = {(root / rel).resolve() for rel in (entry.get('outputs') or {}).values()
+              if (root / rel).exists()}
+    swept = {f.resolve() for _folder, f in registry.own_folder_files(entry)}
+    return len(listed | swept)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Batch colocalization analysis for ENCR ND2 files',
@@ -1222,7 +1240,7 @@ def main():
     all_results = []
     replaced_by_no_nuclei = []   # (sample, earlier n_nuclei, files archived)
     not_replaced = []            # (sample, earlier n_nuclei): files would not move
-    retired_by_error = []        # samples whose earlier entry a failure retired
+    retired_by_error = []        # (sample, files archived): a failure retired its entry
     not_retired = []             # samples whose entry should retire, files would not move
     kept_after_error = []        # failed samples whose earlier entry stays current
     kept_unproven = []           # (sample, step): no other sample got past the step
@@ -1290,8 +1308,14 @@ def main():
         # re-run found nothing kept its earlier entry -- with the earlier
         # count -- marked current, and the registry reported a number the
         # newest run contradicts. The earlier entry's files are archived first
-        # (invalidate moves them to _archived/<timestamp>/ beside them), so no
-        # current entry is left pointing at, or next to, another run's files.
+        # (invalidate moves them to _archived/<timestamp>/ beside them), and
+        # with them EVERY other file in the sample's own registry folder
+        # (include_own_folder): such a folder can hold files of the earlier
+        # run that its entry never listed -- extra overlays, histograms --
+        # and archiving only the listed ones left those in the active folder
+        # beside the new 0-nuclei entry, where a mirror shows them as current.
+        # So no current entry is left pointing at, or next to, another run's
+        # files.
         # WHEN THEY WILL NOT MOVE (a file open in another program, a share
         # dropping out): invalidate leaves the earlier entry current with its
         # files in place and returns nothing. Registering 0 nuclei over it
@@ -1306,15 +1330,15 @@ def main():
             retired = False   # True once the earlier entry's files have moved
             try:
                 earlier = registry.get_entry(sample_id)
-                if (earlier and earlier.get('is_current', True)
-                        and earlier.get('outputs')):
+                present = (_files_to_archive(registry, earlier)
+                           if earlier and earlier.get('is_current', True)
+                           else 0)
+                if present:
                     # Counted before the move (afterwards they are gone from
                     # here) and reported only once invalidate says it moved
                     # them all.
-                    present = sum(
-                        1 for rel in earlier['outputs'].values()
-                        if (Path(registry.registry_root) / rel).exists())
-                    if not registry.invalidate(sample=sample_id):
+                    if not registry.invalidate(sample=sample_id,
+                                               include_own_folder=True):
                         not_replaced.append(
                             (sample_id,
                              (earlier.get('results') or {}).get('n_nuclei')))
@@ -1390,8 +1414,14 @@ def main():
                 continue   # nothing current to retire
             if not finished.intersection(STEP_EVIDENCE.get(failed_step, ())):
                 kept_unproven.append((sample_id, failed_step))
-            elif registry.invalidate(sample=sample_id):
-                retired_by_error.append(sample_id)
+                continue
+            # Every file in the sample's own registry folder goes with the
+            # entry, for the same reason as on the no-nuclei path above: a
+            # retired entry must not leave an earlier run's files in the
+            # active folder with no current entry naming them.
+            present = _files_to_archive(registry, earlier)
+            if registry.invalidate(sample=sample_id, include_own_folder=True):
+                retired_by_error.append((sample_id, present))
             else:
                 # invalidate could not move a file: the entry is still
                 # current. Said in the summary, not only in invalidate's own
@@ -1450,10 +1480,11 @@ def main():
         if r.get('status') == 'error':
             print(f"    {r.get('file', '')}: [{r.get('failure', '')} failure "
                   f"while {r.get('failed_at', '')}] {r.get('error', '')}")
-    for sample_id in retired_by_error:
+    for sample_id, archived in retired_by_error:
+        what = (f"{archived} file(s) moved to _archived/" if archived
+                else "no files to archive")
         print(f"    {sample_id}: earlier registry entry retired (no longer "
-              "current, its files moved to _archived/) -- the sample's own "
-              "re-run failed")
+              f"current; {what}) -- the sample's own re-run failed")
     for sample_id in not_retired:
         print(f"    [!] {sample_id}: the sample's own re-run failed, but its "
               "earlier registry entry could not be retired and is STILL "
