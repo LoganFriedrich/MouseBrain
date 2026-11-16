@@ -34,7 +34,7 @@ import subprocess
 import sys
 
 from mousebrain.config import iter_brains, registered_input, resolve_pipeline_input
-from mousebrain.pipeline_status import brain_status
+from mousebrain.pipeline_status import brain_status, find_candidates
 from mousebrain.registration_approval import (approval_state,
                                               is_approved as is_registration_approved)
 import time
@@ -666,15 +666,15 @@ def generate_cell_detection_images(pipeline_dir: Path, output_dir: Path) -> List
         if not tiff_files:
             return []
 
-        # Load cells from XML
+        # Load cells from "the candidates": the file step 5 classifies
+        # (pipeline_status.find_candidates). This used to take the first .xml
+        # the folder listing gave at the top of 4_Cell_Candidates, which is not
+        # the run step 5 uses when that run is kept in from_<registered
+        # folder>, so the picture showed no cells, or another run's cells.
         cells = []
-        det_xml = None
-        det_dir = pipeline_dir / FOLDER_DETECTION
-        if det_dir.exists():
-            xml_files = list(det_dir.glob("*.xml"))
-            if xml_files:
-                det_xml = xml_files[0]
-                cells = parse_cells_from_xml(det_xml)
+        det_xml = find_candidates(pipeline_dir)
+        if det_xml is not None:
+            cells = parse_cells_from_xml(det_xml)
 
         # Generate images at 25%, 50%, 75% Z
         total_z = len(tiff_files)

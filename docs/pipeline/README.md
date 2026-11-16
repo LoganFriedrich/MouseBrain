@@ -67,7 +67,9 @@ registered-space candidates folder (the top of `4_Cell_Candidates`, then
 `from_<the folder the atlas was fitted to>`), `detected_cells.xml` if it is
 there, else `cell_classification.xml`, else the first `.xml` by name. Everything
 else that reads "the candidates" reads that same file: `batch_process.py`'s
-detection check, the pre-filter (`python -m mousebrain.prefilter --brain ...`
+detection check, the "detected" mark in step 4's own list of brains
+(`4_detect_cells.py` run without `--brain`), the cells drawn on the overnight
+batch's sample pictures, the pre-filter (`python -m mousebrain.prefilter --brain ...`
 without `--candidates`, and the Setup & Tuning pre-filter button when no run is
 selected) and the Setup & Tuning Classify button. Nothing reads a run kept in
 `4_Cell_Candidates/_archive/` (an earlier, replaced run) or a trial run outside
