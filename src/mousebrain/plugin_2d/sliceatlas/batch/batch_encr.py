@@ -832,12 +832,16 @@ def process_single(
     from ..core.colocalization import ColocalizationAnalyzer
     from ..core.visualization import save_all_qc_figures
 
-    # Initialize tracker
+    # Initialize tracker. When it cannot be opened the sample is still
+    # analyzed (its CSV and figures are the results), but the reason is
+    # printed for every sample. WHY: this used to set tracker = None in
+    # silence, so a whole batch could run with nothing logged and nobody told.
     try:
         from ..tracker import SliceTracker
         tracker = SliceTracker()
-    except Exception:
+    except Exception as e:
         tracker = None
+        print(f"  [!] Runs will NOT be logged to the calibration tracker: {e}")
     from ..tracker.schema import COLOC_SIGMA_RECORDED_VERSION
 
     result = {

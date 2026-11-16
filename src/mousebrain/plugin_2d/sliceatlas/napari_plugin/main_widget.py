@@ -90,13 +90,7 @@ class BrainSliceWidget(QWidget):
         # Runs whose tracker row this window could not write (see
         # _result_not_recorded): not written to again this session.
         self._unwritable_run_ids: set = set()
-        try:
-            from ..tracker import SliceTracker
-            self.tracker = SliceTracker()
-        except Exception as e:
-            self.tracker = None
-            self._tracker_error = str(e)
-            print(f"[BrainSlice] Calibration tracker not available: {e}")
+        self._open_tracker()
 
         # Session tracking
         self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -179,6 +173,15 @@ class BrainSliceWidget(QWidget):
         self.status_label = QLabel("Ready - Load an image to begin")
         self.status_label.setStyleSheet("color: gray;")
         layout.addWidget(self.status_label)
+
+        # Shown for as long as runs are not being logged. A separate label,
+        # because the status bar is overwritten by every action and the
+        # warning must stay in view.
+        self.tracker_warning_label = QLabel(self._tracker_warning_text())
+        self.tracker_warning_label.setStyleSheet("color: #c0392b; font-weight: bold;")
+        self.tracker_warning_label.setWordWrap(True)
+        self.tracker_warning_label.setVisible(self.tracker is None)
+        layout.addWidget(self.tracker_warning_label)
 
         # Progress bar (hidden by default)
         self.progress_bar = QProgressBar()
@@ -5721,6 +5724,35 @@ class BrainSliceWidget(QWidget):
             QMessageBox.warning(self, "Error", f"Failed to save QC images: {e}")
 
     # ----- Tracker row helpers -----
+
+    def _open_tracker(self) -> None:
+        """Open the 2D calibration tracker, or keep the reason it cannot be.
+
+        WHY the reason is kept and shown: when the tracker could not be
+        opened (mousebrain not configured, the CSV unreadable, its folder
+        missing) every detection, colocalization and particle run in this
+        window used to go unlogged with no warning but one console line. Now
+        the reason stays in a red line under the status bar
+        (_tracker_warning_text) and the atlas fit at Run Quantification says
+        so too.
+        """
+        try:
+            from ..tracker import SliceTracker
+            self.tracker = SliceTracker(
+                lock_wait_seconds=GUI_TRACKER_LOCK_WAIT_SECONDS,
+                replace_retry_seconds=GUI_TRACKER_REPLACE_RETRY_SECONDS)
+        except Exception as e:
+            self.tracker = None
+            self._tracker_error = str(e)
+            print(f"[BrainSlice] [!] Runs will NOT be logged: {e}")
+
+    def _tracker_warning_text(self) -> str:
+        """The line shown while runs are not being logged ('' when they are)."""
+        if self.tracker is not None:
+            return ""
+        return ("[!] Runs will NOT be logged to the calibration tracker: "
+                + (self._tracker_error or "it could not be opened")
+                + ". Fix this and reopen the window before tuning.")
 
     def _fail_run_if_unfinished(self, run_id, why: str) -> bool:
         """Set this window's run `run_id` to 'failed' if it is still

@@ -55,6 +55,11 @@ REPLACE_RETRY_SECONDS = 30  # a reader on Windows can hold the file open briefly
 FAILED = "failed"
 
 
+class TrackerNotConfiguredError(RuntimeError):
+    """SliceTracker() was asked for the default tracker on an install that
+    does not know where the lab's data lives (see SliceTracker.__init__)."""
+
+
 class SliceTracker:
     """
     Central calibration run tracking for BrainSlice pipeline.
@@ -69,7 +74,9 @@ class SliceTracker:
         Initialize tracker.
 
         Args:
-            csv_path: Path to calibration runs CSV. Uses default if not specified.
+            csv_path: Path to calibration runs CSV. Uses the configured 2D
+                tracker (<MouseBrain_Pipeline>/2D_Slices/2_Data_Summary/
+                calibration_runs.csv) if not specified.
             lock_wait_seconds / replace_retry_seconds: how long one write
                 waits for another writer's lock, and keeps retrying the swap
                 while something holds the CSV open. None = the module values
@@ -77,9 +84,26 @@ class SliceTracker:
                 GUI writes on the thread that draws its window, so a long
                 wait there freezes the window; it passes short waits and
                 reports a write that could not be made instead.
+
+        Raises:
+            TrackerNotConfiguredError: no csv_path was given and mousebrain is
+                not configured (CONNECTOME_ROOT unset). WHY: the default path
+                is then under a temporary stand-in folder; runs logged there
+                look recorded but never reach the lab's tracker. Callers show
+                this reason to the person instead of running unlogged in
+                silence.
         """
         if csv_path is None:
+            from mousebrain import config as _cfg
+            if not _cfg.is_configured():
+                raise TrackerNotConfiguredError(
+                    "mousebrain is not configured, so the 2D tracker's default "
+                    "location is a temporary stand-in and runs logged there would "
+                    "be lost. " + _cfg.UNCONFIGURED_MESSAGE)
             from ..core.config import TRACKER_CSV
+            if TRACKER_CSV is None:
+                raise TrackerNotConfiguredError(
+                    "the 2D tracker has no configured location. " + _cfg.UNCONFIGURED_MESSAGE)
             csv_path = TRACKER_CSV
 
         self.csv_path = Path(csv_path)
