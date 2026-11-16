@@ -531,6 +531,19 @@ def process_brain(brain_path: Path, brain_name: str) -> dict:
     results['qc_register'] = f"{qc_status}: {qc_msg}"
     print(f"    QC: {qc_msg}")
 
+    # A registration that did not produce its files stops HERE, as a
+    # registration failure. This case used to fall through to detection,
+    # which then stopped on the missing approval, so the row said the brain
+    # failed at 'detect' -- three steps from the cause. (Step 3 ending
+    # without an error does not settle it: it also ends cleanly when it finds
+    # nothing to register for the brain, e.g. a brainreg.json is there but the
+    # deformation field is not.)
+    if qc_status == QCStatus.FAIL:
+        results['status'] = QCStatus.FAIL
+        results['failed_step'] = 'register'
+        update_brain_status(brain_name, results)
+        return results
+
     # Registration needs a person's approval. A batch never approves: the
     # approval exists so that a person has looked at the registration before
     # hours of detection run on it. (--auto-approve used to try, with an

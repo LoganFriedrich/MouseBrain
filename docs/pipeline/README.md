@@ -202,6 +202,10 @@ needs a crop -- `ch0/` TIFFs plus `metadata.json` in
 the brain stops as "needs manual crop": crop it by hand and run it again. Then
 registration (`3_register_to_atlas.py --batch --brain <brain>`), after which the
 brain always stops at "needs registration approval" until a person approves it.
+A registration that did not produce its files (`3_Registered_Atlas/brainreg.json`
+and `deformation_field_0.tiff`) stops the brain as FAILED at `register`, with the
+missing file named in `qc_register`; look at the registration step's output for
+that brain, fix the cause, and run it again with `--resume --retry-failed`.
 (Until this was fixed every brain failed at extraction: the batch passed steps 2
 and 3 an option they do not accept, and the checks looked for files the steps do
 not write.)
