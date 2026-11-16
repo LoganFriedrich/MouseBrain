@@ -144,3 +144,76 @@ def test_no_nuclei_first_run_is_registered(env, monkeypatch):
         (tmp_path / "registry" / "exports" / "ENCR_Detection" / "registry.json")
         .read_text(encoding="utf-8"))
     assert manifest["entries"][SAMPLE]["results"]["n_nuclei"] == 0
+
+
+def _invalidate_entry_records(tmp_path):
+    """The retired records in the registry's audit log, oldest first."""
+    log = tmp_path / "registry" / "logs" / "ENCR_Detection.log"
+    records = []
+    for line in log.read_text(encoding="utf-8").splitlines():
+        cols = line.split("\t")
+        if cols[2] == "invalidate_entry" and cols[3] == SAMPLE:
+            records.append(json.loads(cols[5]))
+    return records
+
+
+def test_earlier_entry_with_missing_files_is_retired_and_logged(env, monkeypatch, capsys):
+    """A current entry whose files are gone has nothing to move, but it must
+    still be retired through invalidate, so its counts and parameters reach
+    the log before the 0-nuclei registration overwrites its record."""
+    tmp_path = env
+    reg, old_file = _earlier_entry(tmp_path)
+    old_file.unlink()
+    _run(monkeypatch, tmp_path)
+
+    assert reg.get_entry(SAMPLE)["results"]["n_nuclei"] == 0
+    records = _invalidate_entry_records(tmp_path)
+    assert len(records) == 1
+    assert records[0]["results"]["n_nuclei"] == 28
+    assert records[0]["method_params"] == {"sigma_threshold": 0}
+    assert ("earlier registry entry (28 nuclei) replaced by this run's 0 nuclei; "
+            "no files to archive") in capsys.readouterr().out
+
+
+def test_earlier_no_nuclei_entry_with_other_parameters_is_logged(env, monkeypatch):
+    """An earlier 0-nuclei entry lists no files. Re-running with different
+    parameters must still leave the earlier parameters in the log."""
+    tmp_path = env
+    reg = AnalysisRegistry(analysis_name="ENCR_Detection",
+                           registry_root=tmp_path / "registry")
+    reg.register_output(
+        sample=SAMPLE, category="detection", files={},
+        results={"n_nuclei": 0, "n_positive": 0, "positive_fraction": None,
+                 "background": None},
+        method_params={"sigma_threshold": 7, "log_threshold": 0.5},
+        source_files={})
+    _run(monkeypatch, tmp_path)
+
+    entry = reg.get_entry(SAMPLE)
+    assert entry["is_current"] is True
+    assert entry["method_params"]["size_filter_um"] == list(be.BATCH_NUCLEUS_DIAMETER_UM)
+    records = _invalidate_entry_records(tmp_path)
+    assert len(records) == 1
+    assert records[0]["results"]["n_nuclei"] == 0
+    assert records[0]["method_params"] == {"sigma_threshold": 7, "log_threshold": 0.5}
+
+
+def test_record_is_printed_when_the_log_cannot_be_written(tmp_path, capsys):
+    """A failed invalidate_entry log write is reported, with the record, so
+    the retired counts are not lost without anyone knowing."""
+    reg = AnalysisRegistry(analysis_name="ENCR_Detection",
+                           registry_root=tmp_path / "registry")
+    reg.register_output(
+        sample=SAMPLE, category="detection", files={},
+        results={"n_nuclei": 41}, method_params={"sigma_threshold": 3},
+        source_files={})
+    log = tmp_path / "registry" / "logs" / "ENCR_Detection.log"
+    log.unlink()
+    log.mkdir()   # a folder where the log should be: every write fails
+    assert reg.invalidate(sample=SAMPLE) == [SAMPLE]
+
+    out = capsys.readouterr().out
+    assert f"[!] {SAMPLE} was invalidated, but its record could not be written" in out
+    printed = json.loads(out.split("Its record is: ")[1].splitlines()[0])
+    assert printed["results"] == {"n_nuclei": 41}
+    assert printed["method_params"] == {"sigma_threshold": 3}

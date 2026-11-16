@@ -1588,6 +1588,10 @@ class AnalysisRegistry:
           is marked current again, its files are put back, the failure is
           printed and logged, and the error is raised -- the pass stops,
           because the next write would most likely fail the same way.
+        * once the manifest says so, log an ``invalidate_entry`` line holding
+          the retired entry's record (results, method hash, parameters,
+          source files, ``_archived/<timestamp>``): the next registration of
+          the sample overwrites that record in the manifest.
 
         Anything else that stops the pass part-way through an entry's files
         (Ctrl+C, an unexpected error) also puts that entry's moved files back
@@ -1701,6 +1705,22 @@ class AnalysisRegistry:
                         self._log_event("invalidate", sample or "ALL",
                                         f"{len(invalidated)} entries", timestamp)
                     raise
+                # WHY a line per retired entry, carrying its record: the next
+                # registration of the same sample OVERWRITES this entry in
+                # registry.json, so without it the retired counts and the
+                # parameters that produced them would survive only in
+                # whatever files the entry happened to list.
+                # If the line cannot be written, the record is printed
+                # instead: once the sample is registered again, that printed
+                # line is the only place the retired counts are kept, so a
+                # silent failure here would lose them without anyone knowing.
+                record = self._retired_record(entry, timestamp)
+                log_problem = self._log_event("invalidate_entry",
+                                              entry.get("sample", key), key, record)
+                if log_problem:
+                    print("  [!] %s was invalidated, but its record could not be "
+                          "written to logs/%s.log (%s). Its record is: %s"
+                          % (key, self.analysis_name, log_problem, record))
                 lock.touch()
                 invalidated.append(key)
 
@@ -1717,6 +1737,26 @@ class AnalysisRegistry:
                   "they stay current. Free the files and run invalidate again."
                   % (len(failed), "y" if len(failed) == 1 else "ies"))
         return invalidated
+
+    @staticmethod
+    def _retired_record(entry: Dict[str, Any], archived_to: str) -> str:
+        """One-line JSON of what a retired entry said, for its log line.
+
+        Holds the entry's category, results (its counts), method hash,
+        method parameters, source files, when it was registered and when it
+        was retired, and the ``_archived/<timestamp>`` it was moved under.
+        JSON escapes tabs and newlines, so the log stays one line per event."""
+        record = {
+            "category": entry.get("category"),
+            "results": entry.get("results"),
+            "method_hash": entry.get("method_hash"),
+            "method_params": entry.get("method_params"),
+            "source_files": entry.get("source_files"),
+            "registered_at": entry.get("registered_at"),
+            "invalidated_at": entry.get("invalidated_at"),
+            "archived_to": "_archived/%s" % archived_to,
+        }
+        return json.dumps(record, sort_keys=True, default=str)
 
     @staticmethod
     def _put_back(moved: List[Tuple[Path, Path]]) -> str:
@@ -1736,11 +1776,16 @@ class AnalysisRegistry:
     # Logging
     # -----------------------------------------------------------------
 
-    def _log_event(self, action: str, sample: str, detail: str, extra: str = "") -> None:
+    def _log_event(self, action: str, sample: str, detail: str, extra: str = "") -> Optional[str]:
         """Append a line to the audit log.
 
         The log file is ``logs/{analysis_name}.log`` under the registry root.
         One line per event, tab-separated for easy parsing.
+
+        Returns None when the line was written, else the error text. A
+        failure never raises (logging must not break the pipeline); a caller
+        whose line is the only record of something (invalidate's
+        ``invalidate_entry``) checks the return and reports it.
         """
         log_path = self.logs_dir / f"{self.analysis_name}.log"
         ts = datetime.now().isoformat()
@@ -1749,8 +1794,10 @@ class AnalysisRegistry:
         try:
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(line)
-        except OSError:
-            pass  # Logging failure should never break the pipeline
+        except OSError as e:
+            # Logging failure should never break the pipeline.
+            return "%s: %s" % (type(e).__name__, e)
+        return None
 
 
 # =============================================================================

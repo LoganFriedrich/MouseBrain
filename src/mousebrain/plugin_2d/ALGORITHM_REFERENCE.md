@@ -729,8 +729,14 @@ banner before the real run.
   `_archived/<date_time>/` folder inside it -- not only the files the entry
   lists, but also any other file there (an older batch copied extra
   overlays and histograms it never listed); the `_archived/` folder itself
-  is left alone. The earlier entry's record is replaced; the registry's log
-  keeps both events. The end-of-batch summary lists each such sample as
+  is left alone. The earlier entry's record is replaced in `registry.json`,
+  but not lost: the registry's log (`logs/ENCR_Detection.log`) gets one
+  `invalidate_entry` line for the retired entry carrying its counts, method
+  hash and parameters (see "Where a retired entry's counts are kept" below),
+  then a `register` line for the new one. This happens even when the earlier
+  entry has no files to move (an earlier 0-nuclei entry lists none; a
+  completed entry's files may have gone missing): it is still retired, and
+  still gets its `invalidate_entry` line, before the new entry is written. The end-of-batch summary lists each such sample as
   `earlier registry entry (<n> nuclei) replaced by this run's 0 nuclei;`
   followed by `<k> file(s) moved to _archived/` when files were moved, or
   `no files to archive` when there were none (or the earlier entry was
@@ -755,7 +761,7 @@ banner before the real run.
   that moment), the sample is left with NO current entry: the earlier one is
   retired, its files are in `_archived/`, and nothing replaced it. The
   summary says `[!] <sample>: earlier registry entry (<n> nuclei) was
-  retired, <k> file(s) moved to _archived/, but this run's 0-nuclei result
+  retired, <k> file(s) moved to _archived/ (or: no files to archive), but this run's 0-nuclei result
   could NOT be registered: <error>. The sample has no current entry now; run
   the batch again.` Running the batch again registers the 0-nuclei result.
 - **A sample whose run fails**: the batch goes on with the next file. Its
@@ -819,14 +825,17 @@ banner before the real run.
   defect that hits only SOME images, in a run where another sample got past
   the step, is taken for those samples' own failure and their earlier
   entries ARE retired. The earlier files are kept when that happens: they
-  are in `_archived/`, and the registry's log records the retirement. Running
+  are in `_archived/`, and the registry's log records the retirement together
+  with the retired counts and parameters. Running
   the batch again once the defect is fixed registers each sample again, and
   that registration OVERWRITES the retired entry's record in `registry.json`
   -- its counts and parameters are not kept there. If the re-run does not
   reproduce the earlier counts exactly (the batch's detection is not yet
-  guaranteed to), the earlier counts then survive only in the archived
-  `measurements.csv` and in the registry's log (`logs/ENCR_Detection.log`),
-  not in the registry itself. One more
+  guaranteed to), the earlier counts are then no longer in the registry's
+  record, but they are kept in two places: the per-cell values in the
+  archived `measurements.csv`, and the counts themselves (with the method
+  hash and parameters that produced them) in the registry's log -- see
+  "Where a retired entry's counts are kept" below. One more
   consequence: a batch run on a single sample never retires its entry,
   because nothing else in the run shows the software works; run it together
   with a sample known to be good.
@@ -841,7 +850,32 @@ banner before the real run.
 
   Either way, fix the cause and run the batch again: a successful re-run
   registers a new current entry. A retired entry's files stay in `_archived/`
-  and the registry's log records the retirement.
+  and the registry's log records the retirement with the retired counts.
+
+  **Where a retired entry's counts are kept.** Every time an entry is
+  retired, the registry writes one line for it to `logs/ENCR_Detection.log`
+  in the registry folder. Open that file in Notepad and search for the
+  sample name; the line you want has the word `invalidate_entry` in it.
+  The columns are separated by tabs: the time, the computer, the word
+  `invalidate_entry`, the sample, the entry's key, and then, in braces, the
+  retired record: `results` (`n_nuclei`, `n_positive`, `positive_fraction`,
+  `background` ...), `method_hash`, `method_params` (every setting the run
+  used), `source_files`, `registered_at`, `invalidated_at`, and
+  `archived_to` (the `_archived/<date_time>` folder its files were moved
+  to). A sample retired more than once has one such line per retirement;
+  the latest is the last one in the file. (Entries retired before this line
+  was added have only an `invalidate` line with a count, no record.)
+
+  **If that log line cannot be written** (the log file is open in another
+  program, the share drops out at that moment), the entry is still retired
+  -- writing the log never stops the batch -- and the registry prints
+  `[!] <key> was invalidated, but its record could not be written to
+  logs/ENCR_Detection.log (<error>). Its record is: {...}` with the same
+  record as the log line would have held. That printed line is then the
+  ONLY place the retired counts and parameters are kept (the next
+  registration of the sample overwrites them in `registry.json`): copy it
+  from the window into a text file beside the log before closing the
+  window. Once the sample is registered again, nothing else holds them.
 - **When the registry itself cannot be read or written** (its file is open
   in another program, the share drops out), the samples are still processed
   and their files and `summary.csv` are written. The end-of-batch summary

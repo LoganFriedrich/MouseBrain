@@ -1411,3 +1411,33 @@ def test_the_header_records_where_the_approved_method_came_from(tmp_path, monkey
     monkeypatch.setenv("MOUSEBRAIN_APPROVED_METHOD", str(elsewhere))
     reg.refresh_approved_method()
     assert _header(reg)["approved_method_source"] == "MOUSEBRAIN_APPROVED_METHOD=%s" % elsewhere
+
+
+def test_invalidate_logs_each_retired_entry_with_its_record(tmp_path):
+    # The record of a retired entry is overwritten in registry.json by the
+    # next registration of the same sample, so invalidate writes the entry's
+    # results, method hash and parameters into the audit log, one line each.
+    _make_source_files(tmp_path)
+    reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
+    reg.register_output(sample="E01_01_S01_DCN", category="roi_analysis",
+                        files={}, results={"n_nuclei": 7, "note": "a\tb\nc"},
+                        method_params=DEFAULT_METHOD)
+    method_hash = reg.get_entry("E01_01_S01_DCN")["method_hash"]
+    reg.invalidate(sample="E01_01_S01_DCN")
+    reg.register_output(sample="E01_01_S01_DCN", category="roi_analysis",
+                        files={}, results={"n_nuclei": 9},
+                        method_params=DEFAULT_METHOD)
+
+    lines = [l.split("\t") for l in
+             (reg.logs_dir / "A.log").read_text(encoding="utf-8").splitlines()]
+    retired = [f for f in lines if f[2] == "invalidate_entry"]
+    assert len(retired) == 1
+    assert len(retired[0]) == 6   # a tab or newline in a value stays escaped
+    assert retired[0][3] == "E01_01_S01_DCN"
+    record = json.loads(retired[0][5])
+    assert record["results"] == {"n_nuclei": 7, "note": "a\tb\nc"}
+    assert record["method_hash"] == method_hash
+    assert record["method_params"] == json.loads(json.dumps(DEFAULT_METHOD))
+    assert record["invalidated_at"]
+    # The summary line is still written after the per-entry lines.
+    assert [f[2] for f in lines].index("invalidate") > [f[2] for f in lines].index("invalidate_entry")

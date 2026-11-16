@@ -401,3 +401,44 @@ def test_a_library_that_does_not_import_stops_the_batch_first(env, monkeypatch, 
     assert attempted == []
     _assert_kept(reg, old_file)
     assert "a_library_that_is_not_installed" in capsys.readouterr().out
+
+
+def _retired_records(reg, sample):
+    """The invalidate_entry records the registry's audit log holds for sample."""
+    import json
+    log = (reg.logs_dir / "ENCR_Detection.log").read_text(encoding="utf-8")
+    records = []
+    for line in log.splitlines():
+        fields = line.split("\t")
+        if fields[2] == "invalidate_entry" and fields[3] == sample:
+            records.append(json.loads(fields[5]))
+    return records
+
+
+def test_the_retired_counts_survive_in_the_log_after_a_re_registration(env, monkeypatch):
+    # The re-run that follows a retirement OVERWRITES the entry's record in
+    # registry.json; the earlier counts and parameters must still be readable
+    # from the registry's audit log.
+    t, tmp_path, img = env
+    reg, _ = _earlier_entry(tmp_path)
+    earlier_hash = reg.get_entry(SAMPLE)["method_hash"]
+    _other_sample_succeeds(env, monkeypatch)
+    _loads(monkeypatch, img)
+    monkeypatch.setattr(det_mod, "detect_with_log_augmentation",
+                        _raise(ValueError("image must be 2D")))
+    _run(monkeypatch, tmp_path)
+    assert reg.get_entry(SAMPLE)["is_current"] is False
+
+    reg.register_output(
+        sample=SAMPLE, category="detection", files={},
+        results={"n_nuclei": 30, "n_positive": 12, "positive_fraction": 0.4},
+        method_params={"sigma_threshold": 1}, source_files={})
+    assert reg.get_entry(SAMPLE)["results"]["n_nuclei"] == 30
+
+    records = _retired_records(reg, SAMPLE)
+    assert len(records) == 1
+    assert records[0]["results"] == {"n_nuclei": 28, "n_positive": 15,
+                                     "positive_fraction": 0.536}
+    assert records[0]["method_params"] == {"sigma_threshold": 0}
+    assert records[0]["method_hash"] == earlier_hash
+    assert records[0]["archived_to"].startswith("_archived/")

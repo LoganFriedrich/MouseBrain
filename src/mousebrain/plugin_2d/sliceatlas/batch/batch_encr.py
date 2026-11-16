@@ -1327,16 +1327,23 @@ def main():
             sample_id = nd2_path.stem
             earlier = None
             archived = 0
-            retired = False   # True once the earlier entry's files have moved
+            retired = False   # True once invalidate has retired the earlier entry
             try:
                 earlier = registry.get_entry(sample_id)
-                present = (_files_to_archive(registry, earlier)
-                           if earlier and earlier.get('is_current', True)
-                           else 0)
-                if present:
+                if earlier and earlier.get('is_current', True):
+                    # Retired through invalidate EVEN WHEN it has no files to
+                    # move (an earlier 0-nuclei entry lists none; a completed
+                    # entry's files may be gone). WHY: invalidate is what
+                    # marks the entry invalidated and writes the
+                    # invalidate_entry log line holding its counts, method
+                    # hash and parameters. Registering straight over it would
+                    # overwrite that record with nothing kept anywhere.
                     # Counted before the move (afterwards they are gone from
                     # here) and reported only once invalidate says it moved
-                    # them all.
+                    # them all ("no files to archive" when there were none).
+                    present = _files_to_archive(registry, earlier)
+                    # The entry is current, so invalidate returns its key
+                    # unless it could not retire it (a file would not move).
                     if not registry.invalidate(sample=sample_id,
                                                include_own_folder=True):
                         not_replaced.append(
@@ -1470,8 +1477,10 @@ def main():
               "could not be moved to _archived/ (in use?). Close whatever has "
               "them open and run again.")
     for sample_id, earlier_n, archived, message in retired_not_registered:
+        what = (f"{archived} file(s) moved to _archived/" if archived
+                else "no files to archive")
         print(f"    [!] {sample_id}: earlier registry entry ({earlier_n} "
-              f"nuclei) was retired, {archived} file(s) moved to _archived/, "
+              f"nuclei) was retired, {what}, "
               "but this run's 0-nuclei result could NOT be registered: "
               f"{message}. The sample has no current entry now; run the "
               "batch again.")

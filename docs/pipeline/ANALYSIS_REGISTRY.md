@@ -325,6 +325,30 @@ In every case, fix the cause and run it again; entries already invalidated
 are skipped. Each failure is also written to `logs/<analysis>.log` as an
 `invalidate_failed` line.
 
+Each entry that IS invalidated gets its own `invalidate_entry` line in
+`logs/<analysis>.log`, and the pass ends with one `invalidate` line giving
+how many entries it retired. The `invalidate_entry` line carries, as JSON in
+its last (tab-separated) column, what the entry said: `results`,
+`method_hash`, `method_params`, `source_files`, `registered_at`,
+`invalidated_at` and `archived_to` (the `_archived/<time>` folder). WHY: the
+next registration of the same sample overwrites the entry in
+`registry.json`, so without this line the retired results and the
+parameters that produced them would be kept nowhere but in whatever files
+the entry happened to list. Entries invalidated before this line existed
+have only the `invalidate` count line.
+
+Writing to the log never stops a pass (a log that cannot be written must not
+leave files half moved). So when the `invalidate_entry` line itself cannot be
+written (the log file is open elsewhere, the share drops out), the entry is
+still invalidated, and `invalidate` prints `[!] <key> was invalidated, but its
+record could not be written to logs/<analysis>.log (<error>). Its record is:
+{...}` carrying the same JSON. That printed line is then the only copy of the
+retired results and parameters once the sample is registered again: copy it
+into a text file beside the log. Other log lines (`invalidate`,
+`invalidate_failed`, `register`) that fail to write are not reported; they
+describe events whose outcome `registry.json` and the files themselves still
+show.
+
 The one case this cannot cover is the process being killed outright (power
 cut, ended in Task Manager) in the instant between moving an entry's files
 and writing the manifest. That entry's files are then in `_archived/<time>/`
