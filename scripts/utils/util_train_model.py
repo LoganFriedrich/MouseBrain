@@ -763,6 +763,12 @@ Examples:
     n_non_cells = sum(len(list(d.glob("*Ch0.tif"))) for d in non_cell_dirs if d and d.exists())
     print(f"\nTraining data: {n_cells} cells, {n_non_cells} non-cells (across {len(cell_dirs)} source(s))")
 
+    # A DONE.json left by an earlier training into the same folder must not
+    # make this one look finished before it is (DONE_RECORD).
+    stale_done = Path(output_dir) / DONE_RECORD
+    if stale_done.exists():
+        stale_done.unlink()
+
     # Initialize tracker
     tracker = ExperimentTracker()
 

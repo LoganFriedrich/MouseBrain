@@ -37,7 +37,7 @@ def _load_script():
     return mod
 
 
-def _script_run(tmp_path, monkeypatch, writes_model):
+def _script_run(tmp_path, monkeypatch, writes_model, stale_record=False):
     from mousebrain.tracker import ExperimentTracker
     mod = _load_script()
     tracker = ExperimentTracker(csv_path=tmp_path / "calibration_runs.csv")
@@ -55,6 +55,9 @@ def _script_run(tmp_path, monkeypatch, writes_model):
     cells.mkdir(parents=True)
     non_cells.mkdir(parents=True)
     out = tmp_path / "models" / "model_x"
+    if stale_record:  # an earlier training into the same folder
+        out.mkdir(parents=True)
+        (out / "DONE.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", [
         "util_train_model.py", "--cells", str(cells), "--non-cells", str(non_cells),
         "--output", str(out), "--name", "TEST_MODEL"])
@@ -75,7 +78,7 @@ def test_a_finished_training_records_its_model_in_its_folder(tmp_path, monkeypat
 
 
 def test_a_training_that_left_no_model_is_not_finished(tmp_path, monkeypatch):
-    out, rows = _script_run(tmp_path, monkeypatch, writes_model=False)
+    out, rows = _script_run(tmp_path, monkeypatch, writes_model=False, stale_record=True)
     assert not (out / "DONE.json").exists()
     assert rows[0]["status"] == "failed"
 
