@@ -50,7 +50,11 @@ def _classify(tw, monkeypatch, tmp_path, brain, tracker, chosen):
     import mousebrain.brain_context as brain_context
     monkeypatch.setattr(tw, "DATA_SUMMARY_DIR", tmp_path / "summary")
     monkeypatch.setattr(cells_io, "get_cells", lambda _p: [])
-    layer = SimpleNamespace(data=object())
+    # A signal layer loaded from the registered images (classification
+    # refuses any other folder's layers).
+    layer = SimpleNamespace(data=object(), metadata={
+        "source_brain": str(brain),
+        "source_folder": str(brain / "2_Cropped_For_Registration")})
     monkeypatch.setattr(brain_context, "pick_image_layers", lambda _l, _b: (layer, None, []))
     warnings = []
     monkeypatch.setattr(tw.QMessageBox, "warning", lambda *a, **k: warnings.append(a[2]))

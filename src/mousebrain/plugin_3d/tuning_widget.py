@@ -7551,6 +7551,25 @@ class TuningWidget(QWidget):
                  if other_images else "Signal layer not loaded. ") + "Load this brain first.")
             return
 
+        # The cubes are cut from the loaded layer at the candidates' positions,
+        # which are positions in the images the atlas was fitted to. A layer
+        # loaded from any other folder (another crop, the full extraction, or
+        # a layer with no record of its folder) would give every candidate a
+        # cube of the wrong place -- and such a run can be promoted to
+        # production. So the layer must be the registered folder's.
+        from mousebrain.brain_context import layer_source_folder
+        loaded_from = layer_source_folder(signal_layer)
+        if not loaded_from or str(Path(loaded_from)) != str(Path(data_folder)):
+            QMessageBox.warning(
+                self, "Loaded Images Are Not The Registered Ones",
+                f"The signal layer in the viewer was loaded from:\n"
+                f"{loaded_from or '(unknown folder)'}\n\n"
+                f"but the atlas of {self.current_brain.name} was fitted to the images in:\n"
+                f"{data_folder}\n\n"
+                "Nothing was classified. Load the brain again (Load Brain into "
+                "Napari loads the registered images), then run classification.")
+            return
+
         signal_array = signal_layer.data
         background_array = background_layer.data if background_layer else signal_array
 
@@ -8433,20 +8452,32 @@ class TuningWidget(QWidget):
         """(source, folder) of the images Load shows and Convert to Zarr
         caches, or None after telling the person why there is none.
 
-        Priority: manual crop > crop > full extraction, by which holds ch0/."""
-        candidates = (("manual_crop", "2_Cropped_For_Registration_Manual"),
-                      ("cropped", "2_Cropped_For_Registration"),
-                      ("extracted", "1_Extracted_Full"))
-        for source, name in candidates:
-            folder = self.current_brain / name
-            if (folder / "ch0").exists():
-                return source, folder
-        QMessageBox.warning(
-            self, "Error",
-            f"No image data found for {self.current_brain.name}\n"
-            "Expected ch0/ folder in 2_Cropped_For_Registration or 1_Extracted_Full"
-        )
-        return None
+        The images the atlas was fitted to (config.registered_input), the
+        same rule detection-from-disk and classification use. Load used to
+        take the manual crop, else the crop, else the extraction, by which
+        folder existed; on a brain registered on another folder (the crop,
+        with a manual crop made later; or the full extraction) the person
+        then tuned and classified on images the cell positions are not in.
+        A brain whose registration records no folder (not registered, or
+        registered before that was recorded) keeps the old order: manual
+        crop, crop, full extraction."""
+        from mousebrain.config import RegisteredImagesMissing, registered_input
+        try:
+            source, folder, _meta = registered_input(
+                self.current_brain, fallback=("manual", "cropped", "full"))
+        except RegisteredImagesMissing as e:
+            QMessageBox.warning(self, "Registered images missing", str(e))
+            return None
+        if folder is None or not any((Path(folder) / "ch0").glob("*.tif*")):
+            QMessageBox.warning(
+                self, "Error",
+                f"No image data found for {self.current_brain.name}\n"
+                "Expected ch0/ folder in 2_Cropped_For_Registration or 1_Extracted_Full"
+            )
+            return None
+        # The names the layers have always carried
+        label = {"manual": "manual_crop", "full": "extracted"}.get(source, source)
+        return label, Path(folder)
 
     def load_brain_into_napari(self):
         """Load the selected brain's channels into napari - mode-aware loading."""
