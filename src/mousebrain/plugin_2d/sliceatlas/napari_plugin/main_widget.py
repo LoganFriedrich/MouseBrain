@@ -2204,19 +2204,32 @@ class BrainSliceWidget(QWidget):
 
         return False
 
-    def _nav_get_siblings(self):
-        """Get sorted list of same-type image files in the current file's folder."""
-        if not self.current_file or not self.current_file.exists():
+    def _nav_get_siblings(self, fpath=None):
+        """Get sorted list of same-type image files in the folder of fpath
+        (default: the current file), and fpath's place in it."""
+        fpath = Path(fpath) if fpath is not None else self.current_file
+        if not fpath or not fpath.exists():
             return [], -1
-        folder = self.current_file.parent
-        ext = self.current_file.suffix.lower()
+        folder = fpath.parent
+        ext = fpath.suffix.lower()
         siblings = sorted(f for f in folder.iterdir()
                           if f.suffix.lower() == ext and f.is_file())
         try:
-            idx = siblings.index(self.current_file)
+            idx = siblings.index(fpath)
         except ValueError:
             idx = -1
         return siblings, idx
+
+    def _nav_point_at(self, fpath):
+        """Make Prev/Next walk the folder of the image being opened, starting
+        at that image. WHY: the list was built once, from the first image
+        loaded, so after Browse File or the queue opened an image somewhere
+        else Prev/Next kept walking the first folder and the position label
+        named an image that was not on screen."""
+        if fpath is None:
+            self._nav_siblings, self._nav_selected_idx = [], -1
+        else:
+            self._nav_siblings, self._nav_selected_idx = self._nav_get_siblings(fpath)
 
     def _nav_update_label(self):
         """Update navigation labels on both Detect & Classify and ROI tabs."""
@@ -2312,6 +2325,7 @@ class BrainSliceWidget(QWidget):
         if peek:
             self._peek_and_configure(fpath)
         self._load_single_file(fpath)
+        self._nav_point_at(fpath)
         self._nav_update_label()
         return True
 
@@ -2327,6 +2341,9 @@ class BrainSliceWidget(QWidget):
         self.current_folder = folder
         self.is_folder_load = True
         self._load_folder(folder)
+        # A stack has no neighbouring images to step through.
+        self._nav_point_at(None)
+        self._nav_update_label()
         return True
 
     def _nav_prev_image(self):
