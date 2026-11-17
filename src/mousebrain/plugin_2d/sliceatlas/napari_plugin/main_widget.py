@@ -2295,6 +2295,13 @@ class BrainSliceWidget(QWidget):
         Returns False when the image was not opened."""
         fpath = Path(fpath)
         self._leave_current_image()
+        if fpath != self.current_file:
+            # The Sample ID box names the image every tracker row and export
+            # is filed under. WHY here: it used to be set by Browse File only,
+            # so after Prev/Next or the queue the rows went under the
+            # previous image's name. A reload of the same image keeps a
+            # Sample ID typed by hand.
+            self.sample_id_edit.setText(fpath.stem)
         self._chosen_file = fpath
         self.current_file = fpath
         self.current_folder = None
@@ -2314,6 +2321,9 @@ class BrainSliceWidget(QWidget):
         first. Returns False when the folder was not opened."""
         folder = Path(folder)
         self._leave_current_image()
+        # Named when it is opened, not when it is chosen (see _open_image):
+        # until Load, the image on screen is still the previous one.
+        self.sample_id_edit.setText(folder.name)
         self.current_folder = folder
         self.is_folder_load = True
         self._load_folder(folder)
@@ -4455,8 +4465,6 @@ class BrainSliceWidget(QWidget):
         )
 
         if file_path:
-            # Auto-set sample ID from filename
-            self.sample_id_edit.setText(Path(file_path).stem)
             # Opens it the one way every image is opened: the previous
             # image's results are saved and cleared first (_open_image).
             self._open_image(Path(file_path))
@@ -4490,8 +4498,6 @@ class BrainSliceWidget(QWidget):
                     self.file_label.setText(str(self.current_folder.name))
                     self.folder_info_label.setText(f"Found {n_files} images - will load as stack")
                     self.load_btn.setEnabled(True)
-                    # Auto-set sample ID from folder name
-                    self.sample_id_edit.setText(self.current_folder.name)
             except Exception as e:
                 self.file_label.setText(f"Error: {e}")
                 self.load_btn.setEnabled(False)

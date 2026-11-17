@@ -329,3 +329,11 @@ def image_files(folder, names):
         p.write_bytes(b"")
         paths.append(p)
     return paths
+
+
+def choose_folder(w, monkeypatch, folder):
+    """Browse Folder... picks `folder` (not loaded until Load is clicked)."""
+    from mousebrain.plugin_2d.sliceatlas.napari_plugin import main_widget
+    monkeypatch.setattr(main_widget, "QFileDialog", SimpleNamespace(
+        getExistingDirectory=lambda *a, **k: str(folder)))
+    w._browse_folder()
