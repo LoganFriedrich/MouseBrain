@@ -132,3 +132,50 @@ def test_force_does_not_claim_a_registration_that_did_not_happen(tmp_path, monke
     result = ob.process_brain(BRAIN, b, skip_complete=False)
     assert result["steps"]["registration"] == "failed"
     assert steps_after == []
+
+
+class _Stop(Exception):
+    pass
+
+
+def _overnight_main(tmp_path, monkeypatch, argv, name):
+    """Run overnight_batch.main() on one registered brain under tmp_path.
+    Returns (exit code or _Stop, brains handed to process_brain, step-3 calls)."""
+    monkeypatch.chdir(tmp_path)
+    ob = _load(name, PIPELINE / "overnight_batch.py")
+    _registered_brain(tmp_path / "data")
+    monkeypatch.setattr(ob, "BRAINS_ROOT", tmp_path / "data")
+    calls, processed = [], []
+    monkeypatch.setattr(ob.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Done())
+
+    def fake_process(brain_name, *a, **k):
+        processed.append(brain_name)
+        raise _Stop()
+    monkeypatch.setattr(ob, "process_brain", fake_process)
+    monkeypatch.setattr(sys, "argv", ["overnight_batch.py"] + argv)
+    try:
+        code = ob.main()
+    except _Stop:
+        code = _Stop
+    return code, processed, calls
+
+
+def test_force_without_a_brain_is_refused(tmp_path, monkeypatch, caplog):
+    # One forgotten --brain would register every brain again and set aside
+    # every approval: refused, nothing run, and the count is said.
+    code, processed, calls = _overnight_main(tmp_path, monkeypatch, ["--force"], "ob_force_all")
+    assert code not in (0, _Stop)
+    assert processed == [] and calls == []
+    assert "would register 1 registered brain(s) again" in caplog.text
+
+
+def test_force_with_all_brains_runs(tmp_path, monkeypatch):
+    code, processed, _ = _overnight_main(tmp_path, monkeypatch, ["--force", "--all-brains"],
+                                         "ob_force_all2")
+    assert code is _Stop and processed == [BRAIN]
+
+
+def test_force_with_one_brain_runs(tmp_path, monkeypatch):
+    code, processed, _ = _overnight_main(tmp_path, monkeypatch, ["--force", "--brain", BRAIN],
+                                         "ob_force_one")
+    assert code is _Stop and processed == [BRAIN]

@@ -327,8 +327,12 @@ there ("awaiting approval" in the report): detection, classification and
 counting wait until a person has looked at the new QC pictures and approved
 them; the next run then does them. If step 3 ends without a new registration
 in the folder, the batch reports the registration as failed and does nothing
-after it. Use `--force --brain <brain>`: without `--brain`, every brain is
-registered again. (Before, `--force` never registered anything -- step 3 said
+after it. Use `--force --brain <brain>`. `--force` without `--brain` is
+REFUSED: it would register every registered brain again (hours each) and set
+aside every approval, so the batch stops before touching anything, prints how
+many brains that would have been, and ends with an error. If every brain really
+should be registered again, add `--all-brains` (`--force --all-brains`).
+(Before, `--force` never registered anything -- step 3 said
 "already registered" -- yet the batch logged "Registration complete" and redid
 every later step on the old registration.)
 

@@ -16,6 +16,9 @@ Usage:
                                                # it is REGISTERED AGAIN, then
                                                # waits for a person's approval
                                                # before detection
+    python overnight_batch.py --force --all-brains  # The same for EVERY brain;
+                                               # --force without --brain or
+                                               # --all-brains is refused
 
 A brain whose registration a person REJECTED is never registered again by
 this batch, --force included: it is listed under "Not started" in the report
@@ -888,7 +891,12 @@ def main():
                             'archived) and then waits for a person to approve the new '
                             'registration before detection, classification and counting. '
                             'A brain whose registration was REJECTED is not registered '
-                            'again (see the report\'s "Not Started")')
+                            'again (see the report\'s "Not Started"). Needs --brain, or '
+                            '--all-brains to register every brain again')
+    parser.add_argument('--all-brains', action='store_true',
+                       help='With --force and no --brain: really register EVERY '
+                            'registered brain again (hours each) and set aside every '
+                            'approval. Without it, --force needs --brain')
 
     args = parser.parse_args()
 
@@ -914,6 +922,19 @@ def main():
     if args.brain:
         brains = [(p, n) for p, n in brains if args.brain in n]
         left_out = [(n, why) for n, why in left_out if args.brain in n]
+
+    # --force without --brain registers EVERY registered brain again (hours
+    # each) and archives every approval, so every brain then waits for a person
+    # to look at it again. One forgotten --brain must not do that: it needs the
+    # extra --all-brains, and without it the run stops before touching anything
+    # and says how many brains it would have registered again.
+    if args.force and not args.brain and not args.all_brains:
+        n_registered = sum(1 for p, _ in brains if get_brain_status(p).get('registered'))
+        log.error(f"--force without --brain would register {n_registered} registered "
+                  f"brain(s) again and set aside every approval.")
+        log.error("Give --brain <brain> to redo one brain, or add --all-brains if every "
+                  "brain really should be registered again. Nothing was processed.")
+        return 2
 
     # Every brain the batch does not take is named, with the reason: a brain
     # that silently never runs looks exactly like one that is not there.
