@@ -262,8 +262,8 @@ Only most recent and second-most-recent are accessible via buttons.
 |--------|--------|
 | **Load Brain** | Loads brain into napari (mode-dependent) |
 | **Run Detection** | Executes detection with current parameters, records to tracker |
-| **Mark Selected Layer as Best** | Marks currently selected points layer as BEST in tracker |
-| **Load Best** | Loads most recent completed calibration run |
+| **Mark Selected Layer as Best** | Moves the selected brain's Best mark to the run the selected points layer shows (refused for a layer that is not a tracked run or belongs to another brain); the previous Best only loses its mark, it is not archived |
+| **Load Best** | Loads the run marked Best for the brain (see "How the Best marks behave" in README.md) |
 | **Load Most Recent** | Loads second-most recent run for comparison |
 
 ---

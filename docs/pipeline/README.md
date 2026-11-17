@@ -1208,12 +1208,40 @@ e.g. `--threshold 9`. The run is logged as `custom`, never as the settled method
 run type), and each imaging setup at most one Paradigm Best:
 
 - *Mark as Best* moves the brain's Best mark to the selected run; other brains'
-  marks are not touched.
+  marks are not touched. All three "make this the Best" buttons in Setup &
+  Tuning do exactly this and nothing else: **Mark as Best** in the run list,
+  **Mark Selected Layer as Best** and **Promote Recent to Best** in the
+  detection comparison. The run that was Best only loses its Best mark: it is
+  NOT archived, and it keeps its Paradigm Best if it had one. (The comparison
+  buttons used to archive it, which also ended its Paradigm Best -- the
+  settled method of every brain imaged the same way.) If you want a run
+  archived, that is a separate decision.
+- **The comparison buttons act only on the selected brain's layers.** Every
+  points layer that shows a detection run remembers which brain and which run
+  it is, and whether it was loaded as the Best or as the run to compare
+  ("recent"). The buttons find the Best and recent layers by that, never by
+  their names, and ignore layers of any other brain still open in the viewer.
+  What you will see:
+  - *Mark Selected Layer as Best* on a layer that is not a tracked run (one
+    you made by hand, or loaded from a file) says "Not a Tracked Run" and
+    changes nothing. On a layer of another brain it says so and changes
+    nothing: select that brain first.
+  - *Promote Recent to Best* and *Keep Current Best* need exactly one recent
+    layer of the brain. With none they say so; with several (for example two
+    detections run this session) they list them and ask you to close all but
+    one, or to select the one you mean and use *Mark Selected Layer as Best*.
+    If the recent layer shows the run that is already Best they change
+    nothing.
+  - After a mark, the new Best layer is renamed "BEST: ..." and the layer that
+    showed the old Best is grayed out and renamed "[not best] ...". This is the
+    viewer only; the tracker's Best mark has already moved.
+  - *Keep Current Best* only grays out the recent layer in the viewer
+    ("[archived] ..."); nothing is written to the tracker.
 - *Mark as Paradigm Best* makes the run the imaging setup's settled method AND
   its brain's Best; the brain's previous Best is cleared (a brain never has two),
   and the previous Paradigm Best of that imaging setup loses that mark.
-- *Archiving* a run (when a new run replaces the Best in the comparison view)
-  clears both its Best and its Paradigm Best. An archived run is never used as
+- *Archiving* a run clears both its Best and its Paradigm Best (no Best
+  button archives a run any more; see above). An archived run is never used as
   the settled method, even if an old tracker row still carries the mark.
 - Each change is one locked write of the tracker, so a mark is never left half
   moved.

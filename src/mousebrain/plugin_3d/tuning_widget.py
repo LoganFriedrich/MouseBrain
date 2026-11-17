@@ -2108,6 +2108,13 @@ class TuningWidget(QWidget):
             layer.metadata['exp_id'] = exp_id
             layer.metadata['is_best'] = is_best
             layer.metadata['cell_type'] = actual_cell_type
+            # The brain this run belongs to, so the Best buttons act on it
+            # only while that brain is selected (brain_context, rule 4). A run
+            # of another brain is left untagged: no Best button acts on it.
+            from mousebrain.brain_context import tag_run_layer
+            from mousebrain.tracker import same_brain_name
+            if self.current_brain and same_brain_name(run.get('brain'), self.current_brain.name):
+                tag_run_layer(layer, self.current_brain, exp_id, actual_cell_type)
 
             print(f"[MouseBrain] Loaded run {exp_id}: {len(cells)} cells")
 
@@ -2141,29 +2148,88 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "No Selection", "Please select a run to mark as best.")
             return
 
-        if not self.tracker:
-            QMessageBox.warning(self, "No Tracker", "Experiment tracker not available.")
+        # The same helper as the curation tab's Mark as Best, so both buttons
+        # leave the same tracker state (see _mark_run_best).
+        if not self._mark_run_best(exp_id):
             return
 
-        # Mark as best in tracker
-        self.tracker.mark_as_best(exp_id)
-        print(f"[MouseBrain] Marked run {exp_id} as best")
-
-        # Update any existing layers in napari with this exp_id
-        for layer in self.viewer.layers:
-            if hasattr(layer, 'metadata') and layer.metadata.get('exp_id') == exp_id:
-                # Update layer styling to best
-                if hasattr(layer, 'border_color'):
-                    layer.border_color = '#00FF00'  # Green for best
-                # Add ★ to layer name if not already there
-                if not layer.name.startswith("★"):
-                    layer.name = "★ " + layer.name.lstrip("● ")
-                layer.metadata['is_best'] = True
-
-        # Refresh the runs table to show updated status
-        self._refresh_context_runs()
-
         QMessageBox.information(self, "Success", f"Run marked as best!")
+
+    def _mark_run_best(self, exp_id) -> bool:
+        """Make ``exp_id`` the selected brain's Best detection run: in the
+        tracker, then on every loaded layer of this brain. Returns False (after
+        telling the person why) when nothing was marked.
+
+        Every "mark best" button comes here: the run list's Mark as Best, the
+        curation tab's Mark as Best and Promote Recent. They used to differ:
+        the run list only moved the mark, the curation tab also ARCHIVED the
+        previous Best in the tracker -- and archiving a run ends its Paradigm
+        Best too (tracker.archive_experiment), so changing which run of ONE
+        brain is best silently withdrew the settled method of every brain
+        imaged the same way. Now only tracker.mark_as_best is called: it
+        takes the mark off the brain's previous Best in the same locked
+        rewrite, and leaves Paradigm Best and the archive alone.
+
+        A run of another brain is refused: the curation buttons act on the
+        selected brain only.
+        """
+        from mousebrain.tracker import same_brain_name
+        if not self.tracker:
+            QMessageBox.warning(self, "No Tracker", "Experiment tracker not available.")
+            return False
+        if not self.current_brain:
+            QMessageBox.warning(self, "No Brain", "Select a brain first.")
+            return False
+        row = self.tracker.get_experiment(exp_id)
+        if not row:
+            QMessageBox.warning(self, "Not Found", f"Run {exp_id} is not in the tracker.")
+            return False
+        if not same_brain_name(row.get('brain'), self.current_brain.name):
+            QMessageBox.warning(
+                self, "Another Brain's Run",
+                f"Run {exp_id} belongs to brain {row.get('brain')}, not to the "
+                f"selected brain {self.current_brain.name}.\n\n"
+                f"Select that brain to change its Best run.")
+            return False
+        if not self.tracker.mark_as_best(exp_id):
+            QMessageBox.warning(self, "Not Marked", f"Run {exp_id} could not be marked best.")
+            return False
+        print(f"[MouseBrain] Marked run {exp_id} as best")
+        self._restyle_run_layers()
+        self._refresh_context_runs()
+        return True
+
+    def _restyle_run_layers(self):
+        """Style every loaded detection-run layer of the selected brain from
+        its tracker row: the Best run as Best, a layer that showed the Best
+        and no longer does as "[not best]". Layers of other brains, and
+        layers that are not a tracked run, are left exactly as they are."""
+        import napari
+        from mousebrain.brain_context import run_layer_base_name
+        if not self.tracker or not self.current_brain:
+            return
+        brain = str(self.current_brain)
+        for layer in list(self.viewer.layers):
+            if not isinstance(layer, napari.layers.Points):
+                continue
+            meta = layer.metadata or {}
+            exp_id = meta.get('exp_id')
+            if not exp_id or meta.get('source_brain') != brain:
+                continue
+            row = self.tracker.get_experiment(exp_id)
+            if not row or row.get('exp_type') != 'detection':
+                continue
+            base = run_layer_base_name(layer.name)
+            if row.get('marked_best') == 'True':
+                self._set_layer_type(layer, 'det_best')
+                layer.metadata['is_best'] = True
+                layer.name = f"BEST: {base}"
+            elif meta.get('cell_type') == 'det_best' or meta.get('is_best'):
+                # Shown in the viewer as demoted only: the run itself is not
+                # archived (see _mark_run_best).
+                self._set_layer_type(layer, 'archived')
+                layer.metadata['is_best'] = False
+                layer.name = f"[not best] {base}"
 
     def _mark_selected_as_paradigm_best(self):
         """Mark the selected run as best for its imaging paradigm."""
@@ -2210,6 +2276,12 @@ class TuningWidget(QWidget):
         if success:
             print(f"[MouseBrain] Marked run {exp_id} as paradigm best for '{paradigm}'")
             self.paradigm_status_label.setText(f"Paradigm: {paradigm} ✓")
+
+            # Paradigm Best also makes the run its brain's Best and takes the
+            # mark off the previous one: restyle this brain's run layers from
+            # the tracker, as the Mark as Best buttons do, so the comparison
+            # buttons never act on a layer that is no longer the Best.
+            self._restyle_run_layers()
 
             # Update any existing layers
             for layer in self.viewer.layers:
@@ -2691,10 +2763,20 @@ class TuningWidget(QWidget):
                     visible=True,
                 )
 
-                # Store exp_id in layer metadata for tracking
+                # Store exp_id in layer metadata for tracking, with the brain
+                # and the role ('det_recent': the run just made), so the
+                # curation buttons find it by that record and not by the "●"
+                # in its name (brain_context, rule 4). Tagged only when the run
+                # was logged for the brain selected now.
                 if self.last_run_id:
                     layer.metadata['exp_id'] = self.last_run_id
                     layer.metadata['is_best'] = False
+                    from mousebrain.brain_context import tag_run_layer
+                    from mousebrain.tracker import same_brain_name
+                    row = self.tracker.get_experiment(self.last_run_id) if self.tracker else None
+                    if (row and self.current_brain
+                            and same_brain_name(row.get('brain'), self.current_brain.name)):
+                        tag_run_layer(layer, self.current_brain, self.last_run_id, 'det_recent')
 
                 print(f"[MouseBrain] Added {len(coords)} cells to napari (white circle outline = new detection)")
                 print(f"[MouseBrain] Layer style: size={style['size']}, symbol={style['symbol']}, border_width={border_width}")
@@ -4725,18 +4807,17 @@ class TuningWidget(QWidget):
     # ==========================================================================
 
     def mark_current_as_best(self):
-        """Mark the currently selected layer as best detection.
+        """Mark the run shown by the selected points layer as this brain's Best.
 
-        Workflow:
-        1. Get selected points layer
-        2. Archive any existing best layer
-        3. Apply det_best styling to selected layer
-        4. Update experiment tracker
-        5. Log to session documenter
+        Refused, before anything changes, when the layer is not a tracked run
+        (no run id: a hand-made or file-loaded layer) or shows another brain's
+        run. It used to archive the existing Best first -- in the tracker too,
+        ending its Paradigm Best -- and only then find that the selected layer
+        had no run id, leaving the brain with no Best at all. The marking
+        itself is _mark_run_best, shared with the run list's button.
         """
         print("[DEBUG] Button clicked: mark_current_as_best")
         import napari
-        from datetime import datetime
 
         # Get selected layer
         selected_layers = list(self.viewer.layers.selection)
@@ -4751,42 +4832,22 @@ class TuningWidget(QWidget):
                 "Please select a Points layer (cell candidates), not an image layer.")
             return
 
-        # Get layer's exp_id from metadata if available
-        exp_id = layer.metadata.get('exp_id') if hasattr(layer, 'metadata') else None
+        meta = layer.metadata or {}
+        exp_id = meta.get('exp_id')
+        if not exp_id:
+            QMessageBox.warning(self, "Not a Tracked Run",
+                f"Layer '{layer.name}' is not a tracked calibration run, so it "
+                f"cannot be the Best run.\n\nNothing was changed. Load the run "
+                f"from the run list, or run a detection, and mark that layer.")
+            return
+        if meta.get('source_brain') != str(self.current_brain):
+            QMessageBox.warning(self, "Another Brain's Layer",
+                f"Layer '{layer.name}' was not loaded for the selected brain.\n\n"
+                f"Nothing was changed. Select the brain it belongs to first.")
+            return
 
-        # Find and archive any existing "best" layer
-        existing_best = self._get_layer_by_type('det_best')
-        if existing_best and existing_best != layer:
-            old_exp_id = existing_best.metadata.get('exp_id') if hasattr(existing_best, 'metadata') else None
-            self._archive_layer(existing_best, archived_by=exp_id or 'user selection')
-
-            # Update tracker for archived experiment
-            if self.tracker and old_exp_id:
-                try:
-                    self.tracker.archive_experiment(old_exp_id, archived_by=exp_id)
-                except AttributeError:
-                    # Method not yet added to tracker
-                    pass
-
-        # Apply best styling
-        self._set_layer_type(layer, 'det_best')
-
-        # Update name with BEST: prefix
-        if not layer.name.startswith('BEST:'):
-            # Remove any existing prefix
-            name = layer.name
-            for prefix in ['RECENT:', '[archived]', 'Best ', 'Recent ']:
-                if name.startswith(prefix):
-                    name = name[len(prefix):].strip()
-            layer.name = f"BEST: {name}"
-
-        # Update tracker
-        if self.tracker and exp_id:
-            try:
-                self.tracker.mark_as_best(exp_id)
-            except AttributeError:
-                # Method not yet added to tracker - update rating as fallback
-                self.tracker.update_rating(exp_id, rating=5, notes="Marked as best")
+        if not self._mark_run_best(exp_id):
+            return
 
         # Log to session documenter
         if self.session_doc:
@@ -4800,56 +4861,62 @@ class TuningWidget(QWidget):
             f"Layer '{layer.name}' is now marked as BEST.\n"
             f"Points: {len(layer.data)}")
 
-    def promote_recent_to_best(self):
-        """Promote the 'recent' detection to become the new 'best'.
+    def _one_run_layer(self, role):
+        """(layer, problem): the selected brain's single layer in ``role``
+        ('det_best' / 'det_recent'), or None and a sentence saying why not.
 
-        This is a shortcut that:
-        1. Finds the det_recent layer
-        2. Archives the current det_best
-        3. Promotes det_recent to det_best
+        Found by the brain, run and role recorded on the layer
+        (brain_context.run_layers), never by its name: a Best layer whose name
+        still carried a new run's marker was also found as the recent one."""
+        what = "Best" if role == 'det_best' else "recent"
+        found = self._this_brains_run_layers(role)
+        if not found:
+            return None, f"No {what} detection layer of this brain is loaded."
+        if len(found) > 1:
+            names = "\n".join(f"  {l.name}" for l in found)
+            return None, (f"More than one {what} detection layer of this brain is "
+                          f"loaded:\n{names}\n\nClose all but one, or select the "
+                          f"layer you mean and use Mark as Best.")
+        return found[0], ""
+
+    def _this_brains_run_layers(self, role):
+        """Points layers of the selected brain that show a run in ``role``."""
+        import napari
+        from mousebrain.brain_context import run_layers
+        if not self.current_brain:
+            return []
+        points = [l for l in self.viewer.layers if isinstance(l, napari.layers.Points)]
+        return run_layers(points, self.current_brain, role)
+
+    def promote_recent_to_best(self):
+        """Make the run of this brain's 'recent' layer the brain's Best run.
+
+        Uses _mark_run_best like both Mark as Best buttons: the previous Best
+        only loses its mark (it used to be archived, ending its Paradigm
+        Best). When the recent layer shows the run that is already Best,
+        nothing is done.
         """
         print("[DEBUG] Button clicked: promote_recent_to_best")
-        import napari
-
-        recent_layer = self._get_layer_by_type('det_recent')
-        if not recent_layer:
+        recent_layer, problem = self._one_run_layer('det_recent')
+        if recent_layer is None:
             QMessageBox.warning(self, "No Recent Detection",
-                "No recent detection layer found.\n"
-                "Load or run a detection first, then compare.")
+                f"{problem}\nLoad or run a detection first, then compare.")
+            return
+        exp_id = recent_layer.metadata.get('exp_id')
+        if not exp_id:
+            QMessageBox.warning(self, "Not a Tracked Run",
+                f"Layer '{recent_layer.name}' is not a tracked calibration run.\n"
+                f"Nothing was changed.")
+            return
+        best_layer, _ = self._one_run_layer('det_best')
+        if best_layer is not None and best_layer.metadata.get('exp_id') == exp_id:
+            QMessageBox.information(self, "Already Best",
+                "The recent layer shows the run that is already this brain's Best.\n"
+                "Nothing was changed.")
             return
 
-        # Get exp_id for recent
-        exp_id = recent_layer.metadata.get('exp_id') if hasattr(recent_layer, 'metadata') else None
-
-        # Archive current best if exists
-        existing_best = self._get_layer_by_type('det_best')
-        if existing_best:
-            old_exp_id = existing_best.metadata.get('exp_id') if hasattr(existing_best, 'metadata') else None
-            self._archive_layer(existing_best, archived_by=exp_id or 'promoted recent')
-
-            # Update tracker for archived experiment
-            if self.tracker and old_exp_id:
-                try:
-                    self.tracker.archive_experiment(old_exp_id, archived_by=exp_id)
-                except AttributeError:
-                    pass
-
-        # Promote recent to best
-        self._set_layer_type(recent_layer, 'det_best')
-
-        # Update name
-        name = recent_layer.name
-        for prefix in ['RECENT:', 'Recent ', 'Most recent']:
-            if name.startswith(prefix):
-                name = name[len(prefix):].strip()
-        recent_layer.name = f"BEST: {name}"
-
-        # Update tracker
-        if self.tracker and exp_id:
-            try:
-                self.tracker.mark_as_best(exp_id)
-            except AttributeError:
-                self.tracker.update_rating(exp_id, rating=5, notes="Promoted from recent to best")
+        if not self._mark_run_best(exp_id):
+            return
 
         # Log to session documenter
         if self.session_doc:
@@ -4857,7 +4924,7 @@ class TuningWidget(QWidget):
                 'layer_name': recent_layer.name,
                 'points_count': len(recent_layer.data),
                 'exp_id': exp_id,
-                'previous_best_archived': existing_best is not None,
+                'previous_best_layer': best_layer.name if best_layer is not None else None,
             })
 
         QMessageBox.information(self, "Promoted to Best",
@@ -4868,17 +4935,24 @@ class TuningWidget(QWidget):
     def keep_current_best(self):
         """Keep the current best, archive the recent comparison layer.
 
-        User has decided the current best is better than the recent run.
+        User has decided the current best is better than the recent run. Only
+        the viewer changes: the recent layer is grayed out. The layers are
+        found by their recorded brain, run and role, and a recent layer that
+        shows the Best run itself is never grayed out.
         """
         print("[DEBUG] Button clicked: keep_current_best")
-        recent_layer = self._get_layer_by_type('det_recent')
-        if not recent_layer:
+        recent_layer, problem = self._one_run_layer('det_recent')
+        if recent_layer is None:
             QMessageBox.information(self, "Keep Best",
-                "No recent detection to discard. Current best remains.")
+                f"{problem}\nNothing to discard. Current best remains.")
             return
 
-        best_layer = self._get_layer_by_type('det_best')
-        best_exp_id = best_layer.metadata.get('exp_id') if best_layer and hasattr(best_layer, 'metadata') else None
+        best_layer, _ = self._one_run_layer('det_best')
+        best_exp_id = best_layer.metadata.get('exp_id') if best_layer is not None else None
+        if best_exp_id and recent_layer.metadata.get('exp_id') == best_exp_id:
+            QMessageBox.information(self, "Keep Best",
+                "The recent layer shows the Best run itself. Nothing was changed.")
+            return
 
         # Archive the recent layer
         self._archive_layer(recent_layer, archived_by=f"kept best: {best_exp_id}" if best_exp_id else "user kept best")
@@ -4923,18 +4997,20 @@ class TuningWidget(QWidget):
         tolerance = getattr(self, 'det_diff_tolerance_spin', None)
         tolerance_voxels = tolerance.value() if tolerance else 5.0
 
-        best_layer = self._get_layer_by_type('det_best')
-        recent_layer = self._get_layer_by_type('det_recent')
+        # This brain's own Best and recent layers, by their recorded run
+        # (_one_run_layer), never another brain's or one found by its name.
+        best_layer, best_problem = self._one_run_layer('det_best')
+        recent_layer, recent_problem = self._one_run_layer('det_recent')
 
-        if not best_layer:
+        if best_layer is None:
             QMessageBox.warning(self, "Missing Layer",
-                "No 'best' detection layer found.\n"
+                f"{best_problem}\n"
                 "Mark a detection as best first.")
             return
 
-        if not recent_layer:
+        if recent_layer is None:
             QMessageBox.warning(self, "Missing Layer",
-                "No 'recent' detection layer found.\n"
+                f"{recent_problem}\n"
                 "Load or run a detection for comparison.")
             return
 
@@ -9287,8 +9363,15 @@ class TuningWidget(QWidget):
 
         Returns:
             The napari Points layer or None if not found.
+
+        The detection-run roles ('det_best', 'det_recent') are looked up by
+        the selected brain's recorded run layers only, never by name (see
+        _one_run_layer); None when there is not exactly one.
         """
         import napari
+        from mousebrain.brain_context import RUN_LAYER_ROLES
+        if cell_type in RUN_LAYER_ROLES:
+            return self._one_run_layer(cell_type)[0]
 
         for layer in self.viewer.layers:
             if not isinstance(layer, napari.layers.Points):
