@@ -218,6 +218,170 @@ def _empty_drawn(name: str, widget) -> Dict[str, Any]:
     return {"regions": []}
 
 
+# What the window says is running while Run Batch Analysis works through its
+# folder (see BrainSliceWidget._batch_run_analysis).
+BATCH_RUNNING = "the batch analysis"
+
+
+class BatchImageFailed(Exception):
+    """One batch image could not be analyzed; the message says why."""
+
+
+def analyze_batch_image(fpath, settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Find and classify the particles of one batch image with `settings`
+    (the particle tab's settings, as _pa_get_settings returns them).
+
+    A plain function of the file and the settings, holding nothing of the
+    window. WHY: the batch used to keep its work in the window's own
+    attributes while the window answered clicks between images, so a click
+    could change what the rest of the run worked on (see _batch_run_analysis).
+
+    Returns {'particles', 'labels', 'channels', 'n_particles', 'n_raw'}.
+    Raises BatchImageFailed (or whatever the analysis raised) when the image
+    cannot be analyzed."""
+    from ..core.particle_analysis import ParticleAnalyzer
+    from ..core.io import load_image
+    import pandas as pd
+    from scipy import ndimage as ndi
+    from skimage.segmentation import watershed, find_boundaries
+    from skimage.feature import peak_local_max
+    from skimage.measure import regionprops
+
+    analyzer = ParticleAnalyzer()
+    det_ch = settings.get('detect_channel_idx', 1)
+    meas_ch = settings.get('measure_channel_idx', 0)
+    threshold = settings['threshold']
+    min_area = settings['min_area']
+    max_area = settings['max_area']
+    min_circ = settings['min_circularity']
+    do_watershed = settings['watershed']
+    bg_value = settings['bg_value']
+    min_pct = settings['min_pct_above_bg']
+    rotation_text = settings.get('rotation', 'None')
+    z_proj_text = settings.get('z_projection', 'Max Intensity')
+    red_ch_idx = settings.get('red_channel_idx', 1)
+    green_ch_idx = settings.get('green_channel_idx', 0)
+
+    if '90' in rotation_text and 'CCW' in rotation_text:
+        rot_k = 1
+    elif '90' in rotation_text and 'CW' in rotation_text:
+        rot_k = 3
+    elif '180' in rotation_text:
+        rot_k = 2
+    else:
+        rot_k = 0
+
+    channels, _meta = load_image(str(fpath))
+    if channels is None:
+        raise BatchImageFailed("could not be read")
+
+    # Apply z-projection and rotation to each channel, as the Load tab does
+    processed = []
+    for ch in channels:
+        if ch.ndim == 3:
+            if 'Max' in z_proj_text:
+                ch = ch.max(axis=0)
+            elif 'Mean' in z_proj_text:
+                ch = ch.mean(axis=0)
+            else:  # First Z
+                ch = ch[0]
+        if rot_k > 0:
+            ch = np.rot90(ch, k=rot_k)
+        processed.append(ch)
+    channels = processed
+
+    # Map channels like the Load tab does: red_ch_idx and green_ch_idx are
+    # the raw channel indices; det_ch and meas_ch are relative to
+    # [green, red] = [0, 1]
+    if max(red_ch_idx, green_ch_idx) >= len(channels):
+        raise BatchImageFailed(
+            f"not enough channels (need idx {max(red_ch_idx, green_ch_idx)}, "
+            f"have {len(channels)})")
+    mapped_channels = [channels[green_ch_idx], channels[red_ch_idx]]
+    for ci, ch in enumerate(channels):
+        if ci not in (green_ch_idx, red_ch_idx):
+            mapped_channels.append(ch)
+
+    det_img = mapped_channels[det_ch].astype(np.float64)
+    meas_img = mapped_channels[meas_ch].astype(np.float64)
+
+    mask = analyzer.binarize(det_img, threshold)
+    if do_watershed:
+        distance = ndi.distance_transform_edt(mask)
+        min_dist = max(3, int(np.sqrt(min_area / np.pi)))
+        coords = peak_local_max(distance, min_distance=min_dist,
+                                labels=mask.astype(int))
+        local_max = np.zeros(mask.shape, dtype=bool)
+        if len(coords) > 0:
+            local_max[tuple(coords.T)] = True
+        markers, _ = ndi.label(local_max)
+        ws_labels = watershed(-distance, markers, mask=mask)
+        boundaries = find_boundaries(ws_labels, mode='inner')
+        mask[boundaries] = False
+
+    # Particles before the size/circularity filter (the tracker row's
+    # pa_particles_raw).
+    n_raw = int(ndi.label(mask)[1])
+    labels, particle_props = analyzer.find_particles(
+        mask, min_area=min_area, max_area=max_area,
+        min_circularity=min_circ, max_circularity=1.0,
+    )
+    n = int(labels.max())
+
+    if n > 0 and bg_value > 0:
+        from skimage.measure import regionprops_table
+        table = regionprops_table(
+            labels, intensity_image=meas_img,
+            properties=['label', 'mean_intensity', 'max_intensity', 'area'],
+        )
+        measurements = pd.DataFrame(table)
+        median_vals, integrated_vals = [], []
+        for lbl in measurements['label'].values:
+            px_vals = meas_img[labels == lbl].astype(np.float64)
+            median_vals.append(float(np.median(px_vals)))
+            integrated_vals.append(float(np.sum(px_vals)))
+        measurements['median_intensity'] = median_vals
+        measurements['integrated_intensity'] = integrated_vals
+        measurements['background'] = bg_value
+        measurements['mean_above_background'] = (
+            measurements['mean_intensity'] - bg_value)
+        measurements['snr'] = (
+            measurements['mean_above_background'] / max(bg_value, 1e-10))
+
+        results = pd.merge(particle_props, measurements, on='label',
+                           suffixes=('', '_meas'))
+        if 'area_meas' in results.columns:
+            results = results.drop(columns=['area_meas'])
+
+        pct_above = []
+        for lbl in results['label'].values:
+            px_vals = meas_img[labels == int(lbl)]
+            n_above = int((px_vals > bg_value).sum())
+            pct_above.append(100.0 * n_above / max(len(px_vals), 1))
+        results['pct_above_bg'] = pct_above
+        results['is_positive'] = results['pct_above_bg'] >= min_pct
+        results['fold_change'] = (
+            results['mean_intensity'] / max(bg_value, 1e-10))
+
+        rp = {r.label: r for r in regionprops(labels)}
+        results['centroid_y'] = results['label'].map(
+            lambda l: rp[l].centroid[0] if l in rp else np.nan)
+        results['centroid_x'] = results['label'].map(
+            lambda l: rp[l].centroid[1] if l in rp else np.nan)
+    else:
+        results = particle_props.copy()
+        if 'pct_above_bg' not in results.columns:
+            results['pct_above_bg'] = 0.0
+            results['is_positive'] = False
+
+    return {
+        'particles': results,
+        'labels': labels,
+        'channels': mapped_channels,
+        'n_particles': n,
+        'n_raw': n_raw,
+    }
+
 
 class _NumericTableItem(QTableWidgetItem):
     """QTableWidgetItem that sorts numerically instead of alphabetically."""
@@ -2726,6 +2890,11 @@ class BrainSliceWidget(QWidget):
                 f"Wait for it to finish, then try again.")
             return True
         busy = self._analysis_in_progress()
+        if busy == BATCH_RUNNING:
+            self.status_label.setText(
+                f"{what}: not opened -- {busy} is still running. Wait for it "
+                f"to finish, then try again.")
+            return True
         if busy:
             self.status_label.setText(
                 f"{what}: not opened -- {busy} is still running on the image "
@@ -3265,7 +3434,10 @@ class BrainSliceWidget(QWidget):
             with open(path) as f:
                 settings = json.load(f)
             self._pa_apply_settings(settings)
-            self._batch_settings = settings
+            # Not copied into the batch's settings: a batch records the
+            # settings it actually ran with, when it runs. WHY: loading a
+            # file after a batch had run used to make Export Batch Results
+            # write the loaded file as the batch's settings.
             source = settings.get('source_image', 'unknown')
             self.status_label.setText(
                 f"Settings loaded from {Path(path).name} (tuned on: {source})")
@@ -3273,10 +3445,19 @@ class BrainSliceWidget(QWidget):
             QMessageBox.warning(self, "Error", f"Failed to load settings: {e}")
 
     def _batch_select_folder(self):
-        """Select a folder of images for batch processing."""
+        """Select a folder of images for batch processing. Refused while the
+        batch runs or waits for ROIs (see _batch_busy)."""
+        busy = self._batch_busy()
+        if busy:
+            self.status_label.setText(f"Batch folder not changed: {busy}.")
+            return
         folder = QFileDialog.getExistingDirectory(
             self, "Select Batch Folder")
         if not folder:
+            return
+        busy = self._batch_busy()   # the dialog lets the window answer clicks
+        if busy:
+            self.status_label.setText(f"Batch folder not changed: {busy}.")
             return
         folder = Path(folder)
         # Find all ND2 and TIFF files
@@ -3355,211 +3536,100 @@ class BrainSliceWidget(QWidget):
             pass
         return warnings
 
+    def _batch_busy(self) -> Optional[str]:
+        """What stops the batch section from being changed now, or None:
+        the batch analysis running, or its ROI drawing waiting.
+
+        WHY: the batch runs on the window's thread and lets the window answer
+        clicks between images (_batch_run_analysis). Choosing another batch
+        folder part-way used to replace the file list and empty the results
+        while the run kept going, so the two batches were mixed under the
+        first one's file names; during the ROI drawing it threw away the
+        images not yet counted."""
+        if self._analysis_running == BATCH_RUNNING:
+            return "the batch analysis is still running"
+        if self._batch_roi_mode:
+            return ("the batch is waiting for ROIs (finish it with Count & Next "
+                    "or Skip)")
+        return None
+
+    def _set_batch_buttons(self, enabled: bool) -> None:
+        """The batch folder, run and export buttons, off while the batch
+        runs. Only shows the refusal in _batch_busy; that is what protects."""
+        for name in ("_batch_folder_btn", "_batch_run_btn", "_batch_export_btn"):
+            btn = getattr(self, name, None)
+            if btn is not None:
+                btn.setEnabled(enabled)
+
     def _batch_run_analysis(self):
-        """Run particle analysis on all batch images with current settings."""
+        """Run particle analysis on all batch images with current settings.
+
+        The files, the settings and the results are this run's own local
+        values; the window's batch attributes are set once, at the end.
+        While it runs, the window says BATCH_RUNNING is going
+        (_analysis_running), so -- like any analysis -- it refuses to open an
+        image or start another analysis, and _batch_busy refuses a new batch
+        folder. WHY: the loop lets the window answer clicks between images
+        (QApplication.processEvents), and a click used to be able to change
+        the folder, the file list or the image on screen part-way through.
+        It still runs on the window's thread: the window answers only
+        between images."""
         if not self._batch_files:
             return
+        busy = self._batch_busy()
+        if busy:
+            self.status_label.setText(f"Batch analysis not started: {busy}.")
+            return
+        if self._refuse_if_analysis_running("Batch analysis"):
+            return
 
+        files = list(self._batch_files)
         settings = self._pa_get_settings()
-        self._batch_settings = settings
-
-        self._batch_run_btn.setEnabled(False)
-        self._batch_progress.setVisible(True)
-        self._batch_progress.setMaximum(len(self._batch_files))
-        self._batch_progress.setValue(0)
-        self._batch_results = {}
-
-        from ..core.particle_analysis import ParticleAnalyzer
-        from ..core.io import load_image
-        import pandas as pd
-        from scipy import ndimage as ndi
-        from skimage.segmentation import watershed, find_boundaries
-        from skimage.feature import peak_local_max
-        from skimage.measure import regionprops
-
-        analyzer = ParticleAnalyzer()
-        det_ch = settings.get('detect_channel_idx', 1)
-        meas_ch = settings.get('measure_channel_idx', 0)
-        threshold = settings['threshold']
-        min_area = settings['min_area']
-        max_area = settings['max_area']
-        min_circ = settings['min_circularity']
-        do_watershed = settings['watershed']
-        bg_value = settings['bg_value']
-        min_pct = settings['min_pct_above_bg']
-
-        # Load params
-        rotation_text = settings.get('rotation', 'None')
-        z_proj_text = settings.get('z_projection', 'Max Intensity')
-        red_ch_idx = settings.get('red_channel_idx', 1)
-        green_ch_idx = settings.get('green_channel_idx', 0)
-
-        # Determine rotation k value
-        if '90' in rotation_text and 'CCW' in rotation_text:
-            rot_k = 1
-        elif '90' in rotation_text and 'CW' in rotation_text:
-            rot_k = 3
-        elif '180' in rotation_text:
-            rot_k = 2
-        else:
-            rot_k = 0
 
         from qtpy.QtWidgets import QApplication
 
+        results: Dict[str, Any] = {}
         errors = []
-        for i, fpath in enumerate(self._batch_files):
-            self._batch_progress.setValue(i)
-            self._batch_status_label.setText(
-                f"Processing {i+1}/{len(self._batch_files)}: {fpath.name}")
-            QApplication.processEvents()
-
-            try:
-                channels, meta = load_image(str(fpath))
-                if channels is None:
-                    errors.append(f"{fpath.name}: failed to load")
+        self._analysis_running = BATCH_RUNNING
+        self._set_batch_buttons(False)
+        self._batch_progress.setVisible(True)
+        self._batch_progress.setMaximum(len(files))
+        self._batch_progress.setValue(0)
+        try:
+            for i, fpath in enumerate(files):
+                self._batch_progress.setValue(i)
+                self._batch_status_label.setText(
+                    f"Processing {i+1}/{len(files)}: {fpath.name}")
+                QApplication.processEvents()
+                try:
+                    data = analyze_batch_image(fpath, settings)
+                except Exception as e:
+                    errors.append(f"{fpath.name}: {e}")
                     continue
+                data.update({'path': fpath, 'roi_done': False,
+                             'summary': None, 'detail': None})
+                results[fpath.name] = data
+        finally:
+            self._analysis_running = None
+            self._set_batch_buttons(True)
+            self._batch_export_btn.setEnabled(False)
+            self._batch_progress.setVisible(False)
 
-                # Apply z-projection to each channel
-                processed = []
-                for ch in channels:
-                    if ch.ndim == 3:
-                        if 'Max' in z_proj_text:
-                            ch = ch.max(axis=0)
-                        elif 'Mean' in z_proj_text:
-                            ch = ch.mean(axis=0)
-                        else:  # First Z
-                            ch = ch[0]
-                    # Apply rotation
-                    if rot_k > 0:
-                        ch = np.rot90(ch, k=rot_k)
-                    processed.append(ch)
-                channels = processed
+        self._batch_progress.setValue(len(files))
+        self._batch_settings = settings
+        self._batch_results = results
 
-                # Map channels like the Load tab does:
-                # red_ch_idx and green_ch_idx are the raw channel indices
-                # det_ch and meas_ch are relative to [green, red] = [0, 1]
-                if max(red_ch_idx, green_ch_idx) >= len(channels):
-                    errors.append(f"{fpath.name}: not enough channels "
-                                  f"(need idx {max(red_ch_idx, green_ch_idx)}, "
-                                  f"have {len(channels)})")
-                    continue
-
-                # Build the 2-channel list as the Load tab would:
-                # channels[0] = green (signal), channels[1] = red (nuclear)
-                mapped_channels = [
-                    channels[green_ch_idx],  # index 0 = green/signal
-                    channels[red_ch_idx],    # index 1 = red/nuclear
-                ]
-                # If there are extra channels, append them
-                for ci, ch in enumerate(channels):
-                    if ci not in (green_ch_idx, red_ch_idx):
-                        mapped_channels.append(ch)
-
-                det_img = mapped_channels[det_ch].astype(np.float64)
-                meas_img = mapped_channels[meas_ch].astype(np.float64)
-
-                # Store mapped channels for ROI annotation display later
-                channels = mapped_channels
-
-                # Binarize
-                mask = analyzer.binarize(det_img, threshold)
-
-                # Optional watershed
-                if do_watershed:
-                    distance = ndi.distance_transform_edt(mask)
-                    min_dist = max(3, int(np.sqrt(min_area / np.pi)))
-                    coords = peak_local_max(distance, min_distance=min_dist,
-                                            labels=mask.astype(int))
-                    local_max = np.zeros(mask.shape, dtype=bool)
-                    if len(coords) > 0:
-                        local_max[tuple(coords.T)] = True
-                    markers, _ = ndi.label(local_max)
-                    ws_labels = watershed(-distance, markers, mask=mask)
-                    boundaries = find_boundaries(ws_labels, mode='inner')
-                    mask[boundaries] = False
-
-                labels, particle_props = analyzer.find_particles(
-                    mask, min_area=min_area, max_area=max_area,
-                    min_circularity=min_circ, max_circularity=1.0,
-                )
-                n = int(labels.max())
-
-                if n > 0 and bg_value > 0:
-                    from skimage.measure import regionprops_table
-                    table = regionprops_table(
-                        labels, intensity_image=meas_img,
-                        properties=['label', 'mean_intensity', 'max_intensity', 'area'],
-                    )
-                    measurements = pd.DataFrame(table)
-                    median_vals, integrated_vals = [], []
-                    for lbl in measurements['label'].values:
-                        px_vals = meas_img[labels == lbl].astype(np.float64)
-                        median_vals.append(float(np.median(px_vals)))
-                        integrated_vals.append(float(np.sum(px_vals)))
-                    measurements['median_intensity'] = median_vals
-                    measurements['integrated_intensity'] = integrated_vals
-                    measurements['background'] = bg_value
-                    measurements['mean_above_background'] = (
-                        measurements['mean_intensity'] - bg_value)
-                    measurements['snr'] = (
-                        measurements['mean_above_background'] / max(bg_value, 1e-10))
-
-                    results = pd.merge(particle_props, measurements, on='label',
-                                       suffixes=('', '_meas'))
-                    if 'area_meas' in results.columns:
-                        results = results.drop(columns=['area_meas'])
-
-                    # Per-pixel positivity
-                    pct_above = []
-                    for lbl in results['label'].values:
-                        px_vals = meas_img[labels == int(lbl)]
-                        n_above = int((px_vals > bg_value).sum())
-                        pct_above.append(100.0 * n_above / max(len(px_vals), 1))
-                    results['pct_above_bg'] = pct_above
-                    results['is_positive'] = results['pct_above_bg'] >= min_pct
-                    results['fold_change'] = (
-                        results['mean_intensity'] / max(bg_value, 1e-10))
-
-                    # Centroids
-                    rp = {r.label: r for r in regionprops(labels)}
-                    results['centroid_y'] = results['label'].map(
-                        lambda l: rp[l].centroid[0] if l in rp else np.nan)
-                    results['centroid_x'] = results['label'].map(
-                        lambda l: rp[l].centroid[1] if l in rp else np.nan)
-                else:
-                    results = particle_props.copy()
-                    if 'pct_above_bg' not in results.columns:
-                        results['pct_above_bg'] = 0.0
-                        results['is_positive'] = False
-
-                self._batch_results[fpath.name] = {
-                    'path': fpath,
-                    'particles': results,
-                    'labels': labels,
-                    'channels': channels,
-                    'n_particles': n,
-                    'roi_done': False,
-                    'summary': None,
-                    'detail': None,
-                }
-            except Exception as e:
-                errors.append(f"{fpath.name}: {e}")
-
-        self._batch_progress.setValue(len(self._batch_files))
-
-        n_ok = len(self._batch_results)
-        status = f"Batch complete: {n_ok}/{len(self._batch_files)} images processed"
+        n_ok = len(results)
+        status = f"Batch complete: {n_ok}/{len(files)} images processed"
         if errors:
             status += f" ({len(errors)} errors)"
             print(f"[BrainSlice] Batch errors:")
             for err in errors:
                 print(f"  {err}")
         self._batch_status_label.setText(status)
-        self._batch_run_btn.setEnabled(True)
-        self._batch_progress.setVisible(False)
 
         # Enter ROI annotation mode if we have results
-        if self._batch_results:
+        if results:
             self._batch_enter_roi_mode()
 
     def _batch_enter_roi_mode(self):
