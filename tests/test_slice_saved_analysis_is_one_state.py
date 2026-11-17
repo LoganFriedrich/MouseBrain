@@ -165,3 +165,40 @@ def test_analyzed_marker_needs_a_saved_result(tmp_path, monkeypatch):
     pd.DataFrame({"label": [1]}).to_csv(folder / "measurements.csv", index=False)
     w._nav_update_label()
     assert "[analyzed" in w._img_nav_label.text()
+
+
+def test_an_error_part_way_through_a_restore_leaves_the_folder_untouched(tmp_path, monkeypatch):
+    w, image = _open(tmp_path, monkeypatch)
+    _draw_roi(w)
+    nuclei = np.zeros((8, 8), dtype=np.int32)
+    nuclei[2:4, 2:4] = 1
+    w.nuclei_labels = nuclei
+    w.cell_measurements = pd.DataFrame({"label": [1], "is_positive": [True]})
+    w._roi_detail_data = pd.DataFrame({"roi": ["DCN"], "total": [1]})
+    w._save_analysis_state()
+    folder = image.parent / "PRJ_01_01_S1_analysis"
+    before = {p.name: p.read_bytes() for p in folder.iterdir()}
+
+    # Drawing the restored nuclei fails unexpectedly: nothing after it
+    # (measurements, ROI counts, ROIs) is read back.
+    from slice_widget_helpers import FakeViewer
+
+    class FailingViewer(FakeViewer):
+        def add_labels(self, data, name=None, **kwargs):
+            if name and name.startswith("Nuclei"):
+                raise RuntimeError("display failed")
+            return super().add_labels(data, name, **kwargs)
+
+    image2 = image
+    w2 = make_loading_widget(tmp_path, monkeypatch)
+    w2.viewer = FailingViewer()
+    w2._pa_get_scale = lambda: (1.0, 1.0)
+    w2._open_image(image2, peek=False)
+    finish_load(w2)
+    assert "only partly restored" in w2.status_label.text()
+
+    # Leaving the image must not remove or empty what was never read back.
+    w2._save_analysis_state()
+    after = {p.name: p.read_bytes() for p in folder.iterdir()}
+    for name in ("measurements.csv", "roi_detail.csv", "rois.json", "nuclei.npz"):
+        assert after[name] == before[name], name

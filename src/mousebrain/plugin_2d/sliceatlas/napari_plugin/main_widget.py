@@ -2272,8 +2272,15 @@ class BrainSliceWidget(QWidget):
 
     def _save_analysis_state(self):
         """Save what the window holds for the image on screen into its
-        <image name>_analysis folder, as one state (see the note above)."""
-        state = self._analysis_state_in_memory()
+        <image name>_analysis folder, as one state (see the note above).
+        Never raises: an error here would stop the next image from opening."""
+        try:
+            state = self._analysis_state_in_memory()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.status_label.setText(f"[!] Analysis NOT saved: {e}")
+            return
         has_results = any(v is not None for v in state.values())
 
         if self.current_file is None:
@@ -2295,9 +2302,9 @@ class BrainSliceWidget(QWidget):
             print("[BrainSlice] Save skipped: no results to save")
             return
 
-        state["settings.json"] = self._analysis_settings_to_save()
         not_saved = []
         try:
+            state["settings.json"] = self._analysis_settings_to_save()
             analysis_dir.mkdir(exist_ok=True)
             for name, payload in state.items():
                 path = analysis_dir / name
@@ -2379,11 +2386,32 @@ class BrainSliceWidget(QWidget):
         with another rotation, z-projection or channel choice than the
         saved analysis was made on: the status bar says what differs and
         how to see it."""
+        # The window owns the folder (a save may then remove or empty what is
+        # no longer in memory) only once the restore has gone through. WHY:
+        # an error part-way would leave the files after it unread but not
+        # named as blocked, and the next save would delete or empty them.
+        self._restore_blocked = set()
+        self._state_restored_for = None
+        try:
+            restored = self._restore_analysis_files()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            name = self.current_file.name if self.current_file is not None else "image"
+            msg = (f"[!] Saved analysis of {name} only partly restored ({e}). "
+                   f"Saving will not remove or empty anything in its _analysis "
+                   f"folder; open the image again to retry.")
+            self.status_label.setText(msg)
+            print(f"[BrainSlice] {msg}")
+            return False
+        self._state_restored_for = self.current_file
+        return restored
+
+    def _restore_analysis_files(self):
+        """The body of _restore_analysis_state: each file in turn."""
         import json
         import pandas as pd
 
-        self._restore_blocked = set()
-        self._state_restored_for = self.current_file
         if self.current_file is None:
             return False
         analysis_dir = analysis_dir_for(self.current_file)
@@ -5396,7 +5424,7 @@ class BrainSliceWidget(QWidget):
             self.current_file = fpath
             # The settings the load started with, not the controls now: a
             # control changed during the load did not change these pixels.
-            loaded_with = self._loading_with or self._load_settings_now()
+            loaded_with = getattr(self, '_loading_with', None) or self._load_settings_now()
             self._loading_with = None
             self._loaded_with = loaded_with
             rotation = loaded_with.get('rotation')
