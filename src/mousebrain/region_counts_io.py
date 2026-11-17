@@ -130,12 +130,45 @@ def _points_at(row_path: str, target: Path) -> bool:
     return n == _norm(target) or n == _norm(Path(target).parent)
 
 
+# How much later than its record cells.xml may be and still be the file the
+# record describes. Both times are file times from the same file system (the
+# record is written just after cells.xml is put in place), so only the
+# file system's time resolution needs room.
+RECORD_TOLERANCE_S = 5.0
+
+
+def _record_exp_id(cells_xml) -> str:
+    """The exp_id the production record beside cells.xml names, or "" when
+    there is no readable record or the record no longer describes cells.xml
+    (mousebrain.classification_runs writes the record).
+
+    WHY the time check: anything that writes cells.xml without writing the
+    record -- an older copy of step 5 still installed somewhere, a file put
+    back by hand -- leaves a record naming a run that did not make the file.
+    Trusting it would give counts the detection settings of a run they did
+    not come from. A cells.xml modified after its record is therefore not
+    described by it, and the caller falls back to the time-guarded search.
+    """
+    import json
+    cells_xml = Path(cells_xml)
+    rec = cells_xml.with_name("promoted_from.json")
+    try:
+        exp_id = str((json.loads(rec.read_text(encoding="utf-8")) or {}).get("exp_id") or "")
+        if exp_id and cells_xml.stat().st_mtime > rec.stat().st_mtime + RECORD_TOLERANCE_S:
+            return ""
+        return exp_id
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
 def detection_provenance(tracker_rows: List[dict], brain_folder: str, cells_xml,
                          candidates_hint=None) -> Optional[Dict[str, str]]:
     """The detection run behind a brain's production cells.xml, or None.
 
-    Chain: the newest completed classification of this brain whose output is
-    cells.xml's folder (and that is not newer than cells.xml) -> its
+    Chain: the classification run the production record beside cells.xml
+    (promoted_from.json) names; for a brain without one, the newest completed
+    classification of this brain whose output is cells.xml or its folder (and
+    that is not newer than cells.xml) -> its
     parent_experiment if that is a detection run; else its input candidates
     -> through any pre-filter run whose output they are -> the newest
     completed detection run whose output is those candidates (file or folder)
@@ -151,16 +184,31 @@ def detection_provenance(tracker_rows: List[dict], brain_folder: str, cells_xml,
         return (r.get("exp_type") == kind and r.get("status") == "completed"
                 and _same_brain(r.get("brain"), brain_folder))
 
-    cla = [r for r in tracker_rows
-           if (ok(r, "classification") or ok(r, "selective_classification"))
-           and _points_at(r.get("output_path"), cells_xml)]
-    try:
-        cells_time = datetime.fromtimestamp(cells_xml.stat().st_mtime).isoformat()
-    except OSError:
-        cells_time = "9999"
-    cla = [r for r in cla if (r.get("created_at") or "") <= cells_time]
-    cla.sort(key=lambda r: r.get("created_at") or "", reverse=True)
-    classification = cla[0] if cla else None
+    def classifying(r):
+        return ok(r, "classification") or ok(r, "selective_classification")
+
+    # The production record beside cells.xml (promoted_from.json, written by a
+    # promotion and by step 5) names the run whose files these are. WHY it is
+    # read first: a run promoted from Setup & Tuning wrote into its own run
+    # folder, so its tracker row never names 5_Classified_Cells and the search
+    # below cannot find it -- counts of a promoted classification had no
+    # provenance at all. The record is the one statement of which run made
+    # the file; the search is for brains classified before records existed,
+    # and for a cells.xml written after its record (_record_exp_id).
+    classification = None
+    record_id = _record_exp_id(cells_xml)
+    if record_id and record_id in by_id and classifying(by_id[record_id]):
+        classification = by_id[record_id]
+    if classification is None:
+        cla = [r for r in tracker_rows
+               if classifying(r) and _points_at(r.get("output_path"), cells_xml)]
+        try:
+            cells_time = datetime.fromtimestamp(cells_xml.stat().st_mtime).isoformat()
+        except OSError:
+            cells_time = "9999"
+        cla = [r for r in cla if (r.get("created_at") or "") <= cells_time]
+        cla.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+        classification = cla[0] if cla else None
 
     detection = None
     if classification is not None:

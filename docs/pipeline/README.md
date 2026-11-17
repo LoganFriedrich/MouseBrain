@@ -693,7 +693,17 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   a temporary file, like step 6.
 - The `det_*` and `voxel_*` columns: the settings of the detection run behind
   the brain's `cells.xml`, found by following the tracker from the
-  classification that wrote `cells.xml`, through the pre-filter if there was
+  classification that wrote `cells.xml` -- the run named in
+  `5_Classified_Cells/promoted_from.json` when there is one (step 5 and
+  **Promote to production** write it; before that, counts of a promoted
+  Setup & Tuning run could not be traced at all, because that run's row names
+  its own run folder). The record is believed only while `cells.xml` is not
+  newer than the record itself: if something wrote `cells.xml` without
+  writing the record (an older installed copy of step 5, a file put back by
+  hand), the record names a run that did not make the file, so step 6 instead
+  takes the newest finished classification run of the brain that names
+  `5_Classified_Cells` and started before `cells.xml` was written. From the
+  classification the chain goes through the pre-filter if there was
   one, to the detection run whose output those candidates are. If the chain
   cannot be followed (runs from before the tracker recorded these links), the
   `det_*` columns stay empty and step 6 prints `[!] The detection run behind
