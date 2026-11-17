@@ -205,7 +205,7 @@ load from TIFFs it builds the copies in the background (or press "Convert to
 Zarr").
 
 A copy is used only when it is **complete and current**: it is written into a
-folder of its own, `ch0.zarr.partial-<random letters>`, renamed to `ch0.zarr`
+folder of its own, `ch0.zarr.partial-<random characters>`, renamed to `ch0.zarr`
 when every plane is in, and then `ch0.zarr.complete.json` is written last. A load uses the Zarr copies only if
 both channels have that record, the plane count matches the TIFFs in the folder,
 and no TIFF is newer than the copy. Otherwise the terminal says
