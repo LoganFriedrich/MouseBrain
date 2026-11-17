@@ -279,12 +279,26 @@ class ExperimentTracker:
                     "tracker lives, and a second empty one would look real while the "
                     "actual record of every calibration run was orphaned. %s"
                     % (self.csv_path, _cfg.UNCONFIGURED_MESSAGE))
+            # The default tracker is created only INSIDE an existing
+            # 2_Data_Summary folder, never together with it. A configured root
+            # whose pipeline folder is not visible right now (a share that is
+            # half connected) must not get a fresh, empty tracker that later
+            # runs append to while the real one sits unseen. A path given on
+            # purpose (csv_path=...) is not a guess, so its folders are made.
+            if using_default and not self.csv_path.parent.is_dir():
+                raise RuntimeError(
+                    "refusing to create a new calibration tracker: its folder %s "
+                    "does not exist. On a working installation that folder is "
+                    "always there, so either the data drive is not connected "
+                    "right now (reconnect it and try again) or CONNECTOME_ROOT "
+                    "points at the wrong place (check with: mousebrain --paths). "
+                    "Only on a brand-new installation, create that one folder by "
+                    "hand; the tracker then starts in it." % self.csv_path.parent)
             self.csv_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
                 writer.writeheader()
         else:
-            self.csv_path.parent.mkdir(parents=True, exist_ok=True)
             self._add_missing_columns()
 
     # -----------------------------------------------------------------

@@ -220,9 +220,20 @@ if PIPELINE_ROOT and (PIPELINE_ROOT / "3D_Cleared").exists():
 elif (TISSUE_ROOT / "3D_Cleared").exists():
     # Current structure: Tissue/3D_Cleared
     CLEARED_3D_DIR = TISSUE_ROOT / "3D_Cleared"
-else:
-    # Legacy structure: 3_Nuclei_Detection
+elif (ROOT_PATH / "3_Nuclei_Detection").exists():
+    # Legacy structure: 3_Nuclei_Detection -- only when that folder is THERE.
     CLEARED_3D_DIR = ROOT_PATH / "3_Nuclei_Detection"
+else:
+    # None of the layouts is visible: point at the current layout's place
+    # anyway. WHY not the legacy one: the layout is chosen once, at import. If
+    # the share answers for the root but not yet for Tissue/MouseBrain_Pipeline
+    # (a reconnecting network drive), the old code chose the legacy folder,
+    # and the tracker then created <root>/3_Nuclei_Detection/2_Data_Summary/
+    # with a new, empty calibration_runs.csv that later runs appended to -- a
+    # fork of the record of every calibration run. Pointing at the expected
+    # place makes every reader find nothing and the tracker refuse to write
+    # (it never creates its own 2_Data_Summary folder; see tracker.py).
+    CLEARED_3D_DIR = TISSUE_ROOT / "MouseBrain_Pipeline" / "3D_Cleared"
 
 # Alias for backwards compatibility
 NUCLEI_DETECTION_DIR = CLEARED_3D_DIR

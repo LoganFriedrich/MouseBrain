@@ -544,6 +544,18 @@ The experiment tracker creates its CSV at:
 <CONNECTOME_ROOT>\Tissue\MouseBrain_Pipeline\3D_Cleared\2_Data_Summary\calibration_runs.csv
 ```
 
+It starts a new CSV there only when the `2_Data_Summary` folder already
+exists, and it never creates that folder. If you see
+`refusing to create a new calibration tracker: its folder ... does not exist`,
+the data drive is not connected (reconnect it and run again) or
+`CONNECTOME_ROOT` points at the wrong place (`mousebrain --paths` shows what is
+seen). On a brand-new installation, create that one folder by hand. WHY: when
+the drive answered for the root but not yet for `Tissue\MouseBrain_Pipeline` (a
+network share reconnecting), the tools used to fall back to the old
+`3_Nuclei_Detection` layout and start a second, empty tracker there, which later
+runs appended to while the real one sat unseen. The old layout is now used only
+where its `3_Nuclei_Detection` folder really exists.
+
 ## Usage Examples
 
 ### Script 4: Detection

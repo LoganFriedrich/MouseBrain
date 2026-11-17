@@ -89,6 +89,9 @@ def test_a_configured_tracker_is_untouched(monkeypatch, tmp_path):
     from mousebrain import config as cfg, tracker as tk
     monkeypatch.setattr(cfg, "ROOT_PATH", tmp_path)
     target = tmp_path / "2_Data_Summary" / "calibration_runs.csv"
+    # The tracker starts only inside an existing 2_Data_Summary folder (see
+    # test_a_half_visible_share_never_forks_the_tracker.py).
+    target.parent.mkdir()
     monkeypatch.setattr(tk, "DEFAULT_TRACKER_PATH", target)
     tk.ExperimentTracker()
     assert target.exists()
