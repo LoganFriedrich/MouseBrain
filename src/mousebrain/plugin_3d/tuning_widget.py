@@ -662,10 +662,6 @@ class TuningWidget(QWidget):
         self._prefilter_source_exp_id = None
         self._prefilter_source_brain = None
 
-        # Classification selection for region counting
-        self._selected_class_run = None
-        self._selected_cells_xml = None
-
         # The last GUI classification run's own folder and tracker id (never
         # the production 5_Classified_Cells; see run_classification)
         self._last_class_output = None
@@ -4476,6 +4472,16 @@ class TuningWidget(QWidget):
         runs_btn_layout.addWidget(refresh_class_runs_btn)
 
         runs_layout.addLayout(runs_btn_layout)
+
+        # Any completed run of this brain can become production, not only the
+        # last one made in this window (which a restart or brain change forgets).
+        promote_selected_btn = QPushButton("Promote selected to production...")
+        promote_selected_btn.setToolTip(
+            "Make the run selected above the brain's production classification\n"
+            "(what region counting counts). You are asked to confirm; the current\n"
+            "5_Classified_Cells files are archived first, not deleted.")
+        promote_selected_btn.clicked.connect(self._promote_selected_class_run)
+        runs_layout.addWidget(promote_selected_btn)
         content_layout.addWidget(runs_group)
 
         # =================================================================
@@ -7915,37 +7921,146 @@ class TuningWidget(QWidget):
         print(f"[MouseBrain] === COMPARISON COMPLETE ===\n")
 
     def _promote_last_classification(self):
-        """Make the last GUI classification run this brain's production one,
-        after the person confirms (mousebrain.classification_runs)."""
+        """Classification tab button: promote the last classification run
+        made in this window for the selected brain. Earlier runs (another
+        session, or before a brain change) are promoted from the run list
+        (Classification Runs, "Promote selected to production...") or from
+        the Results tab's "Promote a run..." list."""
         run_folder = getattr(self, '_last_class_output', None)
         if not self.current_brain or not run_folder:
-            QMessageBox.warning(self, "Nothing to promote", "Run a classification first.")
+            QMessageBox.warning(
+                self, "Nothing to promote",
+                "No classification run was made here for this brain since it was selected.\n\n"
+                "To promote an earlier run, select it in 'Classification Runs (from "
+                "Tracker)' and click 'Promote selected to production...'.")
             return
-        if Path(run_folder).parent.name != self.current_brain.name:
-            QMessageBox.warning(self, "Different brain",
-                                "The last classification run was for another brain.")
+        self._promote_classification_run(run_folder, getattr(self, '_last_class_exp_id', None),
+                                         brain_name=Path(run_folder).parent.name)
+
+    def _promote_selected_class_run(self):
+        """'Classification Runs (from Tracker)' button: promote the run
+        selected in that list -- any completed classification run of this
+        brain, from any session."""
+        exp_id = self._get_selected_class_run_id()
+        if not exp_id or not self.tracker:
+            QMessageBox.warning(self, "No Selection",
+                                "Select a classification run in the list first.")
             return
+        self._promote_tracker_row(self.tracker.get_experiment(exp_id))
+
+    def _promote_tracker_row(self, row):
+        """Promote the classification run a tracker row describes (checks in
+        _promote_classification_run). A row's output_path is the run's folder,
+        or for a step 5 run the cells.xml it wrote: a file is read as its
+        folder."""
+        if not row:
+            QMessageBox.warning(self, "Not Found", "That run is not in the tracker.")
+            return False
+        if row.get('exp_type') != 'classification' or row.get('status') != 'completed':
+            QMessageBox.warning(
+                self, "Not promoted",
+                f"Run {row.get('exp_id')} is not a completed classification run.")
+            return False
+        output_path = row.get('output_path') or ''
+        if not output_path:
+            QMessageBox.warning(self, "Not promoted",
+                                f"Run {row.get('exp_id')} has no recorded output folder.")
+            return False
+        folder = Path(output_path)
+        if folder.suffix.lower() == '.xml':
+            folder = folder.parent
+        return self._promote_classification_run(folder, row.get('exp_id'), brain_name=row.get('brain'))
+
+    def _promote_classification_run(self, run_folder, exp_id, brain_name=None):
+        """Make a classification run this brain's production classification
+        (what region counting counts), after the person confirms
+        (mousebrain.classification_runs.promote_to_production).
+
+        Refused, with the reason shown, when the run belongs to another brain,
+        has no cells.xml, or IS the production folder: promoting archives the
+        production files first and then copies the run's files in, so
+        promoting production onto itself would leave the brain with no
+        classification at all."""
+        if not self.current_brain:
+            QMessageBox.warning(self, "No Brain", "Select a brain first.")
+            return False
+        if brain_name and brain_name != self.current_brain.name:
+            QMessageBox.warning(
+                self, "Different brain",
+                f"That classification run is of {brain_name}, not of the selected "
+                f"brain {self.current_brain.name}.")
+            return False
+        run_folder = Path(run_folder)
+        from mousebrain.classification_runs import PRODUCTION_FOLDER, promote_to_production
+
+        def norm(p):
+            return os.path.normcase(os.path.normpath(str(p)))
+        if norm(run_folder) == norm(self.current_brain / PRODUCTION_FOLDER):
+            QMessageBox.information(
+                self, "Already production",
+                "That run's files are the brain's production classification already: "
+                "region counting counts them.")
+            return False
+        if not (run_folder / "cells.xml").is_file():
+            QMessageBox.warning(self, "Not promoted",
+                                f"No cells.xml in the run's folder:\n{run_folder}")
+            return False
         reply = QMessageBox.question(
             self, "Promote to production",
             f"Make this run the production classification of {self.current_brain.name}?\n\n"
-            f"Run: {run_folder}\n\n"
+            f"Run: {exp_id or '(no tracker id)'}\n{run_folder}\n\n"
+            f"Region counting counts only the production classification.\n"
             f"The current files in 5_Classified_Cells are moved to\n"
             f"5_Classified_Cells/_archive/ first. Region counts made before this\n"
             f"will show as stale until counting is run again.",
             QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
-            return
-        from mousebrain.classification_runs import promote_to_production
+            return False
         try:
-            promote_to_production(run_folder, self.current_brain,
-                                  exp_id=getattr(self, '_last_class_exp_id', None),
+            promote_to_production(run_folder, self.current_brain, exp_id=exp_id,
                                   tracker=self.tracker)
         except Exception as e:
             QMessageBox.warning(self, "Not promoted", str(e))
-            return
+            return False
+        self._update_counting_source_label()
         QMessageBox.information(self, "Promoted",
                                 "This run is now the production classification.\n"
                                 "Run region counting to update the counts.")
+        return True
+
+    def _update_counting_source_label(self):
+        """Results tab: say which classification region counting will count.
+
+        Counting (step 6) always counts the brain's production classification,
+        5_Classified_Cells/cells.xml. The label used to read "Selected: <a
+        run>" after a run was chosen in the Results tab, while the count still
+        used production -- the choice had no effect. Now the label names the
+        production file and the run its record (promoted_from.json) says it
+        came from; choosing a run there promotes it, after confirmation."""
+        label = getattr(self, 'class_selection_status', None)
+        if label is None:
+            return
+        brain = getattr(self, 'current_brain', None)
+        if not brain:
+            label.setText("(no brain selected)")
+            label.setStyleSheet("color: gray; font-style: italic;")
+            return
+        from mousebrain.classification_runs import PRODUCTION_FOLDER, production_record
+        cells_xml = Path(brain) / PRODUCTION_FOLDER / "cells.xml"
+        if not cells_xml.is_file():
+            label.setText(f"Counts {PRODUCTION_FOLDER}/cells.xml -- none yet. "
+                          "Run step 5 or promote a classification run.")
+            label.setStyleSheet("color: orange;")
+            return
+        record = production_record(brain)
+        if record.get('exp_id') or record.get('source'):
+            how = record.get('how') or 'recorded'
+            when = (record.get('promoted_at') or '')[:16].replace('T', ' ')
+            who = record.get('exp_id') or Path(str(record.get('source'))).name
+            label.setText(f"Counts {PRODUCTION_FOLDER}/cells.xml -- run {who} ({how}, {when})")
+        else:
+            label.setText(f"Counts {PRODUCTION_FOLDER}/cells.xml (no record of the run that made it)")
+        label.setStyleSheet("color: blue; font-weight: bold;")
 
     def _load_classified_cells(self, *_ignored, folder=None):
         """
@@ -8427,6 +8542,8 @@ class TuningWidget(QWidget):
                 btn = getattr(self, btn_name, None)
                 if btn is not None:
                     btn.setEnabled(False)
+            # Results tab: what counting will count for THIS brain
+            self._update_counting_source_label()
             self.load_metadata()
             self.parse_voxel_from_filename()
             conflict = self._set_swap_from_metadata()
@@ -10206,13 +10323,18 @@ class TuningWidget(QWidget):
 
         # Classification selection row
         class_row = QHBoxLayout()
-        class_row.addWidget(QLabel("Classification:"))
+        class_row.addWidget(QLabel("Counting uses:"))
 
-        self.class_selection_status = QLabel("(none selected)")
+        # What counting WILL count (the production classification and the run
+        # it came from) -- see _update_counting_source_label.
+        self.class_selection_status = QLabel("(no brain selected)")
         self.class_selection_status.setStyleSheet("color: gray; font-style: italic;")
         class_row.addWidget(self.class_selection_status, 1)
 
-        select_class_btn = QPushButton("Select...")
+        select_class_btn = QPushButton("Promote a run...")
+        select_class_btn.setToolTip(
+            "Choose a classification run to make the production classification,\n"
+            "which is what region counting counts. You are asked to confirm.")
         select_class_btn.clicked.connect(self._show_classification_selector)
         class_row.addWidget(select_class_btn)
         top_layout.addLayout(class_row)
@@ -10470,18 +10592,22 @@ class TuningWidget(QWidget):
         return widget
 
     def _show_classification_selector(self):
-        """Show dialog to select classification for region counting."""
+        """Results tab "Promote a run...": list this brain's classifications;
+        the chosen one is promoted to production (after confirmation), since
+        production is the only classification region counting counts."""
         if not self.current_brain:
             QMessageBox.warning(self, "No Brain", "Select a brain first")
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Select Classification")
+        dialog.setWindowTitle("Promote a Classification Run")
         dialog.setMinimumWidth(600)
         layout = QVBoxLayout()
         dialog.setLayout(layout)
 
-        layout.addWidget(QLabel("Select classification to use for region counting:"))
+        layout.addWidget(QLabel(
+            "Region counting counts the production classification (5_Classified_Cells).\n"
+            "Choose a run to make it the production classification:"))
 
         # Table of available classifications
         table = QTableWidget()
@@ -10562,20 +10688,14 @@ class TuningWidget(QWidget):
 
         # Buttons
         btn_row = QHBoxLayout()
-        select_btn = QPushButton("Use Selected")
+        select_btn = QPushButton("Promote Selected to Production...")
         select_btn.setStyleSheet("background-color: #4CAF50; color: white;")
 
         def on_select():
             row = table.currentRow()
             if row >= 0 and row < len(dialog._entries):
-                entry = dialog._entries[row]
-                self._selected_class_run = entry.get('run')
-                self._selected_cells_xml = entry.get('cells_xml')
-                self.class_selection_status.setText(
-                    f"{entry['date']} ({entry['cells']} cells) [{entry['source']}]"
-                )
-                self.class_selection_status.setStyleSheet("color: blue; font-weight: bold;")
-                dialog.accept()
+                if self._promote_classification_entry(dialog._entries[row]):
+                    dialog.accept()
 
         select_btn.clicked.connect(on_select)
         btn_row.addWidget(select_btn)
@@ -11110,33 +11230,33 @@ class TuningWidget(QWidget):
             use_btn.clicked.connect(lambda checked, e=entry: self._select_classification_entry(e))
             self.runs_table.setCellWidget(i, 5, use_btn)
 
-        # Show count
-        if all_entries:
-            self.class_selection_status.setText(f"Found {len(all_entries)} classification(s) - click 'Use' to select")
-            self.class_selection_status.setStyleSheet("color: gray;")
-        else:
-            self.class_selection_status.setText("No classifications found")
-            self.class_selection_status.setStyleSheet("color: orange;")
+        # The label says what counting will count, never "Selected: ...":
+        # choosing a run here promotes it (see _update_counting_source_label).
+        self._update_counting_source_label()
+
+    def _promote_classification_entry(self, entry):
+        """A run chosen in the Results tab ("Use" / "Promote Selected to
+        Production..."): promote it, after confirmation. Choosing used to only
+        set a field nothing read and relabel the tab "Selected: ...", while
+        counting kept counting production. An entry with no tracker row is the
+        production file itself."""
+        run = entry.get('run')
+        if run:
+            return self._promote_tracker_row(run)
+        cells_xml = entry.get('cells_xml')
+        if not cells_xml:
+            QMessageBox.warning(self, "Not promoted", "That entry has no cells.xml.")
+            return False
+        return self._promote_classification_run(Path(cells_xml).parent, None)
 
     def _select_classification_entry(self, entry):
-        """Select a classification from the combined table."""
-        self._selected_class_run = entry.get('run')
-        self._selected_cells_xml = entry.get('cells_xml')
-
-        date = entry.get('date', '?')
-        cells = entry.get('cells', '?')
-        source = entry.get('source', '?')
-
-        self.class_selection_status.setText(f"Selected: {date} ({cells} cells) [{source}]")
-        self.class_selection_status.setStyleSheet("color: blue; font-weight: bold;")
+        """The hidden run table's "Use" button: promote that run (see
+        _promote_classification_entry)."""
+        return self._promote_classification_entry(entry)
 
     def _select_specific_classification(self, run):
-        """Select a specific classification run from the table."""
-        self._selected_class_run = run
-        cells = run.get('class_cells_kept', '?')
-        date = run.get('created_at', '')[:16]
-        self.class_selection_status.setText(f"Selected: {date} ({cells} cells) [manual selection]")
-        self.class_selection_status.setStyleSheet("color: blue; font-weight: bold;")
+        """Promote a specific classification run (a tracker row)."""
+        return self._promote_tracker_row(run)
 
     def load_run_results(self, exp_id):
         """

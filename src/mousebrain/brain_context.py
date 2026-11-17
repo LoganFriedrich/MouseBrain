@@ -39,8 +39,6 @@ PER_BRAIN_DEFAULTS = {
     "training_data_dir": None,
     "_cells_xml": None,
     "_non_cells_xml": None,
-    "_selected_class_run": None,
-    "_selected_cells_xml": None,
     "_detection_z_offset": 0,
     "_last_output_path": None,
     "_last_class_output": None,
