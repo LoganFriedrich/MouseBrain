@@ -120,3 +120,16 @@ def test_a_count_finishing_after_a_brain_change_shows_nothing_of_the_new_brain(c
         worker.run()
     assert w.loaded == []
     assert BRAIN_A in w.region_count_status.texts[-1]
+
+
+def test_the_window_does_not_close_under_a_running_count(monkeypatch):
+    messages = []
+    monkeypatch.setattr(tw.QMessageBox, "warning", lambda *a, **k: messages.append(a[1]))
+    widget = SimpleNamespace(region_count_worker=SimpleNamespace(isRunning=lambda: True),
+                             session_doc=None, _runs_in_progress=set(), tracker=None)
+    event = SimpleNamespace(accepted=False, ignored=False)
+    event.accept = lambda: setattr(event, "accepted", True)
+    event.ignore = lambda: setattr(event, "ignored", True)
+    tw.TuningWidget.closeEvent(widget, event)
+    assert event.ignored and not event.accepted
+    assert messages == ["Region Counting Running"]
