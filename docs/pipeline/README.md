@@ -1186,7 +1186,9 @@ became the detection method of every brain imaged that way, and step 4 logged it
 as the settled method. Now step 4 stops with the message above until someone
 marks a Paradigm Best. The same rule applies to the classification model step 5
 takes from the tracker: only a classification run marked Paradigm Best for the
-imaging setup counts. (Setup & Tuning still shows a brain's Best; it just never
+imaging setup counts. Until a classification run is marked Paradigm Best (an
+open decision), step 5 does not stop: it falls back to the newest model file,
+exactly as before. (Setup & Tuning still shows a brain's Best; it just never
 runs it for other brains.)
 
 **Changing one setting for a trial.** Give it to step 4 on the command line,

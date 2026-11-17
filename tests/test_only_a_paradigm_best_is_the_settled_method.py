@@ -62,5 +62,8 @@ def test_the_paradigm_best_is_the_method_even_beside_a_newer_brain_best(tmp_path
 
 def test_the_display_lookup_still_shows_a_brain_best(tmp_path):
     t = _tracker(tmp_path, [_brain_best("det_one_brain", **EIGHT)])
+    # Display lookup, called without the new keyword: behaviour that must hold
+    # on both sides of the change.
     assert t.get_best_for_paradigm(SETUP)["exp_id"] == "det_one_brain"
+    # The settled-method lookup refuses it.
     assert t.get_best_for_paradigm(SETUP, strict=True) is None
