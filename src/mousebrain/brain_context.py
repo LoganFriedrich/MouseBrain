@@ -189,3 +189,80 @@ def run_points_file(output_path) -> Optional[Path]:
     if p.is_dir():
         p = p / "detected_cells.xml"
     return p if p.is_file() else None
+
+
+# ---------------------------------------------------------------------------
+# Which channel holds the cells (the "signal") and which is the background
+# ---------------------------------------------------------------------------
+#
+# WHY ONE FUNCTION
+# A brain's metadata.json can say which channel is the signal in three ways,
+# written by different tools over time:
+#   * ``channels.signal_channel`` (an integer) -- written by extraction (step 2)
+#     and read by registration, detection and classification (steps 3-5);
+#   * a top-level ``signal_channel`` ("ch1" or 1) -- written by an old crop tool;
+#   * a top-level ``channels_swapped`` (true = ch1 is the signal) -- same.
+# The Setup & Tuning widget used to read them by three different rules: Load
+# took ch1 if ANY of them said so, a detection run read from disk followed a
+# checkbox that started checked whatever the brain said, and classification
+# read only ``channels.signal_channel``. So one brain could be shown with ch1 as
+# its signal, tested on ch0, and classified on ch0.
+#
+# channel_roles reads all three. When those present agree (or only one is
+# present) that is the answer; with none present the signal is ch0. When they
+# CONTRADICT each other, nothing here decides which is right -- only a person
+# who looks at the images can -- so the answer is None and ``conflict`` says
+# what disagrees; the caller must say so where the person will see it.
+
+class ChannelRoles(tuple):
+    """(signal, background, conflict). ``signal`` is None when the metadata
+    contradicts itself; ``conflict`` then describes the disagreement."""
+
+    def __new__(cls, signal, background, conflict=""):
+        return super().__new__(cls, (signal, background, conflict))
+
+    signal = property(lambda self: self[0])
+    background = property(lambda self: self[1])
+    conflict = property(lambda self: self[2])
+
+
+def _channel_number(value):
+    """1 from 1, "1", "ch1"; None for anything that names no channel."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip().lower()
+    if text.startswith("ch"):
+        text = text[2:]
+    return int(text) if text.isdigit() else None
+
+
+def channel_roles(metadata) -> ChannelRoles:
+    """Which channel is the signal and which the background, from metadata.json.
+
+    See the block comment above for why there is exactly one rule."""
+    metadata = metadata or {}
+    channels = metadata.get("channels") if isinstance(metadata.get("channels"), dict) else {}
+    says = []
+    if channels.get("signal_channel") is not None:
+        n = _channel_number(channels.get("signal_channel"))
+        if n is not None:
+            says.append(("channels.signal_channel", n))
+    if metadata.get("signal_channel") is not None:
+        n = _channel_number(metadata.get("signal_channel"))
+        if n is not None:
+            says.append(("signal_channel", n))
+    if "channels_swapped" in metadata and metadata.get("channels_swapped") is not None:
+        says.append(("channels_swapped", 1 if metadata.get("channels_swapped") else 0))
+
+    answers = {n for _key, n in says}
+    if len(answers) > 1:
+        detail = ", ".join("%s says ch%d" % (key, n) for key, n in says)
+        return ChannelRoles(None, None, "the metadata contradicts itself about which "
+                            "channel holds the cells (%s)" % detail)
+    signal = answers.pop() if answers else 0
+    background = _channel_number(channels.get("background_channel"))
+    if background is None or background == signal:
+        background = 1 if signal == 0 else 0
+    return ChannelRoles(signal, background)

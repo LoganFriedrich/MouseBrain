@@ -506,6 +506,7 @@ class ManualCropWidget(QWidget):
         if meta_path.exists():
             with open(meta_path, 'r') as f:
                 self.metadata = json.load(f)
+        self._preset_signal_choice()
 
         # Clear existing layers
         self.viewer.layers.clear()
@@ -583,6 +584,7 @@ class ManualCropWidget(QWidget):
 
         # Try to get metadata
         self.metadata, self.pipeline_folder = find_pipeline_folder_from_layer(image_layer)
+        self._preset_signal_choice()
 
         # Determine dimensions (handle 3D and 4D data)
         if len(shape) == 3:
@@ -666,6 +668,49 @@ class ManualCropWidget(QWidget):
         shape = self.active_image.data.shape
         self._update_crop_line(value, shape)
 
+    def _preset_signal_choice(self):
+        """Start the "which channel has the cells" choice on the brain's own answer.
+
+        WHY: the choice used to start on ch0 for every brain, and the crop
+        writes it into the crop's metadata (crop_subprocess.apply_signal_choice)
+        -- so a brain whose extraction says ch1 would be switched to ch0 by a
+        person who only moved the crop line. It starts on what the extraction's
+        metadata says (brain_context.channel_roles). When that metadata
+        contradicts itself, NEITHER channel is chosen and the crop refuses until
+        the person picks one by looking at the images.
+        """
+        # Once per brain: a person's own choice is never reset by a later
+        # step (Add Crop Line, Apply) on the same brain.
+        key = str(self.pipeline_folder) if self.pipeline_folder else None
+        if not self.metadata or key == getattr(self, '_signal_choice_for', None):
+            return
+        self._signal_choice_for = key
+        from mousebrain.brain_context import channel_roles
+        roles = channel_roles(self.metadata)
+        group = self.channel_button_group
+        # A choice is REQUIRED only when the metadata contradicts itself. A
+        # brain whose signal is a channel this window does not offer (ch2 ...)
+        # starts with nothing chosen and, left so, keeps its metadata.
+        self._signal_choice_required = roles.signal is None
+        if roles.signal in (0, 1):
+            (self.ch1_radio if roles.signal == 1 else self.ch0_radio).setChecked(True)
+            self.channel_help.setText(
+                "Set from this brain's metadata (ch%d). Change it only if the "
+                "other channel shows the cells." % roles.signal)
+        else:
+            group.setExclusive(False)
+            self.ch0_radio.setChecked(False)
+            self.ch1_radio.setChecked(False)
+            group.setExclusive(True)
+            if roles.signal is None:
+                self.channel_help.setText(
+                    "Choose one: %s. Look at both channels and pick the one with "
+                    "bright cell bodies." % roles.conflict)
+            else:
+                self.channel_help.setText(
+                    "This brain's metadata names ch%d as the signal, which this "
+                    "window does not show; leave both unchosen to keep it." % roles.signal)
+
     def _apply_crop(self):
         """Apply crop - either start background worker or save position for CLI."""
         if not self.active_image:
@@ -718,6 +763,7 @@ class ManualCropWidget(QWidget):
             if meta_path.exists():
                 with open(meta_path, 'r') as f:
                     self.metadata = json.load(f)
+            self._preset_signal_choice()
 
         y_pos = self.y_spinbox.value()
         shape = self.active_image.data.shape
@@ -744,6 +790,18 @@ class ManualCropWidget(QWidget):
                 f"Pipeline folder: {self.pipeline_folder}\n\n"
                 f"Make sure you selected the correct brain folder."
             )
+            return
+
+        # Which channel has the cells must be an answer, not a default
+        # (see _preset_signal_choice): with nothing chosen, nothing is cropped.
+        if (self.channel_button_group.checkedId() not in (0, 1)
+                and getattr(self, '_signal_choice_required', False)):
+            QMessageBox.warning(
+                self,
+                "Choose The Signal Channel",
+                "Choose which channel shows the cells (ch0 or ch1) under "
+                "'Signal Channel' before applying the crop.\n\n"
+                + (self.channel_help.text() or ""))
             return
 
         # Confirm
@@ -788,8 +846,9 @@ class ManualCropWidget(QWidget):
                 'rows_kept': rows_kept,
                 'total_rows': y,
                 'timestamp': time.time(),
-                'signal_channel': f"ch{signal_channel}",
-                'channels_swapped': channels_swapped,
+                # None = nothing chosen: the crop keeps the metadata's answer
+                'signal_channel': f"ch{signal_channel}" if signal_channel in (0, 1) else None,
+                'channels_swapped': channels_swapped if signal_channel in (0, 1) else None,
             }, f, indent=2)
 
         # Spawn subprocess to do the cropping (so it continues after napari closes)

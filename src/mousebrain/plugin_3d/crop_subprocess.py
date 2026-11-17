@@ -64,6 +64,60 @@ def swap_in(output_folder: Path, partial: Path) -> Path:
     return archive
 
 
+def apply_signal_choice(crop_meta: dict, crop_data: dict) -> None:
+    """Write the crop tool's "which channel has the cells" answer into the
+    crop's metadata, under the keys every later step reads.
+
+    WHY: the crop window asks the person which channel shows the cells and
+    puts the answer in .crop_position.json, but this process used to copy the
+    extraction's metadata unchanged, so the answer was dropped and steps 3-5
+    went on reading the extraction's ``channels.signal_channel``. The window
+    starts on the extraction's own answer (manual_crop_widget), so a person who
+    leaves the choice alone writes back what was there.
+
+    What is written, and only when the answer CHANGES something:
+      * the answer equals the metadata's own (``channels.signal_channel``,
+        read by the one rule, brain_context.channel_roles): nothing in
+        ``channels`` is touched -- a background of null, or a third channel,
+        stays as extraction wrote it;
+      * the answer is the other channel: ``channels.signal_channel`` becomes
+        the answer and, if ``channels.background_channel`` was the answer,
+        it becomes the previous signal channel (the two roles swap);
+      * no answer (the window was left with nothing chosen, or an older
+        window that did not ask): nothing is changed.
+    The old top-level ``signal_channel`` / ``channels_swapped`` keys are
+    removed from the crop's copy only when they disagree with the answer, so
+    they cannot contradict it.
+    """
+    from mousebrain.brain_context import _channel_number
+
+    signal = _channel_number(crop_data.get('signal_channel'))
+    if signal is None or signal < 0:
+        return
+    channels = crop_meta.get('channels')
+    if not isinstance(channels, dict):
+        channels = {}
+    current = _channel_number(channels.get('signal_channel'))
+    if current is None:
+        # No integer key yet: what the old keys said, else ch0 (the rule's default)
+        old = _channel_number(crop_meta.get('signal_channel'))
+        if old is None and crop_meta.get('channels_swapped') is not None:
+            old = 1 if crop_meta.get('channels_swapped') else 0
+        current = 0 if old is None else old
+    if signal != current:
+        crop_meta['channels'] = channels
+        channels['signal_channel'] = signal
+        if _channel_number(channels.get('background_channel')) == signal:
+            channels['background_channel'] = current
+        crop_meta['signal_channel_chosen_at_crop'] = signal
+    top = _channel_number(crop_meta.get('signal_channel'))
+    if top is not None and top != signal:
+        crop_meta.pop('signal_channel', None)
+    swapped = crop_meta.get('channels_swapped')
+    if swapped is not None and (1 if swapped else 0) != signal:
+        crop_meta.pop('channels_swapped', None)
+
+
 def do_crop(pipeline_folder: Path):
     """Perform the crop operation based on saved crop position."""
     print(f"[DEBUG] Pipeline folder received: {pipeline_folder}")
@@ -169,6 +223,7 @@ def do_crop(pipeline_folder: Path):
         'y': y_crop,
         'x': x,
     }
+    apply_signal_choice(crop_meta, crop_data)
 
     with open(partial / "metadata.json", 'w') as f:
         json.dump(crop_meta, f, indent=2)
