@@ -307,7 +307,7 @@ def interactive_mode(tracker: ExperimentTracker):
             if exp_type == 'all' or not exp_type:
                 exp_type = None
             
-            rows = tracker.search(brain=term, exp_type=exp_type, limit=50)
+            rows = tracker.search(brain_contains=term, exp_type=exp_type, limit=50)
             print_experiment_table(rows, f"Search: '{term}'")
         
         elif choice == '3':
@@ -429,7 +429,7 @@ Types: detection, training, classification, counts
             print("Usage: experiments.py search TERM")
             sys.exit(1)
         term = ' '.join(args.args)
-        rows = tracker.search(brain=term, limit=50)
+        rows = tracker.search(brain_contains=term, limit=50)
         print_experiment_table(rows, f"Search: '{term}'", verbose=args.verbose)
     
     elif args.command == 'best':

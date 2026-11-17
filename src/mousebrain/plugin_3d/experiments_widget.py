@@ -340,7 +340,7 @@ class ExperimentsWidget(QWidget):
         term = self.search_input.text()
         exp_type = self.search_type.currentData()
 
-        rows = self.tracker.search(brain=term, exp_type=exp_type, limit=50)
+        rows = self.tracker.search(brain_contains=term or None, exp_type=exp_type, limit=50)
         self.populate_table(self.search_table, rows)
 
     def refresh_best(self):

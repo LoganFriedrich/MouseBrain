@@ -217,6 +217,22 @@ LOCK_WAIT_SECONDS = 300
 REPLACE_RETRY_SECONDS = 30  # a reader on Windows can hold the file open briefly
 
 
+def same_brain_name(logged: Optional[str], brain: str) -> bool:
+    """True when the tracker's `brain` column names exactly this brain.
+
+    Scripts log "<mouse>/<brain>", the napari widget logs "<brain>", so a row
+    matches when its name IS the brain or ENDS in "/<brain>" (a backslash is
+    taken as the same separator). Case is ignored, as folder names on the
+    file server are. A name that merely CONTAINS the brain is a different
+    brain and never matches.
+    """
+    name = (logged or '').strip().replace(chr(92), '/').lower()
+    want = (brain or '').strip().replace(chr(92), '/').lower()
+    if not want:
+        return False
+    return name == want or name.endswith('/' + want)
+
+
 # =============================================================================
 # EXPERIMENT TRACKER CLASS
 # =============================================================================
@@ -1047,18 +1063,37 @@ class ExperimentTracker:
         exp_type: Optional[str] = None,
         status: Optional[str] = None,
         rating_min: Optional[int] = None,
-        limit: int = 50,
+        limit: Optional[int] = None,
         sort_by: str = "created_at",
         descending: bool = True,
+        brain_contains: Optional[str] = None,
     ) -> List[Dict[str, str]]:
         """
-        Search experiments with filters.
+        Search calibration runs with filters.
+
+        brain: ONE brain, matched as a whole name (see same_brain_name). Code
+            that asks for "this brain's runs" uses this.
+        brain_contains: any brain whose name contains the text. For a person
+            typing part of a name into a search box -- never for code that
+            means one brain.
+        limit: at most this many rows; None (the default) returns every match.
+
+        WHY whole-name and no default limit: this used to match part of the
+        name and return only the 50 newest rows. A brain's run list therefore
+        also showed runs of every brain whose name merely contained this one,
+        and once 50 newer rows existed a brain's older runs -- its marked
+        Best among them -- silently dropped out of the list and out of every
+        "does this detection have a classification" lookup. A caller that
+        wants a page asks for one with limit.
         """
         rows = self._read_all()
 
         # Filter
         if brain:
-            rows = [r for r in rows if brain.lower() in r.get('brain', '').lower()]
+            rows = [r for r in rows if same_brain_name(r.get('brain'), brain)]
+        if brain_contains:
+            needle = brain_contains.lower()
+            rows = [r for r in rows if needle in (r.get('brain') or '').lower()]
         if exp_type:
             rows = [r for r in rows if r.get('exp_type') == exp_type]
         if status:
@@ -1079,7 +1114,7 @@ class ExperimentTracker:
 
         rows.sort(key=sort_key, reverse=descending)
 
-        return rows[:limit]
+        return rows if limit is None else rows[:limit]
 
     def get_recent(self, limit: int = 10) -> List[Dict[str, str]]:
         """Get most recent experiments."""
@@ -1389,15 +1424,10 @@ class ExperimentTracker:
         Returns:
             The best experiment dict, or None if not found
         """
-        # The brain is matched as a whole name: scripts log "<mouse>/<brain>",
-        # the napari widget "<brain>". (A substring match would also take a
-        # brain whose name merely contains this one.)
-        def same_brain(row):
-            name = row.get('brain') or ''
-            return name == brain or name.endswith('/' + brain)
-
+        # The brain is matched as a whole name (see same_brain_name).
         rows = [r for r in self._read_all()
-                if same_brain(r) and r.get('exp_type') == exp_type]
+                if same_brain_name(r.get('brain'), brain)
+                and r.get('exp_type') == exp_type]
         for row in rows:
             if row.get('marked_best') == 'True':
                 return row
@@ -1529,7 +1559,7 @@ Examples:
     elif args.search or args.type or args.status:
         print(f"\nSearch results:")
         rows = tracker.search(
-            brain=args.search,
+            brain_contains=args.search,
             exp_type=args.type,
             status=args.status,
             limit=args.limit

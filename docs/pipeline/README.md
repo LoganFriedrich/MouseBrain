@@ -784,6 +784,16 @@ python util_experiments.py best detection
 python util_experiments.py stats
 ```
 
+`search` finds every run whose brain name CONTAINS the text you type (so
+`search "001"` lists all brains with 001 anywhere in the name) and shows the
+50 newest. That is only the typed search. Wherever the tools ask for ONE
+brain's runs -- the run list in Setup & Tuning, "has this detection been
+classified", the Best lookups -- the brain is matched by its whole name
+(`<brain>` or `<mouse>/<brain>`) and every run is returned, however many the
+brain has. (Until this was fixed, a brain's run list also showed brains whose
+name merely contained it, and only its 50 newest runs, so an older Best could
+silently drop out of the list.)
+
 ### Utility: Manual Crop
 ```bash
 # Launch napari with brain loaded and crop tool ready

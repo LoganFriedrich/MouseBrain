@@ -137,8 +137,10 @@ The **Tracker** is the backbone of the calibration workflow. It records:
 # Log a new calibration run
 tracker.log_detection(brain=..., ball_xy=..., threshold=..., output_path=...)
 
-# Search for runs
+# Search for runs: brain= is ONE brain, matched by whole name, every run returned
 tracker.search(brain="001_CNT_01_01_1p625x_z4", exp_type="detection")
+# Part of a name, as a person types it into a search box; limit= gives a page
+tracker.search(brain_contains="001", limit=50)
 
 # Update run status
 tracker.update_status(run_id, status="completed")
