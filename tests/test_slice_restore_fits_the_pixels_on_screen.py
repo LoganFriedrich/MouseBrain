@@ -121,3 +121,14 @@ def test_labels_of_another_size_are_not_drawn_on_the_image(tmp_path, monkeypatch
 
     assert w._pa_labels is None
     assert "labels.npz" in w.status_label.text()
+
+
+def test_a_load_tab_changed_to_the_saved_settings_is_said_on_screen(tmp_path, monkeypatch):
+    image, _ = _saved_analysis(tmp_path)
+    w = _widget(tmp_path, monkeypatch)
+    w._open_image(image)
+    finish_load(w)
+
+    status = w.status_label.text()
+    assert "Load tab set" in status and "rotation 180" in status
+    assert "kept for the next image" in status

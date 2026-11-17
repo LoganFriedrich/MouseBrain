@@ -249,6 +249,9 @@ class BrainSliceWidget(QWidget):
         # so a restore can tell whether saved labels and ROIs fit the pixels.
         self._loading_with: Optional[Dict[str, Any]] = None
         self._loaded_with: Optional[Dict[str, Any]] = None
+        # Set when opening an image changed the Load tab to its saved
+        # analysis's load settings; shown once the image has loaded.
+        self._load_settings_note: Optional[str] = None
         self.stack_data: Optional[np.ndarray] = None  # For folder stacks
         self.red_channel: Optional[np.ndarray] = None
         self.green_channel: Optional[np.ndarray] = None
@@ -2405,6 +2408,11 @@ class BrainSliceWidget(QWidget):
             print(f"[BrainSlice] {msg}")
             return False
         self._state_restored_for = self.current_file
+        note = getattr(self, "_load_settings_note", None)
+        if note:
+            self._load_settings_note = None
+            text = self.status_label.text()
+            self.status_label.setText(f"{text} -- {note}" if text else note)
         return restored
 
     def _restore_analysis_files(self):
@@ -2826,7 +2834,18 @@ class BrainSliceWidget(QWidget):
             print(f"[BrainSlice] Saved load settings not read from {path}: {e}")
             return
         if saved:
+            before = self._load_settings_now()
             self._apply_load_settings(saved)
+            after = self._load_settings_now()
+            changed = [f"{LOAD_SETTING_LABELS[k]} {after[k]!s}"
+                       for k in LOAD_SETTING_KEYS if before.get(k) != after.get(k)]
+            if changed:
+                # Said in the status bar once the image has loaded (see
+                # _restore_analysis_state). WHY: these choices stay set for
+                # the next image opened, which used to happen with no word.
+                self._load_settings_note = (
+                    "Load tab set to what its saved analysis was made with: "
+                    + ", ".join(changed) + " (kept for the next image)")
             print(f"[BrainSlice] Load settings of the saved analysis applied: {saved}")
 
     def _open_folder(self, folder) -> bool:
