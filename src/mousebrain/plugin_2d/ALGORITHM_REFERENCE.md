@@ -681,11 +681,12 @@ There are five ways to open an image, and they all do the same thing:
 
 Every time, in this order:
 
-1. **The image on screen is saved, then forgotten.** Its particles, labels, ROIs,
-   background ROIs and ignore regions are written to its own `<image name>_analysis`
-   folder beside the image file. Then all of them, and its colocalization
-   measurements, tissue mask, background diagnostics and region counts, are cleared.
-   Nothing of one image is ever carried onto the next.
+1. **The image on screen is saved, then forgotten.** Its particles, labels, nuclei,
+   colocalization measurements, ROI counts, ROIs, background ROIs and ignore regions
+   are written to its own `<image name>_analysis` folder beside the image file (see
+   "What is saved with an image" below). Then all of them, and its tissue mask,
+   background diagnostics and region counts, are cleared. Nothing of one image is
+   ever carried onto the next.
 2. **The Sample ID box is set to the new file's name** (the folder's name for a stack).
    Every tracker row and every Quantify export is filed under this name. A reload of
    the same image keeps a Sample ID you typed by hand.
@@ -696,7 +697,8 @@ Every time, in this order:
    with `... not started: image loading is still running.` The image queue and Browse
    Image Folder read each file's channel names to pick the nuclear and signal channels,
    exactly as Browse File does.
-5. **When it has loaded**, Detect Nuclei and Run Particle Analysis turn on. Colocalize
+5. **When it has loaded**, its saved analysis comes back (see below), and Detect
+   Nuclei and Run Particle Analysis turn on. Colocalize
    turns on after a detection, and Run Quantification after a colocalization, on THIS
    image.
 
@@ -735,6 +737,96 @@ automatically. If you used Prev / Next or the image queue, check the recent trac
 rows and Quantify exports: each row's `sample_id` must be the image it was made on. An
 `_analysis` folder whose particles do not match its image (for example, particle
 positions outside the tissue) should be analyzed again.
+
+### What is saved with an image, and what comes back when it is opened again
+
+Each image's analysis is saved in a folder beside the image file, named
+`<image name>_analysis`. It is saved when you open another image (step 1 above), when
+you click **Save State**, after Run Particle Analysis, after a particle
+re-classification and after Count in ROI(s). Opening the image again brings it
+back.
+
+**What the folder holds:**
+
+| File | What it is | Made by |
+|---|---|---|
+| `particles.csv` | the particle table (header only when the analysis found none) | Run Particle Analysis |
+| `labels.npz` | the particle outlines | Run Particle Analysis |
+| `nuclei.npz` | the detected nuclei | Run Detection |
+| `measurements.csv` | each nucleus's colocalization measurements | Colocalize |
+| `roi_detail.csv` | the cell counts per ROI | Count in ROI(s) |
+| `rois.json`, `bg_rois.json`, `ignore_regions.json` | ROIs, background ROIs and ignore regions you drew | you |
+| `settings.json` | the particle settings, the rotation / z-projection / channels the image was loaded with, and the tracker runs the results came from | every save |
+
+**The folder always holds what the window held when it was saved -- nothing older.**
+A result that is gone from the window is gone from the folder: a particle analysis
+that found no particles saves an empty particle table, and a new detection (which
+forgets the old colocalization) removes the old `measurements.csv`. Shapes you drew
+and then deleted are saved as an empty list; those files are never deleted. Each
+file is written to a temporary file first and then swapped in, so a save that fails
+part-way leaves the previous file whole.
+
+**When the image is opened again:**
+
+1. **Before it loads,** the Load tab is set to the rotation, z-projection and
+   channels the saved analysis was made with, so the picture is the one the analysis
+   was made on. These stay set for the next image you open, like any choice made on
+   the Load tab. (A reload with the **Load** button keeps what the Load tab holds.)
+2. **After it loads,** everything saved comes back: particles, nuclei, measurements,
+   ROI counts and the shapes you drew. Colocalize turns on when nuclei came back, and
+   Run Quantification when measurements came back. A colocalization run on restored
+   nuclei is recorded under the detection they came from.
+3. The status bar lists what came back (`Restored: settings, labels, particles (12),
+   nuclei (40), ...`).
+
+**When something cannot come back, it is kept, never overwritten.** The status bar
+says what and why:
+
+- `[!] Saved analysis of <file> NOT restored: it was made on the image loaded with
+  rotation 180 (this image: None) ...` -- the image is loaded differently from when
+  the analysis was made (most often: channels changed by hand before clicking Load).
+  Nothing is restored, because the outlines would sit on the wrong cells. To see the
+  saved analysis, set the Load tab to what the message names and click **Load**.
+- `[!] Restored for <file>: ... NOT restored: labels.npz unreadable (...)` -- one file
+  is damaged, or its outlines are a different size from the image (the image file was
+  replaced). Everything else came back.
+
+In both cases those files stay exactly as they are when the image is saved again.
+If you make new results that would replace them (for example a new particle analysis),
+they are NOT saved and a message says so: export them (Export CSV) before opening
+another image, or reload the image the way the message names first.
+
+**`[analyzed <date>]`** after an image's name (beside Prev / Next) means a result is
+saved for it: a particle table, particle outlines, nuclei, measurements or ROI counts.
+A folder holding only settings or drawn shapes does not count. The date is the newest
+saved result's.
+
+**A folder opened as one stack saves nothing.** It has no single image to file
+results under: no `_analysis` folder and no measurements file is written. The status
+bar says `[!] Results on a folder stack are NOT saved ...` when you leave a stack with
+results and after a colocalization on it. Export what you need, or open the image on
+its own. Where a stack's results should be kept is not decided yet.
+
+**Append to Folder CSV** (particles: `<folder name>_particles.csv`; ROIs:
+`<folder name>_roi_results.csv`, both beside the images) adds this image's rows to one
+table for the whole folder. Above the table, each sample has its own line,
+`# Settings <sample>: {...}`, with the settings its rows were made with. Appending a
+sample again replaces its rows and its line only. (Older files had a single
+`# Settings:` line, rewritten on every append, so it described only the sample
+appended last. It is kept, renamed `# Settings (written before each sample's settings
+were kept; they are the last sample appended then):`.) Spreadsheet programs show the
+`#` lines as text rows above the table; skip them when reading the table.
+
+**Not registered yet.** Results saved by this window (the `_analysis` folders, the
+folder-wide CSVs and the measurements CSV a colocalization writes under the subject's
+`4_Quantified` folder) are not entered in the analysis registry, so they do not reach
+the database. Whether and where they should be registered is not decided yet.
+
+**Results saved before this change** may hold leftovers: a `particles.csv` or
+`rois.json` from an earlier analysis of the same image, kept when a later analysis
+found nothing or the ROIs were cleared. They cannot be told apart from current ones
+automatically. If an image's saved particles or ROIs look wrong, analyze it again; the
+new save replaces them.
 
 ### Several windows and the batch at once
 
