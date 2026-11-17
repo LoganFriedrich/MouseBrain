@@ -2675,21 +2675,27 @@ class TuningWidget(QWidget):
             self.last_run_cells = cell_count
 
             # Save detected cells to XML file for later loading
+            saved_xml = None
             if detected_cells and hasattr(self, '_last_output_path') and self._last_output_path:
                 try:
                     from brainglobe_utils.IO.cells import save_cells
                     xml_path = self._last_output_path / "detected_cells.xml"
                     save_cells(detected_cells, xml_path)
+                    saved_xml = xml_path
                     print(f"[MouseBrain] Saved {len(detected_cells)} cells to: {xml_path}")
                 except Exception as e:
                     print(f"[MouseBrain] Warning: Could not save cells to XML: {e}")
 
-            # Update tracker
+            # Update tracker. The run's output_path becomes the FILE it wrote:
+            # it was left as the run folder, and "Load best detection" reads
+            # output_path as a candidates file, so a widget run marked Best
+            # loaded nothing.
             if self.tracker and self.last_run_id:
                 self.tracker.update_status(
                     self.last_run_id,
                     status="completed",
                     det_cells_found=cell_count,
+                    output_path=str(saved_xml) if saved_xml else None,
                 )
 
             # No database push here. The tracker CSV updated above is the
@@ -8993,13 +8999,24 @@ class TuningWidget(QWidget):
                             label_suffix = "(only result)"
                         cell_type = 'recent'
 
-                    # Load raw detection from output path
-                    output_path = target_run.get('output_path')
-                    if output_path:
+                    # Load raw detection from output path. A widget run used
+                    # to record its run FOLDER here; run_points_file finds the
+                    # candidates file in it, so such a Best run loads too.
+                    from mousebrain.brain_context import run_points_file
+                    points_file = run_points_file(target_run.get('output_path'))
+                    if points_file is None:
+                        print(f"  Run {target_run.get('exp_id')} has no candidates file at "
+                              f"{target_run.get('output_path')}")
+                    else:
                         points_loaded = self._load_points_from_xml(
-                            Path(output_path),
+                            points_file,
                             f"{self.current_brain.name} - Detection {label_suffix}",
-                            cell_type=cell_type
+                            cell_type=cell_type,
+                            # The Best role only for a run really marked
+                            # best; a highest-rated stand-in is a plain run.
+                            run=(target_run.get('exp_id'),
+                                 ('det_best' if target_run.get('marked_best') == 'True'
+                                  else None) if best else 'det_recent'),
                         )
                         if points_loaded:
                             return True
@@ -9491,7 +9508,8 @@ class TuningWidget(QWidget):
 
         print(f"[MouseBrain] Archived layer: {layer.name}")
 
-    def _load_points_from_xml(self, xml_path: Path, layer_name: str, cell_type: str = 'best') -> bool:
+    def _load_points_from_xml(self, xml_path: Path, layer_name: str, cell_type: str = 'best',
+                              run=None) -> bool:
         """
         Load cell coordinates from BrainGlobe XML format and add as points layer.
 
@@ -9502,6 +9520,10 @@ class TuningWidget(QWidget):
             xml_path: Path to the XML file
             layer_name: Name for the napari layer
             cell_type: One of 'best', 'recent', 'cells', 'rejected' - controls color/style
+            run: optional (exp_id, role) when the file is a calibration run's
+                output: the layer then records the selected brain, the run and
+                its role ('det_best' / 'det_recent'), as every run layer does
+                (brain_context, rule 4). Without it the layer is a plain file.
         """
         if not xml_path.exists():
             print(f"  XML file not found: {xml_path}")
@@ -9543,7 +9565,7 @@ class TuningWidget(QWidget):
             style = self.CELL_COLORS.get(cell_type, self.CELL_COLORS['best'])
 
             # Add as points layer with type-specific styling
-            self.viewer.add_points(
+            layer = self.viewer.add_points(
                 coords,
                 name=layer_name,
                 size=style['size'],
@@ -9555,6 +9577,10 @@ class TuningWidget(QWidget):
                 border_width=style.get('border_width', 0.1),
                 visible=(cell_type != 'rejected'),  # Hide rejected by default
             )
+            if run and run[0] and self.current_brain:
+                from mousebrain.brain_context import tag_run_layer
+                tag_run_layer(layer, self.current_brain, run[0], run[1])
+                layer.metadata['is_best'] = run[1] == 'det_best'
             print(f"  Layer style: size={style['size']}, symbol={style['symbol']}, border={style.get('border_width', 0.1)}, opacity={style['opacity']}")
             return True
 

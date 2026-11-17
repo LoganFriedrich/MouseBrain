@@ -1249,6 +1249,11 @@ run type), and each imaging setup at most one Paradigm Best:
   loads the run MARKED Best for the brain. If none is marked, it loads the
   highest-rated run that has not been archived and labels it "highest rated --
   none is marked best"; if there is none of those either, it loads nothing.
+  A run made in Setup & Tuning records the candidates file it wrote
+  (`detected_cells.xml` in its run folder); older widget runs recorded only
+  the folder, and the file inside it is found and loaded. If that file is
+  missing, the terminal says "Run ... has no candidates file at ..." and
+  nothing is loaded.
 
 ## Folder Structure (Updated)
 
