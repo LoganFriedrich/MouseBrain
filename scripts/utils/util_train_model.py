@@ -15,6 +15,15 @@ HOW TO USE
     python util_train_model.py --yaml t.yml --post-run "python 5_classify_cells.py --brain {brain} --model {output_dir}"
 
 ================================================================================
+OUTPUT
+================================================================================
+    The model folder (--output, default: a timestamped folder in the models
+    folder) gets the model file and, ONLY when the training finished with a
+    model file, DONE.json (tracker exp_id + model file). DONE.json is how the
+    napari Setup & Tuning window knows the training finished; a training that
+    reports success but saved no model is marked failed and writes none.
+
+================================================================================
 REQUIREMENTS
 ================================================================================
     - cellfinder must be installed

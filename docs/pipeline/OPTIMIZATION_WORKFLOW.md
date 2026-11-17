@@ -82,9 +82,24 @@ Classification") are calibration runs. Each one is written to its own folder,
 brain's `5_Classified_Cells` is not touched, so trying a model can never replace
 the classification the counts come from.
 
-**To make a napari run the production classification** (promote it): right after
-the run finishes, click **Promote last run to production...** under "Run
-Classification" and confirm. What happens:
+**To make a napari run the production classification** (promote it), use any
+of these three buttons; each asks you to confirm and does the same thing:
+
+- **Promote last run to production...** under "Run Classification": the last
+  run made in this window for the selected brain.
+- **Promote selected to production...** under "Classification Runs (from
+  Tracker)" (the Classification Compare tab): select any completed run of this
+  brain in the list -- from today or from an earlier session -- then click it.
+  Click **Refresh** first if the list is empty.
+- **Promote a run...** at the top of the Results tab: a list of this brain's
+  classification runs; select one and click **Promote Selected to
+  Production...**.
+
+A promotion is refused, with the reason shown, when the run belongs to another
+brain, is not a completed classification, has no `cells.xml`, or IS the
+production classification already (a step 5 run's files are in
+`5_Classified_Cells` itself; promoting them onto themselves would archive them
+and leave the brain with no classification). What a promotion does:
 
 1. The files currently in `5_Classified_Cells` (`cells.xml`, `rejected.xml`,
    `promoted_from.json`) move to `5_Classified_Cells/_archive/<date>_<time>/` --
@@ -100,9 +115,35 @@ Classification" and confirm. What happens:
    classification, so RUN_PIPELINE and the pipeline dashboard show them as stale
    and offer counting again. Run step 6 to update them.
 
-The button only promotes the last run made in this napari session, for the brain
-it was made on. Running step 5 again also replaces production (that is what step
-5 is for); it archives the files it replaces in the same way.
+Running step 5 again also replaces production (that is what step 5 is for); it
+archives the files it replaces in the same way.
+
+### Training a model from Setup & Tuning (Training tab, "Start Training")
+
+The training runs in its own process (`scripts/utils/util_train_model.py`);
+napari stays usable and the console shows its progress.
+
+- The widget names the training's model folder,
+  `<models folder>/model_<date>_<time>/`, and the "Training Started" message
+  shows it.
+- **Only one training from a window at a time.** Clicking Start Training again
+  while one runs shows "Training Already Running" and starts nothing.
+- **A training is finished only when it says so.** When it ends with a model
+  file, the training writes `DONE.json` into its model folder (its tracker id
+  and the model file). The window checks every 5 seconds; once the process has
+  ended it reads that file. No `DONE.json` means the training did not finish:
+  the window says "Training Did Not Finish" and nothing is classified -- even
+  if other model files appeared in the models folder meanwhile (they are not
+  this training's). A training that reports success but saved no model file is
+  marked `failed` in the tracker and writes no `DONE.json`.
+- **Auto-classify** (the "Auto-classify after training completes" box): when
+  the training finished, the window selects THAT training's model in the model
+  list and runs classification on the brain that was selected when the
+  training started. It classifies nothing, and says why, when another brain is
+  selected by then (select the brain and classify by hand) or when the model
+  is not in the model list (click Refresh, pick it, classify by hand). An
+  automatic classification loads its results and compares them with the
+  previous run without asking; a classification you start yourself always asks.
 
 ## Step 3: Count by Region
 
@@ -111,6 +152,21 @@ python 6_count_regions.py --brain YOUR_BRAIN
 ```
 
 Outputs `cell_counts_by_region.csv` in the brain's `6_Region_Analysis/` folder.
+
+### Counting from Setup & Tuning (Results tab, "Run Region Counting")
+
+Counting always counts the brain's **production** classification,
+`5_Classified_Cells/cells.xml`. The line "Counting uses:" at the top of the
+Results tab says which run that file came from (from `promoted_from.json`), or
+that there is none yet. To count a different run, promote it first (see above).
+
+"Run Region Counting" runs step 6 in the background with no time limit (a
+whole brain takes far longer than the five minutes it used to be allowed). Meanwhile napari stays usable, the
+status line shows step 6's latest message, the brain list is held, and a second
+click says "Counting Running". When it ends the counts are loaded into the
+Results tab (only if the counted brain is still the selected one). Closing the
+Setup & Tuning window while counting runs is refused with a message: wait until
+the status line says it finished.
 
 ## Step 4: Compare to Published Data
 

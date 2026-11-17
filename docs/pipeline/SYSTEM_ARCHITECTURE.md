@@ -232,13 +232,16 @@ brain, and a new crop left the old crop's cache in use.
 ### Switching brains in Setup & Tuning
 
 Selecting another brain in the brain list starts that brain from a clean slate:
-its own metadata (never the previous brain's), no pre-filter result, no selected
-classification, no training-data folder, no "last run". The buttons that act on
+its own metadata (never the previous brain's), no pre-filter result, no
+training-data folder, no "last run". The buttons that act on
 those (Save pre-filter results, Send to training, Promote last run to
-production) are disabled until you make a new one for this brain.
+production) are disabled until you make a new one for this brain. (Any earlier
+classification run of the brain can still be promoted from the run list or the
+Results tab; see OPTIMIZATION_WORKFLOW.md, "Trying a model in napari".)
 
 **While a run is going the brain list is greyed out.** Run Test Detection and
-Run Classification hold the list until their run returns, and each run keeps
+Run Classification -- and Run Region Counting on the Results tab -- hold the
+list until their run returns, and each run keeps
 its own record (brain, tracker run, folder, first plane tested) from start to
 finish, so the result is saved and the tracker row completed for the brain
 the run was started on. (Before, selecting another brain mid-run reset what

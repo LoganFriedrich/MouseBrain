@@ -1317,7 +1317,10 @@ machines write it, and every status change rewrites the whole file, so each writ
 **A run is never left at `started`.** Steps 3-6 and model training
 (`util_train_model.py`) mark their tracker row `failed` (with the reason in
 `notes`) when they stop part-way -- an error, Ctrl-C, a crash inside brainreg or
-cellfinder. Setup & Tuning does the same for its own detection and
+cellfinder; a training that reports success but saved no model file is marked
+`failed` too, and only a training that finished with a model writes `DONE.json`
+into its model folder (what Setup & Tuning waits for). Setup & Tuning does the
+same for its own detection and
 classification runs when napari (or the Setup & Tuning panel) is closed while
 one is still going: the row becomes `failed` with "napari was closed before the
 run finished" in `notes`. (If only the panel was closed and the run then
