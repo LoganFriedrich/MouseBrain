@@ -4008,7 +4008,13 @@ class BrainSliceWidget(QWidget):
         self._pa_reclass_pending = None
         timer = getattr(self, '_pa_reclass_timer', None)
         if timer is not None:
-            timer.stop()
+            # WHY guarded: this also runs from the program's aboutToQuit
+            # signal, which can fire after Qt has already deleted the timer;
+            # stopping it then raises RuntimeError inside a slot at exit.
+            try:
+                timer.stop()
+            except RuntimeError:
+                pass
         if not pending or not self.tracker:
             return
         try:

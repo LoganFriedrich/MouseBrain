@@ -70,3 +70,19 @@ def test_a_waiting_reclassification_is_recorded_before_the_next_analysis(tmp_pat
     reclass = rows[1]
     assert reclass["parent_run"] == analysis["run_id"]
     assert float(reclass["pa_min_pct_above_bg"]) == 100.0
+
+
+def test_recording_at_program_exit_survives_a_deleted_timer(tmp_path, monkeypatch):
+    """The exit signal can fire after Qt deleted the timer; stopping it then
+    raises RuntimeError. The waiting change is still recorded, nothing raises."""
+    w, analysis = _analysed(tmp_path, monkeypatch)
+    w.pa_bg_manual_spin = Control(value=250.0)
+    w._pa_reclassify_live()
+
+    class DeletedTimer:
+        def stop(self):
+            raise RuntimeError("wrapped C/C++ object has been deleted")
+
+    w._pa_reclass_timer = DeletedTimer()
+    w._pa_record_reclassification()               # must not raise
+    assert len(_rows(w)) == 2
