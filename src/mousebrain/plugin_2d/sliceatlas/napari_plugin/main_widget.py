@@ -43,6 +43,107 @@ GUI_TRACKER_LOCK_WAIT_SECONDS = 10
 GUI_TRACKER_REPLACE_RETRY_SECONDS = 2
 
 
+# ----- An image's saved analysis folder -----------------------------------
+# Every file an image's <image name>_analysis folder may hold, apart from
+# settings.json. See BrainSliceWidget._save_analysis_state for why the
+# folder is written as one state.
+STATE_FILES = (
+    "particles.csv", "labels.npz",        # particle analysis
+    "measurements.csv", "nuclei.npz",     # detection + colocalization
+    "roi_detail.csv",                     # ROI counts
+    "rois.json", "bg_rois.json", "ignore_regions.json",   # drawn by a person
+)
+# Drawn by a person: an empty state is written as an empty list, never by
+# deleting the file.
+PERSON_DRAWN_FILES = ("rois.json", "bg_rois.json", "ignore_regions.json")
+# Results: an image counts as analyzed only when one of these is saved.
+RESULT_FILES = ("particles.csv", "labels.npz", "measurements.csv",
+                "nuclei.npz", "roi_detail.csv")
+# The load settings that decide which pixels are on screen.
+LOAD_SETTING_KEYS = ("rotation", "z_projection", "red_channel_idx",
+                     "green_channel_idx")
+LOAD_SETTING_LABELS = {
+    "rotation": "rotation",
+    "z_projection": "z-projection",
+    "red_channel_idx": "nuclear channel",
+    "green_channel_idx": "signal channel",
+}
+
+
+def analysis_dir_for(image_path) -> Path:
+    """<image folder>/<image name>_analysis -- where an image's state is saved."""
+    image_path = Path(image_path)
+    return image_path.parent / f"{image_path.stem}_analysis"
+
+
+def saved_load_settings(settings) -> Dict[str, Any]:
+    """The load settings a saved analysis was made with: 'loaded_with' when
+    it was recorded, else the load settings saved beside the particle
+    settings (older saves)."""
+    if not settings:
+        return {}
+    loaded_with = settings.get("loaded_with")
+    source = loaded_with if isinstance(loaded_with, dict) else settings
+    return {k: source[k] for k in LOAD_SETTING_KEYS if k in source}
+
+
+def analysis_has_results(analysis_dir) -> Optional[float]:
+    """Time of the newest saved result in analysis_dir, or None when it
+    holds no result. WHY not 'the folder exists': a folder holding only
+    settings.json (or only drawn ROIs) has nothing to restore, yet was
+    shown as '[analyzed]'."""
+    analysis_dir = Path(analysis_dir)
+    newest = None
+    for name in RESULT_FILES:
+        try:
+            mtime = (analysis_dir / name).stat().st_mtime
+        except OSError:
+            continue
+        newest = mtime if newest is None else max(newest, mtime)
+    return newest
+
+
+def _write_state_file(path: Path, payload) -> None:
+    """Write one file of the saved state through a temporary file swapped in
+    with os.replace. WHY: writing in place left a half-written file when the
+    save failed part-way (disk full, share dropped), and the next restore
+    read it."""
+    import json
+    import os
+    import tempfile
+
+    path = Path(path)
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp",
+                               dir=str(path.parent))
+    try:
+        if path.suffix == ".npz":
+            with os.fdopen(fd, "wb") as f:
+                np.savez_compressed(f, labels=payload)
+        elif path.suffix == ".csv":
+            with os.fdopen(fd, "w", newline="") as f:
+                payload.to_csv(f, index=False)
+        else:
+            with os.fdopen(fd, "w") as f:
+                json.dump(payload, f, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _empty_drawn(name: str, widget) -> Dict[str, Any]:
+    """What a person-drawn file holds when nothing is drawn."""
+    if name == "rois.json":
+        return {"version": 1, "roi_names": [], "rois": []}
+    if name == "bg_rois.json":
+        return {"regions": [], "bg_value": widget.pa_bg_manual_spin.value()}
+    return {"regions": []}
+
+
+
 class _NumericTableItem(QTableWidgetItem):
     """QTableWidgetItem that sorts numerically instead of alphabetically."""
     def __lt__(self, other):
@@ -63,6 +164,10 @@ class BrainSliceWidget(QWidget):
         self.current_file: Optional[Path] = None
         self.current_folder: Optional[Path] = None
         self.is_folder_load: bool = False
+        # Saved-state bookkeeping (see _save_analysis_state): the image the
+        # last restore ran for, and the saved files it did not bring back.
+        self._state_restored_for: Optional[Path] = None
+        self._restore_blocked: set = set()
         self.stack_data: Optional[np.ndarray] = None  # For folder stacks
         self.red_channel: Optional[np.ndarray] = None
         self.green_channel: Optional[np.ndarray] = None
@@ -2003,234 +2108,376 @@ class BrainSliceWidget(QWidget):
         self.coloc_btn.setEnabled(False)
         self.quant_btn.setEnabled(False)
 
+    # ----- The image's saved analysis (<image name>_analysis/) -----
+    #
+    # The folder holds ONE state: what the window holds for the image when it
+    # is saved. WHY: saving used to only ever add files -- a re-analysis that
+    # found 0 particles, or ROIs that were cleared, left the earlier
+    # particles.csv / rois.json in place, and the next restore brought them
+    # back as current. Now every save writes each file from what is in
+    # memory, removes a machine-made file whose result is gone, and writes a
+    # person-drawn file (ROIs, background ROIs, ignore regions) as an empty
+    # list rather than deleting it.
+    #
+    # The exception that keeps a person's work: a saved file the restore did
+    # NOT bring back (unreadable, or refused because it was made on the image
+    # loaded with another rotation, z-projection or channel choice) is never
+    # overwritten or removed. Its contents are not in memory, so "the state
+    # in memory" says nothing about it. self._restore_blocked names those
+    # files; self._state_restored_for names the image the restore last ran
+    # for, and a save for any other image only writes, never removes.
+
+    def _analysis_state_in_memory(self) -> Dict[str, Any]:
+        """{file name: what to write, or None when there is nothing}."""
+        state: Dict[str, Any] = {name: None for name in STATE_FILES}
+        state["particles.csv"] = getattr(self, "_pa_results", None)
+        state["labels.npz"] = getattr(self, "_pa_labels", None)
+        state["measurements.csv"] = getattr(self, "cell_measurements", None)
+        state["nuclei.npz"] = getattr(self, "nuclei_labels", None)
+        state["roi_detail.csv"] = getattr(self, "_roi_detail_data", None)
+
+        layers = getattr(self.viewer, "layers", [])
+
+        def drawn(layer):
+            if layer is None or layer not in layers or len(layer.data) == 0:
+                return None
+            return [np.array(shape).tolist() for shape in layer.data]
+
+        ignore = drawn(getattr(self, "_pa_ignore_shapes_layer", None))
+        if ignore is not None:
+            state["ignore_regions.json"] = {"regions": ignore}
+        bg = drawn(getattr(self, "_pa_bg_shapes_layer", None))
+        if bg is not None:
+            state["bg_rois.json"] = {"regions": bg,
+                                     "bg_value": self.pa_bg_manual_spin.value()}
+        rois = drawn(getattr(self, "roi_shapes_layer", None))
+        if rois is not None:
+            state["rois.json"] = {
+                "version": 1,
+                "roi_names": list(getattr(self, "_roi_names", []) or []),
+                "rois": [{"name": self._get_roi_name(i), "vertices": v}
+                         for i, v in enumerate(rois)],
+            }
+        return state
+
+    def _analysis_settings_to_save(self) -> Dict[str, Any]:
+        """settings.json: the particle settings, the load settings the
+        pixels were loaded with, and the tracker rows the saved results
+        came from."""
+        try:
+            settings = dict(self._pa_get_settings())
+        except Exception as e:  # a control that cannot be read
+            print(f"[BrainSlice] WARNING: particle settings not read: {e}")
+            settings = {}
+        # The tracker row of the analysis these particles came from, so a
+        # re-classification after the state is restored can name it.
+        settings["particle_run_id"] = getattr(self, "_pa_run_id", None)
+        # The detection the saved nuclei came from and the colocalization
+        # the saved measurements came from. WHY: a colocalization run on
+        # restored nuclei records its detection as its parent; without the
+        # id its tracker row would name no detection.
+        settings["detection_run_id"] = getattr(self, "_labels_run_id", None)
+        settings["coloc_run_id"] = getattr(self, "_coloc_run_id", None)
+        # What the pixels on screen were really loaded with (captured when
+        # the load started). A restore compares it with the image it is
+        # restoring onto; see _saved_load_mismatch.
+        settings["loaded_with"] = getattr(self, "_loaded_with", None)
+        settings["saved_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        layer_visibility = {}
+        for layer in getattr(self.viewer, "layers", []):
+            layer_visibility[layer.name] = getattr(layer, "visible", True)
+        settings["layer_visibility"] = layer_visibility
+        return settings
+
     def _save_analysis_state(self):
-        """Save current analysis state to disk alongside the image file."""
+        """Save what the window holds for the image on screen into its
+        <image name>_analysis folder, as one state (see the note above)."""
+        state = self._analysis_state_in_memory()
+        has_results = any(v is not None for v in state.values())
+
         if self.current_file is None:
-            print("[BrainSlice] Save skipped: no current file")
+            if getattr(self, "is_folder_load", False) and has_results:
+                # A folder opened as one stack has no single image to file
+                # its results under. WHY said, not silent: these results
+                # used to vanish on the next image with only a console line.
+                msg = ("[!] Results on a folder stack are NOT saved: no "
+                       "_analysis state and no measurements file is written "
+                       "for a stack. Export what you need now, or open the "
+                       "image on its own to keep its results.")
+                self.status_label.setText(msg)
+                print(f"[BrainSlice] {msg}")
+            else:
+                print("[BrainSlice] Save skipped: no current file")
             return
-        if self._pa_results is None and self.cell_measurements is None:
+
+        analysis_dir = analysis_dir_for(self.current_file)
+        owned = getattr(self, "_state_restored_for", None) == self.current_file
+        blocked = set(getattr(self, "_restore_blocked", None) or ()) if owned else set()
+        if not has_results and not (owned and analysis_dir.exists()):
             print("[BrainSlice] Save skipped: no results to save")
             return
 
-        import json
-
+        state["settings.json"] = self._analysis_settings_to_save()
+        not_saved = []
         try:
-            analysis_dir = self.current_file.parent / f"{self.current_file.stem}_analysis"
             analysis_dir.mkdir(exist_ok=True)
-
-            # Save particle results
-            if self._pa_results is not None and len(self._pa_results) > 0:
-                self._pa_results.to_csv(analysis_dir / "particles.csv", index=False)
-
-            # Save particle labels
-            if self._pa_labels is not None:
-                np.savez_compressed(analysis_dir / "labels.npz", labels=self._pa_labels)
-
-            # Save ignore regions
-            if (self._pa_ignore_shapes_layer is not None
-                    and self._pa_ignore_shapes_layer in self.viewer.layers
-                    and len(self._pa_ignore_shapes_layer.data) > 0):
-                ignore_data = []
-                for shape_data in self._pa_ignore_shapes_layer.data:
-                    ignore_data.append(np.array(shape_data).tolist())
-                with open(analysis_dir / "ignore_regions.json", 'w') as f:
-                    json.dump({'regions': ignore_data}, f, indent=2)
-
-            # Save background ROIs
-            if (self._pa_bg_shapes_layer is not None
-                    and self._pa_bg_shapes_layer in self.viewer.layers
-                    and len(self._pa_bg_shapes_layer.data) > 0):
-                bg_rois = []
-                for shape_data in self._pa_bg_shapes_layer.data:
-                    bg_rois.append(np.array(shape_data).tolist())
-                bg_data = {
-                    'regions': bg_rois,
-                    'bg_value': self.pa_bg_manual_spin.value(),
-                }
-                with open(analysis_dir / "bg_rois.json", 'w') as f:
-                    json.dump(bg_data, f, indent=2)
-
-            # Save ROIs
-            if self.roi_shapes_layer is not None and self.roi_shapes_layer in self.viewer.layers:
-                if len(self.roi_shapes_layer.data) > 0:
-                    rois = []
-                    for i, shape_data in enumerate(self.roi_shapes_layer.data):
-                        rois.append({
-                            'name': self._get_roi_name(i),
-                            'vertices': np.array(shape_data).tolist(),
-                        })
-                    roi_data = {
-                        'version': 1,
-                        'roi_names': self._roi_names,
-                        'rois': rois,
-                    }
-                    with open(analysis_dir / "rois.json", 'w') as f:
-                        json.dump(roi_data, f, indent=2)
-
-            # Save settings + layer visibility
-            settings = self._pa_get_settings()
-            # The tracker row of the analysis these particles came from, so a
-            # re-classification after the state is restored can name it.
-            settings['particle_run_id'] = self._pa_run_id
-            layer_visibility = {}
-            for layer in self.viewer.layers:
-                layer_visibility[layer.name] = layer.visible
-            settings['layer_visibility'] = layer_visibility
-            with open(analysis_dir / "settings.json", 'w') as f:
-                json.dump(settings, f, indent=2)
-
-            # Save ROI counts if available
-            if hasattr(self, '_roi_detail_data') and self._roi_detail_data is not None:
-                self._roi_detail_data.to_csv(analysis_dir / "roi_detail.csv", index=False)
-
+            for name, payload in state.items():
+                path = analysis_dir / name
+                if name in blocked:
+                    if payload is not None and name != "settings.json":
+                        not_saved.append(name)
+                    continue
+                if payload is not None:
+                    _write_state_file(path, payload)
+                elif owned and path.exists():
+                    if name in PERSON_DRAWN_FILES:
+                        # Drawn by a person: written as an empty list, never
+                        # deleted, so the file still says "none drawn".
+                        _write_state_file(path, _empty_drawn(name, self))
+                    else:
+                        # A machine-made result that is gone from memory
+                        # (re-run, or cleared by a new detection): the old
+                        # file would come back as current on the next load.
+                        path.unlink()
             print(f"[BrainSlice] Analysis saved to {analysis_dir.name}/")
-
         except Exception as e:
             print(f"[BrainSlice] ERROR saving analysis: {e}")
             import traceback
             traceback.print_exc()
+            self.status_label.setText(
+                f"[!] Analysis of {self.current_file.name} NOT fully saved: {e}")
+            return
+
+        if not_saved:
+            msg = (f"[!] {', '.join(not_saved)} of {self.current_file.name} NOT "
+                   f"saved: {analysis_dir.name} holds an earlier analysis that "
+                   f"could not be restored (see the message shown when the image "
+                   f"was opened), and it is never overwritten. Export these "
+                   f"results now if you need them.")
+            self.status_label.setText(msg)
+            print(f"[BrainSlice] {msg}")
+            QMessageBox.warning(self, "Results not saved", msg)
 
     def _manual_save_state(self):
         """Explicitly save analysis state (triggered by Save State button)."""
         self._save_analysis_state()
-        if self.current_file:
+        if self.current_file and not self.status_label.text().startswith("[!]"):
             self.status_label.setText(
                 f"State saved for {self.current_file.stem}")
 
     def _restore_analysis_state(self):
-        """Restore analysis state from disk if available for current image."""
+        """Restore what was saved for the image on screen.
+
+        Every file is restored on its own: one that cannot be read, or that
+        does not fit the image (labels of another size), is reported and
+        left on disk untouched (see the note above _analysis_state_in_memory)
+        while the rest come back. Nothing is restored onto an image loaded
+        with another rotation, z-projection or channel choice than the
+        saved analysis was made on: the status bar says what differs and
+        how to see it."""
+        import json
+        import pandas as pd
+
+        self._restore_blocked = set()
+        self._state_restored_for = self.current_file
         if self.current_file is None:
             return False
-
-        analysis_dir = self.current_file.parent / f"{self.current_file.stem}_analysis"
+        analysis_dir = analysis_dir_for(self.current_file)
         if not analysis_dir.exists():
             return False
 
-        import pandas as pd
-        import json
-        restored = []
+        blocked = self._restore_blocked
+        restored, problems = [], []
 
-        try:
-            # Restore settings first
-            settings_path = analysis_dir / "settings.json"
-            if settings_path.exists():
+        def refuse(name, why):
+            blocked.add(name)
+            problems.append(f"{name} {why}")
+
+        settings = None
+        settings_path = analysis_dir / "settings.json"
+        if settings_path.exists():
+            try:
                 with open(settings_path) as f:
                     settings = json.load(f)
+            except Exception as e:
+                refuse("settings.json", f"unreadable ({e})")
+
+        if settings is not None:
+            try:
+                # Particle settings only. WHY not the load settings: they
+                # were applied before the image was loaded (_open_image);
+                # applying them now would not change the pixels on screen
+                # and would silently carry to the next image's load.
                 self._pa_apply_settings(settings)
                 restored.append("settings")
-                # The saved classification is the one last recorded in the
-                # tracker (a waiting one is recorded before an image is left),
-                # so restoring it is not a re-classification.
-                self._pa_run_id = settings.get('particle_run_id')
-                if 'bg_value' in settings and 'min_pct_above_bg' in settings:
-                    self._pa_classified_with = (settings['bg_value'],
-                                                settings['min_pct_above_bg'])
+            except Exception as e:
+                problems.append(f"settings not applied ({e})")
+            # The saved classification is the one last recorded in the
+            # tracker (a waiting one is recorded before an image is left),
+            # so restoring it is not a re-classification.
+            self._pa_run_id = settings.get("particle_run_id")
+            if "bg_value" in settings and "min_pct_above_bg" in settings:
+                self._pa_classified_with = (settings["bg_value"],
+                                            settings["min_pct_above_bg"])
 
-            # Restore particle labels
-            labels_path = analysis_dir / "labels.npz"
-            if labels_path.exists():
-                data = np.load(labels_path)
-                self._pa_labels = data['labels']
-                restored.append("labels")
+        def load_labels(name):
+            path = analysis_dir / name
+            if not path.exists():
+                return None
+            try:
+                with np.load(path) as data:
+                    arr = data["labels"]
+            except Exception as e:
+                refuse(name, f"unreadable ({e})")
+                return None
+            return arr
 
-                # Add labels layer to viewer
-                scale = self._pa_get_scale()
-                self.viewer.add_labels(
-                    self._pa_labels, name='Particles',
-                    opacity=0.5, scale=scale)
+        def load_table(name, needs):
+            path = analysis_dir / name
+            if not path.exists():
+                return None
+            if needs in blocked:
+                refuse(name, f"belongs to {needs}, which was not restored")
+                return None
+            try:
+                return pd.read_csv(path)
+            except pd.errors.EmptyDataError:
+                return pd.DataFrame()
+            except Exception as e:
+                refuse(name, f"unreadable ({e})")
+                return None
 
-            # Restore particle results
-            results_path = analysis_dir / "particles.csv"
-            if results_path.exists():
-                self._pa_results = pd.read_csv(results_path)
-                restored.append(f"particles ({len(self._pa_results)})")
+        def load_json(name):
+            path = analysis_dir / name
+            if not path.exists():
+                return None
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except Exception as e:
+                refuse(name, f"unreadable ({e})")
+                return None
 
-                # Populate table
-                self._pa_populate_table(self._pa_results)
+        # Particle labels and table
+        labels = load_labels("labels.npz")
+        if labels is not None:
+            self._pa_labels = labels
+            self.viewer.add_labels(labels, name="Particles", opacity=0.5,
+                                   scale=self._pa_get_scale())
+            restored.append("labels")
+        particles = load_table("particles.csv", "labels.npz")
+        if particles is not None:
+            self._pa_results = particles
+            restored.append(f"particles ({len(particles)})")
+            try:
+                self._pa_populate_table(particles)
                 self.pa_export_btn.setEnabled(True)
                 self.pa_export_fig_btn.setEnabled(True)
-                self._pa_append_folder_btn.setEnabled(True)
-
-                # Draw classification overlay
-                if self._pa_labels is not None and 'is_positive' in self._pa_results.columns:
+                self._pa_append_folder_btn.setEnabled(len(particles) > 0)
+                if self._pa_labels is not None and "is_positive" in particles.columns:
                     self._pa_draw_classification_overlay()
-
-                # Register click callback
-                particles_layer = self._pa_find_layer('Particles')
+                particles_layer = self._pa_find_layer("Particles")
                 if particles_layer is not None:
                     self._pa_register_click_callback(particles_layer)
+            except Exception as e:
+                problems.append(f"particle table not drawn ({e})")
 
-            # Restore ROIs
-            rois_path = analysis_dir / "rois.json"
-            if rois_path.exists():
-                with open(rois_path) as f:
-                    roi_data = json.load(f)
-                self._roi_names = roi_data.get('roi_names', [])
-                rois = roi_data.get('rois', [])
+        # Nuclei and their colocalization measurements. WHY restored: they
+        # used to be neither saved nor restored, so an image analyzed only
+        # by colocalization showed as analyzed with nothing to bring back.
+        nuclei = load_labels("nuclei.npz")
+        if nuclei is not None:
+            self.nuclei_labels = nuclei
+            self._labels_run_id = (settings or {}).get("detection_run_id")
+            n = int(len(np.unique(nuclei[nuclei > 0])))
+            layer = self.viewer.add_labels(nuclei, name=f"Nuclei ({n})")
+            try:
+                layer.contour = 2
+            except Exception:
+                pass
+            self.coloc_btn.setEnabled(True)
+            restored.append(f"nuclei ({n})")
+        measurements = load_table("measurements.csv", "nuclei.npz")
+        if measurements is not None:
+            if self.nuclei_labels is None:
+                refuse("measurements.csv", "has no saved nuclei to belong to")
+            else:
+                self.cell_measurements = measurements
+                self._coloc_run_id = (settings or {}).get("coloc_run_id")
+                self.quant_btn.setEnabled(True)
+                restored.append(f"measurements ({len(measurements)})")
+
+        # ROI counts. WHY restored: they were saved but never read back, so
+        # after reopening there were none to export or append.
+        detail = load_table("roi_detail.csv", "rois.json")
+        if detail is not None:
+            self._roi_detail_data = detail
+            restored.append("ROI counts")
+
+        roi_data = load_json("rois.json")
+        if roi_data is not None:
+            try:
+                self._roi_names = roi_data.get("roi_names", [])
+                rois = roi_data.get("rois", [])
                 if rois:
                     self._add_roi_layer()
                     self.roi_shapes_layer.data = []
                     for roi in rois:
-                        verts = np.array(roi['vertices'])
-                        self.roi_shapes_layer.add_polygons([verts])
-                    self.roi_shapes_layer.mode = 'pan_zoom'
+                        self.roi_shapes_layer.add_polygons([np.array(roi["vertices"])])
+                    self.roi_shapes_layer.mode = "pan_zoom"
                     self._update_roi_names_label()
                     restored.append(f"ROIs ({len(rois)})")
+            except Exception as e:
+                refuse("rois.json", f"not drawn ({e})")
 
-            # Restore background ROIs
-            bg_rois_path = analysis_dir / "bg_rois.json"
-            if bg_rois_path.exists():
-                with open(bg_rois_path) as f:
-                    bg_data = json.load(f)
-                bg_regions = bg_data.get('regions', [])
-                bg_value = bg_data.get('bg_value', 0)
+        bg_data = load_json("bg_rois.json")
+        if bg_data is not None:
+            try:
+                bg_regions = bg_data.get("regions", [])
+                bg_value = bg_data.get("bg_value", 0)
                 if bg_regions:
                     self._pa_setup_bg_shapes_layer()
                     for region in bg_regions:
-                        verts = np.array(region)
-                        self._pa_bg_shapes_layer.add_rectangles([verts])
-                    self._pa_bg_shapes_layer.mode = 'pan_zoom'
+                        self._pa_bg_shapes_layer.add_rectangles([np.array(region)])
+                    self._pa_bg_shapes_layer.mode = "pan_zoom"
                     if bg_value > 0:
                         self.pa_bg_manual_spin.setValue(bg_value)
                     restored.append(f"BG ROIs ({len(bg_regions)})")
+            except Exception as e:
+                refuse("bg_rois.json", f"not drawn ({e})")
 
-            # Restore ignore regions
-            ignore_path = analysis_dir / "ignore_regions.json"
-            if ignore_path.exists():
-                with open(ignore_path) as f:
-                    ignore_data = json.load(f)
-                regions = ignore_data.get('regions', [])
+        ignore_data = load_json("ignore_regions.json")
+        if ignore_data is not None:
+            try:
+                regions = ignore_data.get("regions", [])
                 if regions:
                     self._pa_activate_ignore_drawing()
                     self._pa_ignore_shapes_layer.data = []
                     for region in regions:
-                        verts = np.array(region)
-                        self._pa_ignore_shapes_layer.add_polygons([verts])
-                    self._pa_ignore_shapes_layer.mode = 'pan_zoom'
+                        self._pa_ignore_shapes_layer.add_polygons([np.array(region)])
+                    self._pa_ignore_shapes_layer.mode = "pan_zoom"
                     restored.append(f"ignore regions ({len(regions)})")
+            except Exception as e:
+                refuse("ignore_regions.json", f"not drawn ({e})")
 
-            # Restore layer visibility
-            if settings_path.exists():
-                with open(settings_path) as f:
-                    s = json.load(f)
-                vis = s.get('layer_visibility', {})
-                if vis:
-                    for layer in self.viewer.layers:
-                        if layer.name in vis:
-                            layer.visible = vis[layer.name]
+        vis = (settings or {}).get("layer_visibility", {})
+        for layer in getattr(self.viewer, "layers", []):
+            if layer.name in vis:
+                layer.visible = vis[layer.name]
 
-            if restored:
-                self.status_label.setText(
-                    f"Restored: {', '.join(restored)}")
-                print(f"[BrainSlice] Restored analysis from {analysis_dir.name}/: "
-                      f"{', '.join(restored)}")
-                return True
-
-        except Exception as e:
-            print(f"[BrainSlice] Failed to restore analysis: {e}")
-            import traceback
-            traceback.print_exc()
-
+        if problems:
+            msg = (f"[!] Restored for {self.current_file.name}: "
+                   f"{', '.join(restored) or 'nothing'}. NOT restored: "
+                   f"{'; '.join(problems)}. Those files are kept as they are "
+                   f"and will not be overwritten.")
+            self.status_label.setText(msg)
+            print(f"[BrainSlice] {msg}")
+            return bool(restored)
+        if restored:
+            self.status_label.setText(f"Restored: {', '.join(restored)}")
+            print(f"[BrainSlice] Restored analysis from {analysis_dir.name}/: "
+                  f"{', '.join(restored)}")
+            return True
         return False
 
     def _nav_get_siblings(self, fpath=None):
@@ -2280,21 +2527,13 @@ class BrainSliceWidget(QWidget):
         selected = self._nav_siblings[self._nav_selected_idx]
         total = len(self._nav_siblings)
         # Check if this image has been analyzed before
-        analysis_dir = selected.parent / f"{selected.stem}_analysis"
+        # '[analyzed <time of the newest result>]' only when a result is
+        # saved (see analysis_has_results).
         marker = ""
-        if analysis_dir.exists():
-            # Get timestamp from settings.json or folder mtime
-            settings_file = analysis_dir / "settings.json"
-            try:
-                if settings_file.exists():
-                    mtime = settings_file.stat().st_mtime
-                else:
-                    mtime = analysis_dir.stat().st_mtime
-                from datetime import datetime as _dt
-                ts = _dt.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
-                marker = f" [analyzed {ts}]"
-            except Exception:
-                marker = " [analyzed]"
+        mtime = analysis_has_results(analysis_dir_for(selected))
+        if mtime is not None:
+            ts = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M')
+            marker = f" [analyzed {ts}]"
         text = f"{self._nav_selected_idx + 1}/{total}: {selected.name}{marker}"
         can_prev = self._nav_selected_idx > 0
         can_next = self._nav_selected_idx < total - 1
