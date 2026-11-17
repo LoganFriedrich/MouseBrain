@@ -5892,10 +5892,10 @@ class BrainSliceWidget(QWidget):
         # they disagree, telling the person to clear the unwanted mark here
         # with "Unmark Best". A mark older than the 20 newest runs could not
         # be selected, so that stop could not be cleared from the GUI.
-        # Only runs of exactly this sample: tracker.search matches sample ids
-        # by substring, so without the equality test opening a sample whose
-        # name is the start of another's would list -- and offer to unmark --
-        # the other sample's starred run as if it were this one's.
+        # Only runs of exactly this sample: tracker.search(sample_id=...) is an
+        # exact match, and the equality test below is a second guard, so a
+        # sample whose name is the start of another's can never list -- or
+        # offer to unmark -- the other sample's starred run as if it were its own.
         shown = {r.get('run_id') for r in runs}
         runs = runs + [
             r for r in self.tracker.search(
