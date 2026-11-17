@@ -8032,7 +8032,9 @@ class TuningWidget(QWidget):
         if not self.current_brain:
             QMessageBox.warning(self, "No Brain", "Select a brain first.")
             return False
-        if brain_name and brain_name != self.current_brain.name:
+        # A row names its brain by folder name (widget) or
+        # "<mouse folder>/<brain folder>" (pipeline steps): _run_is_of_brain.
+        if brain_name and not _run_is_of_brain({'brain': brain_name}, self.current_brain.name):
             QMessageBox.warning(
                 self, "Different brain",
                 f"That classification run is of {brain_name}, not of the selected "
@@ -8041,9 +8043,11 @@ class TuningWidget(QWidget):
         run_folder = Path(run_folder)
         from mousebrain.classification_runs import PRODUCTION_FOLDER, promote_to_production
 
-        def norm(p):
-            return os.path.normcase(os.path.normpath(str(p)))
-        if norm(run_folder) == norm(self.current_brain / PRODUCTION_FOLDER):
+        # Same folder by the file system, not by spelling (a drive letter and
+        # a network path can name one folder); promote_to_production checks
+        # the same again.
+        prod = self.current_brain / PRODUCTION_FOLDER
+        if prod.is_dir() and run_folder.is_dir() and os.path.samefile(str(run_folder), str(prod)):
             QMessageBox.information(
                 self, "Already production",
                 "That run's files are the brain's production classification already: "

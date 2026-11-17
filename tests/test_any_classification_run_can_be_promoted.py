@@ -104,3 +104,25 @@ def test_another_brains_run_is_not_promoted(tmp_path, monkeypatch):
     w._select_specific_classification(tracker.get_experiment("cla_early"))
     assert (prod / "cells.xml").read_text(encoding="utf-8") == "production"
     assert "Different brain" in [m[1] for m in w.msgs.seen]
+
+
+def test_promoting_production_onto_itself_raises_and_keeps_it(tmp_path, monkeypatch):
+    """The library refuses too, for every caller: before, it archived
+    production and then had nothing to copy back."""
+    from mousebrain.classification_runs import promote_to_production
+    monkeypatch.setattr(region_counts_io, "withdraw_counts_or_warn", lambda *a, **k: [])
+    brain = tmp_path / BRAIN_A
+    prod = brain / "5_Classified_Cells"
+    prod.mkdir(parents=True)
+    (prod / "cells.xml").write_text("production", encoding="utf-8")
+    with pytest.raises(ValueError):
+        promote_to_production(prod, brain, exp_id="cla_step5")
+    assert (prod / "cells.xml").read_text(encoding="utf-8") == "production"
+
+
+def test_a_pipeline_row_naming_the_mouse_folder_is_this_brains(tmp_path, monkeypatch):
+    """Pipeline steps record the brain as '<mouse folder>/<brain folder>'."""
+    w, tracker, prod, run = _setup(tmp_path, monkeypatch, run_brain=BRAIN_A)
+    row = dict(tracker.get_experiment("cla_early"), brain="M/" + BRAIN_A)
+    w._select_specific_classification(row)
+    assert (prod / "cells.xml").read_text(encoding="utf-8") == "earlier run"

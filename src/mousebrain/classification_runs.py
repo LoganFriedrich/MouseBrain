@@ -50,6 +50,7 @@ record) has its ``output_path`` moved to their place in the archive -- as step
 
 import getpass
 import json
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -251,12 +252,21 @@ def promote_to_production(run_folder, brain_folder, exp_id: Optional[str] = None
     (region_counts_io.withdraw_counts; ``summary_dir`` defaults to the
     configured 2_Data_Summary).
 
-    Raises FileNotFoundError when the run has no cells.xml.
+    Raises FileNotFoundError when the run has no cells.xml, and ValueError,
+    touching nothing, when the run folder IS the production folder.
     """
     run_folder = Path(run_folder)
     prod = Path(brain_folder) / PRODUCTION_FOLDER
     if not (run_folder / "cells.xml").is_file():
         raise FileNotFoundError("no cells.xml in %s -- nothing to promote" % run_folder)
+    # Promoting the production folder onto itself would archive its files
+    # and then find nothing to copy back: the brain would be left with no
+    # classification. A step 5 run's tracker row names that folder, and the
+    # same folder can be written two ways (drive letter or network path), so
+    # this asks the file system whether they are the same folder.
+    if prod.is_dir() and os.path.samefile(str(run_folder), str(prod)):
+        raise ValueError("%s is the production classification already -- nothing to promote"
+                         % run_folder)
     prod.mkdir(parents=True, exist_ok=True)
 
     archived, prev_id = archive_production(brain_folder)
