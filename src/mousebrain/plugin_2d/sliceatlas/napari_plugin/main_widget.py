@@ -168,6 +168,12 @@ class BrainSliceWidget(QWidget):
         # last restore ran for, and the saved files it did not bring back.
         self._state_restored_for: Optional[Path] = None
         self._restore_blocked: set = set()
+        # The rotation, z-projection and channel numbers the image on screen
+        # was REALLY loaded with, captured when its load started (the
+        # controls can be changed while it loads). Saved with its analysis,
+        # so a restore can tell whether saved labels and ROIs fit the pixels.
+        self._loading_with: Optional[Dict[str, Any]] = None
+        self._loaded_with: Optional[Dict[str, Any]] = None
         self.stack_data: Optional[np.ndarray] = None  # For folder stacks
         self.red_channel: Optional[np.ndarray] = None
         self.green_channel: Optional[np.ndarray] = None
@@ -2265,6 +2271,32 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(
                 f"State saved for {self.current_file.stem}")
 
+    def _image_shape(self):
+        """Shape of the image on screen (the nuclear channel), or None."""
+        red = getattr(self, "red_channel", None)
+        return tuple(red.shape) if red is not None else None
+
+    def _saved_load_mismatch(self, settings) -> str:
+        """'' when the saved analysis was made on pixels loaded the way the
+        image on screen is; else a description of what differs.
+
+        WHY: a 90 degree turn of a square image, another z-projection or a
+        swapped channel keeps the image's shape, so labels and ROIs saved on
+        one would sit on the wrong cells of the other with nothing to show
+        it. Saved state from before the load settings were recorded
+        ('loaded_with' absent) is judged by the load settings saved beside
+        it, which were the controls' values when it was saved."""
+        if not settings:
+            return ""
+        saved = saved_load_settings(settings)
+        now = getattr(self, "_loaded_with", None) or {}
+        diffs = []
+        for key in LOAD_SETTING_KEYS:
+            if key in saved and key in now and saved[key] != now[key]:
+                diffs.append(f"{LOAD_SETTING_LABELS[key]} {saved[key]!s} "
+                             f"(this image: {now[key]!s})")
+        return "; ".join(diffs)
+
     def _restore_analysis_state(self):
         """Restore what was saved for the image on screen.
 
@@ -2302,13 +2334,25 @@ class BrainSliceWidget(QWidget):
             except Exception as e:
                 refuse("settings.json", f"unreadable ({e})")
 
+        mismatch = self._saved_load_mismatch(settings)
+        if mismatch:
+            blocked.update(n for n in STATE_FILES + ("settings.json",)
+                           if (analysis_dir / n).exists())
+            msg = (f"[!] Saved analysis of {self.current_file.name} NOT restored: "
+                   f"it was made on the image loaded with {mismatch}. Its files "
+                   f"are kept and will not be overwritten. To see it, set those "
+                   f"on the Load tab and click Load.")
+            self.status_label.setText(msg)
+            print(f"[BrainSlice] {msg}")
+            return False
+
         if settings is not None:
             try:
                 # Particle settings only. WHY not the load settings: they
                 # were applied before the image was loaded (_open_image);
                 # applying them now would not change the pixels on screen
                 # and would silently carry to the next image's load.
-                self._pa_apply_settings(settings)
+                self._pa_apply_settings(settings, include_load=False)
                 restored.append("settings")
             except Exception as e:
                 problems.append(f"settings not applied ({e})")
@@ -2320,6 +2364,8 @@ class BrainSliceWidget(QWidget):
                 self._pa_classified_with = (settings["bg_value"],
                                             settings["min_pct_above_bg"])
 
+        shape = self._image_shape()
+
         def load_labels(name):
             path = analysis_dir / name
             if not path.exists():
@@ -2329,6 +2375,9 @@ class BrainSliceWidget(QWidget):
                     arr = data["labels"]
             except Exception as e:
                 refuse(name, f"unreadable ({e})")
+                return None
+            if shape is not None and tuple(arr.shape) != shape:
+                refuse(name, f"is {tuple(arr.shape)}, the image is {shape}")
                 return None
             return arr
 
@@ -2650,10 +2699,35 @@ class BrainSliceWidget(QWidget):
         self.load_btn.setEnabled(True)
         if peek:
             self._peek_and_configure(fpath)
+            self._apply_saved_load_settings(fpath)
         self._load_single_file(fpath)
         self._nav_point_at(fpath)
         self._nav_update_label()
         return True
+
+    def _apply_saved_load_settings(self, fpath) -> None:
+        """Set the Load tab to the rotation, z-projection and channels the
+        image's saved analysis was made with, BEFORE the image loads.
+
+        WHY before: they used to be applied by the restore, after the image
+        had loaded with whatever the controls held, so restored labels could
+        sit on a differently turned image and the settings silently carried
+        to the next image's load. Not on a reload with the Load button
+        (peek=False), which keeps channels chosen by hand; the restore then
+        refuses a saved analysis that does not fit (_saved_load_mismatch)."""
+        import json
+        path = analysis_dir_for(fpath) / "settings.json"
+        if not path.exists():
+            return
+        try:
+            with open(path) as f:
+                saved = saved_load_settings(json.load(f))
+        except Exception as e:
+            print(f"[BrainSlice] Saved load settings not read from {path}: {e}")
+            return
+        if saved:
+            self._apply_load_settings(saved)
+            print(f"[BrainSlice] Load settings of the saved analysis applied: {saved}")
 
     def _open_folder(self, folder) -> bool:
         """Open a folder of images as one stack (Browse Folder, then Load).
@@ -2994,8 +3068,9 @@ class BrainSliceWidget(QWidget):
             settings['pixel_size_um'] = self._pixel_size_um
         return settings
 
-    def _pa_apply_settings(self, settings):
-        """Apply saved particle + load settings to the UI controls."""
+    def _pa_apply_settings(self, settings, include_load=True):
+        """Apply saved particle settings, and the load settings unless
+        include_load is False, to the UI controls."""
         # Particle params
         if 'threshold' in settings:
             self._pa_thresh_spin.setValue(int(settings['threshold']))
@@ -3012,7 +3087,20 @@ class BrainSliceWidget(QWidget):
             self.pa_bg_manual_spin.setValue(settings['bg_value'])
         if 'min_pct_above_bg' in settings:
             self.pa_pos_pct_spin.setValue(settings['min_pct_above_bg'])
-        # Load params
+        if include_load:
+            self._apply_load_settings(settings)
+
+    def _load_settings_now(self) -> Dict[str, Any]:
+        """The load settings the controls hold now."""
+        return {
+            'rotation': self.rotation_combo.currentText(),
+            'z_projection': self.z_projection_combo.currentText(),
+            'red_channel_idx': self.red_channel_spin.value(),
+            'green_channel_idx': self.green_channel_spin.value(),
+        }
+
+    def _apply_load_settings(self, settings):
+        """Set the rotation, z-projection and channel controls."""
         if 'rotation' in settings:
             idx = self.rotation_combo.findText(settings['rotation'])
             if idx >= 0:
@@ -4999,13 +5087,14 @@ class BrainSliceWidget(QWidget):
         self.load_btn.setEnabled(False)
         self._loading_file = fpath
         self._set_open_buttons(False)
+        self._loading_with = self._load_settings_now()
 
         from .workers import ImageLoaderWorker
 
         self.loader_worker = ImageLoaderWorker(
             fpath,
-            red_idx=self.red_channel_spin.value(),
-            green_idx=self.green_channel_spin.value(),
+            red_idx=self._loading_with['red_channel_idx'],
+            green_idx=self._loading_with['green_channel_idx'],
             z_projection=self._get_z_projection_mode(),
         )
         self.loader_worker.progress.connect(self._on_load_progress)
@@ -5163,9 +5252,11 @@ class BrainSliceWidget(QWidget):
             hi = np.percentile(image, 99)
             return (float(lo), float(hi))
 
-    def _get_rotation_k(self) -> int:
-        """Get rotation value (k for np.rot90) from dropdown."""
-        rotation_mode = self.rotation_combo.currentText()
+    def _get_rotation_k(self, rotation_mode=None) -> int:
+        """Get rotation value (k for np.rot90): of rotation_mode when given,
+        else of the dropdown."""
+        if rotation_mode is None:
+            rotation_mode = self.rotation_combo.currentText()
         if '90° CCW' in rotation_mode:
             return 1  # 90° counter-clockwise
         elif '90° CW' in rotation_mode:
@@ -5174,9 +5265,9 @@ class BrainSliceWidget(QWidget):
             return 2  # 180°
         return 0  # No rotation
 
-    def _apply_rotation(self, data: np.ndarray) -> np.ndarray:
-        """Apply rotation to image data based on dropdown selection."""
-        k = self._get_rotation_k()
+    def _apply_rotation(self, data: np.ndarray, rotation_mode=None) -> np.ndarray:
+        """Rotate image data by rotation_mode, or the dropdown's selection."""
+        k = self._get_rotation_k(rotation_mode)
         if k == 0:
             return data
 
@@ -5234,10 +5325,16 @@ class BrainSliceWidget(QWidget):
             # pixels stayed on screen, and later results were saved and
             # logged under the wrong name.
             self.current_file = fpath
+            # The settings the load started with, not the controls now: a
+            # control changed during the load did not change these pixels.
+            loaded_with = self._loading_with or self._load_settings_now()
+            self._loading_with = None
+            self._loaded_with = loaded_with
+            rotation = loaded_with.get('rotation')
             try:
                 # Apply rotation
-                red = self._apply_rotation(red)
-                green = self._apply_rotation(green)
+                red = self._apply_rotation(red, rotation)
+                green = self._apply_rotation(green, rotation)
 
                 self.red_channel = red
                 self.green_channel = green
@@ -5246,8 +5343,8 @@ class BrainSliceWidget(QWidget):
                 # Store all channels for particle analysis.
                 # red/green are already rotated and in the correct order
                 # (channels[0]=red=nuclear, channels[1]=green=signal).
-                red_idx = self.red_channel_spin.value()
-                green_idx = self.green_channel_spin.value()
+                red_idx = loaded_with.get('red_channel_idx')
+                green_idx = loaded_with.get('green_channel_idx')
                 if (full_data is not None and full_data.ndim == 3
                         and full_data.shape[0] > 2):
                     # >2 channels: red and green first, then extras (rotated)
@@ -5255,7 +5352,7 @@ class BrainSliceWidget(QWidget):
                     used = {red_idx, green_idx}
                     for i in range(full_data.shape[0]):
                         if i not in used:
-                            self.channels.append(self._apply_rotation(full_data[i]))
+                            self.channels.append(self._apply_rotation(full_data[i], rotation))
                 else:
                     self.channels = [red, green]
 
