@@ -116,6 +116,115 @@ def append_archive_rows(archive_path, new_rows: List[dict]) -> Path:
     return archive_path
 
 
+# ---------------------------------------------------------------- withdrawal
+COUNT_TABLES = (("region_counts.csv", "region_counts_archive.csv"),
+                ("elife_counts.csv", "elife_counts_archive.csv"))
+
+
+def _read_table(path: Path):
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        return list(reader.fieldnames or []), list(reader)
+
+
+def _summary_copies(summary_dir: Path, brain_folder: str) -> List[Path]:
+    """The per-brain copies step 6 leaves in the summary folder,
+    ``<mouse>_<brain>_counts.csv`` (an integrator imports every ``*_counts.csv``
+    there)."""
+    tables = {t for pair in COUNT_TABLES for t in pair}
+    out = []
+    for f in summary_dir.glob("*_counts.csv"):
+        if f.name in tables:
+            continue
+        if f.name == brain_folder + "_counts.csv" or f.name.endswith("_" + brain_folder + "_counts.csv"):
+            out.append(f)
+    return out
+
+
+def withdraw_counts(brain_folder: str, reason: str, summary_dir=None) -> List[str]:
+    """Take a brain's counts out of the production tables because what they
+    were made from has been replaced.
+
+    WHY: region_counts.csv and elife_counts.csv are what an integrator pulls.
+    When a brain's registration was archived (step 3 registers it again) or
+    its classification was replaced (step 5, a promotion), its row stayed in
+    them until somebody counted the brain again -- counts of a registration or
+    a classification that no longer stands for the brain, indistinguishable
+    from current ones. The status readers already showed the counts stale;
+    the tables did not.
+
+    What happens: the brain's row in each table moves to that table's archive
+    (``archived_at`` and ``withdrawn_reason`` added; archived, never deleted),
+    and step 6's per-brain copy in the summary folder is renamed
+    ``<name>.withdrawn-<time>.csv`` beside it, so it is no longer a
+    ``*_counts.csv`` an integrator imports. The brain's own
+    ``6_Region_Analysis`` files are left where they are (the status readers
+    show them stale). Counting the brain again puts a fresh row back.
+
+    ``brain_folder`` is the brain folder's name; a table row matches when its
+    ``brain`` is that name or ``<mouse>/<that name>``. ``summary_dir`` defaults
+    to the configured 2_Data_Summary. Nothing is locked or written when the
+    brain has no counts there. Returns what was withdrawn (file names).
+    """
+    if summary_dir is None:
+        from mousebrain import config
+        summary_dir = config.DATA_SUMMARY_DIR
+    summary_dir = Path(summary_dir)
+    if not summary_dir.is_dir():
+        return []
+
+    def present() -> bool:
+        for table, _archive in COUNT_TABLES:
+            path = summary_dir / table
+            if path.exists() and any(_same_brain(r.get("brain"), brain_folder)
+                                     for r in _read_table(path)[1]):
+                return True
+        return bool(_summary_copies(summary_dir, brain_folder))
+
+    if not present():
+        return []
+
+    done = []
+    stamp = datetime.now()
+    with counts_tables_lock(summary_dir / COUNT_TABLES[0][0]):
+        for table, archive in COUNT_TABLES:
+            path = summary_dir / table
+            if not path.exists():
+                continue
+            header, rows = _read_table(path)
+            out = [r for r in rows if _same_brain(r.get("brain"), brain_folder)]
+            if not out:
+                continue
+            for r in out:
+                r["archived_at"] = stamp.isoformat()
+                r["withdrawn_reason"] = reason
+            append_archive_rows(summary_dir / archive, out)
+            write_rows_atomic(path, header,
+                              [r for r in rows if not _same_brain(r.get("brain"), brain_folder)])
+            done.append(table)
+        for copy in _summary_copies(summary_dir, brain_folder):
+            aside = copy.with_name("%s.withdrawn-%s.csv" % (copy.stem, stamp.strftime("%Y%m%d_%H%M%S")))
+            os.replace(copy, aside)
+            done.append(copy.name)
+    if done:
+        print("    Counts of %s withdrawn from %s (%s); count the brain again to "
+              "restore them." % (brain_folder, ", ".join(done), reason))
+    return done
+
+
+def withdraw_counts_or_warn(brain_folder: str, reason: str, summary_dir=None) -> List[str]:
+    """withdraw_counts for a step whose own work is already done: a problem
+    (the tables locked by a run that does not finish ...) is printed with what
+    to do, never raised, so it cannot undo or hide that work."""
+    try:
+        return withdraw_counts(brain_folder, reason, summary_dir)
+    except Exception as e:
+        print("    [!] The counts of %s could NOT be withdrawn from region_counts.csv / "
+              "elife_counts.csv: %s. They are out of date (%s); count the brain again "
+              "(step 6) to replace them." % (brain_folder, e, reason))
+        return []
+
+
 # ----------------------------------------------------------------- provenance
 def _same_brain(row_brain: str, brain_folder: str) -> bool:
     row_brain = row_brain or ""

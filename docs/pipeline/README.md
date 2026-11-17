@@ -677,6 +677,24 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   step 6 finds an archive like that, it renames it to
   `region_counts_archive.malformed-<date>_<time>.csv`, keeps it untouched, prints
   a warning and starts a new archive.)
+- **Out-of-date counts leave these tables at once.** A brain's counts are
+  regions of one registration, counted from one classification. When either is
+  replaced, the brain's row is taken out of `region_counts.csv` and
+  `elife_counts.csv` straight away and moved to their archives, with
+  `archived_at` and a `withdrawn_reason` column saying why; step 6's per-brain
+  copy in `2_Data_Summary` (`<mouse>_<brain>_counts.csv`) is renamed
+  `<mouse>_<brain>_counts.withdrawn-<date>_<time>.csv` beside it, so an
+  integrator no longer imports it. This happens when step 3 moves a
+  registration into `_archive` (registering the brain again), when step 5
+  finishes a new classification, and when a Setup & Tuning run is promoted to
+  production. Each prints `Counts of <brain> withdrawn from ...`. The brain's
+  own `6_Region_Analysis` files stay where they are, and RUN_PIPELINE and the
+  dashboard show the brain at "Count" again: run step 6 for it and its row comes
+  back. Why: the rows used to stay until someone counted the brain again, and
+  nothing in the tables told them apart from current counts. A rejected
+  registration or a re-crop makes the counts stale in the status readers but
+  does not yet take the row out of the tables; count such a brain again after
+  registering it again.
 - **One run at a time changes these tables.** Step 6, the rebuild
   `python regenerate_derived_counts.py` (which remakes `elife_counts.csv` and
   `hemisphere_laterality_analysis.csv` from `region_counts.csv`), and the

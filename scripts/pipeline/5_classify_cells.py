@@ -760,6 +760,11 @@ Examples:
             # row follows its files into the archive.
             tracker.update_status(exp_id, output_path=str(output_path / "cells.xml"))
             follow_files_into_archive(tracker, prev_id, archived, pipeline_folder)
+            # Counts made from the classification just replaced leave the
+            # production count tables (region_counts_io.withdraw_counts).
+            from mousebrain.region_counts_io import withdraw_counts_or_warn
+            withdraw_counts_or_warn(pipeline_folder.name,
+                                    "classification replaced by step 5 run %s" % exp_id)
         else:
             success = False
             kept = discard_staged(staged, pipeline_folder, "failed")

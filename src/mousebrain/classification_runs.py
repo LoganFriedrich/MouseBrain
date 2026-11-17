@@ -238,7 +238,7 @@ def follow_files_into_archive(tracker, prev_id: Optional[str], archived: Optiona
 
 
 def promote_to_production(run_folder, brain_folder, exp_id: Optional[str] = None,
-                          tracker=None) -> dict:
+                          tracker=None, summary_dir=None) -> dict:
     """Make a classification run the brain's production classification.
 
     The current production files (if any) move into
@@ -246,7 +246,10 @@ def promote_to_production(run_folder, brain_folder, exp_id: Optional[str] = None
     run's cells.xml (and rejected.xml) are copied in, with
     ``promoted_from.json`` saying which run they came from. The run's tracker
     row gets the tag ``promoted_to_production``. Region counts made before
-    this are then older than cells.xml, so the status readers show them stale.
+    this are then older than cells.xml, so the status readers show them stale,
+    and the brain's row is withdrawn from the production count tables
+    (region_counts_io.withdraw_counts; ``summary_dir`` defaults to the
+    configured 2_Data_Summary).
 
     Raises FileNotFoundError when the run has no cells.xml.
     """
@@ -269,6 +272,12 @@ def promote_to_production(run_folder, brain_folder, exp_id: Optional[str] = None
             copied.append(name)
     record = write_production_record(brain_folder, exp_id, run_folder, copied, archived,
                                      how="promoted")
+
+    # The counts were made from the classification just replaced.
+    from mousebrain.region_counts_io import withdraw_counts_or_warn
+    withdraw_counts_or_warn(Path(brain_folder).name,
+                            "classification replaced: promoted run %s" % (exp_id or run_folder.name),
+                            summary_dir)
 
     if tracker is not None:
         follow_files_into_archive(tracker, prev_id, archived, brain_folder)

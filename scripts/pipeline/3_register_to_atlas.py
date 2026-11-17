@@ -422,7 +422,15 @@ def archive_existing_registration(pipeline_folder, label=""):
     for item in contents:
         dest = archive_folder / item.name
         shutil.move(str(item), str(dest))
-    
+
+    # Counts are regions of THIS registration's atlas fit. Once it is archived
+    # they describe a registration that no longer stands for the brain, so the
+    # brain's row leaves the production count tables now, not when someone
+    # next counts it (region_counts_io.withdraw_counts says why).
+    from mousebrain.region_counts_io import withdraw_counts_or_warn
+    withdraw_counts_or_warn(Path(pipeline_folder).name,
+                            "registration archived to %s" % archive_folder.name)
+
     return True
 
 
