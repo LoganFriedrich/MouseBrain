@@ -143,6 +143,10 @@ class BrainSliceWidget(QWidget):
         # The image file last chosen (Browse File, Prev/Next, the queue):
         # what the Load button opens. See _open_image.
         self._chosen_file: Optional[Path] = None
+        # The file or folder a loader is loading right now, None when no
+        # load is going. current_file becomes this only when the load
+        # succeeds; see _on_load_finished.
+        self._loading_file: Optional[Path] = None
 
         # Image navigation
         self._nav_siblings = []
@@ -2316,7 +2320,9 @@ class BrainSliceWidget(QWidget):
             # Sample ID typed by hand.
             self.sample_id_edit.setText(fpath.stem)
         self._chosen_file = fpath
-        self.current_file = fpath
+        # current_file is NOT set here: it names the image whose pixels are
+        # on screen, so it changes only when the load succeeds
+        # (_on_load_finished).
         self.current_folder = None
         self.is_folder_load = False
         self.file_label.setText(str(fpath.name))
@@ -4658,6 +4664,7 @@ class BrainSliceWidget(QWidget):
 
         self.status_label.setText("Loading image...")
         self.load_btn.setEnabled(False)
+        self._loading_file = fpath
 
         from .workers import ImageLoaderWorker
 
@@ -4679,6 +4686,7 @@ class BrainSliceWidget(QWidget):
             return
 
         print(f"[BrainSlice] Starting folder load: {folder}")
+        self._loading_file = folder
         self.status_label.setText("Loading folder as stack...")
         self.load_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
@@ -4704,9 +4712,10 @@ class BrainSliceWidget(QWidget):
             import traceback
             print(f"[BrainSlice] ERROR starting worker: {e}")
             traceback.print_exc()
-            self.status_label.setText(f"Error: {e}")
-            self.load_btn.setEnabled(True)
             self.progress_bar.setVisible(False)
+            self._loading_file = None
+            self.load_btn.setEnabled(True)
+            self._image_not_loaded(folder, str(e))
 
     def _on_folder_load_progress(self, current: int, total: int, filename: str):
         """Handle folder load progress updates."""
@@ -4717,10 +4726,15 @@ class BrainSliceWidget(QWidget):
     def _on_folder_load_finished(self, success: bool, message: str, stack, metadata):
         """Handle folder load completion."""
         print(f"[BrainSlice] Folder load finished: success={success}, message={message}")
+        folder = self._loading_file or self.current_folder
+        self._loading_file = None
         self.load_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
 
         if success:
+            # A stack is not one file: nothing is named by current_file.
+            self.current_file = None
+            self.current_folder = folder
             # Apply rotation to entire stack
             stack = self._apply_rotation(stack)
             self.stack_data = stack  # (N_slices, C, Y, X)
@@ -4784,8 +4798,7 @@ class BrainSliceWidget(QWidget):
             self.inset_widget.on_base_loaded()
 
         else:
-            self.status_label.setText(f"Error: {message}")
-            QMessageBox.warning(self, "Load Error", message)
+            self._image_not_loaded(folder, message)
 
     def _on_load_progress(self, message: str):
         """Handle load progress updates."""
@@ -4860,9 +4873,17 @@ class BrainSliceWidget(QWidget):
 
     def _on_load_finished(self, success: bool, message: str, red, green, metadata, full_data=None):
         """Handle load completion."""
+        fpath = self._loading_file or self.current_file
+        self._loading_file = None
         self.load_btn.setEnabled(True)
 
         if success:
+            # Only now does the window's image change. WHY: current_file
+            # used to be set when the image was chosen, so a load that then
+            # failed left it naming the new file while the previous image's
+            # pixels stayed on screen, and later results were saved and
+            # logged under the wrong name.
+            self.current_file = fpath
             try:
                 # Apply rotation
                 red = self._apply_rotation(red)
@@ -4994,8 +5015,33 @@ class BrainSliceWidget(QWidget):
             self._restore_analysis_state()
 
         else:
-            self.status_label.setText(f"Error: {message}")
-            QMessageBox.warning(self, "Load Error", message)
+            self._image_not_loaded(fpath, message)
+
+    def _image_not_loaded(self, what, message: str):
+        """A load failed: the window is left with NO image, not the previous
+        one. WHY: the previous image's results were already saved and
+        cleared when the new one was asked for (_leave_current_image); its
+        pixels left on screen with nothing naming them would let a
+        detection or particle analysis run on them and be filed under
+        whatever name the window showed. Clicking Load tries the same file
+        again."""
+        self.current_file = None
+        self.red_channel = None
+        self.green_channel = None
+        self.channels = []
+        self.channel_names = []
+        self.stack_data = None
+        self.metadata = None
+        self.nuclei_labels = None
+        self.viewer.layers.clear()
+        for btn in (self.detect_btn, self.preproc_preview_btn, self.coloc_btn,
+                    self.quant_btn, self.pa_run_btn):
+            btn.setEnabled(False)
+        name = Path(what).name if what is not None else "the image"
+        self.status_label.setText(
+            f"Error: {name} could not be opened ({message}). No image is open; "
+            f"fix the file and click Load to try again, or open another image.")
+        QMessageBox.warning(self, "Load Error", f"{name} could not be opened: {message}")
 
     def _run_detection(self):
         """Run nuclei detection."""
