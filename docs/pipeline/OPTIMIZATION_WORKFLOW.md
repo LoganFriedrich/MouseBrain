@@ -75,7 +75,7 @@ Step 5 writes the brain's **production** classification,
 
 ### Trying a model in napari does not change production
 
-Classification runs started from Setup & Tuning (Classification tab, "Run
+Classification runs started from Setup & Tuning ("7. Classify" tab, "Run
 Classification") are calibration runs. Each one is written to its own folder,
 `2_Data_Summary/optimization_runs/<brain>/class_<date>_<time>/` (`cells.xml`,
 `rejected.xml`), and that folder is the run's `output_path` in the tracker. The
@@ -85,13 +85,13 @@ the classification the counts come from.
 **To make a napari run the production classification** (promote it), use any
 of these three buttons; each asks you to confirm and does the same thing:
 
-- **Promote last run to production...** under "Run Classification": the last
+- **Promote last run to production...** under "Run Classification" ("7. Classify" tab): the last
   run made in this window for the selected brain.
 - **Promote selected to production...** under "Classification Runs (from
-  Tracker)" (the Classification Compare tab): select any completed run of this
+  Tracker)" (the "8. Class Compare" tab): select any completed run of this
   brain in the list -- from today or from an earlier session -- then click it.
   Click **Refresh** first if the list is empty.
-- **Promote a run...** at the top of the Results tab: a list of this brain's
+- **Promote a run...** at the top of the "10. Results" tab: a list of this brain's
   classification runs; select one and click **Promote Selected to
   Production...**.
 
@@ -118,7 +118,7 @@ and leave the brain with no classification). What a promotion does:
 Running step 5 again also replaces production (that is what step 5 is for); it
 archives the files it replaces in the same way.
 
-### Training a model from Setup & Tuning (Training tab, "Start Training")
+### Training a model from Setup & Tuning ("9. Curate/Train" tab, "Start Training")
 
 The training runs in its own process (`scripts/utils/util_train_model.py`);
 napari stays usable and the console shows its progress.
@@ -153,7 +153,7 @@ python 6_count_regions.py --brain YOUR_BRAIN
 
 Outputs `cell_counts_by_region.csv` in the brain's `6_Region_Analysis/` folder.
 
-### Counting from Setup & Tuning (Results tab, "Run Region Counting")
+### Counting from Setup & Tuning ("10. Results" tab, "Run Region Counting")
 
 Counting always counts the brain's **production** classification,
 `5_Classified_Cells/cells.xml`. The line "Counting uses:" at the top of the
@@ -166,7 +166,10 @@ status line shows step 6's latest message, the brain list is held, and a second
 click says "Counting Running". When it ends the counts are loaded into the
 Results tab (only if the counted brain is still the selected one). Closing the
 Setup & Tuning window while counting runs is refused with a message: wait until
-the status line says it finished.
+the status line says it finished. If napari itself is closed anyway (or
+stops), the count can be cut off part-way and its tracker row left at
+`started`: run Region Counting again for that brain (or run step 6 from the
+command line).
 
 ## Step 4: Compare to Published Data
 
