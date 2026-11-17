@@ -879,7 +879,9 @@ once it is analyzed, as `completed` or `failed` -- never left `started`. If the
 tracker refuses a row (most often `calibration_runs.csv` is open in a spreadsheet
 program), the batch stops trying, so the window is not frozen again for every image,
 and the status line ends `[!] <n> image(s) NOT logged to the calibration tracker
-(<the reason>)`. The analysis itself carries on.
+(<the reason>)`. The same happens if an unexpected error occurs while the row is being
+built from that image's results: it is reported as a tracker problem, never as the end of
+the batch, so no image's results are lost before export. The analysis itself carries on.
 
 **Drawing ROIs.** The image that was open before the batch is first saved to its
 `_analysis` folder and closed: the window then has no image of its own until you
