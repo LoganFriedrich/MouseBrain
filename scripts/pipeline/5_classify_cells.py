@@ -425,6 +425,8 @@ Examples:
     python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4  # Uses default model
     python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --no-prefilter  # Skip pre-filter (not recommended)
     python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --routine       # Auto pre-filter + paradigm model
+    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --candidates <brain>/4_Cell_Candidates/prefiltered_<time>/interior_candidates.xml
+                                                             # Classify a saved (tuned) pre-filter
         """
     )
     
@@ -444,6 +446,10 @@ Examples:
                         help='Routine processing mode: auto-use paradigm-best model if available')
     parser.add_argument('--no-prefilter', action='store_true',
                         help='Skip atlas pre-filter (not recommended - includes surface artifacts)')
+    parser.add_argument('--candidates', type=Path,
+                        help='Classify this file instead: a saved pre-filter of the brain\'s '
+                             'candidates (4_Cell_Candidates/prefiltered_<time>/'
+                             'interior_candidates.xml), which is not pre-filtered again')
     parser.add_argument('--selective', action='store_true',
                         help='Region-selective classification: trust cells in eLife regions, classify only uncertain regions')
     parser.add_argument('--tracing-type', default='descending',
@@ -492,6 +498,25 @@ Examples:
 
     # Check for paradigm-best model
     tracker = ExperimentTracker()
+
+    # A saved pre-filter chosen by the person (--candidates): checked to be a
+    # pre-filter of THIS brain's current candidates (mousebrain.prefilter.
+    # check_candidates_choice says why), and then classified as it is --
+    # step 5's own pre-filter would filter it again with the default settings
+    # and undo the tuning.
+    already_prefiltered = False
+    if args.candidates:
+        from mousebrain.prefilter import check_candidates_choice
+        try:
+            candidates, already_prefiltered = check_candidates_choice(
+                pipeline_folder, args.candidates, tracker._read_all())
+        except ValueError as e:
+            print(f"ERROR: --candidates cannot be classified: {e}")
+            print("Nothing was classified.")
+            sys.exit(1)
+        print(f"Candidates chosen: {candidates}")
+        if already_prefiltered:
+            print("    (a saved pre-filter: step 5's own pre-filter is not run on it)")
     parsed = parse_brain_name(pipeline_folder.name)
     imaging_paradigm = parsed.get('imaging_params', '')
     paradigm_model = None
@@ -572,15 +597,20 @@ Examples:
 
     output_path = pipeline_folder / FOLDER_CLASSIFICATION
 
-    # Optional pre-filter step
-    if args.prefilter:
+    # The pre-filter (on unless --no-prefilter). It either runs or step 5
+    # stops: a pre-filter that failed used to print a warning and classify the
+    # UNFILTERED candidates -- surface glow and all -- into the production
+    # classification, with nothing on the run saying so. Classifying
+    # unfiltered candidates is allowed only when the person asks for it with
+    # --no-prefilter.
+    if args.prefilter and not already_prefiltered:
         print(f"\n[{timestamp()}] Running atlas pre-filter...")
         try:
             from mousebrain.prefilter import prefilter_candidates
 
             registration_path = pipeline_folder / "3_Registered_Atlas"
             if not registration_path.exists():
-                print("WARNING: No registration folder found, skipping pre-filter")
+                raise RuntimeError("no registration folder (%s)" % registration_path)
             else:
                 result = prefilter_candidates(
                     candidates_xml=candidates,
@@ -628,11 +658,19 @@ Examples:
                     output_path=str(prefiltered_xml),
                     status="completed",
                 )
-        except ImportError:
-            print("WARNING: mousebrain.prefilter not found, skipping pre-filter")
         except Exception as e:
-            print(f"WARNING: Pre-filter failed: {e}")
-            print("Continuing with unfiltered candidates...")
+            print(f"\nERROR: The pre-filter failed: {e}")
+            try:
+                tracker.log_prefilter(
+                    brain=brain_name, tracing_type='descending',
+                    input_path=str(candidates), status="failed",
+                    notes=f"step 5 stopped: {e}"[:500])
+            except Exception as log_error:
+                print(f"    [!] The failure could not be recorded in the tracker: {log_error}")
+            print("Step 5 stopped. Nothing was classified, and the production")
+            print("classification was not touched. Fix the cause above, or run step 5")
+            print("again with --no-prefilter to classify the unfiltered candidates on purpose.")
+            sys.exit(1)
 
     if args.dry_run:
         print("\n=== DRY RUN ===")

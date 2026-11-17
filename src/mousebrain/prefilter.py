@@ -34,6 +34,7 @@ Usage (CLI):
 
 import argparse
 import json
+import os
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -712,6 +713,122 @@ def find_step5_candidates(brain_path: Path) -> Optional[Path]:
 # The old name, kept so scripts that import it keep working. It never meant
 # "newest" since the shared rule took over; use find_step5_candidates.
 find_latest_candidates = find_step5_candidates
+
+
+# =============================================================================
+# CLASSIFYING A SAVED PRE-FILTER (step 5 --candidates)
+# =============================================================================
+#
+# WHY: a pre-filter tuned by hand (Setup & Tuning's pre-filter, or this
+# module's CLI with other settings) is saved as
+# ``4_Cell_Candidates/prefiltered_<time>/interior_candidates.xml``, and the CLI
+# told the person to classify it with ``5_classify_cells.py --candidates`` --
+# an option step 5 did not have. Step 5 always classified the brain's raw
+# candidates after its OWN default pre-filter, so a tuned pre-filter was never
+# used. These two functions say which saved pre-filters exist and whether one
+# may be classified as the brain's production classification.
+
+PREFILTER_OUTPUT = "interior_candidates.xml"
+_SLACK_SECONDS = 2.0  # copies and network shares round modification times
+
+
+def _relative_to_brain(path, brain_path: Path):
+    """``path``'s parts below the brain folder, or None. Compared by name, not
+    by drive: a report written on another machine names the same file with
+    another drive letter or a share path."""
+    parts = Path(str(path)).parts
+    if brain_path.name not in parts:
+        return None
+    return tuple(p.lower() for p in parts[len(parts) - parts[::-1].index(brain_path.name):])
+
+
+def _prefilter_source(folder: Path, tracker_rows=None) -> str:
+    """The candidates file a saved pre-filter filtered: its report's
+    ``source_xml``, else the input of the tracker pre-filter run whose output
+    is that folder (older Setup & Tuning saves did not write the source)."""
+    try:
+        source = json.loads((folder / "prefilter_report.json").read_text()).get("source_xml") or ""
+    except (OSError, ValueError, AttributeError):
+        source = ""
+    if source or not tracker_rows:
+        return source
+    target = os.path.normcase(os.path.normpath(str(folder)))
+    for row in reversed(list(tracker_rows)):
+        out = row.get("output_path") or ""
+        if (row.get("exp_type") == "prefilter" and row.get("status") == "completed" and out
+                and os.path.normcase(os.path.normpath(out)) == target):
+            return row.get("input_path") or ""
+    return ""
+
+
+def saved_prefilters(brain_path) -> List[Path]:
+    """Saved pre-filter outputs of a brain, newest first: every
+    ``prefilter*/interior_candidates.xml`` in its registered-space candidates
+    folders, except step 5's own ``prefiltered/`` (step 5 remakes that one on
+    every run)."""
+    from mousebrain.config import registered_candidate_folders
+    found = []
+    for folder in registered_candidate_folders(brain_path):
+        if not folder.is_dir():
+            continue
+        for xml in folder.glob("prefilter*/" + PREFILTER_OUTPUT):
+            if xml.parent.name != "prefiltered":
+                found.append(xml)
+    return sorted(found, key=lambda p: p.parent.name, reverse=True)
+
+
+def check_candidates_choice(brain_path, chosen, tracker_rows=None):
+    """Whether step 5 may classify ``chosen`` as this brain's production
+    classification. Returns (the file, True when it is a saved pre-filter that
+    step 5 must not pre-filter again); raises ValueError saying why not.
+
+    Allowed: the brain's own candidates (pipeline_status.find_candidates), or
+    a saved pre-filter of exactly those candidates
+    (``prefilter*/interior_candidates.xml`` in a registered-space candidates
+    folder) that is not older than them. Anything else -- a file of another
+    brain, an archived or trial run, a pre-filter of candidates that have
+    since been made again -- would make the production classification
+    something the status readers and step 6's provenance do not describe.
+    """
+    from mousebrain.config import registered_candidate_folders
+    from mousebrain.pipeline_status import find_candidates
+    brain_path = Path(brain_path)
+    chosen = Path(chosen)
+    if not chosen.is_file():
+        raise ValueError("%s is not a file" % chosen)
+    current = find_candidates(brain_path)
+    if current is None:
+        raise ValueError("%s has no candidates in the space the atlas was fitted to "
+                         "(run step 4 first)" % brain_path.name)
+
+    def same(a, b):
+        return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
+
+    if same(chosen, current):
+        return current, False
+    folders = registered_candidate_folders(brain_path)
+    in_prefilter_folder = (chosen.name == PREFILTER_OUTPUT
+                           and chosen.parent.name.startswith("prefilter")
+                           and any(same(chosen.parent.parent, f) for f in folders))
+    if not in_prefilter_folder:
+        raise ValueError(
+            "%s is neither the brain's candidates (%s) nor a saved pre-filter of them "
+            "(4_Cell_Candidates/prefiltered_<time>/%s)" % (chosen, current, PREFILTER_OUTPUT))
+    if chosen.parent.name == "prefiltered":
+        raise ValueError("%s is step 5's own pre-filter, remade on every run; run step 5 "
+                         "without --candidates instead" % chosen)
+    source = _prefilter_source(chosen.parent, tracker_rows)
+    if not source:
+        raise ValueError("%s does not say which candidates it filtered (no source in its "
+                         "prefilter_report.json, no tracker pre-filter run for its folder); "
+                         "pre-filter the candidates again and save" % chosen)
+    if _relative_to_brain(source, brain_path) != _relative_to_brain(current, brain_path):
+        raise ValueError("%s is a pre-filter of %s, not of the brain's candidates %s"
+                         % (chosen, source, current))
+    if current.stat().st_mtime > chosen.stat().st_mtime + _SLACK_SECONDS:
+        raise ValueError("the candidates %s were made again after this pre-filter (%s); "
+                         "pre-filter them again" % (current, chosen))
+    return chosen, True
 
 
 # =============================================================================

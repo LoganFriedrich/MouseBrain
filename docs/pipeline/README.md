@@ -593,6 +593,38 @@ far outside the atlas. What is left is written to
 classified. Candidates that land inside the brain outline but in no atlas region
 are kept.
 
+**If the pre-filter fails, step 5 stops.** It prints `ERROR: The pre-filter
+failed: <why>`, records a failed pre-filter run in the tracker, classifies
+nothing and leaves the production classification as it was. Fix the cause, or
+run step 5 with `--no-prefilter` if you mean to classify the unfiltered
+candidates. Why: step 5 used to print a warning and classify the unfiltered
+candidates -- surface glow included -- into the production classification, and
+nothing on the run said so.
+
+**Classifying a pre-filter you tuned and saved.** The pre-filter run from
+RUN_PIPELINE's "Pre-filter candidates" step, from `python -m mousebrain.prefilter`,
+or tuned in Setup & Tuning (Save pre-filter results) is saved as
+`4_Cell_Candidates/prefiltered_<date>_<time>/interior_candidates.xml`. To classify
+one of those instead of step 5's own default pre-filter:
+
+```bash
+python 5_classify_cells.py --brain <brain_id> --candidates <brain folder>/4_Cell_Candidates/prefiltered_<date>_<time>/interior_candidates.xml
+```
+
+RUN_PIPELINE asks for you: when a brain has saved pre-filters, its "Classify
+cells" step asks "Which candidates should be classified?" -- step 5's own
+pre-filter, or one of the saved ones by folder name. (The pipeline dashboard and
+the batches always use step 5's own pre-filter.) A saved pre-filter is
+classified as it is, never pre-filtered again. Step 5 refuses it -- and
+classifies nothing -- when it is not a pre-filter of the brain's current
+candidates: a pre-filter of another file (an archived or trial detection run),
+one made before the candidates were detected again (`... were made again after
+this pre-filter`), one that does not say which candidates it filtered, or step
+5's own `prefiltered/` folder. Pre-filter the candidates again and save, then
+classify that. Why: step 5 used to ignore saved pre-filters entirely, so a tuned
+pre-filter was never used, although the pre-filter itself told people to pass it
+with `--candidates`.
+
 To decide where a candidate is, the pre-filter uses BrainGlobe's own transform
 from the detection images into the registration -- the same transform step 6
 counts with. Since 2026-10-27; before that it used a shortcut that reordered the

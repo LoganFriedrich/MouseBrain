@@ -3684,6 +3684,10 @@ class TuningWidget(QWidget):
                 filter_depth_um = 100.0
                 dark_percentile = 5.0
 
+            # Kept for the save: the saved report names the file that was
+            # filtered, which step 5 --candidates checks is still the
+            # brain's candidates before it classifies the saved pre-filter.
+            self._prefilter_candidates_xml = candidates_xml
             result = prefilter_candidates(
                 candidates_xml=candidates_xml,
                 registration_path=registration_path,
@@ -3829,7 +3833,9 @@ class TuningWidget(QWidget):
         try:
             from mousebrain.prefilter import save_prefilter_results
 
-            saved = save_prefilter_results(self._prefilter_result, output_dir, brain_name)
+            saved = save_prefilter_results(
+                self._prefilter_result, output_dir, brain_name,
+                str(getattr(self, '_prefilter_candidates_xml', None) or ''))
 
             # Update tracker with actual output subfolder path
             if self.tracker and hasattr(self, '_last_prefilter_exp_id') and self._last_prefilter_exp_id:
