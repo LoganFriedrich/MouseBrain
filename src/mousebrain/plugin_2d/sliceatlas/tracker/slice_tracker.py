@@ -64,6 +64,7 @@ RESULT_FIELDS = (
     'det_removed_by_border', 'det_removed_by_morphology', 'det_removed_by_confidence',
     'coloc_positive_cells', 'coloc_negative_cells', 'coloc_positive_fraction',
     'coloc_background_value',
+    'coloc_dual_cells', 'coloc_ch1_only_cells', 'coloc_ch2_only_cells', 'coloc_neither_cells',
     'quant_total_regions', 'quant_top_region', 'quant_top_region_count',
     'pa_particles_found', 'pa_particles_raw', 'pa_bg_value', 'pa_mean_intensity',
     'output_path', 'labels_path', 'measurements_path', 'region_counts_path',

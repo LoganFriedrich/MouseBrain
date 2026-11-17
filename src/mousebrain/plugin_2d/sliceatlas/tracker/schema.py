@@ -69,9 +69,19 @@ CSV_COLUMNS = [
     "coloc_background_value",
     "coloc_threshold_method",  # fold_change, std_above, absolute
     "coloc_threshold_value",
-    "coloc_positive_cells",
-    "coloc_negative_cells",
-    "coloc_positive_fraction",
+    "coloc_positive_cells",  # single-channel runs only
+    "coloc_negative_cells",  # single-channel runs only
+    "coloc_positive_fraction",  # single-channel runs only
+    # Dual-channel runs (coloc_signal_channel 'dual'): the four classes each
+    # nucleus falls in. WHY separate columns: these runs used to put the
+    # 'both channels' count in coloc_positive_cells and the 'neither' count
+    # in coloc_negative_cells, where anything reading the column as a
+    # single-channel positive/negative count misread it. ch1 is the
+    # nuclear (red) channel, ch2 the second signal (green).
+    "coloc_dual_cells",
+    "coloc_ch1_only_cells",
+    "coloc_ch2_only_cells",
+    "coloc_neither_cells",
 
     # Quantification
     "quant_total_regions",
@@ -100,7 +110,7 @@ CSV_COLUMNS = [
     "region_counts_path",  # Path to per-region counts CSV. Nothing writes it: the counts' atlas fit row has the folder
 
     # Linkage
-    "parent_run",  # Links colocalization to detection, etc.
+    "parent_run",  # The run whose output this run used: a colocalization's detection (the nuclei it measured), a reclassification's particle analysis
 
     # User feedback
     "marked_best",  # True if user marked this as best for sample
@@ -130,7 +140,9 @@ DETECTION_COLUMNS = [
 COLOCALIZATION_COLUMNS = [
     "coloc_signal_channel", "coloc_background_method", "coloc_background_percentile",
     "coloc_background_value", "coloc_threshold_method", "coloc_threshold_value",
-    "coloc_positive_cells", "coloc_negative_cells", "coloc_positive_fraction"
+    "coloc_positive_cells", "coloc_negative_cells", "coloc_positive_fraction",
+    "coloc_dual_cells", "coloc_ch1_only_cells", "coloc_ch2_only_cells",
+    "coloc_neither_cells",
 ]
 
 QUANTIFICATION_COLUMNS = [

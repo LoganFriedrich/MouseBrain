@@ -17,7 +17,7 @@ from mousebrain.plugin_2d.sliceatlas.napari_plugin import workers
 from mousebrain.plugin_2d.sliceatlas.napari_plugin.main_widget import BrainSliceWidget
 from mousebrain.plugin_2d.sliceatlas.tracker.slice_tracker import SliceTracker
 
-CONTROL_SUFFIXES = ("_spin", "_combo", "_check", "_btn", "_label", "_edit", "_table")
+CONTROL_SUFFIXES = ("_spin", "_combo", "_check", "_btn", "_label", "_edit", "_table", "_ch2")
 
 
 class Control:
@@ -116,6 +116,7 @@ def make_widget(tmp_path, monkeypatch, sample, backend="StarDist"):
     w.last_run_id = None
     w._detection_run_id = None
     w._coloc_run_id = None
+    w._labels_run_id = None
     w._analysis_running = None
     w.detection_worker = w.coloc_worker = w.quant_worker = None
     w.current_file = tmp_path / f"{sample}.nd2"

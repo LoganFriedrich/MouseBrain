@@ -205,6 +205,7 @@ def _widget(tmp_path):
         red_channel=np.ones((8, 8)),
         last_run_id=None,
         _coloc_run_id=None,
+        _labels_run_id=None,
         _detection_run_id=None,
         _analysis_running=None,
         quant_worker=None,

@@ -106,6 +106,13 @@ class BrainSliceWidget(QWidget):
         # detection row left 'started'). Each result handler reads its own.
         self._detection_run_id: Optional[str] = None
         self._coloc_run_id: Optional[str] = None
+        # The detection run that produced the nuclei now in nuclei_labels
+        # (None when they have no row: tracker off, or nothing detected
+        # yet). WHY kept: a colocalization measures THOSE nuclei, and its row
+        # names this run as its parent_run so it can be traced back to the
+        # detection settings behind it; the GUI's colocalization rows used to
+        # have no parent at all.
+        self._labels_run_id: Optional[str] = None
         # Which analysis worker is going ('detection' / 'colocalization'),
         # None when none is. Set just before the worker starts and cleared
         # first thing in its result handler; see _analysis_in_progress.
@@ -1914,6 +1921,7 @@ class BrainSliceWidget(QWidget):
         # Clear colocalization state
         self.cell_measurements = None
         self.nuclei_labels = None
+        self._labels_run_id = None
         self._coloc_background = None
         self._coloc_threshold = None
         self._coloc_summary = None
@@ -4975,6 +4983,7 @@ class BrainSliceWidget(QWidget):
 
             # Store results
             self.nuclei_labels = results['merged_labels']
+            self._labels_run_id = run_id
             count = results['total_cells']
 
             # Update tracker. In its own try, like _on_detect_finished: a
@@ -5071,6 +5080,7 @@ class BrainSliceWidget(QWidget):
 
         if success:
             self.nuclei_labels = labels
+            self._labels_run_id = run_id
 
             # Update tracker (wrapped so failures don't block layer creation)
             record_problem = None
@@ -5311,6 +5321,8 @@ class BrainSliceWidget(QWidget):
                     background_percentile=params['background_percentile'],
                     threshold_method=params['threshold_method'],
                     threshold_value=used_threshold,
+                    parent_run=self._labels_run_id,  # the detection measured
+                    input_path=str(self.current_file) if self.current_file else None,
                     status='started',
                     script_version=COLOC_SIGMA_RECORDED_VERSION,
                     # No column holds these two; the note keeps them with the run.
@@ -5394,6 +5406,8 @@ class BrainSliceWidget(QWidget):
                     background_percentile=params_ch1['background_percentile'],
                     threshold_method=params_ch1['threshold_method'],
                     threshold_value=params_ch1['threshold_value'],
+                    parent_run=self._labels_run_id,  # the detection measured
+                    input_path=str(self.current_file) if self.current_file else None,
                     status='started',
                 )
             except Exception as e:
@@ -5578,10 +5592,19 @@ class BrainSliceWidget(QWidget):
                 if csv_saved:
                     try:
                         if self.tracker and run_id:
+                            # The four classes, each in its own column (see
+                            # tracker.schema). WHY not positive/negative:
+                            # those are single-channel counts, and putting
+                            # 'both' and 'neither' there made a dual run read
+                            # as a single-channel result it never was.
+                            ch1 = summary.get('ch1_name', 'red')
+                            ch2 = summary.get('ch2_name', 'green')
                             update_kwargs = dict(
                                 status='completed',
-                                coloc_positive_cells=summary.get('n_dual', 0),
-                                coloc_negative_cells=summary.get('n_neither', 0),
+                                coloc_dual_cells=summary.get('n_dual', 0),
+                                coloc_ch1_only_cells=summary.get(f'n_{ch1}_only', 0),
+                                coloc_ch2_only_cells=summary.get(f'n_{ch2}_only', 0),
+                                coloc_neither_cells=summary.get('n_neither', 0),
                             )
                             if measurements_path is not None:
                                 update_kwargs['measurements_path'] = str(measurements_path)
@@ -6028,6 +6051,9 @@ class BrainSliceWidget(QWidget):
             run_id = run.get('run_id', '')
             created = run.get('created_at', '')[:16]  # trim seconds
             pos = run.get('coloc_positive_cells', '?')
+            if run.get('coloc_signal_channel') == 'dual' and run.get('coloc_dual_cells'):
+                # A dual-channel run has no single positive count.
+                pos = f"{run['coloc_dual_cells']} dual"
             frac = run.get('coloc_positive_fraction', '')
             if frac:
                 try:

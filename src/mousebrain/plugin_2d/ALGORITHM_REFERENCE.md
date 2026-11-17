@@ -489,6 +489,25 @@ the result. Detections run by the batch keep their settings in `notes`.
 Rows written before this change have only the StarDist numbers (`0` for a threshold
 run) and cannot be reproduced from the row.
 
+**Which detection a colocalization measured.** A colocalization row's `parent_run`
+is the `run_id` of the detection whose nuclei it measured -- the detection on screen
+when Colocalize was clicked -- for the napari window (single- and dual-channel) as for
+the batch. To see the detection settings behind a colocalization, find the row whose
+`run_id` is that `parent_run`. `parent_run` is blank when those nuclei have no row of
+their own (the tracker could not be opened when they were detected). Colocalization
+rows the window wrote before this change have a blank `parent_run`.
+
+**Dual-channel colocalization counts.** A dual-channel run (`coloc_signal_channel` is
+`dual`) puts each nucleus in one of four classes, each counted in its own column:
+`coloc_dual_cells` (positive in both channels), `coloc_ch1_only_cells` (positive in the
+first, nuclear channel -- red -- only), `coloc_ch2_only_cells` (positive in the second
+channel -- green -- only) and `coloc_neither_cells`. Its `coloc_positive_cells`,
+`coloc_negative_cells` and `coloc_positive_fraction` are blank: those are
+single-channel counts. The Run History shows a dual run as `<n> dual`. **Older dual
+rows** (written before this change) hold the "both" count in `coloc_positive_cells`
+and the "neither" count in `coloc_negative_cells`; never read those two columns of a
+`dual` row as a positive/negative count.
+
 **Particle analysis background.** `pa_bg_method` says where the background came from:
 `manual_roi` -- the value in the Background box (measured from drawn rectangles or
 typed in); `percentile_50` -- the box was 0, so the median of the particles' own
