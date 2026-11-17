@@ -118,6 +118,8 @@ def make_widget(tmp_path, monkeypatch, sample, backend="StarDist"):
     w._coloc_run_id = None
     w._labels_run_id = None
     w._analysis_running = None
+    w._loading_file = None          # no image is being loaded
+    w._detection_source = None
     w.detection_worker = w.coloc_worker = w.quant_worker = None
     w.current_file = tmp_path / f"{sample}.nd2"
     w.sample_id_edit = Control(text=sample)

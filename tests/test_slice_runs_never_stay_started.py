@@ -207,7 +207,7 @@ def _widget(tmp_path):
         _coloc_run_id=None,
         _labels_run_id=None,
         _detection_run_id=None,
-        _analysis_running=None,
+        _analysis_running=None, _loading_file=None,
         quant_worker=None,
         session_run_ids=[],
         _unwritable_run_ids=set(),

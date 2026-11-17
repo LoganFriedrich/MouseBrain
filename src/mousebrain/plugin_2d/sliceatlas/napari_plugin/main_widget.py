@@ -127,6 +127,9 @@ class BrainSliceWidget(QWidget):
         # None when none is. Set just before the worker starts and cleared
         # first thing in its result handler; see _analysis_in_progress.
         self._analysis_running: Optional[str] = None
+        # The image array the running detection was started on. A result
+        # for any other array is dropped (see _on_detect_finished).
+        self._detection_source = None
 
         # Workers
         self.loader_worker = None
@@ -2288,6 +2291,49 @@ class BrainSliceWidget(QWidget):
 
     # ----- Opening an image: the one way in -----
 
+    def _refuse_if_busy_for_load(self, what: str) -> bool:
+        """Say so and return True when an image may not be opened now.
+
+        WHY each refusal:
+        - another load is going: two loads at once could finish in either
+          order, and the older one finishing last put its pixels on screen
+          under the newer file's name.
+        - an analysis is going (detection, colocalization, quantification):
+          its result is for the image it started on; arriving after another
+          image was opened, it was drawn on (and saved with) that image."""
+        loading = self._loading_file
+        if loading is not None:
+            self.status_label.setText(
+                f"{what}: not opened -- {Path(loading).name} is still loading. "
+                f"Wait for it to finish, then try again.")
+            return True
+        busy = self._analysis_in_progress()
+        if busy:
+            self.status_label.setText(
+                f"{what}: not opened -- {busy} is still running on the image "
+                f"on screen. Wait for it to finish, then try again.")
+            return True
+        return False
+
+    def _set_open_buttons(self, enabled: bool) -> None:
+        """Browse and the Load buttons are off while an image loads. The
+        refusal in _refuse_if_busy_for_load is what protects; this only
+        shows it."""
+        for name in ("browse_btn", "browse_folder_btn", "_img_load_btn",
+                     "_roi_img_load_btn", "_queue_browse_btn"):
+            btn = getattr(self, name, None)
+            if btn is not None:
+                btn.setEnabled(enabled)
+
+    def _set_analysis_buttons(self, enabled: bool) -> None:
+        """Detection, preview, colocalization, quantification and particle
+        analysis buttons. Turned off when an image starts loading, so
+        nothing is started on the image being replaced; a successful load
+        turns detection, preview and particle analysis back on."""
+        for btn in (self.detect_btn, self.preproc_preview_btn, self.coloc_btn,
+                    self.quant_btn, self.pa_run_btn):
+            btn.setEnabled(enabled)
+
     def _leave_current_image(self):
         """Save the results of the image on screen, then forget them.
 
@@ -2311,7 +2357,10 @@ class BrainSliceWidget(QWidget):
 
         Returns False when the image was not opened."""
         fpath = Path(fpath)
+        if self._refuse_if_busy_for_load(fpath.name):
+            return False
         self._leave_current_image()
+        self._set_analysis_buttons(False)
         if fpath != self.current_file:
             # The Sample ID box names the image every tracker row and export
             # is filed under. WHY here: it used to be set by Browse File only,
@@ -2340,7 +2389,10 @@ class BrainSliceWidget(QWidget):
         Like _open_image, the previous image's results are saved and cleared
         first. Returns False when the folder was not opened."""
         folder = Path(folder)
+        if self._refuse_if_busy_for_load(folder.name):
+            return False
         self._leave_current_image()
+        self._set_analysis_buttons(False)
         # Named when it is opened, not when it is chosen (see _open_image):
         # until Load, the image on screen is still the previous one.
         self.sample_id_edit.setText(folder.name)
@@ -2579,6 +2631,8 @@ class BrainSliceWidget(QWidget):
 
     def _queue_browse_folder(self):
         """Select a folder and discover all images for sequential loading."""
+        if self._refuse_if_busy_for_load("Image queue"):
+            return
         folder = QFileDialog.getExistingDirectory(
             self, "Select Image Folder")
         if not folder:
@@ -2608,6 +2662,8 @@ class BrainSliceWidget(QWidget):
             return
         fpath = self._queue_files[self._queue_idx]
         total = len(self._queue_files)
+        if self._refuse_if_busy_for_load(fpath.name):
+            return False
 
         self._queue_nav_label.setText(
             f"{self._queue_idx + 1}/{total}: {fpath.name}")
@@ -2622,13 +2678,15 @@ class BrainSliceWidget(QWidget):
         """Load previous image in queue."""
         if self._queue_idx > 0:
             self._queue_idx -= 1
-            self._queue_load_current()
+            if not self._queue_load_current():
+                self._queue_idx += 1    # refused: stay on the image shown
 
     def _queue_next(self):
         """Load next image in queue."""
         if self._queue_idx < len(self._queue_files) - 1:
             self._queue_idx += 1
-            self._queue_load_current()
+            if not self._queue_load_current():
+                self._queue_idx -= 1    # refused: stay on the image shown
 
     # =========================================================================
     # BATCH PROCESSING
@@ -4480,6 +4538,8 @@ class BrainSliceWidget(QWidget):
 
     def _browse_file(self):
         """Open file browser to select single image."""
+        if self._refuse_if_busy_for_load("Browse File"):
+            return
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Image File",
@@ -4494,6 +4554,8 @@ class BrainSliceWidget(QWidget):
 
     def _browse_folder(self):
         """Open folder browser to select folder of images as stack."""
+        if self._refuse_if_busy_for_load("Browse Folder"):
+            return
         folder_path = QFileDialog.getExistingDirectory(
             self,
             "Select Folder with Images",
@@ -4665,6 +4727,7 @@ class BrainSliceWidget(QWidget):
         self.status_label.setText("Loading image...")
         self.load_btn.setEnabled(False)
         self._loading_file = fpath
+        self._set_open_buttons(False)
 
         from .workers import ImageLoaderWorker
 
@@ -4687,6 +4750,7 @@ class BrainSliceWidget(QWidget):
 
         print(f"[BrainSlice] Starting folder load: {folder}")
         self._loading_file = folder
+        self._set_open_buttons(False)
         self.status_label.setText("Loading folder as stack...")
         self.load_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
@@ -4715,6 +4779,7 @@ class BrainSliceWidget(QWidget):
             self.progress_bar.setVisible(False)
             self._loading_file = None
             self.load_btn.setEnabled(True)
+            self._set_open_buttons(True)
             self._image_not_loaded(folder, str(e))
 
     def _on_folder_load_progress(self, current: int, total: int, filename: str):
@@ -4726,8 +4791,14 @@ class BrainSliceWidget(QWidget):
     def _on_folder_load_finished(self, success: bool, message: str, stack, metadata):
         """Handle folder load completion."""
         print(f"[BrainSlice] Folder load finished: success={success}, message={message}")
-        folder = self._loading_file or self.current_folder
+        folder = self._loading_file
+        if folder is None:
+            # No load is awaited: a stray result, never applied (see
+            # _on_load_finished).
+            print("[BrainSlice] Ignoring a folder load result nobody is waiting for")
+            return
         self._loading_file = None
+        self._set_open_buttons(True)
         self.load_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
 
@@ -4873,8 +4944,16 @@ class BrainSliceWidget(QWidget):
 
     def _on_load_finished(self, success: bool, message: str, red, green, metadata, full_data=None):
         """Handle load completion."""
-        fpath = self._loading_file or self.current_file
+        fpath = self._loading_file
+        if fpath is None:
+            # No load is awaited. WHY ignored: a result arriving when the
+            # window is not waiting for one belongs to a load the window
+            # has moved on from; applying it would put that file's pixels
+            # under whatever name is shown now.
+            print("[BrainSlice] Ignoring a load result nobody is waiting for")
+            return
         self._loading_file = None
+        self._set_open_buttons(True)
         self.load_btn.setEnabled(True)
 
         if success:
@@ -5050,6 +5129,8 @@ class BrainSliceWidget(QWidget):
             return
         if self._refuse_if_analysis_running("Detection"):
             return
+        # The pixels this detection runs on; see _on_detect_finished.
+        self._detection_source = self.red_channel
 
         self.status_label.setText("Running detection...")
         self.detect_btn.setEnabled(False)
@@ -5309,6 +5390,19 @@ class BrainSliceWidget(QWidget):
         self.detect_btn.setEnabled(True)
         print(f"[BrainSlice] _on_detect_finished called: success={success}, count={count}, "
               f"labels type={type(labels)}, labels shape={getattr(labels, 'shape', 'N/A')}")
+
+        source = self._detection_source
+        self._detection_source = None
+        if success and source is not None and source is not self.red_channel:
+            # The image changed while detection ran. WHY dropped: these
+            # labels are nuclei of the image detection started on; drawn on
+            # the new image they would look like its result and be measured
+            # by colocalization. Opening an image is refused while detection
+            # runs, so this is the last line of defence, not the usual path.
+            why = "the image changed while detection ran; its result was discarded"
+            self._fail_run_if_unfinished(run_id, why)
+            self.status_label.setText(f"Detection: {why}. Run detection again.")
+            return
 
         if success:
             self.nuclei_labels = labels
@@ -6113,6 +6207,10 @@ class BrainSliceWidget(QWidget):
         while the first one's result is still on its way."""
         if self._analysis_running:
             return self._analysis_running
+        if self._loading_file is not None:
+            # Nothing is analysed while the image is being replaced: the
+            # result would come back after the new image is on screen.
+            return "image loading"
         quant = self.quant_worker
         if quant is not None and quant.isRunning():
             return "quantification"

@@ -68,7 +68,7 @@ def _run_widget_coloc(tracker, monkeypatch, method, local=False):
         area_fraction_spin=_Spin(0.5), bg_local_check=_Spin(local),
         bg_block_size_spin=_Spin(256), soma_dilation_spin=_Spin(6),
         sample_id_edit=_Spin(SAMPLE_A), current_file=None,
-        tracker=tracker, last_run_id=None, _analysis_running=None, quant_worker=None,
+        tracker=tracker, last_run_id=None, _analysis_running=None, _loading_file=None, quant_worker=None,
         _labels_run_id=None,
         _get_current_slice=lambda img: img,
         _on_coloc_progress=None, _on_coloc_finished=None,

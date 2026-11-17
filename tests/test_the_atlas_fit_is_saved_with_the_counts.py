@@ -144,7 +144,7 @@ def _widget(tmp_path, export, tracker="csv", atlas_loaded=True):
         results_table=_Table(),
         region_counts=None,
         _on_quant_progress=lambda *_a: None,
-        _analysis_running=None,
+        _analysis_running=None, _loading_file=None,
         quant_worker=None,
     )
     w._get_current_slice = lambda arr: arr
