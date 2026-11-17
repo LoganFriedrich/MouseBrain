@@ -33,7 +33,7 @@ def _layer(name, brain=None, folder=None):
 def test_reset_clears_every_per_brain_field():
     w = SimpleNamespace(metadata={"voxel": 1}, _prefilter_result="A's result",
                         training_data_dir="A's pool", last_run_id="det_A",
-                        _selected_cells_xml="A.xml", _metadata_source="A/crop")
+                        _metadata_source="A/crop")
     reset_per_brain_state(w)
     for name, default in PER_BRAIN_DEFAULTS.items():
         expected = default() if callable(default) else default
