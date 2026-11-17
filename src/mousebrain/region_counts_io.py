@@ -48,19 +48,46 @@ def write_rows_atomic(path, columns: List[str], rows: Iterable[dict]) -> None:
     os.replace(tmp, path)
 
 
+def counts_tables_lock(region_counts_csv):
+    """Hold the one lock that guards the production count tables.
+
+    WHY: region_counts.csv, elife_counts.csv and their archives are each
+    read, changed and written back -- by step 6 after every brain, by
+    regenerate_derived_counts, and when a brain's counts are withdrawn. Two of
+    those at once (two step 6 windows, or step 6 while the derived tables are
+    rebuilt) used to lose an update: both read the old file, and the second
+    write dropped the first one's row. Every reader-writer of these tables
+    holds this lock around its whole read-change-write. It is a file
+    ``region_counts.csv.lock`` beside region_counts.csv
+    (mousebrain.file_lock says how a lock left by a crashed run is taken over).
+    """
+    from mousebrain.file_lock import exclusive_file_lock
+    return exclusive_file_lock(Path(region_counts_csv), "count tables")
+
+
 def append_archive_row(archive_path, row: dict) -> Path:
-    """Add one row to an archive CSV, in the archive's own column order.
+    """Add one row to an archive CSV, in the archive's own column order
+    (append_archive_rows)."""
+    return append_archive_rows(archive_path, [row])
+
+
+def append_archive_rows(archive_path, new_rows: List[dict]) -> Path:
+    """Add rows to an archive CSV, in the archive's own column order.
 
     New columns are appended to the header (whole file rewritten through a
     temporary file); existing rows keep every value under its own name. An
     archive whose rows already have more values than its header (written by
     the old code) cannot be extended safely: it is renamed aside, kept as it
-    is, a fresh archive is started with this row, and a warning is printed.
+    is, a fresh archive is started with these rows, and a warning is printed.
     Returns the archive path.
     """
     archive_path = Path(archive_path)
+    new_rows = list(new_rows)
+    if not new_rows:
+        return archive_path
+    incoming = list(dict.fromkeys(k for r in new_rows for k in r))
     if not archive_path.exists():
-        write_rows_atomic(archive_path, list(row.keys()), [row])
+        write_rows_atomic(archive_path, incoming, new_rows)
         return archive_path
 
     with open(archive_path, newline="", encoding="utf-8") as f:
@@ -75,15 +102,17 @@ def append_archive_row(archive_path, row: dict) -> Path:
         print("    [!] %s has rows that do not match its header (written by an older "
               "version); kept unchanged as %s and a new archive was started."
               % (archive_path.name, aside.name))
-        write_rows_atomic(archive_path, list(row.keys()), [row])
+        write_rows_atomic(archive_path, incoming, new_rows)
         return archive_path
 
-    new_cols = [c for c in row if c not in header]
+    new_cols = [c for c in incoming if c not in header]
     if new_cols:
-        write_rows_atomic(archive_path, header + new_cols, rows + [row])
+        write_rows_atomic(archive_path, header + new_cols, rows + new_rows)
     else:
         with open(archive_path, "a", newline="", encoding="utf-8") as f:
-            csv.DictWriter(f, fieldnames=header).writerow({c: row.get(c, "") for c in header})
+            w = csv.DictWriter(f, fieldnames=header)
+            for row in new_rows:
+                w.writerow({c: row.get(c, "") for c in header})
     return archive_path
 
 

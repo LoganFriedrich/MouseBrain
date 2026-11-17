@@ -23,7 +23,11 @@ Integrators (e.g. a lab database pulling eLife counts) read elife_counts.csv,
 so keeping it current is part of the tool's job.
 
 Old rows of elife_counts.csv are appended to elife_counts_archive.csv with an
-archived_at stamp before the file is rewritten (archived, never deleted).
+archived_at stamp before the file is rewritten (archived, never deleted), in
+the archive's own column order. The rebuild holds the same lock step 6 holds
+while it updates these tables (region_counts.csv.lock beside them), and every
+table is written through a temporary file swapped in at the end, so a run
+started while step 6 is counting waits for it instead of dropping its row.
 
 Usage:
     python regenerate_derived_counts.py            # rebuild both tables
@@ -38,6 +42,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from mousebrain.region_counts_io import (append_archive_rows, counts_tables_lock,
+                                         write_rows_atomic)
 
 FIXED_COLUMNS = ['brain', 'run_date', 'brain_id', 'subject', 'cohort', 'project_code', 'project_name',
                  'det_preset', 'det_ball_xy', 'det_ball_z', 'det_soma_diameter', 'det_threshold',
@@ -143,7 +150,15 @@ def build_laterality_rows(rows: List[Dict[str, str]], aggregate_to_elife, elife_
 
 
 def archive_existing(csv_path: Path, archive_path: Path) -> int:
-    """Append the current rows of csv_path to archive_path with an archived_at stamp."""
+    """Append the current rows of csv_path to archive_path with an archived_at stamp.
+
+    Through region_counts_io.append_archive_rows, in the ARCHIVE'S OWN column
+    order. This used to write each row in its own sorted-key order under a
+    header written once by the first row ever archived, so an archived row with
+    different group columns had its values under the wrong names -- and the
+    labels cannot be recovered afterwards. The caller holds the count-tables
+    lock.
+    """
     if not csv_path.exists():
         return 0
     with open(csv_path, newline='', encoding='utf-8') as f:
@@ -151,19 +166,23 @@ def archive_existing(csv_path: Path, archive_path: Path) -> int:
     if not existing:
         return 0
     stamp = datetime.now().isoformat()
-    write_header = not archive_path.exists()
-    with open(archive_path, 'a', newline='', encoding='utf-8') as f:
-        for old in existing:
-            old['archived_at'] = stamp
-            writer = csv.DictWriter(f, fieldnames=sorted(old.keys()))
-            if write_header:
-                writer.writeheader()
-                write_header = False
-            writer.writerow(old)
+    for old in existing:
+        old['archived_at'] = stamp
+    append_archive_rows(archive_path, existing)
     return len(existing)
 
 
 def regenerate(summary_dir: Path, dry_run: bool = False, log=print) -> dict:
+    """Rebuild elife_counts.csv and hemisphere_laterality_analysis.csv from
+    region_counts.csv.
+
+    The whole read-rebuild-write holds the count-tables lock (the one step 6
+    holds while it updates these files), and each table is written through a
+    temporary file swapped in at the end. WHY: this used to rewrite
+    elife_counts.csv in place with no lock, so a step 6 run at the same moment
+    could have its new row dropped, and a crash part-way left a cut-off file
+    for an integrator to pull.
+    """
     from mousebrain.region_mapping import aggregate_to_elife, ELIFE_GROUPS
     region_csv = summary_dir / 'region_counts.csv'
     elife_csv = summary_dir / 'elife_counts.csv'
@@ -171,30 +190,33 @@ def regenerate(summary_dir: Path, dry_run: bool = False, log=print) -> dict:
     laterality_csv = summary_dir / 'hemisphere_laterality_analysis.csv'
     if not region_csv.exists():
         raise FileNotFoundError("region_counts.csv not found in %s" % summary_dir)
-    with open(region_csv, newline='', encoding='utf-8') as f:
-        rows = list(csv.DictReader(f))
-    elife_rows, columns = build_elife_rows(rows, aggregate_to_elife, ELIFE_GROUPS)
-    lat_rows = build_laterality_rows(rows, aggregate_to_elife, ELIFE_GROUPS)
-    log("%s%d brains in region_counts.csv -> %d eLife rows (%d columns), %d laterality rows" % (
-        "[DRY RUN] " if dry_run else "", len(rows), len(elife_rows), len(columns), len(lat_rows)))
     if dry_run:
+        rows = _read_rows(region_csv)
+        elife_rows, columns = build_elife_rows(rows, aggregate_to_elife, ELIFE_GROUPS)
+        lat_rows = build_laterality_rows(rows, aggregate_to_elife, ELIFE_GROUPS)
+        log("[DRY RUN] %d brains in region_counts.csv -> %d eLife rows (%d columns), %d laterality rows" % (
+            len(rows), len(elife_rows), len(columns), len(lat_rows)))
         return {"brains": len(rows), "elife_rows": len(elife_rows), "laterality_rows": len(lat_rows), "written": False}
-    archived = archive_existing(elife_csv, elife_archive)
-    with open(elife_csv, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=columns)
-        writer.writeheader()
-        for r in elife_rows:
-            writer.writerow({k: r.get(k, '') for k in columns})
-    if lat_rows:
-        cols = ['brain_id', 'brain', 'elife_group', 'left', 'right', 'total', 'lr_ratio', 'laterality_index', 'dominant']
-        with open(laterality_csv, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=cols)
-            writer.writeheader()
-            writer.writerows(lat_rows)
+    with counts_tables_lock(region_csv):
+        rows = _read_rows(region_csv)
+        elife_rows, columns = build_elife_rows(rows, aggregate_to_elife, ELIFE_GROUPS)
+        lat_rows = build_laterality_rows(rows, aggregate_to_elife, ELIFE_GROUPS)
+        log("%d brains in region_counts.csv -> %d eLife rows (%d columns), %d laterality rows" % (
+            len(rows), len(elife_rows), len(columns), len(lat_rows)))
+        archived = archive_existing(elife_csv, elife_archive)
+        write_rows_atomic(elife_csv, columns, elife_rows)
+        if lat_rows:
+            cols = ['brain_id', 'brain', 'elife_group', 'left', 'right', 'total', 'lr_ratio', 'laterality_index', 'dominant']
+            write_rows_atomic(laterality_csv, cols, lat_rows)
     log("[OK] wrote %s (%d rows; %d old rows archived) and %s (%d rows)" % (
         elife_csv.name, len(elife_rows), archived, laterality_csv.name, len(lat_rows)))
     return {"brains": len(rows), "elife_rows": len(elife_rows), "laterality_rows": len(lat_rows),
             "archived": archived, "written": True}
+
+
+def _read_rows(path: Path) -> List[Dict[str, str]]:
+    with open(path, newline='', encoding='utf-8') as f:
+        return list(csv.DictReader(f))
 
 
 def main(argv=None) -> int:

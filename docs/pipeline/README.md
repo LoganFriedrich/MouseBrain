@@ -627,6 +627,20 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   step 6 finds an archive like that, it renames it to
   `region_counts_archive.malformed-<date>_<time>.csv`, keeps it untouched, prints
   a warning and starts a new archive.)
+- **One run at a time changes these tables.** Step 6, the rebuild
+  `python regenerate_derived_counts.py` (which remakes `elife_counts.csv` and
+  `hemisphere_laterality_analysis.csv` from `region_counts.csv`), and the
+  withdrawal of a brain's counts (below) each hold a lock file,
+  `region_counts.csv.lock` beside the tables, while they read and rewrite
+  them. A second run started meanwhile prints `Waiting for the lock on
+  region_counts.csv (held by ...)` and carries on when the first one is done.
+  Why: two runs at once used to read the same old file, and the second write
+  dropped the first run's row. The lock file exists only while a run holds it;
+  one left by a run that crashed is taken over after two minutes. If a run
+  says it waited five minutes and gave up, and nothing else is counting, delete
+  `region_counts.csv.lock` and run it again. The rebuild also archives the old
+  eLife rows in the archive's own column order and writes every table through
+  a temporary file, like step 6.
 - The `det_*` and `voxel_*` columns: the settings of the detection run behind
   the brain's `cells.xml`, found by following the tracker from the
   classification that wrote `cells.xml`, through the pre-filter if there was

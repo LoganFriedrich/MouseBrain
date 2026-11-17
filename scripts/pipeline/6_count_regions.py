@@ -80,8 +80,8 @@ SCRIPT_VERSION = "1.0.1"
 
 from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, iter_brains, explain_brain_not_found
 from mousebrain.config import DATA_SUMMARY_DIR as SUMMARY_DATA_DIR
-from mousebrain.region_counts_io import (append_archive_row, detection_provenance,
-                                         write_rows_atomic)
+from mousebrain.region_counts_io import (append_archive_row, counts_tables_lock,
+                                         detection_provenance, write_rows_atomic)
 from mousebrain.config import (
     REGION_COUNTS_CSV, REGION_COUNTS_ARCHIVE_CSV,
     ELIFE_COUNTS_CSV, ELIFE_COUNTS_ARCHIVE_CSV,
@@ -841,61 +841,66 @@ def update_region_counts_csv(
             row_data[f'region_left_{region}'] = hemi.get('left', 0)
             row_data[f'region_right_{region}'] = hemi.get('right', 0)
 
-    # Read existing data
-    existing_rows = []
-    all_columns = set(row_data.keys())
+    # The whole read-change-write holds the count-tables lock: two runs at
+    # once (two windows, or step 6 while regenerate_derived_counts rebuilds
+    # the eLife table) used to drop one run's row
+    # (region_counts_io.counts_tables_lock).
+    with counts_tables_lock(REGION_COUNTS_CSV):
+        # Read existing data
+        existing_rows = []
+        all_columns = set(row_data.keys())
 
-    if REGION_COUNTS_CSV.exists():
-        with open(REGION_COUNTS_CSV, 'r', newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                all_columns.update(row.keys())
-                existing_rows.append(row)
+        if REGION_COUNTS_CSV.exists():
+            with open(REGION_COUNTS_CSV, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    all_columns.update(row.keys())
+                    existing_rows.append(row)
 
-    # Check if this brain already exists
-    old_row = None
-    new_rows = []
-    for row in existing_rows:
-        if row.get('brain') == brain_name:
-            old_row = row
-        else:
-            new_rows.append(row)
+        # Check if this brain already exists
+        old_row = None
+        new_rows = []
+        for row in existing_rows:
+            if row.get('brain') == brain_name:
+                old_row = row
+            else:
+                new_rows.append(row)
 
-    # Archive old row if it exists -- in the archive's OWN column order
-    # (region_counts_io.append_archive_row says what went wrong before).
-    if old_row:
-        old_row['archived_at'] = datetime.now().isoformat()
-        append_archive_row(REGION_COUNTS_ARCHIVE_CSV, old_row)
+        # Archive old row if it exists -- in the archive's OWN column order
+        # (region_counts_io.append_archive_row says what went wrong before).
+        if old_row:
+            old_row['archived_at'] = datetime.now().isoformat()
+            append_archive_row(REGION_COUNTS_ARCHIVE_CSV, old_row)
 
-        print(f"    Archived previous run for {brain_name}")
+            print(f"    Archived previous run for {brain_name}")
 
-    # Add new row
-    new_rows.append(row_data)
+        # Add new row
+        new_rows.append(row_data)
 
-    # Determine final column order: fixed → total regions → left regions → right regions
-    fixed_columns = [
-        'brain', 'run_date', 'brain_id', 'subject', 'cohort', 'project_code', 'project_name',
-        'det_preset', 'det_ball_xy', 'det_ball_z', 'det_soma_diameter', 'det_threshold',
-        'atlas', 'voxel_xy', 'voxel_z', 'total_cells',
-    ]
-    # Add hemisphere totals after total_cells if any row has them
-    if any('total_left' in r for r in new_rows) or 'total_left' in all_columns:
-        fixed_columns.extend(['total_left', 'total_right'])
+        # Determine final column order: fixed → total regions → left regions → right regions
+        fixed_columns = [
+            'brain', 'run_date', 'brain_id', 'subject', 'cohort', 'project_code', 'project_name',
+            'det_preset', 'det_ball_xy', 'det_ball_z', 'det_soma_diameter', 'det_threshold',
+            'atlas', 'voxel_xy', 'voxel_z', 'total_cells',
+        ]
+        # Add hemisphere totals after total_cells if any row has them
+        if any('total_left' in r for r in new_rows) or 'total_left' in all_columns:
+            fixed_columns.extend(['total_left', 'total_right'])
 
-    # Separate region columns into total, left, right groups
-    total_region_cols = sorted([c for c in all_columns
-                                if c.startswith('region_')
-                                and not c.startswith('region_left_')
-                                and not c.startswith('region_right_')])
-    left_region_cols = sorted([c for c in all_columns if c.startswith('region_left_')])
-    right_region_cols = sorted([c for c in all_columns if c.startswith('region_right_')])
+        # Separate region columns into total, left, right groups
+        total_region_cols = sorted([c for c in all_columns
+                                    if c.startswith('region_')
+                                    and not c.startswith('region_left_')
+                                    and not c.startswith('region_right_')])
+        left_region_cols = sorted([c for c in all_columns if c.startswith('region_left_')])
+        right_region_cols = sorted([c for c in all_columns if c.startswith('region_right_')])
 
-    final_columns = fixed_columns + total_region_cols + left_region_cols + right_region_cols
+        final_columns = fixed_columns + total_region_cols + left_region_cols + right_region_cols
 
-    # Write updated CSV
-    # Through a temporary file: a crash part-way leaves the previous file,
-    # never a cut-off one (this is the file an integrator pulls).
-    write_rows_atomic(REGION_COUNTS_CSV, final_columns, new_rows)
+        # Write updated CSV
+        # Through a temporary file: a crash part-way leaves the previous file,
+        # never a cut-off one (this is the file an integrator pulls).
+        write_rows_atomic(REGION_COUNTS_CSV, final_columns, new_rows)
 
     return REGION_COUNTS_CSV
 
@@ -1005,57 +1010,62 @@ def update_elife_counts_csv(
         if "[Unmapped]" in aggregated_right:
             row_data['group_right_Unmapped'] = aggregated_right["[Unmapped]"]["count"]
 
-    # Read existing data
-    existing_rows = []
-    all_columns = set(row_data.keys())
+    # The whole read-change-write holds the count-tables lock: two runs at
+    # once (two windows, or step 6 while regenerate_derived_counts rebuilds
+    # the eLife table) used to drop one run's row
+    # (region_counts_io.counts_tables_lock).
+    with counts_tables_lock(REGION_COUNTS_CSV):
+        # Read existing data
+        existing_rows = []
+        all_columns = set(row_data.keys())
 
-    if ELIFE_COUNTS_CSV.exists():
-        with open(ELIFE_COUNTS_CSV, 'r', newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                all_columns.update(row.keys())
-                existing_rows.append(row)
+        if ELIFE_COUNTS_CSV.exists():
+            with open(ELIFE_COUNTS_CSV, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    all_columns.update(row.keys())
+                    existing_rows.append(row)
 
-    # Check if this brain already exists
-    old_row = None
-    new_rows = []
-    for row in existing_rows:
-        if row.get('brain') == brain_name:
-            old_row = row
-        else:
-            new_rows.append(row)
+        # Check if this brain already exists
+        old_row = None
+        new_rows = []
+        for row in existing_rows:
+            if row.get('brain') == brain_name:
+                old_row = row
+            else:
+                new_rows.append(row)
 
-    # Archive old row if it exists -- in the archive's OWN column order
-    # (region_counts_io.append_archive_row says what went wrong before).
-    if old_row:
-        old_row['archived_at'] = datetime.now().isoformat()
-        append_archive_row(ELIFE_COUNTS_ARCHIVE_CSV, old_row)
+        # Archive old row if it exists -- in the archive's OWN column order
+        # (region_counts_io.append_archive_row says what went wrong before).
+        if old_row:
+            old_row['archived_at'] = datetime.now().isoformat()
+            append_archive_row(ELIFE_COUNTS_ARCHIVE_CSV, old_row)
 
-    # Add new row
-    new_rows.append(row_data)
+        # Add new row
+        new_rows.append(row_data)
 
-    # Determine final column order: fixed → total groups → left groups → right groups
-    fixed_columns = [
-        'brain', 'run_date', 'brain_id', 'subject', 'cohort', 'project_code', 'project_name',
-        'det_preset', 'det_ball_xy', 'det_ball_z', 'det_soma_diameter', 'det_threshold',
-        'atlas', 'voxel_xy', 'voxel_z', 'total_cells',
-    ]
-    if any('total_left' in r for r in new_rows) or 'total_left' in all_columns:
-        fixed_columns.extend(['total_left', 'total_right'])
+        # Determine final column order: fixed → total groups → left groups → right groups
+        fixed_columns = [
+            'brain', 'run_date', 'brain_id', 'subject', 'cohort', 'project_code', 'project_name',
+            'det_preset', 'det_ball_xy', 'det_ball_z', 'det_soma_diameter', 'det_threshold',
+            'atlas', 'voxel_xy', 'voxel_z', 'total_cells',
+        ]
+        if any('total_left' in r for r in new_rows) or 'total_left' in all_columns:
+            fixed_columns.extend(['total_left', 'total_right'])
 
-    total_group_cols = sorted([c for c in all_columns
-                               if c.startswith('group_')
-                               and not c.startswith('group_left_')
-                               and not c.startswith('group_right_')])
-    left_group_cols = sorted([c for c in all_columns if c.startswith('group_left_')])
-    right_group_cols = sorted([c for c in all_columns if c.startswith('group_right_')])
+        total_group_cols = sorted([c for c in all_columns
+                                   if c.startswith('group_')
+                                   and not c.startswith('group_left_')
+                                   and not c.startswith('group_right_')])
+        left_group_cols = sorted([c for c in all_columns if c.startswith('group_left_')])
+        right_group_cols = sorted([c for c in all_columns if c.startswith('group_right_')])
 
-    final_columns = fixed_columns + total_group_cols + left_group_cols + right_group_cols
+        final_columns = fixed_columns + total_group_cols + left_group_cols + right_group_cols
 
-    # Write updated CSV
-    # Through a temporary file: a crash part-way leaves the previous file,
-    # never a cut-off one (this is the file an integrator pulls).
-    write_rows_atomic(ELIFE_COUNTS_CSV, final_columns, new_rows)
+        # Write updated CSV
+        # Through a temporary file: a crash part-way leaves the previous file,
+        # never a cut-off one (this is the file an integrator pulls).
+        write_rows_atomic(ELIFE_COUNTS_CSV, final_columns, new_rows)
 
     return ELIFE_COUNTS_CSV
 
