@@ -5227,19 +5227,23 @@ class BrainSliceWidget(QWidget):
             bg_logged = params['background_method']
             if params['use_local_background']:
                 bg_logged = f"{bg_logged}+local"
-            self.last_run_id = self.tracker.log_colocalization(
-                sample_id=sample_id,
-                signal_channel='green',
-                background_method=bg_logged,
-                background_percentile=params['background_percentile'],
-                threshold_method=params['threshold_method'],
-                threshold_value=used_threshold,
-                status='started',
-                script_version=COLOC_SIGMA_RECORDED_VERSION,
-                # No column holds these two; the note keeps them with the run.
-                notes=(f"soma_dilation={params['soma_dilation']}; "
-                       f"bg_exclusion_dilation={params['dilation_iterations']}"),
-            )
+            try:
+                self.last_run_id = self.tracker.log_colocalization(
+                    sample_id=sample_id,
+                    signal_channel='green',
+                    background_method=bg_logged,
+                    background_percentile=params['background_percentile'],
+                    threshold_method=params['threshold_method'],
+                    threshold_value=used_threshold,
+                    status='started',
+                    script_version=COLOC_SIGMA_RECORDED_VERSION,
+                    # No column holds these two; the note keeps them with the run.
+                    notes=(f"soma_dilation={params['soma_dilation']}; "
+                           f"bg_exclusion_dilation={params['dilation_iterations']}"),
+                )
+            except Exception as e:
+                self._coloc_could_not_start(e)
+                return
 
         # When using area_fraction method, pass signal_image and labels to worker
         # so it can forward them to classify_positive_negative
@@ -5305,15 +5309,19 @@ class BrainSliceWidget(QWidget):
         # Log to tracker -- AFTER the input check above (see _run_colocalization).
         if self.tracker:
             sample_id = self.sample_id_edit.text() or self.current_file.stem
-            self.last_run_id = self.tracker.log_colocalization(
-                sample_id=sample_id,
-                signal_channel='dual',
-                background_method=params_ch1['background_method'],
-                background_percentile=params_ch1['background_percentile'],
-                threshold_method=params_ch1['threshold_method'],
-                threshold_value=params_ch1['threshold_value'],
-                status='started',
-            )
+            try:
+                self.last_run_id = self.tracker.log_colocalization(
+                    sample_id=sample_id,
+                    signal_channel='dual',
+                    background_method=params_ch1['background_method'],
+                    background_percentile=params_ch1['background_percentile'],
+                    threshold_method=params_ch1['threshold_method'],
+                    threshold_value=params_ch1['threshold_value'],
+                    status='started',
+                )
+            except Exception as e:
+                self._coloc_could_not_start(e)
+                return
 
         self.coloc_worker = DualColocalizationWorker(
             signal_1, signal_2, labels, params_ch1, params_ch2,
@@ -5328,151 +5336,50 @@ class BrainSliceWidget(QWidget):
 
     def _on_coloc_finished(self, success: bool, message: str, measurements, summary, tissue_mask):
         """Handle colocalization completion."""
-        print(f"[BrainSlice] _on_coloc_finished: success={success}, message={message}")
-        if measurements is not None:
-            print(f"[BrainSlice]   measurements: {len(measurements)} rows")
-        if summary is not None:
-            print(f"[BrainSlice]   summary: {summary}")
-        self.coloc_btn.setEnabled(True)
+        # The run this result belongs to, fixed before anything can change it.
+        run_id = self.last_run_id
+        try:
+            print(f"[BrainSlice] _on_coloc_finished: success={success}, message={message}")
+            if measurements is not None:
+                print(f"[BrainSlice]   measurements: {len(measurements)} rows")
+            if summary is not None:
+                print(f"[BrainSlice]   summary: {summary}")
 
-        if success:
-            self.cell_measurements = measurements
-            self._tissue_mask = tissue_mask
-            self._coloc_background = summary['background_used']
-            self._coloc_threshold = summary.get('threshold_value', self.thresh_value_spin.value())
-            self._background_diagnostics = getattr(self.coloc_worker, 'background_diagnostics', None)
-            self._tissue_pixels = getattr(self.coloc_worker, 'tissue_pixels', None)
-            self._coloc_background_surface = getattr(self.coloc_worker, 'background_surface', None)
-            self._coloc_summary = summary
+            if success:
+                self.cell_measurements = measurements
+                self._tissue_mask = tissue_mask
+                self._coloc_background = summary['background_used']
+                self._coloc_threshold = summary.get('threshold_value', self.thresh_value_spin.value())
+                self._background_diagnostics = getattr(self.coloc_worker, 'background_diagnostics', None)
+                self._tissue_pixels = getattr(self.coloc_worker, 'tissue_pixels', None)
+                self._coloc_background_surface = getattr(self.coloc_worker, 'background_surface', None)
+                self._coloc_summary = summary
 
-            # Auto-save measurements CSV (non-fatal if fails)
-            measurements_path = None
-            record_problem = None
-            try:
-                if self.current_file is not None:
-                    from ..core.config import get_sample_dir, SampleDirs
-                    stem = self.current_file.stem
-                    sample_dir = get_sample_dir(stem)
-                    results_dir = sample_dir / SampleDirs.QUANTIFIED
-                    results_dir.mkdir(parents=True, exist_ok=True)
-                    run_tag = self.last_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
-                    measurements_path = results_dir / f"{stem}_{run_tag}_measurements.csv"
-                    measurements.to_csv(measurements_path, index=False)
-            except Exception as e:
-                print(f"[BrainSlice] WARNING: Auto-save measurements failed (non-fatal): {e}")
+                # Auto-save measurements CSV (non-fatal if fails)
+                measurements_path = None
+                record_problem = None
+                try:
+                    if self.current_file is not None:
+                        from ..core.config import get_sample_dir, SampleDirs
+                        stem = self.current_file.stem
+                        sample_dir = get_sample_dir(stem)
+                        results_dir = sample_dir / SampleDirs.QUANTIFIED
+                        results_dir.mkdir(parents=True, exist_ok=True)
+                        run_tag = self.last_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+                        measurements_path = results_dir / f"{stem}_{run_tag}_measurements.csv"
+                        measurements.to_csv(measurements_path, index=False)
+                except Exception as e:
+                    print(f"[BrainSlice] WARNING: Auto-save measurements failed (non-fatal): {e}")
 
-            # Update tracker (non-fatal if fails)
-            try:
-                if self.tracker and self.last_run_id:
-                    update_kwargs = dict(
-                        status='completed',
-                        coloc_positive_cells=summary['positive_cells'],
-                        coloc_negative_cells=summary['negative_cells'],
-                        coloc_positive_fraction=summary['positive_fraction'],
-                        coloc_background_value=summary['background_used'],
-                    )
-                    if measurements_path is not None:
-                        update_kwargs['measurements_path'] = str(measurements_path)
-                    self._saving_to_tracker()
-                    self.tracker.update_status(self.last_run_id, **update_kwargs)
-                    self.session_run_ids.append(self.last_run_id)
-            except Exception as e:
-                record_problem = self._result_not_recorded(self.last_run_id, e)
-
-            # Refresh run history panel
-            try:
-                self._refresh_run_history()
-            except Exception as e:
-                print(f"[BrainSlice] WARNING: Run history refresh failed (non-fatal): {e}")
-
-            # Visualize results - color nuclei by positive/negative
-            try:
-                self._visualize_colocalization(measurements)
-                print(f"[BrainSlice] Colocalization visualization added successfully")
-            except Exception as e:
-                import traceback
-                print(f"[BrainSlice] ERROR adding colocalization layers: {e}")
-                traceback.print_exc()
-
-            # Update diagnostic plot
-            try:
-                self._update_diagnostic_plot()
-            except Exception as e:
-                print(f"[BrainSlice] WARNING: Diagnostic plot update failed (non-fatal): {e}")
-
-            # Update UI
-            self.status_label.setText(message + (f" -- {record_problem}" if record_problem else ""))
-            result_text = (
-                f"Positive: {summary['positive_cells']} ({summary['positive_fraction']*100:.1f}%)\n"
-                f"Negative: {summary['negative_cells']}\n"
-                f"Background: {summary['background_used']:.1f}\n"
-                f"Mean fold change: {summary['mean_fold_change']:.2f}"
-            )
-
-            # Append Manders/Pearson validation metrics if available
-            coloc_metrics = summary.get('coloc_metrics')
-            if coloc_metrics:
-                result_text += (
-                    f"\n--- Validation Metrics ---\n"
-                    f"Pearson r: {coloc_metrics['pearson_r']:.4f}\n"
-                    f"Manders M1 (red in green): {coloc_metrics['manders_m1']:.4f}\n"
-                    f"Manders M2 (green in red): {coloc_metrics['manders_m2']:.4f}"
-                )
-
-            self.coloc_result_label.setText(result_text)
-
-            # Enable quantification
-            self.quant_btn.setEnabled(True)
-
-        else:
-            self.status_label.setText(f"Error: {message}")
-            self._fail_run_if_unfinished(self.last_run_id, f"colocalization failed: {message}")
-
-    def _on_dual_coloc_finished(self, success: bool, message: str, measurements, summary, tissue_mask):
-        """Handle dual-channel colocalization completion."""
-        print(f"[BrainSlice] _on_dual_coloc_finished: success={success}")
-        self.coloc_btn.setEnabled(True)
-
-        if success:
-            self.cell_measurements = measurements
-            self._coloc_summary = summary
-
-            # Save the measurements CSV, then record the result. Each guarded
-            # on its own: an unhandled error here (a full disk, the tracker
-            # CSV open elsewhere) used to end this handler with the run's row
-            # left 'started' forever, and the two failures need different
-            # words -- a CSV that was not saved is not a tracker problem.
-            measurements_path = None
-            record_problem = None
-            csv_saved = True
-            try:
-                if self.current_file is not None:
-                    from ..core.config import get_sample_dir, SampleDirs
-                    stem = self.current_file.stem
-                    sample_dir = get_sample_dir(stem)
-                    results_dir = sample_dir / SampleDirs.QUANTIFIED
-                    results_dir.mkdir(parents=True, exist_ok=True)
-                    tag = self.last_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
-                    measurements_path = results_dir / f"{stem}_{tag}_dual_measurements.csv"
-                    measurements.to_csv(measurements_path, index=False)
-            except Exception as e:
-                # A run whose measurements are not on disk cannot be reloaded
-                # from the Run History, so it is not recorded as completed.
-                csv_saved = False
-                print(f"[BrainSlice] [!] Dual measurements CSV not saved: {e}")
-                marked = self._fail_run_if_unfinished(
-                    self.last_run_id, f"measurements CSV could not be saved: {e}")
-                record_problem = (f"[!] measurements CSV not saved ({e}); "
-                                  + ("run marked failed" if marked
-                                     else "nothing was recorded in the tracker"))
-
-            if csv_saved:
+                # Update tracker (non-fatal if fails)
                 try:
                     if self.tracker and self.last_run_id:
                         update_kwargs = dict(
                             status='completed',
-                            coloc_positive_cells=summary.get('n_dual', 0),
-                            coloc_negative_cells=summary.get('n_neither', 0),
+                            coloc_positive_cells=summary['positive_cells'],
+                            coloc_negative_cells=summary['negative_cells'],
+                            coloc_positive_fraction=summary['positive_fraction'],
+                            coloc_background_value=summary['background_used'],
                         )
                         if measurements_path is not None:
                             update_kwargs['measurements_path'] = str(measurements_path)
@@ -5482,33 +5389,164 @@ class BrainSliceWidget(QWidget):
                 except Exception as e:
                     record_problem = self._result_not_recorded(self.last_run_id, e)
 
-            # Visualize with 4-category coloring
-            self._visualize_dual_colocalization(measurements)
+                # Refresh run history panel
+                try:
+                    self._refresh_run_history()
+                except Exception as e:
+                    print(f"[BrainSlice] WARNING: Run history refresh failed (non-fatal): {e}")
 
-            # Update result label
-            ch1 = summary.get('ch1_name', 'red')
-            ch2 = summary.get('ch2_name', 'green')
-            result_text = (
-                f"DUAL-CHANNEL RESULTS\n"
-                f"Total nuclei: {summary['total_nuclei']}\n"
-                f"Red+ (mCherry): {summary.get(f'n_{ch1}_positive', 0)} "
-                f"({summary.get(f'fraction_{ch1}', 0)*100:.1f}%)\n"
-                f"Green+ (eYFP): {summary.get(f'n_{ch2}_positive', 0)} "
-                f"({summary.get(f'fraction_{ch2}', 0)*100:.1f}%)\n"
-                f"Dual+ (both): {summary.get('n_dual', 0)} "
-                f"({summary.get('fraction_dual', 0)*100:.1f}%)\n"
-                f"Red-only: {summary.get(f'n_{ch1}_only', 0)}\n"
-                f"Green-only: {summary.get(f'n_{ch2}_only', 0)}\n"
-                f"Neither: {summary.get('n_neither', 0)}"
-            )
-            self.coloc_result_label.setText(result_text)
-            self.status_label.setText(message + (f" -- {record_problem}" if record_problem else ""))
+                # Visualize results - color nuclei by positive/negative
+                try:
+                    self._visualize_colocalization(measurements)
+                    print(f"[BrainSlice] Colocalization visualization added successfully")
+                except Exception as e:
+                    import traceback
+                    print(f"[BrainSlice] ERROR adding colocalization layers: {e}")
+                    traceback.print_exc()
 
-            # Enable quantification
-            self.quant_btn.setEnabled(True)
-        else:
-            self.status_label.setText(f"Error: {message}")
-            self._fail_run_if_unfinished(self.last_run_id, f"dual colocalization failed: {message}")
+                # Update diagnostic plot
+                try:
+                    self._update_diagnostic_plot()
+                except Exception as e:
+                    print(f"[BrainSlice] WARNING: Diagnostic plot update failed (non-fatal): {e}")
+
+                # Update UI
+                self.status_label.setText(message + (f" -- {record_problem}" if record_problem else ""))
+                result_text = (
+                    f"Positive: {summary['positive_cells']} ({summary['positive_fraction']*100:.1f}%)\n"
+                    f"Negative: {summary['negative_cells']}\n"
+                    f"Background: {summary['background_used']:.1f}\n"
+                    f"Mean fold change: {summary['mean_fold_change']:.2f}"
+                )
+
+                # Append Manders/Pearson validation metrics if available
+                coloc_metrics = summary.get('coloc_metrics')
+                if coloc_metrics:
+                    result_text += (
+                        f"\n--- Validation Metrics ---\n"
+                        f"Pearson r: {coloc_metrics['pearson_r']:.4f}\n"
+                        f"Manders M1 (red in green): {coloc_metrics['manders_m1']:.4f}\n"
+                        f"Manders M2 (green in red): {coloc_metrics['manders_m2']:.4f}"
+                    )
+
+                self.coloc_result_label.setText(result_text)
+
+                # Enable quantification
+                self.quant_btn.setEnabled(True)
+
+            else:
+                self.status_label.setText(f"Error: {message}")
+                self._fail_run_if_unfinished(self.last_run_id, f"colocalization failed: {message}")
+        except Exception as e:
+            # WHY caught here: an error while handling the result (a summary
+            # missing a value, a layer that cannot be drawn) used to escape
+            # this Qt slot with the run's row left 'started' forever.
+            import traceback
+            traceback.print_exc()
+            self.status_label.setText(f"Colocalization error: {e}")
+            self._fail_run_if_unfinished(run_id, f"colocalization result could not be handled: {e}")
+        finally:
+            self.coloc_btn.setEnabled(True)
+            # Whatever ended this, the row does not stay 'started'; a completed
+            # or failed row is left as it is.
+            self._fail_run_if_unfinished(run_id, "ended without recording a result")
+
+    def _on_dual_coloc_finished(self, success: bool, message: str, measurements, summary, tissue_mask):
+        """Handle dual-channel colocalization completion."""
+        # The run this result belongs to, fixed before anything can change it.
+        run_id = self.last_run_id
+        try:
+            print(f"[BrainSlice] _on_dual_coloc_finished: success={success}")
+
+            if success:
+                self.cell_measurements = measurements
+                self._coloc_summary = summary
+
+                # Save the measurements CSV, then record the result. Each guarded
+                # on its own: an unhandled error here (a full disk, the tracker
+                # CSV open elsewhere) used to end this handler with the run's row
+                # left 'started' forever, and the two failures need different
+                # words -- a CSV that was not saved is not a tracker problem.
+                measurements_path = None
+                record_problem = None
+                csv_saved = True
+                try:
+                    if self.current_file is not None:
+                        from ..core.config import get_sample_dir, SampleDirs
+                        stem = self.current_file.stem
+                        sample_dir = get_sample_dir(stem)
+                        results_dir = sample_dir / SampleDirs.QUANTIFIED
+                        results_dir.mkdir(parents=True, exist_ok=True)
+                        tag = self.last_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+                        measurements_path = results_dir / f"{stem}_{tag}_dual_measurements.csv"
+                        measurements.to_csv(measurements_path, index=False)
+                except Exception as e:
+                    # A run whose measurements are not on disk cannot be reloaded
+                    # from the Run History, so it is not recorded as completed.
+                    csv_saved = False
+                    print(f"[BrainSlice] [!] Dual measurements CSV not saved: {e}")
+                    marked = self._fail_run_if_unfinished(
+                        self.last_run_id, f"measurements CSV could not be saved: {e}")
+                    record_problem = (f"[!] measurements CSV not saved ({e}); "
+                                      + ("run marked failed" if marked
+                                         else "nothing was recorded in the tracker"))
+
+                if csv_saved:
+                    try:
+                        if self.tracker and self.last_run_id:
+                            update_kwargs = dict(
+                                status='completed',
+                                coloc_positive_cells=summary.get('n_dual', 0),
+                                coloc_negative_cells=summary.get('n_neither', 0),
+                            )
+                            if measurements_path is not None:
+                                update_kwargs['measurements_path'] = str(measurements_path)
+                            self._saving_to_tracker()
+                            self.tracker.update_status(self.last_run_id, **update_kwargs)
+                            self.session_run_ids.append(self.last_run_id)
+                    except Exception as e:
+                        record_problem = self._result_not_recorded(self.last_run_id, e)
+
+                # Visualize with 4-category coloring
+                self._visualize_dual_colocalization(measurements)
+
+                # Update result label
+                ch1 = summary.get('ch1_name', 'red')
+                ch2 = summary.get('ch2_name', 'green')
+                result_text = (
+                    f"DUAL-CHANNEL RESULTS\n"
+                    f"Total nuclei: {summary['total_nuclei']}\n"
+                    f"Red+ (mCherry): {summary.get(f'n_{ch1}_positive', 0)} "
+                    f"({summary.get(f'fraction_{ch1}', 0)*100:.1f}%)\n"
+                    f"Green+ (eYFP): {summary.get(f'n_{ch2}_positive', 0)} "
+                    f"({summary.get(f'fraction_{ch2}', 0)*100:.1f}%)\n"
+                    f"Dual+ (both): {summary.get('n_dual', 0)} "
+                    f"({summary.get('fraction_dual', 0)*100:.1f}%)\n"
+                    f"Red-only: {summary.get(f'n_{ch1}_only', 0)}\n"
+                    f"Green-only: {summary.get(f'n_{ch2}_only', 0)}\n"
+                    f"Neither: {summary.get('n_neither', 0)}"
+                )
+                self.coloc_result_label.setText(result_text)
+                self.status_label.setText(message + (f" -- {record_problem}" if record_problem else ""))
+
+                # Enable quantification
+                self.quant_btn.setEnabled(True)
+            else:
+                self.status_label.setText(f"Error: {message}")
+                self._fail_run_if_unfinished(self.last_run_id, f"dual colocalization failed: {message}")
+        except Exception as e:
+            # WHY caught here: an error while handling the result (a summary
+            # missing a value, a layer that cannot be drawn) used to escape
+            # this Qt slot with the run's row left 'started' forever.
+            import traceback
+            traceback.print_exc()
+            self.status_label.setText(f"Dual colocalization error: {e}")
+            self._fail_run_if_unfinished(run_id, f"dual colocalization result could not be handled: {e}")
+        finally:
+            self.coloc_btn.setEnabled(True)
+            # Whatever ended this, the row does not stay 'started'; a completed
+            # or failed row is left as it is.
+            self._fail_run_if_unfinished(run_id, "ended without recording a result")
 
     def _visualize_colocalization(self, measurements):
         """Visualize colocalization results in napari."""
@@ -5753,6 +5791,24 @@ class BrainSliceWidget(QWidget):
         return ("[!] Runs will NOT be logged to the calibration tracker: "
                 + (self._tracker_error or "it could not be opened")
                 + ". Fix this and reopen the window before tuning.")
+
+    def _coloc_could_not_start(self, error) -> None:
+        """The tracker refused the new colocalization run's row (most often:
+        calibration_runs.csv open in a spreadsheet program, so the append
+        cannot be made). The run is not started, the button comes back and
+        the person is told why. WHY not run it unlogged: a run with no row
+        cannot be found, reloaded or marked best later, and detection already
+        refuses to start for the same reason; WHY not let the error escape:
+        it used to leave the Colocalize button disabled for good."""
+        print(f"[BrainSlice] [!] Colocalization not started: the tracker refused its row: {error}")
+        self.status_label.setText(
+            f"[!] Colocalization not started: the calibration tracker refused its row "
+            f"({error}) -- is calibration_runs.csv open elsewhere? Close it and click again.")
+        self.coloc_btn.setEnabled(True)
+        QMessageBox.warning(
+            self, "Colocalization not started",
+            f"The calibration tracker could not record this run:\n{error}\n\n"
+            f"If calibration_runs.csv is open in another program, close it and click again.")
 
     def _fail_run_if_unfinished(self, run_id, why: str) -> bool:
         """Set this window's run `run_id` to 'failed' if it is still

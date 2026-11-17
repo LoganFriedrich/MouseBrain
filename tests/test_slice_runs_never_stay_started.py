@@ -194,7 +194,7 @@ def _widget(tmp_path):
     w = SimpleNamespace(
         tracker=SliceTracker(csv_path=tmp_path / "runs.csv"),
         status_label=SimpleNamespace(setText=lambda t: setattr(w, "status", t)),
-        coloc_btn=SimpleNamespace(setEnabled=lambda _b: None),
+        coloc_btn=SimpleNamespace(setEnabled=lambda b: setattr(w, "coloc_btn_enabled", b)),
         quant_btn=SimpleNamespace(setEnabled=lambda _b: None),
         coloc_result_label=SimpleNamespace(setText=lambda _t: None),
         sample_id_edit=SimpleNamespace(text=lambda: SAMPLE),
@@ -219,7 +219,7 @@ def _widget(tmp_path):
     w.bg_local_check = SimpleNamespace(isChecked=lambda: False)
     for name in ("_fail_run_if_unfinished", "_result_not_recorded", "_saving_to_tracker",
                  "_open_tracker", "_run_colocalization", "_run_dual_colocalization",
-                 "_on_dual_coloc_finished"):
+                 "_on_dual_coloc_finished", "_on_coloc_finished", "_coloc_could_not_start"):
         if hasattr(BrainSliceWidget, name):
             setattr(w, name, types.MethodType(getattr(BrainSliceWidget, name), w))
     return w
@@ -374,3 +374,73 @@ def test_an_inset_detection_the_tracker_file_refuses_is_still_shown_and_said_not
     assert "still says 'started'" in w.status
     assert w.tracker.get_run(w.last_run_id)["status"] == "started"
     assert len(writes) <= 1, "a second write would freeze the window again"
+
+
+class _AppendRefused(SliceTracker):
+    """A tracker whose file refuses a new row (open in another program)."""
+
+    def log_colocalization(self, *a, **k):
+        raise PermissionError("the tracker file is open in another program")
+
+
+def test_a_colocalization_whose_row_the_tracker_refuses_does_not_start_and_frees_the_button(
+        tmp_path, monkeypatch):
+    # The error used to escape the button's handler with the Colocalize
+    # button left disabled for the rest of the session.
+    box = _Box()
+    monkeypatch.setattr(main_widget, "QMessageBox", box)
+    started = []
+    from mousebrain.plugin_2d.sliceatlas.napari_plugin import workers
+    monkeypatch.setattr(workers, "ColocalizationWorker",
+                        lambda *a, **k: started.append(1))
+    w = _widget(tmp_path)
+    w.tracker = _AppendRefused(csv_path=tmp_path / "runs.csv")
+    w._get_current_slice = lambda arr: arr
+    w.coloc_btn_enabled = None
+
+    BrainSliceWidget._run_colocalization(w)
+
+    assert w.coloc_btn_enabled is True
+    assert "Colocalization not started" in w.status
+    assert "open in another program" in w.status
+    assert box.shown and box.shown[0][0] == "Colocalization not started"
+    assert not started, "an unlogged run must not start"
+
+
+def test_a_colocalization_result_that_cannot_be_handled_is_failed_not_left_started(
+        tmp_path, monkeypatch):
+    # A summary missing a value raised inside the result handler before the
+    # tracker was updated: the error left the Qt slot, the row stayed
+    # 'started' forever and nothing on screen said so.
+    w = _widget(tmp_path)
+    w.last_run_id = w.tracker.log_colocalization(sample_id=SAMPLE, signal_channel="green")
+    w.coloc_btn_enabled = None
+    summary = {"positive_cells": 1, "negative_cells": 0}  # no 'background_used'
+
+    BrainSliceWidget._on_coloc_finished(w, True, "done", pd.DataFrame({"label": [1]}),
+                                        summary, None)
+
+    row = w.tracker.get_run(w.last_run_id)
+    assert row["status"] == "failed" and "background_used" in row["notes"]
+    assert w.status.startswith("Colocalization error")
+    assert w.coloc_btn_enabled is True
+
+
+def test_a_dual_colocalization_result_that_cannot_be_handled_is_failed_not_left_started(
+        tmp_path, monkeypatch):
+    w = _widget(tmp_path)
+    w.last_run_id = w.tracker.log_colocalization(sample_id=SAMPLE, signal_channel="dual")
+    w.current_file = None  # no CSV to save; the error comes from drawing the result
+
+    def cannot_draw(_m):
+        raise ValueError("layer could not be drawn")
+    w._visualize_dual_colocalization = cannot_draw
+    w.tracker.update_status = lambda *a, **k: True  # the 'completed' write never lands
+    summary = {"total_nuclei": 1, "n_dual": 0, "n_neither": 1}
+
+    BrainSliceWidget._on_dual_coloc_finished(w, True, "done", pd.DataFrame({"label": [1]}),
+                                             summary, None)
+
+    row = SliceTracker(csv_path=tmp_path / "runs.csv").get_run(w.last_run_id)
+    assert row["status"] == "failed" and "layer could not be drawn" in row["notes"]
+    assert w.status.startswith("Dual colocalization error")

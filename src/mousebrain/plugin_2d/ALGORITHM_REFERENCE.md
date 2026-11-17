@@ -481,7 +481,7 @@ The file lives at `<MouseBrain_Pipeline>/2D_Slices/2_Data_Summary/calibration_ru
 |----------|---------|
 | `started` | The run is going on right now. A row is written only once the run's inputs have been checked, so a run refused by a check ("Run detection first", "No signal channel data available" ...) leaves no row at all. |
 | `completed` | The run finished and its result is in the row. |
-| `failed` | The run did not finish, or finished but its result could not be written. The `notes` column says why (for example `batch stopped at colocalize: RuntimeError: ...`, `colocalization failed: ...`, `result could not be recorded: ...`). |
+| `failed` | The run did not finish, or finished but its result could not be written. The `notes` column says why (for example `batch stopped at colocalize: RuntimeError: ...`, `colocalization failed: ...`, `colocalization result could not be handled: ...`, `result could not be recorded: ...`). |
 
 `failed` is the only word for a run that did not finish. Older rows written by the
 batch may say `error`; that means the same thing (writing `error` now records `failed`).
@@ -529,6 +529,22 @@ insets), colocalization (single- and dual-channel) and particle analysis.
   particle count). For a colocalization the measurements CSV, which is saved before
   the tracker is written, is on disk. But the run will not appear as completed in
   the Run History. Close the spreadsheet and run it again.
+
+**When the napari window cannot write a NEW colocalization row** (the file refuses
+the new line, most often because it is open in a spreadsheet program), the
+colocalization does not start: a message box and the status bar say
+`Colocalization not started: the calibration tracker refused its row (<the reason>)`,
+and the Colocalize button can be clicked again at once. Close the spreadsheet and
+click Colocalize again. (Detection behaves the same way: it says `Failed to start
+detection` and does not run.) A run with no row could never be found, reloaded or
+marked best later, so it is not run unrecorded.
+
+**When something goes wrong while the window handles a colocalization's result**
+(single- or dual-channel: a value missing from the result, a layer that cannot be
+drawn), the status bar says `Colocalization error: <the reason>` (or `Dual
+colocalization error: ...`), the run's row becomes `failed` with
+`... result could not be handled: <the reason>` in `notes`, and the Colocalize
+button works again.
 
 **When the dual-channel colocalization cannot save its measurements CSV** (a full
 disk, a folder that cannot be written), the status bar ends with
