@@ -62,6 +62,15 @@ RESULT_FILES = ("particles.csv", "labels.npz", "measurements.csv",
 # The load settings that decide which pixels are on screen.
 LOAD_SETTING_KEYS = ("rotation", "z_projection", "red_channel_idx",
                      "green_channel_idx")
+# Said wherever a folder stack's results would have been saved. WHY a stack
+# saves nothing: it has no single image to file results under. Saving per
+# slice needs a place for them, which is not decided; until it is, the
+# window says so instead of dropping the results without a word.
+STACK_RESULTS_NOT_SAVED = (
+    "[!] Results on a folder stack are NOT saved: no _analysis state and no "
+    "measurements file is written for a stack. Export what you need now, or "
+    "open the image on its own to keep its results.")
+
 LOAD_SETTING_LABELS = {
     "rotation": "rotation",
     "z_projection": "z-projection",
@@ -2206,10 +2215,7 @@ class BrainSliceWidget(QWidget):
                 # A folder opened as one stack has no single image to file
                 # its results under. WHY said, not silent: these results
                 # used to vanish on the next image with only a console line.
-                msg = ("[!] Results on a folder stack are NOT saved: no "
-                       "_analysis state and no measurements file is written "
-                       "for a stack. Export what you need now, or open the "
-                       "image on its own to keep its results.")
+                msg = STACK_RESULTS_NOT_SAVED
                 self.status_label.setText(msg)
                 print(f"[BrainSlice] {msg}")
             else:
@@ -2263,6 +2269,18 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(msg)
             print(f"[BrainSlice] {msg}")
             QMessageBox.warning(self, "Results not saved", msg)
+
+    def _sample_id_or_default(self) -> str:
+        """The Sample ID box, else the image's name, else the stack folder's.
+        WHY: an emptied Sample ID box on a folder stack (no current_file)
+        crashed detection and colocalization on current_file.stem."""
+        text = self.sample_id_edit.text()
+        if text:
+            return text
+        if self.current_file is not None:
+            return self.current_file.stem
+        folder = getattr(self, "current_folder", None)
+        return Path(folder).name if folder is not None else "sample"
 
     def _manual_save_state(self):
         """Explicitly save analysis state (triggered by Save State button)."""
@@ -5581,7 +5599,7 @@ class BrainSliceWidget(QWidget):
 
             # Log to tracker
             if self.tracker:
-                sample_id = self.sample_id_edit.text() or self.current_file.stem
+                sample_id = self._sample_id_or_default()
                 # Every setting goes in the row (det_backend, and all of
                 # params as JSON). WHY: only the StarDist numbers used to be
                 # recorded -- 0.0 for a threshold run's probability and
@@ -5997,7 +6015,7 @@ class BrainSliceWidget(QWidget):
         # first and then abandoned by one of those checks stayed 'started'
         # forever.
         if self.tracker:
-            sample_id = self.sample_id_edit.text() or self.current_file.stem
+            sample_id = self._sample_id_or_default()
             from ..tracker.schema import COLOC_SIGMA_RECORDED_VERSION
             # WHY: background_mean classifies with the sigma spin box, not the
             # fold-change one, so the row records the sigma for that method.
@@ -6097,7 +6115,7 @@ class BrainSliceWidget(QWidget):
 
         # Log to tracker -- AFTER the input check above (see _run_colocalization).
         if self.tracker:
-            sample_id = self.sample_id_edit.text() or self.current_file.stem
+            sample_id = self._sample_id_or_default()
             try:
                 self._coloc_run_id = self.last_run_id = self.tracker.log_colocalization(
                     sample_id=sample_id,
@@ -6165,6 +6183,8 @@ class BrainSliceWidget(QWidget):
                         measurements.to_csv(measurements_path, index=False)
                 except Exception as e:
                     print(f"[BrainSlice] WARNING: Auto-save measurements failed (non-fatal): {e}")
+                if self.current_file is None:
+                    record_problem = STACK_RESULTS_NOT_SAVED
 
                 # Update tracker (non-fatal if fails)
                 try:
@@ -6288,6 +6308,8 @@ class BrainSliceWidget(QWidget):
                     record_problem = (f"[!] measurements CSV not saved ({e}); "
                                       + ("run marked failed" if marked
                                          else "nothing was recorded in the tracker"))
+                if self.current_file is None and record_problem is None:
+                    record_problem = STACK_RESULTS_NOT_SAVED
 
                 if csv_saved:
                     try:
