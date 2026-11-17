@@ -1980,6 +1980,12 @@ class BrainSliceWidget(QWidget):
         self.pa_export_fig_btn.setEnabled(False)
         self._pa_append_folder_btn.setEnabled(False)
         self.coloc_result_label.setText("")
+        # Colocalize needs this image's nuclei and Quantify this image's
+        # measurements; neither exists yet. WHY: both buttons stayed on
+        # across a new image, so the previous image's nuclei or measurements
+        # could be colocalized against, or counted on, the new one.
+        self.coloc_btn.setEnabled(False)
+        self.quant_btn.setEnabled(False)
 
     def _save_analysis_state(self):
         """Save current analysis state to disk alongside the image file."""
@@ -5407,6 +5413,12 @@ class BrainSliceWidget(QWidget):
         if success:
             self.nuclei_labels = labels
             self._labels_run_id = run_id
+            # Measurements belong to the nuclei they were measured on. WHY
+            # forgotten here: after a new detection Quantify stayed on and
+            # counted the previous detection's colocalization as if it
+            # described these nuclei. Run Colocalization again to measure them.
+            self.cell_measurements = None
+            self.quant_btn.setEnabled(False)
 
             # Update tracker (wrapped so failures don't block layer creation)
             record_problem = None
