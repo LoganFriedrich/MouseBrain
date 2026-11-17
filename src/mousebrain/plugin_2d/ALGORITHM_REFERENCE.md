@@ -665,6 +665,77 @@ Rows written before this change may show that mix-up: a colocalization row with 
 `det_nuclei_found` value, or a particle-analysis row with one. Treat such a row as
 not trustworthy and run that analysis again.
 
+### Opening an image in the napari window
+
+There are five ways to open an image, and they all do the same thing:
+
+- **Browse File...** (Load tab) opens the file you pick.
+- **Browse Folder...** (Load tab) only records the folder you pick. Nothing changes
+  on screen until you click **Load**, which opens the folder as one stack.
+- **Prev / Next** (Detect and ROI tabs) choose a neighboring image of the same type
+  in the same folder; **Load** beside them opens it.
+- The **image queue** (Browse Image Folder..., Previous, Next) opens each image of a
+  folder in turn.
+- **Load** on the Load tab opens the chosen file again (for example after changing the
+  channel numbers by hand; a reload keeps them).
+
+Every time, in this order:
+
+1. **The image on screen is saved, then forgotten.** Its particles, labels, ROIs,
+   background ROIs and ignore regions are written to its own `<image name>_analysis`
+   folder beside the image file. Then all of them, and its colocalization
+   measurements, tissue mask, background diagnostics and region counts, are cleared.
+   Nothing of one image is ever carried onto the next.
+2. **The Sample ID box is set to the new file's name** (the folder's name for a stack).
+   Every tracker row and every Quantify export is filed under this name. A reload of
+   the same image keeps a Sample ID you typed by hand.
+3. **Prev / Next now walk the folder of the image just opened**, and the position
+   label (`2/14: <file name>`) names it.
+4. **The image loads.** Until it has loaded, Browse and the Load buttons are off, and
+   Detect Nuclei, Colocalize, Run Quantification and Run Particle Analysis are refused
+   with `... not started: image loading is still running.` The image queue and Browse
+   Image Folder read each file's channel names to pick the nuclear and signal channels,
+   exactly as Browse File does.
+5. **When it has loaded**, Detect Nuclei and Run Particle Analysis turn on. Colocalize
+   turns on after a detection, and Run Quantification after a colocalization, on THIS
+   image.
+
+**An image cannot be opened while something else is going.** The status bar says
+which, and nothing changes:
+
+- `<file>: not opened -- <other file> is still loading. Wait for it to finish, then try again.`
+- `<file>: not opened -- detection is still running on the image on screen. ...`
+  (or colocalization, or quantification). The result belongs to the image it started
+  on; wait for it.
+- `<file>: not opened -- the batch is waiting for ROIs. Finish it with Count & Next or
+  Skip, then open the image.` The batch's ROI drawing has no way back in once left,
+  so the image is refused rather than the batch abandoned.
+
+**If an image cannot be opened** (a damaged or unreadable file), a message says so and
+the window is left with **no image open**: the picture is cleared and the analysis
+buttons are off. Nothing of the previous image is left on screen to be analyzed under
+the wrong name. Click **Load** to try the same file again, or open another image.
+
+**A new detection forgets the previous colocalization.** Its measurements belonged to
+the nuclei that were just replaced, so Run Quantification turns off until you click
+Colocalize again.
+
+WHY all of this: results are only correct when they are filed under the image they
+were made on. Before this change Browse File switched images without saving or
+clearing, so one image's particles, labels and ROIs could be saved into the next
+image's `_analysis` folder; the Sample ID changed only on Browse File, so tracker rows
+and Quantify exports made after Prev / Next or the queue went under the previous
+image's name; a failed load left the previous image's pixels on screen under the new
+name; two loads could run at once and the older one, finishing last, put its pixels
+under the newer name; and a detection started during a load drew the previous image's
+nuclei on the new one.
+
+**Results made before this change** may carry those mix-ups, and they cannot be found
+automatically. If you used Prev / Next or the image queue, check the recent tracker
+rows and Quantify exports: each row's `sample_id` must be the image it was made on. An
+`_analysis` folder whose particles do not match its image (for example, particle
+positions outside the tissue) should be analyzed again.
+
 ### Several windows and the batch at once
 
 The napari window and the batch can write the tracker at the same time, on one
@@ -704,6 +775,12 @@ Sample ID box, or the image's file name when the box is empty, matched exactly
 a run made on another sample and says which sample it belongs to: its cells are
 positions in that sample's image, and drawn over this one they would look like
 (and be counted as) this slice's result. Open that sample's image first.
+
+A loaded run brings back its measurements only. The tissue mask and background
+diagnostics of the last colocalization run live in the window are cleared when a
+saved run is loaded, so the diagnostic plot never shows another run's mask as if it
+were this run's; region counts are cleared too, so click Run Quantification again
+for the loaded run.
 
 ### Sample Name Parsing
 
