@@ -3726,22 +3726,26 @@ class BrainSliceWidget(QWidget):
         if data is None:
             status = 'failed'
             notes += f"; image not analyzed: {reason}"
-        else:
-            particles = data['particles']
-            n = data['n_particles']
-            results = {
-                'pa_particles_found': n,
-                'pa_particles_raw': data.get('n_raw'),
-                'pa_bg_value': bg_value if classified else None,
-                'pa_mean_intensity': (
-                    float(particles['mean_intensity'].mean())
-                    if classified and n > 0 and 'mean_intensity' in particles.columns
-                    else None),
-                'pa_positive_particles': (
-                    int(particles['is_positive'].sum())
-                    if classified and 'is_positive' in particles.columns else None),
-            }
         try:
+            # WHY the results are built inside this try: an unexpected
+            # failure while reading the image's results is a problem logging
+            # THIS image, reported like a refused tracker row, not a reason
+            # to end the batch and lose every image's in-memory results.
+            if data is not None:
+                particles = data['particles']
+                n = data['n_particles']
+                results = {
+                    'pa_particles_found': n,
+                    'pa_particles_raw': data.get('n_raw'),
+                    'pa_bg_value': bg_value if classified else None,
+                    'pa_mean_intensity': (
+                        float(particles['mean_intensity'].mean())
+                        if classified and n > 0 and 'mean_intensity' in particles.columns
+                        else None),
+                    'pa_positive_particles': (
+                        int(particles['is_positive'].sum())
+                        if classified and 'is_positive' in particles.columns else None),
+                }
             run_id = self.tracker.log_particle_analysis(
                 sample_id=Path(fpath).stem,
                 detection_channel=str(settings.get('detect_channel_idx', 1)),

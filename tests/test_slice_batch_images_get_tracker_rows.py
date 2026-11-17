@@ -68,3 +68,34 @@ def test_a_tracker_that_refuses_is_tried_once_and_the_window_says_so(tmp_path, m
     assert sorted(w._batch_results) == ["A_01.tif", "A_02.tif", "A_03.tif"]
     text = w._batch_status_label.text()
     assert "3 image(s) NOT logged" in text and "open elsewhere" in text
+
+
+def test_a_failure_building_one_images_row_is_a_tracker_problem_not_the_end_of_the_batch(
+        tmp_path, monkeypatch):
+    """The row is built from the image's results before it is written. An
+    unexpected failure there used to escape the batch loop, so the images
+    already analyzed lost their in-memory results before export."""
+    import mousebrain.plugin_2d.sliceatlas.napari_plugin.main_widget as mw
+
+    images = {f"A_0{k}.tif": two_channel_image(1) for k in range(1, 4)}
+    w, folder = make_batch_widget(tmp_path, monkeypatch, images)
+    w._batch_enter_roi_mode = lambda: None
+    real = mw.analyze_batch_image
+
+    class Unreadable:
+        columns = ("mean_intensity", "is_positive")
+
+        def __getitem__(self, key):
+            raise RuntimeError("results are unreadable")
+
+    def analyze(fpath, settings):
+        data = real(fpath, settings)
+        data["particles"] = Unreadable()
+        return data
+    monkeypatch.setattr(mw, "analyze_batch_image", analyze)
+
+    w._batch_run_analysis()          # must not raise
+
+    assert sorted(w._batch_results) == ["A_01.tif", "A_02.tif", "A_03.tif"]
+    text = w._batch_status_label.text()
+    assert "NOT logged" in text and "unreadable" in text
