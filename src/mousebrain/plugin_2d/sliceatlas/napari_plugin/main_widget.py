@@ -143,6 +143,60 @@ def _write_state_file(path: Path, payload) -> None:
         raise
 
 
+# The one settings line folder-wide CSVs carried before each sample's
+# settings were kept. It described only the sample appended last before
+# then, so it is kept under a name that says so.
+_LEGACY_SETTINGS_PREFIX = "# Settings: "
+_LEGACY_SETTINGS_KEPT = ("# Settings (written before each sample's settings "
+                         "were kept; they are the last sample appended then): ")
+
+
+def write_folder_csv(master_path, combined, sample_name: str,
+                     settings: Dict[str, Any]) -> None:
+    """Write a folder-wide results CSV (<folder>_particles.csv,
+    <folder>_roi_results.csv) with one '# Settings <sample>: {...}' line per
+    sample above the table.
+
+    WHY one line per sample: the file used to carry ONE '# Settings:' line,
+    rewritten with the current settings on every append, so every earlier
+    sample's rows were labeled with settings they were not made with. Lines
+    of the other samples are kept as they are; this sample's is replaced."""
+    import json
+    import os
+    import tempfile
+
+    master_path = Path(master_path)
+    own = f"# Settings {sample_name}: "
+    header = []
+    if master_path.exists():
+        with open(master_path, encoding="utf-8") as f:
+            for line in f:
+                if not line.startswith("#"):
+                    break
+                line = line.rstrip("\r\n")
+                if line.startswith(own):
+                    continue
+                if line.startswith(_LEGACY_SETTINGS_PREFIX):
+                    line = _LEGACY_SETTINGS_KEPT + line[len(_LEGACY_SETTINGS_PREFIX):]
+                header.append(line)
+    header.append(own + json.dumps(settings))
+
+    fd, tmp = tempfile.mkstemp(prefix=master_path.name + ".", suffix=".tmp",
+                               dir=str(master_path.parent))
+    try:
+        with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
+            for line in header:
+                f.write(line + "\n")
+            combined.to_csv(f, index=False)
+        os.replace(tmp, master_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _empty_drawn(name: str, widget) -> Dict[str, Any]:
     """What a person-drawn file holds when nothing is drawn."""
     if name == "rois.json":
@@ -4648,10 +4702,7 @@ class BrainSliceWidget(QWidget):
         else:
             combined = detail
 
-        settings = self._pa_get_settings()
-        with open(master_path, 'w', newline='') as f:
-            f.write(f"# Settings: {json.dumps(settings)}\n")
-            combined.to_csv(f, index=False)
+        write_folder_csv(master_path, combined, sample_name, self._pa_get_settings())
 
         n_samples = combined['sample'].nunique()
         self.status_label.setText(
@@ -7432,13 +7483,10 @@ class BrainSliceWidget(QWidget):
         else:
             combined = detail
 
-        # Write with settings header
-        import json
+        # Each sample's settings on its own line (see write_folder_csv).
         settings = self._pa_get_settings()
         settings['roi_names'] = self._roi_names
-        with open(master_path, 'w', newline='') as f:
-            f.write(f"# Settings: {json.dumps(settings)}\n")
-            combined.to_csv(f, index=False)
+        write_folder_csv(master_path, combined, sample_name, settings)
 
         n_samples = combined['sample'].nunique()
         self.status_label.setText(
