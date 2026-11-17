@@ -69,3 +69,27 @@ def test_going_back_and_skipping_keeps_a_counted_image_counted(tmp_path, monkeyp
     summary = export_batch(w, monkeypatch, tmp_path / "out" / "x_summary.csv")
     by_sample = summary.groupby("sample")["status"].agg(set).to_dict()
     assert by_sample == {"A_01.tif": {"counted"}, "A_02.tif": {"skipped"}}
+
+
+def test_a_new_batch_folder_starts_with_nothing_of_the_last_batch(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from mousebrain.plugin_2d.sliceatlas.napari_plugin import main_widget
+    w, folder = make_batch_widget(tmp_path, monkeypatch,
+                                  {"A_01.tif": None, "A_02.tif": two_channel_image(1)})
+    w._batch_run_analysis()
+    w._batch_skip_image()                   # the ROI drawing ends
+    assert w._batch_failed
+    other = tmp_path / "batch_two"
+    other.mkdir()
+    (other / "B_01.tif").write_bytes(b"")
+    monkeypatch.setattr(main_widget, "QFileDialog", SimpleNamespace(
+        getExistingDirectory=lambda *a, **k: str(other)))
+    w._batch_select_folder()
+    assert w._batch_failed == {} and w._batch_results == {}
+    assert w._batch_export_btn.isEnabled() is False
+    out = tmp_path / "out"
+    out.mkdir()
+    monkeypatch.setattr(main_widget, "QFileDialog", SimpleNamespace(
+        getSaveFileName=lambda *a, **k: (str(out / "x_summary.csv"), "")))
+    w._batch_export()
+    assert not (out / "x_summary.csv").exists()

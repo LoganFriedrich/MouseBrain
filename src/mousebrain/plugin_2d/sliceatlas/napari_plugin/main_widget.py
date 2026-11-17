@@ -530,6 +530,8 @@ class BrainSliceWidget(QWidget):
         self._batch_folder = None
         self._batch_files = []
         self._batch_results = {}
+        self._batch_failed = {}     # name -> why, for images not analyzed
+        self._batch_order = []      # the batch's file names, folder order
         self._batch_current_idx = -1
         self._batch_settings = None
         self._batch_roi_mode = False
@@ -3497,6 +3499,12 @@ class BrainSliceWidget(QWidget):
         self._batch_folder = folder
         self._batch_files = files
         self._batch_results = {}
+        # The previous batch's failures and order go too, and its export:
+        # Export would otherwise write them under the new folder's name.
+        self._batch_failed = {}
+        self._batch_order = []
+        self._batch_settings = None
+        self._batch_export_btn.setEnabled(False)
         self._batch_current_idx = -1
 
         # Check metadata consistency
