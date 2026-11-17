@@ -423,6 +423,53 @@ class ClassificationWorker(QThread):
             return 0
 
 
+class RegionCountWorker(QThread):
+    """Runs step 6 (6_count_regions.py) for one brain, off the napari thread.
+
+    WHY: the Results tab's "Run Region Counting" ran step 6 with
+    subprocess.run(..., timeout=300) on napari's own thread. napari froze for
+    the whole count, and a whole brain takes far longer than five minutes, so
+    the count was killed part-way -- with no cleanup, leaving its tracker row
+    at 'started'. Here the script runs to its end with no time limit, and
+    each line it prints is passed on as ``progress`` for the status line.
+
+    stdout and stderr are one stream (two pipes read one after the other can
+    each fill and stop the script); -u makes the lines arrive as printed;
+    stdin is empty so nothing in the script can wait for an answer.
+    ``finished(success, last_lines)``; the brain the count is for travels
+    with the worker (``brain``), never through the widget's fields.
+    """
+    progress = Signal(str)
+    finished = Signal(bool, str)
+
+    def __init__(self, cmd, brain, cwd=None):
+        super().__init__()
+        self.cmd = list(cmd)
+        self.brain = brain
+        self.cwd = cwd
+
+    def run(self):
+        from collections import deque
+        tail = deque(maxlen=40)
+        try:
+            cmd = list(self.cmd)
+            if cmd and cmd[0] == sys.executable and "-u" not in cmd[1:2]:
+                cmd.insert(1, "-u")
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, errors="replace", cwd=self.cwd)
+            for line in proc.stdout:
+                line = line.rstrip()
+                if line:
+                    tail.append(line)
+                    print(f"[step 6] {line}")
+                    self.progress.emit(line)
+            code = proc.wait()
+            self.finished.emit(code == 0, "\n".join(tail))
+        except Exception as e:
+            self.finished.emit(False, f"{type(e).__name__}: {e}")
+
+
 def _run_is_of_brain(run, brain_name):
     """Whether a tracker run belongs to the brain called ``brain_name``.
 
@@ -2735,8 +2782,9 @@ class TuningWidget(QWidget):
     def _release_brain_list(self, finished_worker=None):
         """Let the brain list change again once no detection or
         classification run of this widget is going (``finished_worker`` is the
-        one whose finish is being handled: it may not have stopped yet)."""
-        for name in ('detection_worker', 'classification_worker'):
+        one whose finish is being handled: it may not have stopped yet).
+        A region count from the Results tab holds the list too."""
+        for name in ('detection_worker', 'classification_worker', 'region_count_worker'):
             worker = getattr(self, name, None)
             if worker is not None and worker is not finished_worker and worker.isRunning():
                 return
@@ -11431,6 +11479,12 @@ class TuningWidget(QWidget):
         if not self.current_brain:
             QMessageBox.warning(self, "No Brain", "Select a brain first")
             return
+        worker = getattr(self, 'region_count_worker', None)
+        if worker is not None and worker.isRunning():
+            QMessageBox.warning(self, "Counting Running",
+                                f"Region counting of {getattr(worker.brain, 'name', worker.brain)} "
+                                "is still running. Wait for it to finish.")
+            return
 
         # Check for classification results (CLASSIFIED cells, not detection candidates!)
         cells_xml = self.current_brain / "5_Classified_Cells" / "cells.xml"
@@ -11459,54 +11513,57 @@ class TuningWidget(QWidget):
             )
             return
 
+        # The label says what is counted (production and the run it came from)
+        self._update_counting_source_label()
+
+        # Step 6 runs in its own thread with no time limit (RegionCountWorker
+        # says why); the window stays usable meanwhile.
+        script = find_script("6_count_regions.py")
+        cmd = [sys.executable, str(script), "--brain", self.current_brain.name]
+        print(f"[MouseBrain] Running region counting on CLASSIFIED cells ({n_cells})")
+        print(f"[MouseBrain] Source: {cells_xml}")
+        print(f"[MouseBrain] Command: {' '.join(cmd)}")
+
         self.region_count_status.setText(f"Status: Running on {n_cells} classified cells...")
         self.region_count_status.setStyleSheet("color: blue;")
         self.run_regions_btn.setEnabled(False)
-        QApplication.processEvents()
 
-        try:
-            # Run 6_count_regions.py via subprocess
-            import subprocess
-            cmd = [
-                sys.executable,
-                str(find_script("6_count_regions.py")),
-                "--brain", self.current_brain.name,
-            ]
+        brain = self.current_brain
+        self.region_count_worker = RegionCountWorker(cmd, brain, cwd=str(Path(script).parent))
+        self.region_count_worker.progress.connect(self._on_region_count_progress)
+        self.region_count_worker.finished.connect(
+            lambda ok, out, brain=brain: self._on_region_count_finished(ok, out, brain))
+        self._hold_brain_list()
+        self.region_count_worker.start()
+        return True
 
-            print(f"[MouseBrain] Running region counting on CLASSIFIED cells ({n_cells})")
-            print(f"[MouseBrain] Source: {cells_xml}")
-            print(f"[MouseBrain] Command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    def _on_region_count_progress(self, line):
+        """Show step 6's latest printed line as the status line."""
+        self.region_count_status.setText(f"Status: {line[:120]}")
 
-            if result.returncode == 0:
-                self.region_count_status.setText("Status: Complete! Loading results...")
-                self.region_count_status.setStyleSheet("color: green;")
-                print(f"[MouseBrain] Region counting output:\n{result.stdout}")
-
-                # Load results and update comparison table
-                self._load_region_comparison()
-
-                # Log to session
-                if self.session_doc:
-                    self.session_doc.log_region_count(self.current_brain.name)
-            else:
-                self.region_count_status.setText("Status: Failed - check console")
-                self.region_count_status.setStyleSheet("color: red;")
-                print(f"[MouseBrain] Region counting STDERR:\n{result.stderr}")
-                QMessageBox.warning(
-                    self, "Region Counting Failed",
-                    f"Error running region counting:\n{result.stderr[:500]}"
-                )
-
-        except subprocess.TimeoutExpired:
-            self.region_count_status.setText("Status: Timeout (>5min)")
+    def _on_region_count_finished(self, success, output, brain):
+        """Step 6 ended. ``brain`` is the brain it counted; its results are
+        shown only while that brain is still the selected one."""
+        self._release_brain_list(getattr(self, 'region_count_worker', None))
+        self.run_regions_btn.setEnabled(True)
+        name = getattr(brain, 'name', str(brain))
+        if not success:
+            self.region_count_status.setText(f"Status: Counting {name} failed - see the console")
             self.region_count_status.setStyleSheet("color: red;")
-        except Exception as e:
-            self.region_count_status.setText(f"Status: Error - {str(e)[:50]}")
-            self.region_count_status.setStyleSheet("color: red;")
-            print(f"[MouseBrain] Region counting error: {e}")
-        finally:
-            self.run_regions_btn.setEnabled(True)
+            QMessageBox.warning(self, "Region Counting Failed",
+                                f"Region counting of {name} failed. Its last output:\n\n"
+                                f"{output[-1500:]}")
+            return
+        if not self._run_brain_is_selected(brain):
+            self.region_count_status.setText(
+                f"Status: Counting of {name} finished; select that brain to see its counts.")
+            self.region_count_status.setStyleSheet("color: green;")
+            return
+        self.region_count_status.setText("Status: Complete! Loading results...")
+        self.region_count_status.setStyleSheet("color: green;")
+        self._load_region_comparison()
+        if self.session_doc:
+            self.session_doc.log_region_count(name)
 
     def _load_region_comparison(self):
         """Load region counts and populate comparison table with eLife reference."""
@@ -11764,6 +11821,17 @@ class TuningWidget(QWidget):
 
     def closeEvent(self, event):
         """Handle widget close - generate session report if active."""
+        # A region count runs in a thread of this window (RegionCountWorker);
+        # closing the window under it would end napari with an error and cut
+        # the count off part-way. So the close waits for the count.
+        counting = getattr(self, 'region_count_worker', None)
+        if counting is not None and counting.isRunning():
+            QMessageBox.warning(
+                self, "Region Counting Running",
+                "Region counting is still running. Wait until the Results tab says it "
+                "finished, then close.")
+            event.ignore()
+            return
         if self.session_doc and self.session_doc.is_active():
             reply = QMessageBox.question(
                 self, "End Session?",
