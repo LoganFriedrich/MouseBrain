@@ -43,6 +43,9 @@ class InsetWidget(QWidget):
 
         # InsetManager (created when base image is loaded)
         self.inset_manager = None
+        # The image (file, stack slice) the manager's base image was taken
+        # from; see bound_to_current_image.
+        self._built_for = None
 
         # Track inset layers
         self.inset_layers: Dict[str, napari.layers.Layer] = {}
@@ -188,9 +191,37 @@ class InsetWidget(QWidget):
         self.show_composite_btn.setEnabled(has_insets)
         self.show_mask_btn.setEnabled(has_insets)
 
+    def current_image_key(self):
+        """(file, stack slice) of the image on screen: the slice index is
+        None for a single image."""
+        parent = self.parent_widget
+        red = getattr(parent, "red_channel", None)
+        slice_idx = None
+        if red is not None and getattr(red, "ndim", 2) == 3:
+            try:
+                slice_idx = int(self.viewer.dims.current_step[0])
+            except Exception:
+                slice_idx = None
+        return (getattr(parent, "current_file", None),
+                getattr(parent, "current_folder", None), slice_idx)
+
+    def bound_to_current_image(self) -> bool:
+        """True when the manager was built from the image (and stack slice)
+        now on screen. WHY: insets are aligned to the base image the manager
+        holds; detection with a manager built on another image or slice puts
+        that image's nuclei on this one."""
+        return self.inset_manager is not None and self._built_for == self.current_image_key()
+
     def on_base_loaded(self):
-        """Called when base image is loaded in parent widget."""
+        """Called when base image is loaded in parent widget.
+
+        The previous manager and its insets are dropped FIRST, whatever
+        happens next. WHY: when no base image could be built, or building
+        failed, the old manager used to stay, bound to the previous image,
+        and the next detection used it."""
         from ..core.insets import InsetManager
+
+        self.forget_base()
 
         # Get current slice if data is a 3D stack (from folder loading)
         # This ensures InsetManager works with 2D base images
@@ -208,11 +239,8 @@ class InsetWidget(QWidget):
         if base_image is None:
             return
 
-        self.inset_manager = InsetManager(base_image, self.parent_widget.metadata)
-
-        # Clear previous insets
-        self.insets_table.setRowCount(0)
-        self.inset_layers.clear()
+        self.inset_manager = InsetManager(base_image, self.parent_widget.metadata or {})
+        self._built_for = self.current_image_key()
 
         self._update_ui_state()
 
@@ -226,6 +254,7 @@ class InsetWidget(QWidget):
         drawing). WHY: a manager left in place was used by the next
         detection on whatever image was then on screen."""
         self.inset_manager = None
+        self._built_for = None
         self.insets_table.setRowCount(0)
         self.inset_layers.clear()
         self._update_ui_state()

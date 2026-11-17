@@ -561,6 +561,9 @@ class BrainSliceWidget(QWidget):
         # Inset widget (imported here to avoid circular import)
         from .inset_widget import InsetWidget
         self.inset_widget = InsetWidget(self)
+        # The line beside Run Detection says whether insets will be used.
+        self.inset_widget.insets_changed.connect(self._refresh_inset_status)
+        self.inset_widget.use_insets_check.toggled.connect(self._refresh_inset_status)
         self.tabs.addTab(self.inset_widget, "3. Insets")
 
         self.tabs.addTab(self._scrollable(self._create_coloc_tab()), "4. Detect && Classify")
@@ -1316,6 +1319,7 @@ class BrainSliceWidget(QWidget):
         self.backend_combo = QComboBox()
         self.backend_combo.addItems(['Threshold', 'Threshold+LoG', 'StarDist', 'Cellpose'])
         self.backend_combo.currentTextChanged.connect(self._on_backend_changed)
+        self.backend_combo.currentTextChanged.connect(self._refresh_inset_status)
         backend_row.addWidget(self.backend_combo)
         backend_layout.addLayout(backend_row)
 
@@ -1793,6 +1797,10 @@ class BrainSliceWidget(QWidget):
         self.detect_btn.clicked.connect(self._run_detection)
         self.detect_btn.setEnabled(False)
         nuc_layout.addWidget(self.detect_btn)
+        # Whether Run Detection will use the insets (see _inset_detection_plan)
+        self.inset_status_label = QLabel("")
+        self.inset_status_label.setWordWrap(True)
+        nuc_layout.addWidget(self.inset_status_label)
 
         # ── Detection Results & Metrics ──
         self.detect_result_label = QLabel("")
@@ -5947,11 +5955,11 @@ class BrainSliceWidget(QWidget):
 
             # Check if we should use inset detection
             inset_settings = self.inset_widget.get_detection_settings()
-            use_insets = (
-                inset_settings['use_insets'] and
-                inset_settings['inset_manager'] is not None and
-                len(inset_settings['inset_manager'].insets) > 0
-            )
+            use_insets, inset_note = self._inset_detection_plan(backend)
+            self._refresh_inset_status()
+            if use_insets:
+                # Recorded with the run, so its row says insets were used.
+                params['insets_used'] = len(inset_settings['inset_manager'].insets)
 
             # The input is checked BEFORE the tracker row is written. WHY: a
             # row logged first and then abandoned by this check stayed
@@ -5995,6 +6003,8 @@ class BrainSliceWidget(QWidget):
                 # Run inset-aware detection (synchronous for now)
                 self._run_inset_detection(params, inset_settings)
             else:
+                if inset_note:
+                    self.status_label.setText(f"Running detection... ({inset_note})")
                 print(f"[BrainSlice] Starting detection worker: image shape={image.shape}, dtype={image.dtype}")
                 from .workers import DetectionWorker
                 self.detection_worker = DetectionWorker(image, params)
@@ -6013,6 +6023,46 @@ class BrainSliceWidget(QWidget):
             self._analysis_running = None
             self._fail_run_if_unfinished(run_id, f"detection could not start: {e}")
             QMessageBox.critical(self, "Detection Error", f"Failed to start detection:\n{e}")
+
+    def _inset_detection_plan(self, backend: str):
+        """(use the insets?, the reason they are not used or None) for a
+        detection with `backend` (lower case) on the image on screen.
+
+        Insets are used only when they are switched on and loaded, the
+        backend is StarDist, and they were aligned to the image (and stack
+        slice) now on screen. WHY StarDist only: the inset pipeline runs a
+        StarDist model; a threshold backend used to fail with a KeyError
+        whenever matching inset files happened to sit beside the image, and
+        Cellpose would have been run as StarDist under a Cellpose row. WHY
+        the image check: the inset manager is built when an image loads;
+        one built on another image or slice would put that image's nuclei
+        on this one."""
+        settings = self.inset_widget.get_detection_settings()
+        manager = settings.get('inset_manager')
+        n = len(manager.insets) if manager is not None else 0
+        if not settings.get('use_insets') or n == 0:
+            return False, None
+        if backend != 'stardist':
+            return False, (f"{n} inset(s) ignored: inset detection works only "
+                           f"with StarDist")
+        bound = getattr(self.inset_widget, 'bound_to_current_image', None)
+        if bound is not None and not bound():
+            return False, (f"{n} inset(s) ignored: they were aligned to another "
+                           f"image or stack slice -- reload the image to use them")
+        return True, None
+
+    def _refresh_inset_status(self, *_):
+        """The line beside Run Detection: insets ON (n), or why not used."""
+        label = getattr(self, 'inset_status_label', None)
+        combo = getattr(self, 'backend_combo', None)
+        if label is None or combo is None:
+            return
+        use, note = self._inset_detection_plan(combo.currentText().lower())
+        if use:
+            n = len(self.inset_widget.get_detection_settings()['inset_manager'].insets)
+            label.setText(f"Inset detection ON ({n} insets)")
+        else:
+            label.setText(note or "")
 
     def _run_inset_detection(self, params: Dict[str, Any], inset_settings: Dict[str, Any]):
         """Run detection using insets at full resolution."""
