@@ -596,6 +596,38 @@ def fail_runs_left_open(widget, why: str = "napari was closed before the run fin
     return changed
 
 
+def _signal_channel_of(data_folder, legacy="load"):
+    """(signal channel number, conflict text) from data_folder/metadata.json.
+
+    brain_context.channel_roles is the one rule. When the metadata
+    contradicts itself (e.g. channels_swapped true while
+    channels.signal_channel is 0) no rule here decides which is right:
+    each caller keeps what it did before this rule existed -- Load shows
+    ch1 as the signal if any key says ch1, classification and the
+    pipeline steps follow channels.signal_channel -- and the conflict is
+    printed and returned so the caller can show it."""
+    from mousebrain.brain_context import channel_roles
+    meta = {}
+    meta_path = Path(data_folder) / "metadata.json"
+    if meta_path.exists():
+        try:
+            with open(meta_path, 'r') as f:
+                meta = json.load(f)
+        except Exception as e:
+            print(f"  Warning: Could not read metadata: {e}")
+    roles = channel_roles(meta)
+    if roles.signal is not None:
+        return roles.signal, ""
+    print(f"  [!] {meta_path}: {roles.conflict}")
+    if legacy == "load":
+        legacy = 1 if (meta.get('channels_swapped') or
+                       (meta.get('channels') or {}).get('signal_channel') == 1 or
+                       meta.get('signal_channel') in (1, "ch1")) else 0
+    else:
+        legacy = (meta.get('channels') or {}).get('signal_channel', 0) or 0
+    return int(legacy), roles.conflict
+
+
 class TuningWidget(QWidget):
     """Widget for tuning BrainGlobe settings."""
 
@@ -7507,10 +7539,8 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Registered images missing", str(e))
             return
 
-        if self.metadata:
-            signal_ch = self.metadata.get('channels', {}).get('signal_channel', 0)
-        else:
-            signal_ch = 0
+        # The same rule as Load and detection (brain_context.channel_roles)
+        signal_ch, _conflict = _signal_channel_of(data_folder, legacy="pipeline")
         signal_path = data_folder / f"ch{signal_ch}"
 
         if not signal_path.exists():
@@ -8372,8 +8402,15 @@ class TuningWidget(QWidget):
                     btn.setEnabled(False)
             self.load_metadata()
             self.parse_voxel_from_filename()
-            self.brain_status_label.setText(f"Selected: {self.current_brain.name}")
-            self.brain_status_label.setStyleSheet("color: #2196F3;")
+            conflict = self._set_swap_from_metadata()
+            if conflict:
+                self.brain_status_label.setText(
+                    f"Selected: {self.current_brain.name} -- [!] {conflict}. "
+                    "Check which channel shows the cells before tuning.")
+                self.brain_status_label.setStyleSheet("color: orange;")
+            else:
+                self.brain_status_label.setText(f"Selected: {self.current_brain.name}")
+                self.brain_status_label.setStyleSheet("color: #2196F3;")
 
             # Start session documentation for this brain
             if self.session_doc:
@@ -8448,6 +8485,41 @@ class TuningWidget(QWidget):
             self.approval_status.setStyleSheet("color: orange;")
         self.approval_status.setWordWrap(True)
 
+    def _set_swap_from_metadata(self):
+        """Set the Swap checkbox from the selected brain's channel roles.
+
+        Detection read from disk follows the checkbox; it started checked for
+        every brain and was set from the metadata only when the old
+        channels_swapped key existed, and was never reset for the next brain.
+        Now it is set every time a brain is selected, from the folder Load
+        would show (brain_context.channel_roles). For metadata that
+        contradicts itself the checkbox does what it did before the rule
+        (follows channels_swapped when the metadata has it), and the conflict
+        is returned for the status line."""
+        swap = getattr(self, 'swap_channels', None)
+        if swap is None or not self.current_brain:
+            return ""
+        from mousebrain.brain_context import channel_roles
+        from mousebrain.config import RegisteredImagesMissing, registered_input
+        try:
+            _source, folder, meta = registered_input(
+                self.current_brain, fallback=("manual", "cropped", "full"))
+        except RegisteredImagesMissing:
+            return ""
+        roles = channel_roles(meta if folder is not None else {})
+        if roles.signal is None:
+            print(f"[MouseBrain] [!] {self.current_brain.name}: {roles.conflict}")
+            # What the widget did before the rule existed, so a contradicting
+            # brain is not tested on a stale setting left by the previous one:
+            # the checkbox followed channels_swapped when the brain's metadata
+            # had it.
+            legacy = (getattr(self, 'metadata', None) or {}).get('channels_swapped')
+            if legacy is not None:
+                swap.setChecked(bool(legacy))
+            return roles.conflict
+        swap.setChecked(roles.signal == 1)
+        return ""
+
     def _image_folder_for_load(self):
         """(source, folder) of the images Load shows and Convert to Zarr
         caches, or None after telling the person why there is none.
@@ -8503,24 +8575,11 @@ class TuningWidget(QWidget):
             return
         source, data_folder = found
 
-        # Check metadata for which channel is signal
-        # Default: ch0=signal, ch1=background
-        # If channels_swapped or signal_channel=1, flip them
-        metadata_path = data_folder / "metadata.json"
-        channels_swapped = False
-        if metadata_path.exists():
-            try:
-                with open(metadata_path, 'r') as f:
-                    meta = json.load(f)
-                # Check either channels_swapped flag or signal_channel field
-                if meta.get('channels_swapped', False):
-                    channels_swapped = True
-                elif meta.get('channels', {}).get('signal_channel') == 1:
-                    channels_swapped = True
-                elif meta.get('signal_channel') == 1:
-                    channels_swapped = True
-            except Exception as e:
-                print(f"  Warning: Could not read metadata: {e}")
+        # Which channel is the signal: ONE rule for Load, detection and
+        # classification (brain_context.channel_roles), read from the metadata
+        # of the folder being loaded.
+        signal_ch, conflict = _signal_channel_of(data_folder)
+        channels_swapped = signal_ch == 1
 
         if channels_swapped:
             signal_path = data_folder / "ch1"
@@ -9796,12 +9855,8 @@ class TuningWidget(QWidget):
                         if 'n_free_cpus' in det:
                             self.n_free_cpus.setValue(det['n_free_cpus'])
 
-                    # Check if channels are swapped (from manual crop widget)
-                    if 'channels_swapped' in self.metadata:
-                        self.swap_channels.setChecked(self.metadata['channels_swapped'])
-                        if self.metadata['channels_swapped']:
-                            print(f"[MouseBrain] Metadata says channels are swapped (signal=ch1)")
-
+                    # The Swap checkbox is set by on_brain_changed from the
+                    # one channel rule (_set_swap_from_metadata), not here.
                     return
                 except Exception as e:
                     print(f"[MouseBrain] [!] Could not read {meta_path}: {e}")
