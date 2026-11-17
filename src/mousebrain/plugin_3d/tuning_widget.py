@@ -858,8 +858,9 @@ class TuningWidget(QWidget):
         # Tab 2: Cropping
         self.tabs.addTab(self.create_crop_tab(), "2. Crop")
 
-        # Tab 3: Registration QC
-        self.tabs.addTab(self.create_qc_tab(), "3. Registration")
+        # Tab 3: Registration QC (its index is kept: opening the tab
+        # refreshes the approval status, see _on_tab_changed)
+        self._registration_tab_index = self.tabs.addTab(self.create_qc_tab(), "3. Registration")
 
         # Tab 4: Detection Tuning
         self.tabs.addTab(self.create_detection_tab(), "4. Detection")
@@ -895,6 +896,11 @@ class TuningWidget(QWidget):
 
     def _on_tab_changed(self, index):
         """Handle tab changes - auto-refresh data for certain tabs."""
+        # The Registration tab: re-read the approval status, so the label
+        # (and the registration Approve will sign) is what is in the folder
+        # now, not what was there when the brain was selected.
+        if index == getattr(self, '_registration_tab_index', None) and self.current_brain:
+            self._update_registration_status()
         # Tab 9 (Results) is index 8 - auto-refresh the results views
         if index == 8:
             self._refresh_all_results_views()
@@ -8186,8 +8192,15 @@ class TuningWidget(QWidget):
         # (mousebrain.registration_approval): an approval of an earlier
         # registration of the brain is shown as such, not as APPROVED.
         from mousebrain.registration_approval import (
-            APPROVED, NEEDS_REGISTRATION, NOT_REGISTERED, UNAPPROVED, approval_state)
-        state, text = approval_state(self.current_brain / "3_Registered_Atlas")
+            APPROVED, NEEDS_REGISTRATION, NOT_REGISTERED, UNAPPROVED, approval_state,
+            fingerprint_id, registration_fingerprint)
+        reg = self.current_brain / "3_Registered_Atlas"
+        # Which registration this label describes. Approve signs only that
+        # one (approve(expected_id=...)): the label used to go stale until the
+        # brain changed, and Approve signed whatever was in the folder at the
+        # click -- also a registration a script finished after the person looked.
+        self._shown_registration_id = fingerprint_id(registration_fingerprint(reg))
+        state, text = approval_state(reg)
         if state == APPROVED:
             self.approval_status.setText(f"Status: APPROVED ({text})")
             self.approval_status.setStyleSheet("color: green;")
@@ -8737,6 +8750,11 @@ class TuningWidget(QWidget):
             print(f"  No registration boundaries found at {boundaries_path}")
             return False
 
+        # The registration whose pictures are about to be shown. Approve signs
+        # only this one (see approve_registration).
+        from mousebrain.registration_approval import fingerprint_id, registration_fingerprint
+        shown_before = fingerprint_id(registration_fingerprint(atlas_dir))
+
         try:
             import tifffile
             import json
@@ -8823,6 +8841,12 @@ class TuningWidget(QWidget):
                 print(f"    Region labels shape: {atlas_labels.shape}")
 
             print(f"  [OK] Registration QC view ready")
+            # The status label now describes what is in the folder, and the
+            # pictures' registration is remembered: Approve refuses while the
+            # pictures in the viewer are of another registration than the one
+            # in the folder (it changed while they loaded, or later).
+            self._qc_view_registration_id = shown_before
+            self._update_registration_status()
             self.brain_status_label.setText(f"Registration QC: {self.current_brain.name}")
             self.brain_status_label.setStyleSheet("color: #4CAF50;")
             return True
@@ -9761,10 +9785,37 @@ class TuningWidget(QWidget):
         # registering again needs a new approval. It used to be an empty file
         # that could be written before any registration existed -- the
         # registration made later then inherited it.
-        from mousebrain.registration_approval import approve
+        #
+        # And it names the registration the person was SHOWN (the status
+        # label or the QC view, _shown_registration_id): when the folder now
+        # holds another one -- registered again by a script since they looked
+        # -- nothing is approved and the label is refreshed to show it.
+        from mousebrain.registration_approval import RegistrationChanged, approve
+        shown = getattr(self, '_shown_registration_id', None)
+        if shown is None:
+            self._update_registration_status()
+            QMessageBox.warning(
+                self, "Look first",
+                "The registration status had not been shown for this brain yet. "
+                "It is shown now: look at the registration, then press Approve again.")
+            return
+        qc_shown = getattr(self, '_qc_view_registration_id', None)
+        if qc_shown is not None and qc_shown != shown:
+            QMessageBox.warning(
+                self, "Registered again since you looked",
+                "Nothing was approved: the registration pictures in the viewer are "
+                "of an earlier registration of this brain. Load the brain again "
+                "(Registration QC mode), look at the new registration, then approve it.")
+            return
         try:
             approve(self.current_brain / "3_Registered_Atlas",
-                    note="approved in the napari Setup & Tuning widget")
+                    note="approved in the napari Setup & Tuning widget",
+                    expected_id=shown)
+        except RegistrationChanged as e:
+            self._update_registration_status()
+            QMessageBox.warning(self, "Registered again since you looked",
+                                f"Nothing was approved: {e}")
+            return
         except ValueError as e:
             QMessageBox.warning(self, "Nothing to approve", str(e))
             return

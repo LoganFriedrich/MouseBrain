@@ -91,7 +91,11 @@ A re-crop made after the rejection makes the registration OUT_OF_DATE, which
 the batches do register again: the change a rejection asks for has been made.
 
 What happens to approvals:
-  * approve()                    -- a person approved what is there now
+  * approve()                    -- a person approved what is there now; a
+                                    window passes ``expected_id`` (the
+                                    registration it showed) and approve()
+                                    refuses when the folder now holds another
+                                    one (RegistrationChanged)
   * reject()                     -- a person turned the registration down; the
                                     rejection is recorded and any approval
                                     goes into ``_archive/``
@@ -556,9 +560,20 @@ def _who(name: Optional[str]) -> str:
         return "unknown"
 
 
+class RegistrationChanged(ValueError):
+    """approve() refused: the folder holds another registration than the one
+    the person was shown (registered again since they looked)."""
+
+
 def approve(reg_folder, approved_by: Optional[str] = None, note: str = "",
-            allow_rejected: bool = False) -> dict:
+            allow_rejected: bool = False, expected_id: Optional[str] = None) -> dict:
     """Record that a person approved the registration in this folder.
+
+    ``expected_id``: the fingerprint_id() of the registration the person was
+    shown ("" when they were shown none). When given and the folder now holds
+    another registration, RegistrationChanged is raised and nothing is
+    written: the click was about what they saw, and a registration finished
+    by a script after they looked has not been seen by anyone.
 
     Call this only from something a person did (a button, the approval
     script's yes/no question). Raises ValueError when there is nothing a
@@ -575,6 +590,11 @@ def approve(reg_folder, approved_by: Optional[str] = None, note: str = "",
     current = registration_fingerprint(reg)
     if current is None:
         raise ValueError("no registration to approve in %s (brainreg.json not found)" % reg)
+    if expected_id is not None and fingerprint_id(current) != expected_id:
+        raise RegistrationChanged(
+            "the registration in %s is not the one you were shown: it was "
+            "registered again since. Look at the new registration, then "
+            "approve it." % reg)
     state, text = approval_state(reg)
     if state in (RUNNING, INCOMPLETE, OUT_OF_DATE):
         raise ValueError("cannot approve the registration in %s: %s" % (reg, text))

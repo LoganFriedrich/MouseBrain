@@ -960,6 +960,16 @@ folder now. What that means for you:
   the pipeline dashboard, or "Yes, approve it" in RUN_PIPELINE.
 - **You cannot approve before registering.** With no `brainreg.json` there is
   nothing to approve, and the buttons say so.
+- **Approve in Setup & Tuning signs the registration you were shown.** The
+  status line on the Registration tab is read again every time you open that
+  tab, when you select a brain, after Approve or Reject, and when you load a
+  brain in Registration QC mode. Approve signs only the registration that line
+  (and, if you loaded them, the QC pictures in the viewer) showed you. If the
+  brain was registered again since then -- for example by a batch that
+  finished while you were looking -- nothing is approved: a warning
+  "Registered again since you looked" appears and the status line now shows
+  the new registration. Look at the new one (load the brain again in
+  Registration QC mode) and press Approve again.
 - **Rejecting is recorded.** Saying the registration is NOT good -- the Reject
   button in Setup & Tuning, the **Reject** button in the pipeline dashboard's
   "Does the registration look good?", "No, reject it (recorded)" in

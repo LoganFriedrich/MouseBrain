@@ -42,6 +42,10 @@ PER_BRAIN_DEFAULTS = {
     "_last_class_output": None,
     "_last_class_exp_id": None,
     "_auto_classify_triggered": False,
+    # Which registration the approval label / the QC pictures showed: Approve
+    # signs only that one (tuning_widget.approve_registration).
+    "_shown_registration_id": None,
+    "_qc_view_registration_id": None,
 }
 
 
