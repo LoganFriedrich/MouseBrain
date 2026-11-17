@@ -91,6 +91,10 @@ Classification" and confirm. What happens:
    kept, not deleted.
 2. The run's `cells.xml` and `rejected.xml` are copied into `5_Classified_Cells`,
    with `promoted_from.json` naming the run, its folder, who promoted it and when.
+   The copies carry the time of the promotion, not the time the run was made.
+   Why: the copies used to keep the run's own, older time, so counts made after
+   the run but before the promotion looked newer than the classification and
+   were never shown as stale.
 3. The run's tracker row is tagged `promoted_to_production`.
 4. Region counts made before the promotion are now older than the
    classification, so RUN_PIPELINE and the pipeline dashboard show them as stale
@@ -98,7 +102,7 @@ Classification" and confirm. What happens:
 
 The button only promotes the last run made in this napari session, for the brain
 it was made on. Running step 5 again also replaces production (that is what step
-5 is for).
+5 is for); it archives the files it replaces in the same way.
 
 ## Step 3: Count by Region
 

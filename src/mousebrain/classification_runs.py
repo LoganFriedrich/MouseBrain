@@ -261,7 +261,11 @@ def promote_to_production(run_folder, brain_folder, exp_id: Optional[str] = None
     copied = []
     for name in ("cells.xml", "rejected.xml"):
         if (run_folder / name).is_file():
-            shutil.copy2(str(run_folder / name), str(prod / name))
+            # copyfile, not copy2: the copy gets the time it was written
+            # (stamped by the file server). copy2 kept the run's own, older
+            # time, so counts made after that run but before the promotion
+            # looked newer than cells.xml and were never shown stale.
+            shutil.copyfile(str(run_folder / name), str(prod / name))
             copied.append(name)
     record = write_production_record(brain_folder, exp_id, run_folder, copied, archived,
                                      how="promoted")
