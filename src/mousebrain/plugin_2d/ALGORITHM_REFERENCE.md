@@ -519,6 +519,14 @@ A particle-analysis row also records the positive rule, `pa_min_pct_above_bg` (a
 particle is positive when at least this % of its pixels are above the background),
 and how many particles it classified positive, `pa_positive_particles`.
 
+**Rows written by the particle tab's batch** (Run Batch Analysis, see "The particle
+tab's batch" below) have `notes` starting `GUI batch of folder <folder name>`, and
+the image's file name (without extension) as `sample_id`. When the batch ran with a
+Background of 0 it classified nothing (it does not fall back to the median as a
+single image does): `pa_bg_method` is `none` and `pa_bg_value`,
+`pa_mean_intensity` and `pa_positive_particles` are blank. Older batches left no
+rows at all.
+
 **Re-classifying particles.** After Run Particle Analysis, changing the Background
 value or pressing Apply next to Min % above BG classifies the SAME particles again
 and saves the new classification over the image's `particles.csv` at once. Once the
@@ -712,6 +720,8 @@ which, and nothing changes:
 - `<file>: not opened -- the batch is waiting for ROIs. Finish it with Count & Next or
   Skip, then open the image.` The batch's ROI drawing has no way back in once left,
   so the image is refused rather than the batch abandoned.
+- `<file>: not opened -- the batch analysis is still running. ...` -- Run Batch
+  Analysis is working through its folder (see "The particle tab's batch").
 
 **If an image cannot be opened** (a damaged or unreadable file), a message says so and
 the window is left with **no image open**: the picture is cleared and the analysis
@@ -825,15 +835,116 @@ were kept; they are the last sample appended then):`.) Spreadsheet programs show
 `#` lines as text rows above the table; skip them when reading the table.
 
 **Not registered yet.** Results saved by this window (the `_analysis` folders, the
-folder-wide CSVs and the measurements CSV a colocalization writes under the subject's
-`4_Quantified` folder) are not entered in the analysis registry, so they do not reach
-the database. Whether and where they should be registered is not decided yet.
+folder-wide CSVs, the measurements CSV a colocalization writes under the subject's
+`4_Quantified` folder, and the CSVs Export Batch Results writes) are not entered in
+the analysis registry, so they do not reach the database. Whether and where they
+should be registered is not decided yet. The batch's images do get tracker rows.
 
 **Results saved before this change** may hold leftovers: a `particles.csv` or
 `rois.json` from an earlier analysis of the same image, kept when a later analysis
 found nothing or the ROIs were cleared. They cannot be told apart from current ones
 automatically. If an image's saved particles or ROIs look wrong, analyze it again; the
 new save replaces them.
+
+### The particle tab's batch (Select Batch Folder, Run Batch Analysis)
+
+Tune the particle settings on one image, then **Select Batch Folder** (every `.nd2`,
+`.tif` and `.tiff` in it) and click **Run Batch Analysis**. Each image is analyzed
+with the settings the tab held when you clicked Run; then you draw ROIs on each image
+in turn and export.
+
+**While the batch runs** (the progress bar is showing), the window answers clicks
+only between images, and:
+
+- **Select Batch Folder**, **Run Batch Analysis** and **Export Batch Results** are
+  off; Select Batch Folder says `Batch folder not changed: the batch analysis is
+  still running.`
+- no image can be opened and no other analysis started (Run Detection, Colocalize,
+  Run Particle Analysis ...): the status bar says `... the batch analysis is still
+  running`. Wait for the progress bar to go away.
+- Changing a setting on the tab does not change the batch: it uses what the tab
+  held when Run was clicked, and Export Batch Results saves exactly those settings
+  (`..._settings.json`). Load Settings changes the tab only, never what an earlier
+  batch is recorded with.
+
+WHY: the run used to keep its folder and results in the window itself while it
+answered clicks, so choosing another folder part-way mixed two batches under the
+first one's file names.
+
+**When the run ends**, the status line says how many images were analyzed, and a
+message lists every image that could not be analyzed (`could not be read`, `not
+enough channels ...`, or the error). Each image also gets one row in the
+calibration tracker (see "Rows written by the particle tab's batch" above), written
+once it is analyzed, as `completed` or `failed` -- never left `started`. If the
+tracker refuses a row (most often `calibration_runs.csv` is open in a spreadsheet
+program), the batch stops trying, so the window is not frozen again for every image,
+and the status line ends `[!] <n> image(s) NOT logged to the calibration tracker
+(<the reason>)`. The analysis itself carries on.
+
+**Drawing ROIs.** The image that was open before the batch is first saved to its
+`_analysis` folder and closed: the window then has no image of its own until you
+open one after the batch. (Before this change the batch image's particles were put in
+the window under the previous image's name, and the next save wrote them into that
+image's `_analysis` folder.) For each batch image: draw ROIs, then **Count & Next**
+(no ROI drawn counts as "no ROI drawn"), or **Skip**. **Previous** goes back; skipping
+an image you already counted keeps its count. While the batch waits for ROIs no
+other image can be opened and Select Batch Folder is refused.
+
+**Export Batch Results** writes three files:
+
+| File | What it holds |
+|---|---|
+| `<name>_summary.csv` | one row per ROI of every counted image, and ONE row for every other image of the folder; the `status` column says what happened to each |
+| `<name>_detail.csv` | every particle of the counted images, with the ROI it fell in |
+| `<name>_settings.json` | the settings the batch ran with |
+
+`status` in the summary is one of:
+
+| `status` | Meaning |
+|---|---|
+| `counted` | ROIs drawn and counted; `roi`, `total`, `positive`, `negative`, `fraction` are filled |
+| `no ROI drawn` | Count & Next with no ROI drawn: nothing counted |
+| `skipped` | Skip was clicked |
+| `not reviewed` | the ROI drawing never reached this image |
+| `failed: <why>` | the image could not be analyzed |
+
+Older summaries had no `status` column and left out every image that was not
+counted; an image missing from one may have been skipped, not counted, or unreadable.
+
+### Insets in Run Detection
+
+Insets (tab 3) are high-resolution images of parts of the slice. When an image opens,
+inset files with matching names in the same folder are loaded automatically, and
+"Use insets for detection" is on by default. The line under **Run Detection** says
+what will happen:
+
+- `Inset detection ON (<n> insets)` -- the detection runs on the insets at full
+  resolution (and on the rest of the slice unless that box is unticked). Its tracker
+  row's `det_preprocessing` holds `"insets_used": <n>`.
+- `<n> inset(s) ignored: inset detection works only with StarDist` -- the backend is
+  Threshold, Threshold+LoG or Cellpose: the ordinary detection runs on the slice.
+  (It used to fail with an error instead.)
+- `<n> inset(s) ignored: they were aligned to another image or stack slice -- reload
+  the image to use them` -- for a folder stack, the insets belong to the slice that
+  was on screen when they were loaded. Go back to that slice, or reload.
+
+Opening an image, a failed load, and the batch's ROI drawing all drop the insets of
+the previous image first, so a detection never uses insets aligned to another image.
+
+### The nucleus size filter (Min/Max Area, Detect tab)
+
+When an image opens and its pixel size is known, Min/Max Area are set to nuclei of 5
+to 30 um across at that pixel size (and the Cellpose diameter to 12 um). The grey
+line under them shows the area in um^2.
+
+Once you **type** a Min or Max Area, your values are kept for every image you open
+after it, whatever its pixel size -- check the um^2 line when the pixel size changes.
+Click **Auto size** to go back to setting them from each image's pixel size.
+
+WHY: setting the boxes from the pixel size used to count as typing them, so after
+the first image they were never set from a pixel size again (an image from another
+objective was filtered with the first image's pixel numbers); while Browse File and
+Prev/Next threw away values a person had typed.
 
 ### Several windows and the batch at once
 
