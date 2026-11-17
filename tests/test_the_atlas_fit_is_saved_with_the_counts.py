@@ -64,6 +64,10 @@ class _FakeQuantWorker:
     def start(self):
         pass
 
+    def isRunning(self):
+        # No thread: each test reports the result itself (see _report).
+        return False
+
 
 class _Check:
     def __init__(self, on):
@@ -140,8 +144,13 @@ def _widget(tmp_path, export, tracker="csv", atlas_loaded=True):
         results_table=_Table(),
         region_counts=None,
         _on_quant_progress=lambda *_a: None,
+        _analysis_running=None,
+        quant_worker=None,
     )
     w._get_current_slice = lambda arr: arr
+    for name in ("_refuse_if_analysis_running", "_analysis_in_progress"):
+        if hasattr(BrainSliceWidget, name):
+            setattr(w, name, types.MethodType(getattr(BrainSliceWidget, name), w))
     w._finish_atlas_fit_record = types.MethodType(
         getattr(BrainSliceWidget, "_finish_atlas_fit_record", lambda self, s: None), w)
     w._on_quant_finished = types.MethodType(BrainSliceWidget._on_quant_finished, w)

@@ -204,6 +204,10 @@ def _widget(tmp_path):
         green_channel=np.ones((8, 8)),
         red_channel=np.ones((8, 8)),
         last_run_id=None,
+        _coloc_run_id=None,
+        _detection_run_id=None,
+        _analysis_running=None,
+        quant_worker=None,
         session_run_ids=[],
         _unwritable_run_ids=set(),
         _tracker_error=None,
@@ -219,7 +223,8 @@ def _widget(tmp_path):
     w.bg_local_check = SimpleNamespace(isChecked=lambda: False)
     for name in ("_fail_run_if_unfinished", "_result_not_recorded", "_saving_to_tracker",
                  "_open_tracker", "_run_colocalization", "_run_dual_colocalization",
-                 "_on_dual_coloc_finished", "_on_coloc_finished", "_coloc_could_not_start"):
+                 "_on_dual_coloc_finished", "_on_coloc_finished", "_coloc_could_not_start",
+                 "_refuse_if_analysis_running", "_analysis_in_progress"):
         if hasattr(BrainSliceWidget, name):
             setattr(w, name, types.MethodType(getattr(BrainSliceWidget, name), w))
     return w
@@ -235,7 +240,7 @@ def test_a_colocalization_refused_by_its_input_check_leaves_no_started_row(tmp_p
 
 def test_a_dual_colocalization_whose_csv_cannot_be_saved_does_not_stay_started(tmp_path, monkeypatch):
     w = _widget(tmp_path)
-    w.last_run_id = w.tracker.log_colocalization(sample_id=SAMPLE, signal_channel="dual")
+    w._coloc_run_id = w.last_run_id = w.tracker.log_colocalization(sample_id=SAMPLE, signal_channel="dual")
     monkeypatch.setattr(slice_config, "get_sample_dir", lambda stem: tmp_path / "subject")
     w._visualize_dual_colocalization = lambda m: None
 
@@ -287,7 +292,7 @@ def test_a_result_the_tracker_file_refuses_is_reported_quickly_and_the_row_is_sa
     w = _widget(tmp_path)
     if hasattr(w, "_open_tracker"):
         w._open_tracker()  # the tracker exactly as the window opens it
-    w.last_run_id = w.tracker.log_colocalization(sample_id=SAMPLE, signal_channel="dual")
+    w._coloc_run_id = w.last_run_id = w.tracker.log_colocalization(sample_id=SAMPLE, signal_channel="dual")
     monkeypatch.setattr(slice_config, "get_sample_dir", lambda stem: tmp_path / "subject")
     w._visualize_dual_colocalization = lambda m: None
     writes = []  # whole-file rewrites (this code makes every status change one)
@@ -353,7 +358,7 @@ def test_an_inset_detection_the_tracker_file_refuses_is_still_shown_and_said_not
         add_points=lambda *a, name=None, **k: added.append(name))
     w.detect_btn = SimpleNamespace(setEnabled=lambda _b: None)
     w.detect_result_label = SimpleNamespace(setText=lambda _t: None)
-    w.last_run_id = w.tracker.log_detection(sample_id=SAMPLE, model="2D_versatile_fluo",
+    w._detection_run_id = w.last_run_id = w.tracker.log_detection(sample_id=SAMPLE, model="2D_versatile_fluo",
                                             prob_thresh=0.5, nms_thresh=0.4,
                                             min_area=1, max_area=100, status="started")
     writes = []
@@ -413,7 +418,7 @@ def test_a_colocalization_result_that_cannot_be_handled_is_failed_not_left_start
     # tracker was updated: the error left the Qt slot, the row stayed
     # 'started' forever and nothing on screen said so.
     w = _widget(tmp_path)
-    w.last_run_id = w.tracker.log_colocalization(sample_id=SAMPLE, signal_channel="green")
+    w._coloc_run_id = w.last_run_id = w.tracker.log_colocalization(sample_id=SAMPLE, signal_channel="green")
     w.coloc_btn_enabled = None
     summary = {"positive_cells": 1, "negative_cells": 0}  # no 'background_used'
 
@@ -429,7 +434,7 @@ def test_a_colocalization_result_that_cannot_be_handled_is_failed_not_left_start
 def test_a_dual_colocalization_result_that_cannot_be_handled_is_failed_not_left_started(
         tmp_path, monkeypatch):
     w = _widget(tmp_path)
-    w.last_run_id = w.tracker.log_colocalization(sample_id=SAMPLE, signal_channel="dual")
+    w._coloc_run_id = w.last_run_id = w.tracker.log_colocalization(sample_id=SAMPLE, signal_channel="dual")
     w.current_file = None  # no CSV to save; the error comes from drawing the result
 
     def cannot_draw(_m):

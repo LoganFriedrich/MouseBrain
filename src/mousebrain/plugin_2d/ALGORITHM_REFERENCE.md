@@ -569,6 +569,27 @@ The most common reason is that mousebrain does not know where the lab's data liv
 creating a new, empty tracker in a temporary folder, where runs would look logged
 and be lost. Check with `mousebrain --paths`.
 
+### One analysis at a time in the napari window
+
+The window runs one analysis at a time: Detect Nuclei, Colocalize, Run Quantification
+and Run Particle Analysis. While one is going (from the click until its result has
+been shown and recorded), clicking another one does nothing except the status bar
+saying, for example,
+`Colocalization not started: detection is still running. Wait for it to finish, then click again.`
+Wait for the first one's result, then click again. Nothing has been logged for the
+refused click, so there is no row to clean up.
+
+WHY: each run writes its result into its own row of the tracker. When two ran at
+once, the window used to write the first one's result into the second one's row: a
+detection's nucleus count landed in a colocalization row (which then said
+`completed` with no colocalization result) and the detection row stayed `started`.
+And a colocalization started while a detection is going would measure the nuclei the
+detection is about to replace.
+
+Rows written before this change may show that mix-up: a colocalization row with a
+`det_nuclei_found` value, or a particle-analysis row with one. Treat such a row as
+not trustworthy and run that analysis again.
+
 ### Several windows and the batch at once
 
 The napari window and the batch can write the tracker at the same time, on one

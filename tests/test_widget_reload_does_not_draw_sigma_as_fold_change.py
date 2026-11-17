@@ -9,7 +9,7 @@ Defects covered:
   plots draw.
 """
 
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 
@@ -68,10 +68,13 @@ def _run_widget_coloc(tracker, monkeypatch, method, local=False):
         area_fraction_spin=_Spin(0.5), bg_local_check=_Spin(local),
         bg_block_size_spin=_Spin(256), soma_dilation_spin=_Spin(6),
         sample_id_edit=_Spin(SAMPLE_A), current_file=None,
-        tracker=tracker, last_run_id=None,
+        tracker=tracker, last_run_id=None, _analysis_running=None, quant_worker=None,
         _get_current_slice=lambda img: img,
         _on_coloc_progress=None, _on_coloc_finished=None,
     )
+    for name in ("_refuse_if_analysis_running", "_analysis_in_progress"):
+        if hasattr(mw.BrainSliceWidget, name):
+            setattr(fake, name, MethodType(getattr(mw.BrainSliceWidget, name), fake))
     mw.BrainSliceWidget._run_colocalization(fake)
     return tracker.get_run(fake.last_run_id)
 

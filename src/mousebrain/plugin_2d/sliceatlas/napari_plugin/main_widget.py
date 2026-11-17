@@ -95,7 +95,21 @@ class BrainSliceWidget(QWidget):
         # Session tracking
         self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.session_run_ids = []
+        # The most recent run this window started, of any kind. No result
+        # handler reads it: see the per-kind ids below.
         self.last_run_id: Optional[str] = None
+        # The tracker row of each kind of run, kept apart. WHY: detection,
+        # colocalization and particle analysis used to share last_run_id, so
+        # a run started while another was going re-pointed it, and the first
+        # run's result was then written into the second run's row (a
+        # detection's nucleus count landing in a colocalization row, the
+        # detection row left 'started'). Each result handler reads its own.
+        self._detection_run_id: Optional[str] = None
+        self._coloc_run_id: Optional[str] = None
+        # Which analysis worker is going ('detection' / 'colocalization'),
+        # None when none is. Set just before the worker starts and cleared
+        # first thing in its result handler; see _analysis_in_progress.
+        self._analysis_running: Optional[str] = None
 
         # Workers
         self.loader_worker = None
@@ -3542,6 +3556,8 @@ class BrainSliceWidget(QWidget):
         if not self.channels or len(self.channels) < 2:
             QMessageBox.warning(self, "Error", "Load an image with at least 2 channels first")
             return
+        if self._refuse_if_analysis_running("Particle analysis"):
+            return
 
         det_idx = self.pa_det_combo.currentIndex()
         meas_idx = self.pa_meas_combo.currentIndex()
@@ -4775,6 +4791,8 @@ class BrainSliceWidget(QWidget):
         if self.red_channel is None:
             QMessageBox.warning(self, "Error", "Load an image first")
             return
+        if self._refuse_if_analysis_running("Detection"):
+            return
 
         self.status_label.setText("Running detection...")
         self.detect_btn.setEnabled(False)
@@ -4868,6 +4886,9 @@ class BrainSliceWidget(QWidget):
                     status='started',
                 )
                 self.last_run_id = run_id
+            # This click's row (None when nothing is logged), read by the
+            # result handler -- never another run's.
+            self._detection_run_id = run_id
 
             if use_insets:
                 # Run inset-aware detection (synchronous for now)
@@ -4878,6 +4899,7 @@ class BrainSliceWidget(QWidget):
                 self.detection_worker = DetectionWorker(image, params)
                 self.detection_worker.progress.connect(self._on_detect_progress)
                 self.detection_worker.finished.connect(self._on_detect_finished)
+                self._analysis_running = "detection"
                 self.detection_worker.start()
                 print("[BrainSlice] Detection worker started (model loading may take a moment...)")
 
@@ -4887,11 +4909,13 @@ class BrainSliceWidget(QWidget):
             traceback.print_exc()
             self.status_label.setText(f"Detection error: {e}")
             self.detect_btn.setEnabled(True)
+            self._analysis_running = None
             self._fail_run_if_unfinished(run_id, f"detection could not start: {e}")
             QMessageBox.critical(self, "Detection Error", f"Failed to start detection:\n{e}")
 
     def _run_inset_detection(self, params: Dict[str, Any], inset_settings: Dict[str, Any]):
         """Run detection using insets at full resolution."""
+        run_id = self._detection_run_id  # this detection's row (see _run_detection)
         try:
             from ..core.inset_detection import InsetDetectionPipeline
             from ..core.detection import NucleiDetector
@@ -4934,16 +4958,16 @@ class BrainSliceWidget(QWidget):
             # handler does not try a second locked write.
             record_problem = None
             try:
-                if self.tracker and self.last_run_id:
+                if self.tracker and run_id:
                     self._saving_to_tracker()
                     self.tracker.update_status(
-                        self.last_run_id,
+                        run_id,
                         status='completed',
                         det_nuclei_found=count,
                     )
-                    self.session_run_ids.append(self.last_run_id)
+                    self.session_run_ids.append(run_id)
             except Exception as e:
-                record_problem = self._result_not_recorded(self.last_run_id, e)
+                record_problem = self._result_not_recorded(run_id, e)
 
             # Visualize results
             # Remove old detection layers
@@ -5004,7 +5028,7 @@ class BrainSliceWidget(QWidget):
             traceback.print_exc()
             self.status_label.setText(f"Error: {e}")
             self.detect_btn.setEnabled(True)
-            self._fail_run_if_unfinished(self.last_run_id, f"inset detection failed: {e}")
+            self._fail_run_if_unfinished(run_id, f"inset detection failed: {e}")
 
     def _on_detect_progress(self, message: str):
         """Handle detection progress updates."""
@@ -5012,6 +5036,9 @@ class BrainSliceWidget(QWidget):
 
     def _on_detect_finished(self, success: bool, message: str, count: int, labels, metrics=None):
         """Handle detection completion."""
+        # This detection's own row, and the window is free for the next run.
+        run_id = self._detection_run_id
+        self._analysis_running = None
         self.detect_btn.setEnabled(True)
         print(f"[BrainSlice] _on_detect_finished called: success={success}, count={count}, "
               f"labels type={type(labels)}, labels shape={getattr(labels, 'shape', 'N/A')}")
@@ -5022,16 +5049,16 @@ class BrainSliceWidget(QWidget):
             # Update tracker (wrapped so failures don't block layer creation)
             record_problem = None
             try:
-                if self.tracker and self.last_run_id:
+                if self.tracker and run_id:
                     self._saving_to_tracker()
                     self.tracker.update_status(
-                        self.last_run_id,
+                        run_id,
                         status='completed',
                         det_nuclei_found=count,
                     )
-                    self.session_run_ids.append(self.last_run_id)
+                    self.session_run_ids.append(run_id)
             except Exception as e:
-                record_problem = self._result_not_recorded(self.last_run_id, e)
+                record_problem = self._result_not_recorded(run_id, e)
 
             # Add labels to napari
             try:
@@ -5064,7 +5091,7 @@ class BrainSliceWidget(QWidget):
         else:
             self.status_label.setText(f"Error: {message}")
             self.detect_metrics_label.setText("")
-            self._fail_run_if_unfinished(self.last_run_id, f"detection failed: {message}")
+            self._fail_run_if_unfinished(run_id, f"detection failed: {message}")
 
     def _display_detection_metrics(self, metrics: dict):
         """Display detection metrics in the UI."""
@@ -5165,6 +5192,11 @@ class BrainSliceWidget(QWidget):
         if self.green_channel is None:
             QMessageBox.warning(self, "Error", "No signal channel loaded")
             return
+        if self._refuse_if_analysis_running("Colocalization"):
+            return
+        # This click's row, set below once it is logged; None until then, so
+        # the result handler can never take an earlier run's row for it.
+        self._coloc_run_id = None
 
         # Branch on mode
         if self.coloc_mode_combo.currentText() == 'Dual Channel':
@@ -5228,7 +5260,7 @@ class BrainSliceWidget(QWidget):
             if params['use_local_background']:
                 bg_logged = f"{bg_logged}+local"
             try:
-                self.last_run_id = self.tracker.log_colocalization(
+                self._coloc_run_id = self.last_run_id = self.tracker.log_colocalization(
                     sample_id=sample_id,
                     signal_channel='green',
                     background_method=bg_logged,
@@ -5265,6 +5297,7 @@ class BrainSliceWidget(QWidget):
             )
         self.coloc_worker.progress.connect(self._on_coloc_progress)
         self.coloc_worker.finished.connect(self._on_coloc_finished)
+        self._analysis_running = "colocalization"
         self.coloc_worker.start()
 
     def _run_dual_colocalization(self):
@@ -5310,7 +5343,7 @@ class BrainSliceWidget(QWidget):
         if self.tracker:
             sample_id = self.sample_id_edit.text() or self.current_file.stem
             try:
-                self.last_run_id = self.tracker.log_colocalization(
+                self._coloc_run_id = self.last_run_id = self.tracker.log_colocalization(
                     sample_id=sample_id,
                     signal_channel='dual',
                     background_method=params_ch1['background_method'],
@@ -5328,6 +5361,7 @@ class BrainSliceWidget(QWidget):
         )
         self.coloc_worker.progress.connect(self._on_coloc_progress)
         self.coloc_worker.finished.connect(self._on_dual_coloc_finished)
+        self._analysis_running = "colocalization"
         self.coloc_worker.start()
 
     def _on_coloc_progress(self, message: str):
@@ -5336,8 +5370,11 @@ class BrainSliceWidget(QWidget):
 
     def _on_coloc_finished(self, success: bool, message: str, measurements, summary, tissue_mask):
         """Handle colocalization completion."""
-        # The run this result belongs to, fixed before anything can change it.
-        run_id = self.last_run_id
+        # The run this result belongs to: this colocalization's own row (see
+        # _run_colocalization), never another kind of run's. The window is
+        # free for the next run.
+        run_id = self._coloc_run_id
+        self._analysis_running = None
         try:
             print(f"[BrainSlice] _on_coloc_finished: success={success}, message={message}")
             if measurements is not None:
@@ -5365,7 +5402,7 @@ class BrainSliceWidget(QWidget):
                         sample_dir = get_sample_dir(stem)
                         results_dir = sample_dir / SampleDirs.QUANTIFIED
                         results_dir.mkdir(parents=True, exist_ok=True)
-                        run_tag = self.last_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+                        run_tag = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
                         measurements_path = results_dir / f"{stem}_{run_tag}_measurements.csv"
                         measurements.to_csv(measurements_path, index=False)
                 except Exception as e:
@@ -5373,7 +5410,7 @@ class BrainSliceWidget(QWidget):
 
                 # Update tracker (non-fatal if fails)
                 try:
-                    if self.tracker and self.last_run_id:
+                    if self.tracker and run_id:
                         update_kwargs = dict(
                             status='completed',
                             coloc_positive_cells=summary['positive_cells'],
@@ -5384,10 +5421,10 @@ class BrainSliceWidget(QWidget):
                         if measurements_path is not None:
                             update_kwargs['measurements_path'] = str(measurements_path)
                         self._saving_to_tracker()
-                        self.tracker.update_status(self.last_run_id, **update_kwargs)
-                        self.session_run_ids.append(self.last_run_id)
+                        self.tracker.update_status(run_id, **update_kwargs)
+                        self.session_run_ids.append(run_id)
                 except Exception as e:
-                    record_problem = self._result_not_recorded(self.last_run_id, e)
+                    record_problem = self._result_not_recorded(run_id, e)
 
                 # Refresh run history panel
                 try:
@@ -5436,7 +5473,7 @@ class BrainSliceWidget(QWidget):
 
             else:
                 self.status_label.setText(f"Error: {message}")
-                self._fail_run_if_unfinished(self.last_run_id, f"colocalization failed: {message}")
+                self._fail_run_if_unfinished(run_id, f"colocalization failed: {message}")
         except Exception as e:
             # WHY caught here: an error while handling the result (a summary
             # missing a value, a layer that cannot be drawn) used to escape
@@ -5453,8 +5490,11 @@ class BrainSliceWidget(QWidget):
 
     def _on_dual_coloc_finished(self, success: bool, message: str, measurements, summary, tissue_mask):
         """Handle dual-channel colocalization completion."""
-        # The run this result belongs to, fixed before anything can change it.
-        run_id = self.last_run_id
+        # The run this result belongs to: this colocalization's own row (see
+        # _run_colocalization), never another kind of run's. The window is
+        # free for the next run.
+        run_id = self._coloc_run_id
+        self._analysis_running = None
         try:
             print(f"[BrainSlice] _on_dual_coloc_finished: success={success}")
 
@@ -5477,7 +5517,7 @@ class BrainSliceWidget(QWidget):
                         sample_dir = get_sample_dir(stem)
                         results_dir = sample_dir / SampleDirs.QUANTIFIED
                         results_dir.mkdir(parents=True, exist_ok=True)
-                        tag = self.last_run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
+                        tag = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
                         measurements_path = results_dir / f"{stem}_{tag}_dual_measurements.csv"
                         measurements.to_csv(measurements_path, index=False)
                 except Exception as e:
@@ -5486,14 +5526,14 @@ class BrainSliceWidget(QWidget):
                     csv_saved = False
                     print(f"[BrainSlice] [!] Dual measurements CSV not saved: {e}")
                     marked = self._fail_run_if_unfinished(
-                        self.last_run_id, f"measurements CSV could not be saved: {e}")
+                        run_id, f"measurements CSV could not be saved: {e}")
                     record_problem = (f"[!] measurements CSV not saved ({e}); "
                                       + ("run marked failed" if marked
                                          else "nothing was recorded in the tracker"))
 
                 if csv_saved:
                     try:
-                        if self.tracker and self.last_run_id:
+                        if self.tracker and run_id:
                             update_kwargs = dict(
                                 status='completed',
                                 coloc_positive_cells=summary.get('n_dual', 0),
@@ -5502,10 +5542,10 @@ class BrainSliceWidget(QWidget):
                             if measurements_path is not None:
                                 update_kwargs['measurements_path'] = str(measurements_path)
                             self._saving_to_tracker()
-                            self.tracker.update_status(self.last_run_id, **update_kwargs)
-                            self.session_run_ids.append(self.last_run_id)
+                            self.tracker.update_status(run_id, **update_kwargs)
+                            self.session_run_ids.append(run_id)
                     except Exception as e:
-                        record_problem = self._result_not_recorded(self.last_run_id, e)
+                        record_problem = self._result_not_recorded(run_id, e)
 
                 # Visualize with 4-category coloring
                 self._visualize_dual_colocalization(measurements)
@@ -5533,7 +5573,7 @@ class BrainSliceWidget(QWidget):
                 self.quant_btn.setEnabled(True)
             else:
                 self.status_label.setText(f"Error: {message}")
-                self._fail_run_if_unfinished(self.last_run_id, f"dual colocalization failed: {message}")
+                self._fail_run_if_unfinished(run_id, f"dual colocalization failed: {message}")
         except Exception as e:
             # WHY caught here: an error while handling the result (a summary
             # missing a value, a layer that cannot be drawn) used to escape
@@ -5762,6 +5802,39 @@ class BrainSliceWidget(QWidget):
             QMessageBox.warning(self, "Error", f"Failed to save QC images: {e}")
 
     # ----- Tracker row helpers -----
+
+    def _analysis_in_progress(self) -> Optional[str]:
+        """The analysis still going in this window ('detection',
+        'colocalization', 'quantification'), or None.
+
+        Detection and colocalization count as going from the moment their
+        worker starts until their result handler has run -- not merely while
+        the worker thread is alive -- because the handler is what writes the
+        run's row: a run started in between would get the window to itself
+        while the first one's result is still on its way."""
+        if self._analysis_running:
+            return self._analysis_running
+        quant = self.quant_worker
+        if quant is not None and quant.isRunning():
+            return "quantification"
+        return None
+
+    def _refuse_if_analysis_running(self, wanted: str) -> bool:
+        """Say so and return True when another analysis is still going.
+
+        WHY: the window runs one analysis at a time. Two at once used to
+        write one run's result into the other's tracker row, and an analysis
+        started while detection is going would work on the nuclei that
+        detection is about to replace. Particle analysis runs on the window's
+        own thread, so nothing else can start while IT runs; it is refused
+        while a detection, colocalization or quantification is going."""
+        busy = self._analysis_in_progress()
+        if not busy:
+            return False
+        self.status_label.setText(
+            f"{wanted} not started: {busy} is still running. "
+            f"Wait for it to finish, then click again.")
+        return True
 
     def _open_tracker(self) -> None:
         """Open the 2D calibration tracker, or keep the reason it cannot be.
@@ -6571,6 +6644,8 @@ class BrainSliceWidget(QWidget):
         """Run regional quantification."""
         if self.cell_measurements is None:
             QMessageBox.warning(self, "Error", "Run colocalization first")
+            return
+        if self._refuse_if_analysis_running("Quantification"):
             return
 
         self.status_label.setText("Running quantification...")
