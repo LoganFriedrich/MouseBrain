@@ -48,7 +48,7 @@ from mousebrain.region_counts_io import (append_archive_rows, counts_tables_lock
 
 FIXED_COLUMNS = ['brain', 'run_date', 'brain_id', 'subject', 'cohort', 'project_code', 'project_name',
                  'det_preset', 'det_ball_xy', 'det_ball_z', 'det_soma_diameter', 'det_threshold',
-                 'atlas', 'voxel_xy', 'voxel_z', 'total_cells', 'total_left', 'total_right']
+                 'atlas', 'count_method', 'voxel_xy', 'voxel_z', 'total_cells', 'total_left', 'total_right']
 
 
 def _group_col(prefix: str, group_name: str) -> str:

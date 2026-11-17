@@ -613,6 +613,28 @@ python 6_count_regions.py --brain 001_CNT_01_01_1p625x_z4
 python 6_count_regions.py --all
 ```
 
+**How the cells are placed in regions, and no quiet second method.** Step 6
+places each cell in an atlas region with BrainGlobe's own transform through the
+registration. If that cannot run (brainglobe-utils is not installed, a file of
+the registration is missing, any error), the brain is **not counted**: step 6
+prints the reason and `[FAILED] Not counted`, its tracker row says failed, and
+the other brains in the batch are still counted. There is a second, less
+accurate method -- looking each cell up in the registered atlas image directly
+-- and step 6 uses it only when you ask for it:
+
+```bash
+python 6_count_regions.py --brain <brain_id> --allow-direct-lookup
+```
+
+Every count records which method placed its cells, in the `count_method` column
+of `region_counts.csv` and `elife_counts.csv` and in the analysis registry's
+method parameters: `brainglobe_transform` (the normal one) or
+`direct_atlas_lookup`. Why: step 6 used to switch to the direct lookup by
+itself, and the counts it wrote looked like any others, so nobody could tell
+which brains had been counted the less accurate way. Rows written before this
+change have an empty `count_method`; they cannot be told apart, so count those
+brains again if it matters.
+
 What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
 
 - `2_Data_Summary/region_counts.csv` and `elife_counts.csv` -- one row per brain,

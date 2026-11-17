@@ -65,9 +65,9 @@ def test_the_batch_counts_the_other_brains_and_not_the_one_without_images(step6,
     _brain(root, "902_PROJ_09_02_2p5x_z5")
     counted = []
 
-    def fake_counts(cells_path, registration_path, output_path, atlas="x"):
+    def fake_counts(cells_path, registration_path, output_path, atlas="x", **kw):
         counted.append(Path(registration_path).parent.name)
-        return False, 0.0, 0, None
+        return False, 0.0, 0, None, ""
     monkeypatch.setattr(step6, "run_brainglobe_counts", fake_counts)
     monkeypatch.setattr(step6, "ExperimentTracker", _Tracker)
     monkeypatch.setattr(sys, "argv", ["6", "--all", "--root", str(root)])
@@ -103,7 +103,8 @@ def test_a_counted_brain_has_its_result_on_its_tracker_row(step6, tmp_path, monk
     csv_path = tmp_path / "tracker" / "calibration_runs.csv"
     monkeypatch.setattr(step6, "ExperimentTracker", lambda: ExperimentTracker(csv_path))
     monkeypatch.setattr(step6, "run_brainglobe_counts",
-                        lambda *a, **k: (succeeded, 1.5, 7 if succeeded else 0, None))
+                        lambda *a, **k: (succeeded, 1.5, 7 if succeeded else 0, None,
+                                         "brainglobe_transform" if succeeded else ""))
     monkeypatch.setattr(sys, "argv", ["6", "--all", "--root", str(root)])
     step6.main()
     rows = [r for r in ExperimentTracker(csv_path)._read_all()

@@ -66,7 +66,8 @@ def check_brainglobe_env():
         print("Or run directly with the brainglobe Python:")
         print("    <conda root>\\envs\\brainglobe-env\\python.exe 6_count_regions.py")
         print()
-        print("(The script will use a fallback method, but results may be less accurate)")
+        print("(Without it step 6 counts nothing. --allow-direct-lookup counts with the")
+        print(" less accurate direct atlas lookup instead, and the counts record that.)")
         return False
 
 # Check environment
@@ -179,11 +180,20 @@ def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT):
     return brains
 
 
+# How a brain's cells were placed in atlas regions. Written into the
+# count_method column of region_counts.csv / elife_counts.csv and into the
+# analysis registry's method parameters, so counts made the less accurate way
+# can always be told apart from the rest.
+COUNT_METHOD_TRANSFORM = "brainglobe_transform"
+COUNT_METHOD_DIRECT = "direct_atlas_lookup"
+
+
 def run_brainglobe_counts(
     cells_path: Path,
     registration_path: Path,
     output_path: Path,
     atlas: str = "allen_mouse_10um",
+    allow_direct_lookup: bool = False,
 ) -> tuple:
     """
     Count cells by region using BrainGlobe's proper coordinate transformation.
@@ -191,8 +201,19 @@ def run_brainglobe_counts(
     Uses brainglobe-utils to transform cell coordinates through the registration
     deformation fields and assign atlas regions.
 
+    NO SILENT FALLBACK. When the transform cannot run (brainglobe-utils
+    missing, a deformation field missing, any error), this used to switch
+    quietly to a direct lookup of the cell positions in the registered atlas
+    image -- a less accurate method -- and the counts it wrote looked exactly
+    like transform counts: nothing recorded which method had counted. Now the
+    brain is NOT counted unless the person asked for the direct lookup with
+    ``allow_direct_lookup`` (step 6's --allow-direct-lookup), and the method
+    used is returned so it is written beside the counts.
+
     Returns:
-        (success, duration, total_cells, output_csv)
+        (success, duration, total_cells, output_csv, count_method) -- the
+        method is COUNT_METHOD_TRANSFORM or COUNT_METHOD_DIRECT, or "" when
+        nothing was counted.
     """
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -209,9 +230,10 @@ def run_brainglobe_counts(
     # Try the proper BrainGlobe method first
     from mousebrain.config import RegisteredImagesMissing
     try:
-        return run_counts_brainglobe_transform(
+        result = run_counts_brainglobe_transform(
             cells_path, registration_path, output_path, output_csv, atlas, start_time
         )
+        return tuple(result) + ((COUNT_METHOD_TRANSFORM if result[0] else ""),)
     except RegisteredImagesMissing:
         # NOT a reason to fall back: the images the atlas was fitted to are
         # gone, so no count of this brain can be trusted -- the direct lookup
@@ -219,18 +241,26 @@ def run_brainglobe_counts(
         # on with the next one.
         raise
     except ImportError as e:
-        print(f"    BrainGlobe utils not available: {e}")
-        print(f"    Falling back to direct atlas lookup...")
+        why = f"BrainGlobe utils not available: {e}"
     except Exception as e:
-        print(f"    BrainGlobe transform failed: {e}")
+        why = f"BrainGlobe transform failed: {e}"
         import traceback
         traceback.print_exc()
-        print(f"    Falling back to direct atlas lookup...")
 
-    # Fallback: direct coordinate lookup (less accurate)
-    return run_counts_direct_lookup(
+    print(f"    {why}")
+    if not allow_direct_lookup:
+        print("    [FAILED] Not counted: the BrainGlobe transform could not run, and the")
+        print("    direct atlas lookup is less accurate, so it is never used unasked.")
+        print("    Fix the cause above, or run step 6 again with --allow-direct-lookup")
+        print("    to count this brain the less accurate way (the counts then say so).")
+        return False, time.time() - start_time, 0, None, ""
+
+    print("    --allow-direct-lookup given: counting with the direct atlas lookup")
+    print("    (less accurate; recorded as count_method=%s)." % COUNT_METHOD_DIRECT)
+    result = run_counts_direct_lookup(
         cells_path, registration_path, output_csv, atlas, start_time
     )
+    return tuple(result) + ((COUNT_METHOD_DIRECT if result[0] else ""),)
 
 
 def run_counts_brainglobe_transform(
@@ -571,10 +601,10 @@ def convert_brainglobe_output(
 
 def run_counts_direct_lookup(cells_path, registration_path, output_csv, atlas_name, start_time):
     """
-    Fallback: Count cells by direct lookup in registered_atlas.tiff.
+    Count cells by direct lookup in registered_atlas.tiff.
 
-    This is less accurate than using the deformation fields but works
-    when brainglobe-utils isn't available.
+    This is less accurate than using the deformation fields. Used only when
+    step 6 is run with --allow-direct-lookup (run_brainglobe_counts says why).
     """
     try:
         from brainglobe_atlasapi import BrainGlobeAtlas
@@ -585,7 +615,7 @@ def run_counts_direct_lookup(cells_path, registration_path, output_csv, atlas_na
         cells_path = Path(cells_path)
         output_csv = Path(output_csv)
 
-        print("    Using direct atlas lookup (fallback method)...")
+        print("    Using direct atlas lookup (asked for with --allow-direct-lookup)...")
 
         atlas = BrainGlobeAtlas(atlas_name)
         atlas_resolution = atlas.resolution[0]
@@ -744,8 +774,8 @@ def register_counts(pipeline_folder: Path, output_csv: Path, total_cells: int,
             if (output_csv.parent / name).exists():
                 files[Path(name).stem] = str(output_csv.parent / name)
         method = {k: detection_params.get(k, '') for k in (
-            'atlas', 'preset', 'ball_xy', 'ball_z', 'soma_diameter', 'threshold',
-            'voxel_xy', 'voxel_z')}
+            'atlas', 'count_method', 'preset', 'ball_xy', 'ball_z', 'soma_diameter',
+            'threshold', 'voxel_xy', 'voxel_z')}
         method.update({"detection_exp_id": (prov or {}).get("exp_id", ""),
                        "classification_exp_id": (prov or {}).get("classification_exp_id", ""),
                        "model": (prov or {}).get("model", ""),
@@ -819,6 +849,8 @@ def update_region_counts_csv(
         'det_soma_diameter': detection_params.get('soma_diameter', ''),
         'det_threshold': detection_params.get('threshold', ''),
         'atlas': detection_params.get('atlas', 'allen_mouse_10um'),
+        # How the cells were placed in regions (run_brainglobe_counts).
+        'count_method': detection_params.get('count_method', ''),
         'voxel_xy': detection_params.get('voxel_xy', ''),
         'voxel_z': detection_params.get('voxel_z', ''),
 
@@ -881,7 +913,7 @@ def update_region_counts_csv(
         fixed_columns = [
             'brain', 'run_date', 'brain_id', 'subject', 'cohort', 'project_code', 'project_name',
             'det_preset', 'det_ball_xy', 'det_ball_z', 'det_soma_diameter', 'det_threshold',
-            'atlas', 'voxel_xy', 'voxel_z', 'total_cells',
+            'atlas', 'count_method', 'voxel_xy', 'voxel_z', 'total_cells',
         ]
         # Add hemisphere totals after total_cells if any row has them
         if any('total_left' in r for r in new_rows) or 'total_left' in all_columns:
@@ -973,6 +1005,8 @@ def update_elife_counts_csv(
         'det_soma_diameter': detection_params.get('soma_diameter', ''),
         'det_threshold': detection_params.get('threshold', ''),
         'atlas': detection_params.get('atlas', 'allen_mouse_10um'),
+        # How the cells were placed in regions (run_brainglobe_counts).
+        'count_method': detection_params.get('count_method', ''),
         'voxel_xy': detection_params.get('voxel_xy', ''),
         'voxel_z': detection_params.get('voxel_z', ''),
 
@@ -1048,7 +1082,7 @@ def update_elife_counts_csv(
         fixed_columns = [
             'brain', 'run_date', 'brain_id', 'subject', 'cohort', 'project_code', 'project_name',
             'det_preset', 'det_ball_xy', 'det_ball_z', 'det_soma_diameter', 'det_threshold',
-            'atlas', 'voxel_xy', 'voxel_z', 'total_cells',
+            'atlas', 'count_method', 'voxel_xy', 'voxel_z', 'total_cells',
         ]
         if any('total_left' in r for r in new_rows) or 'total_left' in all_columns:
             fixed_columns.extend(['total_left', 'total_right'])
@@ -1979,6 +2013,10 @@ Examples:
     parser.add_argument('--classification', '-c', help='Classification experiment ID to link to')
     
     parser.add_argument('--atlas', default='allen_mouse_10um')
+    parser.add_argument('--allow-direct-lookup', action='store_true',
+                        help='If the BrainGlobe transform cannot run, count with the less '
+                             'accurate direct atlas lookup instead of not counting '
+                             '(recorded as count_method=direct_atlas_lookup)')
     parser.add_argument('--notes', help='Notes to add to log')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--root', type=Path, default=DEFAULT_BRAINGLOBE_ROOT)
@@ -2082,11 +2120,12 @@ Examples:
         # the tracker row is set to failed instead of staying 'started' forever.
         try:
             with tracker.finish_or_fail(exp_id):
-                success, duration, total_cells, output_csv = run_brainglobe_counts(
+                success, duration, total_cells, output_csv, count_method = run_brainglobe_counts(
                     cells_path=brain['cells_xml'],
                     registration_path=reg_folder,
                     output_path=output_path,
                     atlas=args.atlas,
+                    allow_direct_lookup=args.allow_direct_lookup,
                 )
                 # The count's result goes on its tracker row INSIDE the block:
                 # a row the block leaves without a result is marked failed.
@@ -2125,7 +2164,7 @@ Examples:
                     # Provenance: the settings of the detection run behind
                     # this cells.xml, traced through the tracker. Left empty
                     # (and said so) when the chain cannot be followed.
-                    detection_params = {'atlas': args.atlas}
+                    detection_params = {'atlas': args.atlas, 'count_method': count_method}
                     prov = detection_provenance(
                         tracker._read_all(), pipeline_folder.name, brain['cells_xml'])
                     if prov:
