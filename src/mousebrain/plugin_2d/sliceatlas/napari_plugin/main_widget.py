@@ -3746,7 +3746,17 @@ class BrainSliceWidget(QWidget):
         return None
 
     def _batch_enter_roi_mode(self):
-        """Enter sequential ROI annotation mode."""
+        """Enter sequential ROI annotation mode.
+
+        The image on screen is saved and cleared first, and the window is
+        left with no image of its own (current_file None) while the batch's
+        images are shown. WHY: the batch image's particles used to be put in
+        the window's single-image state while current_file still named the
+        image opened before the batch, so the next save (Save State, Count
+        in ROI(s), opening another image) wrote them into THAT image's
+        _analysis folder over its own results."""
+        self._leave_current_image()
+        self._forget_image_on_screen()
         self._batch_roi_mode = True
         self._batch_roi_nav.setVisible(True)
         self._batch_current_idx = 0
@@ -3793,12 +3803,13 @@ class BrainSliceWidget(QWidget):
             self.viewer.add_labels(
                 labels, name='Particles', opacity=0.5, scale=scale)
 
-        # Show positive/negative overlay if available
+        # Show positive/negative overlay if available. Drawn from the batch
+        # image's own values: the window's single-image state (_pa_labels,
+        # _pa_results) stays empty, so nothing of a batch image can be saved
+        # or re-classified as the window's image.
         results = data['particles']
         if 'is_positive' in results.columns and labels.max() > 0:
-            self._pa_labels = labels
-            self._pa_results = results
-            self._pa_draw_classification_overlay()
+            self._pa_draw_classification_overlay(labels, results)
 
         # Add ROI shapes layer
         self.roi_shapes_layer = None
@@ -4694,12 +4705,13 @@ class BrainSliceWidget(QWidget):
 
     # -- results table ---------------------------------------------------------
 
-    def _pa_draw_classification_overlay(self):
-        """Draw green/red ring outlines around positive/negative particles."""
-        if self._pa_labels is None or self._pa_results is None:
+    def _pa_draw_classification_overlay(self, labels=None, results=None):
+        """Draw green/red ring outlines around positive/negative particles:
+        those given, else the window's own (_pa_labels, _pa_results)."""
+        if labels is None or results is None:
+            labels, results = self._pa_labels, self._pa_results
+        if labels is None or results is None:
             return
-        labels = self._pa_labels
-        results = self._pa_results
         if labels.max() == 0 or len(results) == 0:
             return
         if 'is_positive' not in results.columns:
@@ -5807,6 +5819,18 @@ class BrainSliceWidget(QWidget):
         detection or particle analysis run on them and be filed under
         whatever name the window showed. Clicking Load tries the same file
         again."""
+        self._forget_image_on_screen()
+        name = Path(what).name if what is not None else "the image"
+        self.status_label.setText(
+            f"Error: {name} could not be opened ({message}). No image is open; "
+            f"fix the file and click Load to try again, or open another image.")
+        QMessageBox.warning(self, "Load Error", f"{name} could not be opened: {message}")
+
+    def _forget_image_on_screen(self) -> None:
+        """Leave the window with NO image: no file, no pixels, no inset
+        manager, the analysis buttons off. Its results must already have
+        been saved and cleared (_leave_current_image). Used after a failed
+        load and when the batch's ROI drawing takes over the window."""
         self.current_file = None
         self.red_channel = None
         self.green_channel = None
@@ -5819,11 +5843,10 @@ class BrainSliceWidget(QWidget):
         for btn in (self.detect_btn, self.preproc_preview_btn, self.coloc_btn,
                     self.quant_btn, self.pa_run_btn):
             btn.setEnabled(False)
-        name = Path(what).name if what is not None else "the image"
-        self.status_label.setText(
-            f"Error: {name} could not be opened ({message}). No image is open; "
-            f"fix the file and click Load to try again, or open another image.")
-        QMessageBox.warning(self, "Load Error", f"{name} could not be opened: {message}")
+        # The insets were aligned to the image that is gone.
+        forget = getattr(self.inset_widget, "forget_base", None)
+        if forget is not None:
+            forget()
 
     def _run_detection(self):
         """Run nuclei detection."""

@@ -220,6 +220,17 @@ class InsetWidget(QWidget):
         if self.parent_widget.current_file:
             self._find_matching_insets()
 
+    def forget_base(self):
+        """Drop the inset manager and the insets listed: the image they were
+        aligned to is no longer on screen (a failed load, the batch's ROI
+        drawing). WHY: a manager left in place was used by the next
+        detection on whatever image was then on screen."""
+        self.inset_manager = None
+        self.insets_table.setRowCount(0)
+        self.inset_layers.clear()
+        self._update_ui_state()
+        self.insets_changed.emit()
+
     def _add_single_inset(self):
         """Open file dialog to add a single inset."""
         if self.inset_manager is None:
