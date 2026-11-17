@@ -518,14 +518,13 @@ def _prefilter_file_of_run(run, brain_path):
 
     WHY A SETUP & TUNING TEST RUN IS REFUSED
     A test run keeps its cells in a folder of its own, outside the brain. A
-    test of part of the stack (``det_scope`` "partial") detects on a slice of
-    the images and saves positions counted from the first plane of that slice;
-    the offset is added only to what napari shows. Compared with the atlas as
-    saved, every cell would sit in the wrong plane: wrong interior and removed
-    counts, written into the brain's folder and the tracker, and wrongly
-    placed positions offered as training examples. A whole-stack test run is
-    refused too: nothing records that the images it read are the ones the
-    atlas was fitted to.
+    test of part of the stack (``det_scope`` "partial") covers only some
+    planes, so a pre-filter of it would record interior and removed counts
+    for the whole brain from a few planes; and such runs saved before run
+    files held whole-stack positions (mousebrain.detection_runs) count Z from
+    the first plane tested, which against the atlas puts every cell in the
+    wrong plane. A whole-stack test run is refused too: nothing records that
+    the images it read are the ones the atlas was fitted to.
     """
     if not run:
         return None, "not_found"
@@ -2064,8 +2063,12 @@ class TuningWidget(QWidget):
                 )
                 return
 
-            # Convert to napari points format
-            points = np.array([[c.z, c.y, c.x] for c in cells])
+            # Convert to napari points format. A partial-scope run saved
+            # before its file held whole-stack Z is shifted to where its cells
+            # are (mousebrain.detection_runs).
+            from mousebrain.detection_runs import z_shift_on_load
+            points = np.array([[c.z, c.y, c.x] for c in cells], dtype=np.float64)
+            points[:, 0] += z_shift_on_load(run, output_path)
 
             # Determine styling based on cell_type override or automatic detection
             is_best = run.get('marked_best', False)
@@ -2662,33 +2665,103 @@ class TuningWidget(QWidget):
         self.test_detection_btn.setEnabled(False)
         self.test_detection_btn.setText("Running detection...")
 
+        # The run's own record travels with the worker (see
+        # _on_detection_finished): the brain, its tracker row, its folder and
+        # the first plane it tested. The widget's own fields are reset when
+        # another brain is selected, and the finish handler used to read them.
+        run = {
+            'brain': self.current_brain,
+            'exp_id': self.last_run_id if self.tracker else None,
+            'output_path': output_path,
+            'z_offset': int(z_start),
+            'z_end': int(z_end),
+        }
+
         # Start worker thread with numpy arrays (like native cellfinder plugin)
         self.detection_worker = DetectionWorker(
             signal_array, background_array, voxel_sizes, params
         )
+        self.detection_worker.run_context = run
         self.detection_worker.progress.connect(self._on_detection_progress)
-        self.detection_worker.finished.connect(self._on_detection_finished)
+        self.detection_worker.finished.connect(
+            lambda ok, msg, n, cells, run=run: self._on_detection_finished(ok, msg, n, cells, run=run))
+        self._hold_brain_list()
         self.detection_worker.start()
 
     def _on_detection_progress(self, message):
         """Handle detection progress updates."""
         self.test_detection_btn.setText(message[:30] + "...")
 
-    def _on_detection_finished(self, success, message, cell_count, detected_cells):
-        """Handle detection completion - now receives cells directly from Python API."""
+    def _hold_brain_list(self):
+        """Keep the brain list from changing while a run is going.
+
+        Selecting another brain resets the widget's per-brain fields
+        (brain_context); a run's finish handler must not depend on them, and
+        the runs now carry their own record, but a run's results are still
+        shown in the viewer for the brain they belong to -- so the list is held
+        until the run returns."""
+        combo = getattr(self, 'brain_combo', None)
+        if combo is not None:
+            combo.setEnabled(False)
+
+    def _release_brain_list(self, finished_worker=None):
+        """Let the brain list change again once no detection or
+        classification run of this widget is going (``finished_worker`` is the
+        one whose finish is being handled: it may not have stopped yet)."""
+        for name in ('detection_worker', 'classification_worker'):
+            worker = getattr(self, name, None)
+            if worker is not None and worker is not finished_worker and worker.isRunning():
+                return
+        combo = getattr(self, 'brain_combo', None)
+        if combo is not None:
+            combo.setEnabled(True)
+
+    def _on_detection_finished(self, success, message, cell_count, detected_cells, run=None):
+        """Handle detection completion - now receives cells directly from Python API.
+
+        ``run`` is the record the run started with (brain, tracker id, run
+        folder, first plane tested). Everything here uses it, never the
+        widget's fields: those belong to whichever brain is selected now and
+        are reset when the selection changes, which used to lose the run (no
+        XML saved, the tracker row left 'started')."""
+        if run is None:  # a caller that did not pass one: the widget's fields
+            run = {'brain': self.current_brain, 'exp_id': self.last_run_id,
+                   'output_path': getattr(self, '_last_output_path', None),
+                   'z_offset': int(getattr(self, '_detection_z_offset', 0) or 0)}
+        run_brain = run.get('brain')
+        run_id = run.get('exp_id')
+        run_folder = run.get('output_path')
+        z_offset = int(run.get('z_offset') or 0)
+        self._release_brain_list(getattr(self, 'detection_worker', None))
         self.test_detection_btn.setEnabled(True)
         self.test_detection_btn.setText("Run Test Detection")
 
         if success:
             self.last_run_cells = cell_count
 
+            # Positions are stored counted from the first plane of the WHOLE
+            # stack. A run of part of the stack detects on a slice that starts
+            # at plane z_offset, so cellfinder counts Z from there; the offset
+            # used to be added only to the layer shown, and the file kept the
+            # slice's own Z, so every reload of the run (and anything reading
+            # its file) put its cells z_offset planes too shallow. A marker in
+            # the run folder (mousebrain.detection_runs) says the file holds
+            # whole-stack positions; runs saved before it have none, and their
+            # positions are shifted when they are loaded.
+            if detected_cells and z_offset:
+                for c in detected_cells:
+                    c.z = c.z + z_offset
+
             # Save detected cells to XML file for later loading
             saved_xml = None
-            if detected_cells and hasattr(self, '_last_output_path') and self._last_output_path:
+            if detected_cells and run_folder:
                 try:
                     from brainglobe_utils.IO.cells import save_cells
-                    xml_path = self._last_output_path / "detected_cells.xml"
-                    save_cells(detected_cells, xml_path)
+                    from mousebrain.detection_runs import write_whole_stack_marker
+                    run_folder = Path(run_folder)
+                    write_whole_stack_marker(run_folder, z_offset, run.get('z_end'))
+                    xml_path = run_folder / "detected_cells.xml"
+                    save_cells(detected_cells, str(xml_path))
                     saved_xml = xml_path
                     print(f"[MouseBrain] Saved {len(detected_cells)} cells to: {xml_path}")
                 except Exception as e:
@@ -2698,13 +2771,14 @@ class TuningWidget(QWidget):
             # it was left as the run folder, and "Load best detection" reads
             # output_path as a candidates file, so a widget run marked Best
             # loaded nothing.
-            if self.tracker and self.last_run_id:
+            if self.tracker and run_id:
                 self.tracker.update_status(
-                    self.last_run_id,
+                    run_id,
                     status="completed",
                     det_cells_found=cell_count,
                     output_path=str(saved_xml) if saved_xml else None,
                 )
+                getattr(self, '_runs_in_progress', set()).discard(run_id)
 
             # No database push here. The tracker CSV updated above is the
             # complete record of this calibration run; an integrator pulls
@@ -2713,15 +2787,15 @@ class TuningWidget(QWidget):
             # must never import it.
 
             # Add to session tracking - track runs made during this session
-            if self.last_run_id and self.last_run_id not in self.session_run_ids:
-                self.session_run_ids.append(self.last_run_id)
+            if run_id and run_id not in self.session_run_ids:
+                self.session_run_ids.append(run_id)
 
             # Refresh the calibration runs table to show new run
             self._refresh_context_runs()
             self._refresh_prefilter_runs()
 
             # Log to session documenter
-            if self.session_doc and self.last_run_id:
+            if self.session_doc and run_id:
                 params = {
                     'ball_xy_size': self.ball_xy.value(),
                     'ball_z_size': self.ball_z.value(),
@@ -2730,7 +2804,7 @@ class TuningWidget(QWidget):
                 }
                 z_range = (self.test_z_start.value(), self.test_z_end.value())
                 self.session_doc.log_detection_run(
-                    run_id=self.last_run_id,
+                    run_id=run_id,
                     params=params,
                     cell_count=cell_count,
                     preset="custom",
@@ -2739,20 +2813,21 @@ class TuningWidget(QWidget):
 
             # Add detected cells directly to napari as points layer
             # Using same approach as native cellfinder napari plugin (see cellfinder/napari/utils.py)
-            if detected_cells and len(detected_cells) > 0:
-                z_offset = getattr(self, '_detection_z_offset', 0)
-
+            if detected_cells and len(detected_cells) > 0 and not self._run_brain_is_selected(run_brain):
+                # The run belongs to a brain no longer selected: its cells are
+                # not drawn over another brain's images.
+                print(f"[MouseBrain] Run {run_id} is of {getattr(run_brain, 'name', run_brain)}, "
+                      f"not the brain selected now; its cells were saved but not drawn")
+            elif detected_cells and len(detected_cells) > 0:
                 # Convert Cell objects to array - same as native cellfinder does
                 # Cell objects have .x, .y, .z attributes
                 # Native plugin does: points = [(c.x, c.y, c.z)] then reorders with [:, [2,1,0]]
-                # which gives (z, y, x) order for napari
+                # which gives (z, y, x) order for napari. The cells already
+                # carry whole-stack Z (z_offset added above).
                 points_xyz = np.array([(c.x, c.y, c.z) for c in detected_cells], dtype=np.float64)
                 coords = points_xyz[:, [2, 1, 0]]  # Reorder to (z, y, x) for napari
 
-                # Apply Z offset for the slice range we analyzed
-                coords[:, 0] += z_offset
-
-                print(f"[MouseBrain] Point coordinates (after Z offset={z_offset}):")
+                print(f"[MouseBrain] Point coordinates (Z counted from the first plane, offset {z_offset} added):")
                 print(f"  Z range: {coords[:, 0].min():.0f} - {coords[:, 0].max():.0f}")
                 print(f"  Y range: {coords[:, 1].min():.0f} - {coords[:, 1].max():.0f}")
                 print(f"  X range: {coords[:, 2].min():.0f} - {coords[:, 2].max():.0f}")
@@ -2782,15 +2857,15 @@ class TuningWidget(QWidget):
                 # curation buttons find it by that record and not by the "●"
                 # in its name (brain_context, rule 4). Tagged only when the run
                 # was logged for the brain selected now.
-                if self.last_run_id:
-                    layer.metadata['exp_id'] = self.last_run_id
+                if run_id:
+                    layer.metadata['exp_id'] = run_id
                     layer.metadata['is_best'] = False
                     from mousebrain.brain_context import tag_run_layer
                     from mousebrain.tracker import same_brain_name
-                    row = self.tracker.get_experiment(self.last_run_id) if self.tracker else None
-                    if (row and self.current_brain
-                            and same_brain_name(row.get('brain'), self.current_brain.name)):
-                        tag_run_layer(layer, self.current_brain, self.last_run_id, 'det_recent')
+                    row = self.tracker.get_experiment(run_id) if self.tracker else None
+                    if (row and run_brain
+                            and same_brain_name(row.get('brain'), Path(run_brain).name)):
+                        tag_run_layer(layer, Path(run_brain), run_id, 'det_recent')
 
                 print(f"[MouseBrain] Added {len(coords)} cells to napari (white circle outline = new detection)")
                 print(f"[MouseBrain] Layer style: size={style['size']}, symbol={style['symbol']}, border_width={border_width}")
@@ -2800,9 +2875,16 @@ class TuningWidget(QWidget):
 
             QMessageBox.information(self, "Detection Complete", message)
         else:
-            if self.tracker and self.last_run_id:
-                self.tracker.update_status(self.last_run_id, status="failed")
+            if self.tracker and run_id:
+                self.tracker.update_status(run_id, status="failed")
+                getattr(self, '_runs_in_progress', set()).discard(run_id)
             QMessageBox.warning(self, "Detection Failed", message)
+
+    def _run_brain_is_selected(self, run_brain) -> bool:
+        """Whether a run's brain is the brain selected now."""
+        if run_brain is None or self.current_brain is None:
+            return run_brain is None
+        return str(Path(run_brain)) == str(Path(self.current_brain))
 
     def _generate_detection_qc_image(self):
         """
@@ -3753,10 +3835,10 @@ class TuningWidget(QWidget):
             if why_not in ("partial", "not_the_brains_candidates"):
                 QMessageBox.warning(self, "Run Cannot Be Pre-filtered",
                     f"The chosen detection run {self._prefilter_source_exp_id} "
-                    + ("is a test of part of the stack: its cell positions are "
-                       "counted from the first plane tested, not from the first "
-                       "plane of the brain, so they cannot be compared with the "
-                       "atlas.\n"
+                    + ("is a test of part of the stack: it holds only the "
+                       "planes tested, not the brain's candidates, and runs saved "
+                       "before this was corrected count Z from the first plane "
+                       "tested, so it cannot be compared with the atlas.\n"
                        if why_not == "partial" else
                        "did not write this brain's candidates file (the file "
                        "step 5 classifies, in 4_Cell_Candidates). A Setup & "
@@ -7541,11 +7623,27 @@ class TuningWidget(QWidget):
             batch_size=self.classify_batch_size.value(),
             exp_id=exp_id,
         )
-        self.classification_worker.finished.connect(self._on_classification_finished)
+        # The run's own record travels with the worker: the finish handler
+        # used the widget's _last_class_output, which a brain change resets
+        # (see _on_classification_finished).
+        run = {'brain': self.current_brain, 'exp_id': exp_id, 'output_path': output_path}
+        self.classification_worker.finished.connect(
+            lambda ok, msg, found, rej, eid, run=run:
+                self._on_classification_finished(ok, msg, found, rej, eid, run=run))
+        self._hold_brain_list()
         self.classification_worker.start()
 
-    def _on_classification_finished(self, success, message, cells_found, rejected, exp_id):
-        """Handle classification completion."""
+    def _on_classification_finished(self, success, message, cells_found, rejected, exp_id,
+                                    run=None):
+        """Handle classification completion.
+
+        ``run`` is the record the run started with (brain, tracker id, run
+        folder); the results are found through it, never through the widget's
+        per-brain fields, which a brain change resets."""
+        if run is None:
+            run = {'brain': self.current_brain, 'exp_id': exp_id,
+                   'output_path': getattr(self, '_last_class_output', None)}
+        self._release_brain_list(getattr(self, 'classification_worker', None))
         self.classify_btn.setEnabled(True)
         self.classify_btn.setText("Run Classification")
 
@@ -7577,7 +7675,17 @@ class TuningWidget(QWidget):
                 )
 
             # This run's own folder (never production; see run_classification)
-            run_folder = getattr(self, '_last_class_output', None)
+            run_folder = run.get('output_path')
+            if exp_id:
+                getattr(self, '_runs_in_progress', set()).discard(exp_id)
+            if not self._run_brain_is_selected(run.get('brain')):
+                # Another brain is selected now (only possible if the list was
+                # changed some other way): the run is recorded, nothing of it
+                # is drawn or offered for promotion on this brain.
+                self.classify_status.setText(
+                    f"Classification of {getattr(run.get('brain'), 'name', '?')} finished "
+                    f"(cells {cells_found}, rejected {rejected}); its results are in {run_folder}")
+                return
             if hasattr(self, 'promote_class_btn'):
                 self.promote_class_btn.setEnabled(run_folder is not None)
 
@@ -7620,6 +7728,7 @@ class TuningWidget(QWidget):
         else:
             if self.tracker and exp_id:
                 self.tracker.update_status(exp_id, status="failed")
+                getattr(self, '_runs_in_progress', set()).discard(exp_id)
 
             self.classify_status.setText(f"Classification failed:\n{message}")
             QMessageBox.warning(self, "Classification Failed", message)
@@ -8986,10 +9095,12 @@ class TuningWidget(QWidget):
                         print(f"  Run {target_run.get('exp_id')} has no candidates file at "
                               f"{target_run.get('output_path')}")
                     else:
+                        from mousebrain.detection_runs import z_shift_on_load
                         points_loaded = self._load_points_from_xml(
                             points_file,
                             f"{self.current_brain.name} - Detection {label_suffix}",
                             cell_type=cell_type,
+                            z_shift=z_shift_on_load(target_run, points_file),
                             # The Best role only for a run really marked
                             # best; a highest-rated stand-in is a plain run.
                             run=(target_run.get('exp_id'),
@@ -9487,7 +9598,7 @@ class TuningWidget(QWidget):
         print(f"[MouseBrain] Archived layer: {layer.name}")
 
     def _load_points_from_xml(self, xml_path: Path, layer_name: str, cell_type: str = 'best',
-                              run=None) -> bool:
+                              run=None, z_shift: int = 0) -> bool:
         """
         Load cell coordinates from BrainGlobe XML format and add as points layer.
 
@@ -9502,6 +9613,9 @@ class TuningWidget(QWidget):
                 output: the layer then records the selected brain, the run and
                 its role ('det_best' / 'det_recent'), as every run layer does
                 (brain_context, rule 4). Without it the layer is a plain file.
+            z_shift: planes added to every cell's Z -- a partial-scope run's
+                det_z_start for a file saved before run files held
+                whole-stack Z (mousebrain.detection_runs.z_shift_on_load).
         """
         if not xml_path.exists():
             print(f"  XML file not found: {xml_path}")
@@ -9528,7 +9642,7 @@ class TuningWidget(QWidget):
                 if x_elem is not None and y_elem is not None and z_elem is not None:
                     x = int(x_elem.text)
                     y = int(y_elem.text)
-                    z = int(z_elem.text)
+                    z = int(z_elem.text) + int(z_shift or 0)
                     # Napari uses (Z, Y, X) order for 3D coordinates
                     points.append([z, y, x])
 
