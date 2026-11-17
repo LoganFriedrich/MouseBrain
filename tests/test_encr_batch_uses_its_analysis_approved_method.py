@@ -51,7 +51,7 @@ def test_unset_options_come_from_the_analysis_own_approved_method(env, monkeypat
         asked.append(name)
         method = dict(ar.DEFAULT_METHOD)
         method.update({"sigma_threshold": 1.5, "soma_dilation": 4,
-                       "size_filter_um": list(be.BATCH_NUCLEUS_DIAMETER_UM)})
+                       "size_filter_um": [10, 25]})
         return method
 
     monkeypatch.setattr(ar, "approved_method_for", per_analysis, raising=False)
@@ -65,8 +65,12 @@ def test_unset_options_come_from_the_analysis_own_approved_method(env, monkeypat
 def test_an_analysis_without_an_approved_method_runs_on_builtin_values(env, monkeypatch, capsys):
     monkeypatch.setattr(ar, "approved_method_for", lambda name, *a, **k: None,
                         raising=False)
+    # The diameter range has no built-in value, so with no approved method
+    # it must be typed; everything else falls back to the built-in values.
+    monkeypatch.setattr(sys, "argv", sys.argv + ["--diameter", "9", "24"])
     be.main()
     assert env[0]["sigma_threshold"] == 0 and env[0]["soma_dilation"] == 6
+    assert (env[0]["min_diameter_um"], env[0]["max_diameter_um"]) == (9, 24)
     out = capsys.readouterr().out
     assert "NOT the approved method" not in out
     assert "Approved:  none for ENCR_Detection" in out

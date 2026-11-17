@@ -499,9 +499,10 @@ Sample IDs are automatically parsed to extract hierarchy fields:
 The batch script runs ONE fixed method on every ND2 file of a project:
 threshold + LoG nucleus detection, GMM background, `background_mean`
 classification with a sigma threshold, measured in the green channel. What
-you choose is six numbers: the sigma threshold, the background percentile,
-the soma dilation, the background-exclusion dilation and the two detector
-settings (`threshold_fraction`, `log_threshold`).
+you choose is the nucleus diameter range (micrometers) and six numbers: the
+sigma threshold, the background percentile, the soma dilation, the
+background-exclusion dilation and the two detector settings
+(`threshold_fraction`, `log_threshold`).
 
 ### Two different things: the batch's numbers and the approved method
 
@@ -579,8 +580,10 @@ entry instead of editing the shared method (step 2).
     "background_percentile": 10, "bg_exclusion_dilation": 50}
    ```
 
-   The values in the example only illustrate the format; the size range in
-   particular is the open question at the end of this section. To make it
+   The values in the example only illustrate the format: put in the numbers
+   your lab chose for its tissue -- the diameter range (`size_filter_um`,
+   smallest first, in micrometers) especially, because the batch detects
+   with exactly that range (see "The nucleus diameter range" below). To make it
    the batch's own approved method, leaving every other analysis as it is,
    put that object under `"analyses"` as the entry for `ENCR_Detection`:
 
@@ -624,6 +627,11 @@ For each number, the first of these that gives one wins:
 
 The banner printed at the start lists every number with its source in square
 brackets, e.g. `sigma_threshold=0.5 [marked-best run col_...]`.
+
+The nucleus diameter range follows its own, shorter list: `--diameter MIN MAX`
+typed on the command line, else `size_filter_um` of the approved method. A
+marked run never supplies it, and there is **no built-in range** (see "The
+nucleus diameter range" below).
 
 ### Choosing the sigma and percentile in the napari widget
 
@@ -706,7 +714,10 @@ python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project PROJECT_A
 ```
 
 `--dry-run` prints the banner and the file list and changes nothing. Read the
-banner before the real run.
+banner before the real run. If it stops with `no nucleus diameter range is
+set`, write `size_filter_um` into the approved-method file (see "The nucleus
+diameter range" below), or add `--diameter MIN MAX` to run once at a range you
+type.
 
 ### What it records
 
@@ -892,14 +903,35 @@ banner before the real run.
   counts samples that were processed, not entries that were written: a
   sample is registered only if none of these lines names it.
 
-### Open question: the nucleus diameter range
+### The nucleus diameter range
 
-The batch detects nuclei 10-25 um across. The built-in approved method says
-8-25 um. Until a lab settles which is approved (by setting `size_filter_um`
-in its approved-method file, or by a code change), every batch run with the
-built-in approved method prints the `NOT the approved method` warning for
-`size_filter_um` and its entries show as stale. That is the record being
-honest, not a failed run.
+Only nuclei whose diameter falls inside this range are counted, so it decides
+what the batch counts. Which range is right depends on your tissue, stain and
+magnification; it is a setting, and the code carries no range of its own.
+
+- **Where it comes from:** `--diameter MIN MAX` if you type it (for one run),
+  else `size_filter_um` in the approved method the batch is judged by (see
+  "Making numbers the approved method"). Without an approved-method file the
+  approved method is the registry's built-in one, and its `size_filter_um` is
+  then the range used: write your own into the file to choose it.
+- **What you see:** the banner's `Detection:` line names the range and its
+  source, e.g. `nucleus diameter 12-30 um [approved method]`. Each image's
+  tracker detection row records it in its notes, with the pixel-area range it
+  became at that image's pixel size, and each registry entry records it as
+  `size_filter_um`.
+- **When nothing gives a range** (the approved method has no `size_filter_um`,
+  or the approved-method file gives `ENCR_Detection` no approved method at
+  all) and `--diameter` was not typed, the batch stops before reading any
+  image and says how to set it. Nothing is written.
+- **When the range is unusable** (not two numbers, the larger first, or 0 or
+  below) the batch stops the same way and names the value it found.
+- **A typed range that differs from the approved one** is used, recorded, and
+  listed under `[!] NOT the approved method`; those entries show as stale,
+  like any other typed number.
+
+Changing `size_filter_um` in the approved method makes every earlier entry
+made with the old range show as stale; re-run those samples to bring them
+up to date.
 
 ### Open question: recording the measurement region
 

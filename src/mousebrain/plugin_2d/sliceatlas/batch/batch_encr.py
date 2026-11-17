@@ -19,12 +19,16 @@ given as the MOUSEBRAIN_2D_PROJECT environment variable. When no root holds
 any ND2 file the script names the roots it searched and exits 1.
 
 METHOD (fixed by the code)
-  DETECTION:       threshold+LoG, nucleus diameter BATCH_NUCLEUS_DIAMETER_UM
-                   (10-25 um; converted to pixel area per image from its pixel size)
+  DETECTION:       threshold+LoG, nucleus diameter range from --diameter MIN MAX,
+                   else the approved method's size_filter_um (no built-in range;
+                   converted to pixel area per image from its pixel size)
   COLOCALIZATION:  background_mean with a sigma threshold
   BACKGROUND:      gmm (with a percentile fallback)
 
 PARAMETERS (chosen per run; the banner shows each value and where it came from)
+  nucleus diameter range (um): --diameter MIN MAX, else size_filter_um of the
+  approved method (batch_size_range). The code holds no range of its own: when
+  neither gives one the batch stops before any sample and says how to set it.
   sigma threshold, background percentile, soma dilation (px), background
   exclusion dilation (iterations), detector threshold_fraction / log_threshold.
   Each is taken from, in order:
@@ -91,19 +95,10 @@ DEFAULT_OUTPUT = (Path(DATA_DIR).parent / "2_Data_Summary" / "batch_results") if
 RED_IDX = 1
 GREEN_IDX = 0
 
-# Nucleus diameter range (micrometers) the batch detects with: 10-25 um, the
-# default of the detector it calls (core.detection.detect_with_log_augmentation).
-# It is passed to the detector explicitly and recorded with every output.
-# OPEN QUESTION, deliberately not settled in code: the approved-method default
-# (analysis_registry.DEFAULT_METHOD['size_filter_um']) says 8-25 um. Which range
-# is approved is for the lab to decide; until then the batch detects 10-25 um,
-# says so in its banner and records 10-25 um, so its registry entries show as
-# not matching an approved method that says otherwise.
-BATCH_NUCLEUS_DIAMETER_UM = (10, 25)
-
 # The method the batch runs. These are fixed by the code; they are recorded in
 # each registry entry so an approved method naming something else shows the
 # entry as not produced with it.
+# The nucleus diameter range is NOT here: it is a setting (batch_size_range).
 # NOT recorded yet: the region each cell's signal is measured in. The batch
 # measures a non-overlapping ring around each nucleus that leaves the nucleus
 # out (ColocalizationAnalyzer.measure_cytoplasm_intensities). Adding a key for
@@ -240,11 +235,75 @@ def resolve_parameters(cli: dict, tuned: dict, approved: dict) -> tuple:
     return values, sources
 
 
-def batch_method_params(approved: dict, values: dict) -> dict:
+class SizeRangeNotSet(Exception):
+    """No usable nucleus diameter range: neither typed nor in the approved method.
+
+    The message says what is wrong and how to set the range.
+    """
+
+
+def _size_range_how_to() -> str:
+    return ("Set it in the approved-method file, e.g. "
+            '"size_filter_um": [<min um>, <max um>] (inside the '
+            f'"{REGISTRY_ANALYSIS}" entry when the file names analyses, else '
+            "at the top level), or type --diameter MIN MAX for this run. See "
+            "plugin_2d/ALGORITHM_REFERENCE.md, section 6.")
+
+
+def _check_size_range(value, origin: str) -> tuple:
+    """(min, max) from a 2-number value, or SizeRangeNotSet naming *origin*."""
+    ok = (isinstance(value, (list, tuple)) and len(value) == 2
+          and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                  and math.isfinite(v) for v in value)
+          and 0 < value[0] < value[1])
+    if not ok:
+        raise SizeRangeNotSet(
+            f"{origin} gives the nucleus diameter range as {value!r}; it must "
+            "be two numbers in micrometers, smallest first, both above 0. "
+            + _size_range_how_to())
+    return value[0], value[1]
+
+
+def batch_size_range(typed, approved: dict) -> tuple:
+    """The nucleus diameter range (um) the batch detects with, and its source.
+
+    A range typed on the command line (--diameter MIN MAX) wins; otherwise
+    the approved method's ``size_filter_um``. There is no built-in range.
+
+    WHY a setting and not a constant: which nuclei count is a property of the
+    tissue, stain and magnification a lab works with, not of the code. The
+    batch used to detect at a range fixed in the code while the approved
+    method it is judged by named another, so every entry was registered stale
+    and a lab had no way to make the batch run at its approved range.
+    WHY stop instead of falling back: a fallback range would be a lab fact
+    compiled into the tool, and nuclei counted at a size nobody chose are
+    counts of the wrong thing.
+
+    Returns:
+        ((min_um, max_um), source), source "command line" or "approved method".
+    Raises:
+        SizeRangeNotSet: nothing gives a range, or the one given is unusable.
+    """
+    if typed is not None:
+        return _check_size_range(list(typed), "--diameter"), "command line"
+    if "size_filter_um" not in approved:
+        why = ("there is no approved method for this batch"
+               if not approved else
+               "the approved method has no size_filter_um")
+        raise SizeRangeNotSet(
+            f"no nucleus diameter range is set: {why} and --diameter was not "
+            "typed. " + _size_range_how_to())
+    return (_check_size_range(approved["size_filter_um"],
+                              "the approved method's size_filter_um"),
+            "approved method")
+
+
+def batch_method_params(approved: dict, values: dict, size_range: tuple) -> dict:
     """The method parameters a batch run actually used, for the registry.
 
     Exactly what the batch decides: the resolved values, the fixed method
-    names and the diameter range -- nothing else.
+    names and the diameter range (*size_range*, from batch_size_range) --
+    nothing else.
 
     WHY: entries used to record the approved method whatever the run used, so
     a run with --threshold 1.5 hashed like an approved run and could never be
@@ -259,7 +318,7 @@ def batch_method_params(approved: dict, values: dict) -> dict:
     """
     used = dict(BATCH_FIXED_METHOD)
     used.update(values)
-    used["size_filter_um"] = list(BATCH_NUCLEUS_DIAMETER_UM)
+    used["size_filter_um"] = list(size_range)
     return {key: (approved[key] if key in approved and approved[key] == value
                   else value)
             for key, value in used.items()}
@@ -719,8 +778,8 @@ def process_single(
     bg_percentile: float = BUILTIN_PARAMETERS['background_percentile'],
     soma_dilation: int = BUILTIN_PARAMETERS['soma_dilation'],
     sigma_threshold: float = BUILTIN_PARAMETERS['sigma_threshold'],
-    min_diameter_um: float = BATCH_NUCLEUS_DIAMETER_UM[0],
-    max_diameter_um: float = BATCH_NUCLEUS_DIAMETER_UM[1],
+    min_diameter_um: float = None,
+    max_diameter_um: float = None,
     threshold_fraction: float = BUILTIN_PARAMETERS['threshold_fraction'],
     log_threshold: float = BUILTIN_PARAMETERS['log_threshold'],
 ) -> dict:
@@ -744,7 +803,9 @@ def process_single(
             in the dilated disk around each nucleus.
         sigma_threshold: Number of std devs above background mean for positive
             classification. 0 = background mean IS the threshold.
-        min_diameter_um, max_diameter_um: accepted nucleus diameter range.
+        min_diameter_um, max_diameter_um: accepted nucleus diameter range
+            (um). Required: there is no built-in range (see batch_size_range);
+            main() passes the one it resolved.
         threshold_fraction, log_threshold: detector settings (see
             core.detection.detect_with_log_augmentation).
 
@@ -752,6 +813,10 @@ def process_single(
     A failed run also carries 'failed_at' (the step) and 'failure': 'sample'
     or 'infrastructure' (see failure_is_the_samples).
     """
+    if min_diameter_um is None or max_diameter_um is None:
+        # A programming error, not the sample's fault: say so before any work.
+        raise TypeError("process_single needs min_diameter_um and "
+                        "max_diameter_um (see batch_size_range)")
     from ..core.io import load_image, extract_channels
     from ..core.detection import detect_with_log_augmentation, diameter_range_to_area_px
     from ..core.colocalization import ColocalizationAnalyzer
@@ -1026,8 +1091,8 @@ def main():
     # The four options below default to None = "not typed". Each unset one is
     # filled from a marked-best run, then the approved method, then the
     # built-in default (resolve_parameters). There are no --min-area /
-    # --max-area options: the detector never received them, and its size
-    # range is the diameter range BATCH_NUCLEUS_DIAMETER_UM.
+    # --max-area options: the detector never received them; its size range
+    # is the diameter range (--diameter, else the approved method).
     parser.add_argument('--threshold', type=float, default=None,
                         help='Sigma threshold: positive if green > bg_mean + N*std; '
                              '0 = bg mean IS the threshold (default: marked-best run, '
@@ -1041,6 +1106,11 @@ def main():
     parser.add_argument('--bg-percentile', type=float, default=None,
                         help='Background percentile fallback (default: marked-best run, '
                              'else approved method)')
+    parser.add_argument('--diameter', type=float, nargs=2, default=None,
+                        metavar=('MIN', 'MAX'),
+                        help='Nucleus diameter range in micrometers (default: '
+                             'size_filter_um of the approved method; there is '
+                             'no built-in range)')
     parser.add_argument('--dry-run', action='store_true',
                         help='List files without processing')
     parser.add_argument('--ignore-tracker', action='store_true',
@@ -1115,7 +1185,13 @@ def main():
             "or use --ignore-tracker.")
     # What this run will record in the registry, and where it parts from the
     # approved method (those entries are reported stale by check_staleness).
-    method_params = batch_method_params(approved, values)
+    # Before anything is read or written: without a range there is nothing
+    # to detect with (batch_size_range says why there is no fallback).
+    try:
+        size_range, size_source = batch_size_range(args.diameter, approved)
+    except SizeRangeNotSet as e:
+        parser.error(str(e))
+    method_params = batch_method_params(approved, values, size_range)
     differs = sorted(k for k in set(method_params) | set(approved)
                      if method_params.get(k) != approved.get(k))
 
@@ -1128,9 +1204,9 @@ def main():
         print("Input:     (no ND2 files found)")
     print(f"Searched:  {searched}")
     print(f"Output:    {args.output}")
-    d_min, d_max = BATCH_NUCLEUS_DIAMETER_UM
+    d_min, d_max = size_range
     print(f"Detection: threshold+LoG, nucleus diameter {d_min}-{d_max} um "
-          f"(pixel area per image from its pixel size)")
+          f"[{size_source}] (pixel area per image from its pixel size)")
     print(f"           threshold_fraction={values['threshold_fraction']} "
           f"[{sources['threshold_fraction']}], "
           f"log_threshold={values['log_threshold']} [{sources['log_threshold']}]")
@@ -1261,8 +1337,8 @@ def main():
             bg_percentile=values['background_percentile'],
             soma_dilation=values['soma_dilation'],
             sigma_threshold=values['sigma_threshold'],
-            min_diameter_um=BATCH_NUCLEUS_DIAMETER_UM[0],
-            max_diameter_um=BATCH_NUCLEUS_DIAMETER_UM[1],
+            min_diameter_um=size_range[0],
+            max_diameter_um=size_range[1],
             threshold_fraction=values['threshold_fraction'],
             log_threshold=values['log_threshold'],
         )

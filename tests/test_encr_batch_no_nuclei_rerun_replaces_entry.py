@@ -75,7 +75,7 @@ def test_no_nuclei_rerun_replaces_the_earlier_count(env, monkeypatch, capsys):
     assert entry["results"]["positive_fraction"] is None
     assert entry["outputs"] == {}
     # Registered with the parameters this run used, like a completed sample.
-    assert entry["method_params"]["size_filter_um"] == list(be.BATCH_NUCLEUS_DIAMETER_UM)
+    assert entry["method_params"]["size_filter_um"] == be.batch_approved_method()["size_filter_um"]
     # The earlier run's file is archived, not left beside the new entry.
     assert not old_file.exists()
     archived = list(old_file.parent.glob("_archived/*/" + old_file.name))
@@ -191,7 +191,7 @@ def test_earlier_no_nuclei_entry_with_other_parameters_is_logged(env, monkeypatc
 
     entry = reg.get_entry(SAMPLE)
     assert entry["is_current"] is True
-    assert entry["method_params"]["size_filter_um"] == list(be.BATCH_NUCLEUS_DIAMETER_UM)
+    assert entry["method_params"]["size_filter_um"] == be.batch_approved_method()["size_filter_um"]
     records = _invalidate_entry_records(tmp_path)
     assert len(records) == 1
     assert records[0]["results"]["n_nuclei"] == 0

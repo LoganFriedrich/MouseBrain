@@ -57,20 +57,6 @@ def test_run_with_the_approved_method_is_current(env, monkeypatch):
     assert SAMPLE not in stale
 
 
-def test_recorded_size_range_is_the_one_detection_used(env, monkeypatch, capsys):
-    t, tmp_path = env
-    approved = _approve(tmp_path, monkeypatch, size_filter_um=[8, 25])
-    _fake_loader(monkeypatch, *_synthetic_image())
-    _nd2(tmp_path)
-    _run_main(monkeypatch, ["--project", PROJECT, "--output", str(tmp_path / "out"),
-                            "--ignore-tracker"])
-    stale, reg = _stale_samples()
-    recorded = reg.get_entry(SAMPLE)["method_params"]["size_filter_um"]
-    assert recorded == [10, 25] and recorded != approved["size_filter_um"]
-    assert SAMPLE in stale
-    assert "NOT the approved method" in capsys.readouterr().out
-
-
 def test_an_approved_key_the_batch_does_not_control_is_not_recorded(env, monkeypatch, capsys):
     # The approved method names a setting the batch has no control over; the
     # run did not use it, so its entry must not claim it did.

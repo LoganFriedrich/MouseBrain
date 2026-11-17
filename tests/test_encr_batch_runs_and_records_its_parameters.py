@@ -4,7 +4,7 @@ Defects covered:
 - a value typed on the command line that equalled the built-in default
   (e.g. --threshold 0) was replaced by a tracker value;
 - the detector ran on its own default diameter range while the banner printed
-  pixel areas that were never passed and the docstring said 8-25 um;
+  pixel areas that were never passed and the docstring said another range;
 - the tracker's detection row recorded the tracker's own default areas
   (50/5000 px), never the areas the detector applied.
 """
@@ -154,7 +154,7 @@ def test_banner_states_the_diameter_range_detection_uses(env, monkeypatch, capsy
     _run_main(monkeypatch, ["--project", PROJECT, "--dry-run", "--ignore-tracker",
                             "--output", str(tmp_path / "out")])
     out = capsys.readouterr().out
-    lo, hi = getattr(be, "BATCH_NUCLEUS_DIAMETER_UM", (10, 25))   # what the detector has always used
+    lo, hi = be.batch_approved_method()["size_filter_um"]   # no file: the registry's method
     assert f"nucleus diameter {lo}-{hi} um" in out
     assert "px" not in out.split("Detection:")[1].split("\n")[0].replace("pixel", "")
 
@@ -182,9 +182,10 @@ def test_tracker_row_records_the_areas_the_detector_applied(env, monkeypatch):
         return labels, details
 
     monkeypatch.setattr(det_mod, "detect_with_log_augmentation", spy)
-    result = be.process_single(_nd2(tmp_path), tmp_path / "out")
+    lo, hi = 10, 25
+    result = be.process_single(_nd2(tmp_path), tmp_path / "out",
+                               min_diameter_um=lo, max_diameter_um=hi)
     assert result["status"] == "completed", result
-    lo, hi = getattr(be, "BATCH_NUCLEUS_DIAMETER_UM", (10, 25))   # what the detector has always used
     assert (applied["min_diameter_um"], applied["max_diameter_um"]) == (lo, hi)
     det_rows = t.search(run_type="detection")
     assert len(det_rows) == 1
