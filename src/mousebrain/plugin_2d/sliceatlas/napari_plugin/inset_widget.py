@@ -192,25 +192,29 @@ class InsetWidget(QWidget):
         self.show_mask_btn.setEnabled(has_insets)
 
     def current_image_key(self):
-        """(file, stack slice) of the image on screen: the slice index is
-        None for a single image."""
-        parent = self.parent_widget
-        red = getattr(parent, "red_channel", None)
+        """(the pixels on screen, stack slice): the nuclear channel array the
+        window holds -- a new one for every load -- and the slice index (None
+        for a single image). WHY the array, not the file or folder name:
+        Browse Folder records a folder before anything is loaded, so names
+        can change while the pixels on screen stay the same."""
+        red = getattr(self.parent_widget, "red_channel", None)
         slice_idx = None
         if red is not None and getattr(red, "ndim", 2) == 3:
             try:
                 slice_idx = int(self.viewer.dims.current_step[0])
             except Exception:
                 slice_idx = None
-        return (getattr(parent, "current_file", None),
-                getattr(parent, "current_folder", None), slice_idx)
+        return (red, slice_idx)
 
     def bound_to_current_image(self) -> bool:
         """True when the manager was built from the image (and stack slice)
         now on screen. WHY: insets are aligned to the base image the manager
         holds; detection with a manager built on another image or slice puts
         that image's nuclei on this one."""
-        return self.inset_manager is not None and self._built_for == self.current_image_key()
+        if self.inset_manager is None or self._built_for is None:
+            return False
+        red, slice_idx = self.current_image_key()
+        return self._built_for[0] is red and self._built_for[1] == slice_idx
 
     def on_base_loaded(self):
         """Called when base image is loaded in parent widget.

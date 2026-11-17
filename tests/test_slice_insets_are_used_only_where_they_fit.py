@@ -95,3 +95,13 @@ def test_a_manager_built_on_another_stack_slice_is_not_bound():
     assert widget.bound_to_current_image()
     parent.viewer.dims.current_step = (2, 0, 0)
     assert not widget.bound_to_current_image()
+
+
+def test_choosing_a_folder_without_loading_it_keeps_the_insets_bound():
+    parent = _parent(np.ones((16, 16)))
+    widget = _inset_widget(parent)
+    widget.on_base_loaded()
+    parent.current_folder = "a folder chosen but not loaded"
+    assert widget.bound_to_current_image()
+    parent.red_channel = np.ones((16, 16))   # another image's pixels
+    assert not widget.bound_to_current_image()
