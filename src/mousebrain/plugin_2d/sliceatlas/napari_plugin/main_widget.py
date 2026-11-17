@@ -197,6 +197,18 @@ def write_folder_csv(master_path, combined, sample_name: str,
         raise
 
 
+def fallback_sample_id(widget) -> str:
+    """The name a run is filed under when the Sample ID box is empty: the
+    image's name, else the stack folder's. WHY: an emptied Sample ID box on
+    a folder stack (no current_file) crashed detection and colocalization on
+    current_file.stem."""
+    current = getattr(widget, "current_file", None)
+    if current is not None:
+        return Path(current).stem
+    folder = getattr(widget, "current_folder", None)
+    return Path(folder).name if folder is not None else "sample"
+
+
 def _empty_drawn(name: str, widget) -> Dict[str, Any]:
     """What a person-drawn file holds when nothing is drawn."""
     if name == "rois.json":
@@ -2323,18 +2335,6 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(msg)
             print(f"[BrainSlice] {msg}")
             QMessageBox.warning(self, "Results not saved", msg)
-
-    def _sample_id_or_default(self) -> str:
-        """The Sample ID box, else the image's name, else the stack folder's.
-        WHY: an emptied Sample ID box on a folder stack (no current_file)
-        crashed detection and colocalization on current_file.stem."""
-        text = self.sample_id_edit.text()
-        if text:
-            return text
-        if self.current_file is not None:
-            return self.current_file.stem
-        folder = getattr(self, "current_folder", None)
-        return Path(folder).name if folder is not None else "sample"
 
     def _manual_save_state(self):
         """Explicitly save analysis state (triggered by Save State button)."""
@@ -5650,7 +5650,7 @@ class BrainSliceWidget(QWidget):
 
             # Log to tracker
             if self.tracker:
-                sample_id = self._sample_id_or_default()
+                sample_id = self.sample_id_edit.text() or fallback_sample_id(self)
                 # Every setting goes in the row (det_backend, and all of
                 # params as JSON). WHY: only the StarDist numbers used to be
                 # recorded -- 0.0 for a threshold run's probability and
@@ -6066,7 +6066,7 @@ class BrainSliceWidget(QWidget):
         # first and then abandoned by one of those checks stayed 'started'
         # forever.
         if self.tracker:
-            sample_id = self._sample_id_or_default()
+            sample_id = self.sample_id_edit.text() or fallback_sample_id(self)
             from ..tracker.schema import COLOC_SIGMA_RECORDED_VERSION
             # WHY: background_mean classifies with the sigma spin box, not the
             # fold-change one, so the row records the sigma for that method.
@@ -6166,7 +6166,7 @@ class BrainSliceWidget(QWidget):
 
         # Log to tracker -- AFTER the input check above (see _run_colocalization).
         if self.tracker:
-            sample_id = self._sample_id_or_default()
+            sample_id = self.sample_id_edit.text() or fallback_sample_id(self)
             try:
                 self._coloc_run_id = self.last_run_id = self.tracker.log_colocalization(
                     sample_id=sample_id,
