@@ -222,6 +222,14 @@ def _empty_drawn(name: str, widget) -> Dict[str, Any]:
 # folder (see BrainSliceWidget._batch_run_analysis).
 BATCH_RUNNING = "the batch analysis"
 
+# What happened to each batch image: the `status` column of the exported
+# summary (see BrainSliceWidget._batch_summary_rows). An image that could not
+# be analyzed is "failed: <why>".
+BATCH_NOT_REVIEWED = "not reviewed"
+BATCH_COUNTED = "counted"
+BATCH_NO_ROI = "no ROI drawn"
+BATCH_SKIPPED = "skipped"
+
 
 class BatchImageFailed(Exception):
     """One batch image could not be analyzed; the message says why."""
@@ -3587,9 +3595,12 @@ class BrainSliceWidget(QWidget):
         settings = self._pa_get_settings()
 
         from qtpy.QtWidgets import QApplication
+        import time as _time_mod
 
         results: Dict[str, Any] = {}
-        errors = []
+        failed: Dict[str, str] = {}
+        tracker_problem = None      # why the tracker stopped taking rows
+        unlogged = 0
         self._analysis_running = BATCH_RUNNING
         self._set_batch_buttons(False)
         self._batch_progress.setVisible(True)
@@ -3601,14 +3612,28 @@ class BrainSliceWidget(QWidget):
                 self._batch_status_label.setText(
                     f"Processing {i+1}/{len(files)}: {fpath.name}")
                 QApplication.processEvents()
+                started = _time_mod.time()
+                data, reason = None, None
                 try:
                     data = analyze_batch_image(fpath, settings)
                 except Exception as e:
-                    errors.append(f"{fpath.name}: {e}")
-                    continue
-                data.update({'path': fpath, 'roi_done': False,
-                             'summary': None, 'detail': None})
-                results[fpath.name] = data
+                    reason = str(e) or type(e).__name__
+                    failed[fpath.name] = reason
+                else:
+                    # status: what happened to the image, one row of the
+                    # exported summary each (see _batch_summary_rows).
+                    data.update({'path': fpath, 'roi_done': False,
+                                 'status': BATCH_NOT_REVIEWED,
+                                 'summary': None, 'detail': None})
+                    results[fpath.name] = data
+                if tracker_problem is None:
+                    tracker_problem = self._batch_log_image(
+                        fpath, settings, data, reason,
+                        _time_mod.time() - started)
+                    if tracker_problem is not None:
+                        unlogged += 1
+                else:
+                    unlogged += 1
         finally:
             self._analysis_running = None
             self._set_batch_buttons(True)
@@ -3618,19 +3643,107 @@ class BrainSliceWidget(QWidget):
         self._batch_progress.setValue(len(files))
         self._batch_settings = settings
         self._batch_results = results
+        self._batch_failed = failed
+        self._batch_order = [f.name for f in files]
 
         n_ok = len(results)
         status = f"Batch complete: {n_ok}/{len(files)} images processed"
-        if errors:
-            status += f" ({len(errors)} errors)"
-            print(f"[BrainSlice] Batch errors:")
-            for err in errors:
-                print(f"  {err}")
+        if failed:
+            status += f" ({len(failed)} failed -- listed in the export)"
+            print("[BrainSlice] Batch images that could not be analyzed:")
+            for name, why in failed.items():
+                print(f"  {name}: {why}")
+        if tracker_problem is not None:
+            status += (f" [!] {unlogged} image(s) NOT logged to the calibration "
+                       f"tracker ({tracker_problem})")
         self._batch_status_label.setText(status)
+        if failed:
+            # WHY a message, not only the console: the batch used to print
+            # these and go on, so an image that failed looked like one that
+            # was never in the folder.
+            lines = [f"{name}: {why}" for name, why in failed.items()]
+            shown = lines[:20] + ([f"... and {len(lines) - 20} more"]
+                                  if len(lines) > 20 else [])
+            QMessageBox.warning(
+                self, "Batch: images not analyzed",
+                f"{len(failed)} of {len(files)} images could not be analyzed:\n\n"
+                + "\n".join(shown)
+                + "\n\nThey are listed as 'failed' in the exported summary.")
+        if not results and failed:
+            # Nothing to draw ROIs on, but the failures can still be exported.
+            self._batch_export_btn.setEnabled(True)
 
         # Enter ROI annotation mode if we have results
         if results:
             self._batch_enter_roi_mode()
+
+    def _batch_log_image(self, fpath, settings, data, reason, duration) -> Optional[str]:
+        """One particle-analysis row for one batch image, written once with
+        its final status: 'completed' with what was found, or 'failed' with
+        why. Returns None, or why the tracker refused the row (the batch
+        then stops logging, so the window is not frozen again by every
+        image waiting on a file that is held open).
+
+        WHY: the batch used to leave no row at all, so its results could not
+        be found in the Run History and nothing recorded which settings had
+        produced them. Written after the image is analyzed, in one write,
+        so no batch row can be left 'started'."""
+        if not self.tracker:
+            return None
+        bg_value = float(settings.get('bg_value') or 0)
+        # With no background the batch does not measure intensities and
+        # classifies nothing (every particle is negative); the row says so
+        # ('none') instead of naming a background that was never used.
+        classified = bg_value > 0
+        notes = f"GUI batch of folder {Path(fpath).parent.name}"
+        if settings.get('watershed'):
+            notes += "; watershed split on"
+        results = {}
+        status = 'completed'
+        if data is None:
+            status = 'failed'
+            notes += f"; image not analyzed: {reason}"
+        else:
+            particles = data['particles']
+            n = data['n_particles']
+            results = {
+                'pa_particles_found': n,
+                'pa_particles_raw': data.get('n_raw'),
+                'pa_bg_value': bg_value if classified else None,
+                'pa_mean_intensity': (
+                    float(particles['mean_intensity'].mean())
+                    if classified and n > 0 and 'mean_intensity' in particles.columns
+                    else None),
+                'pa_positive_particles': (
+                    int(particles['is_positive'].sum())
+                    if classified and 'is_positive' in particles.columns else None),
+            }
+        try:
+            run_id = self.tracker.log_particle_analysis(
+                sample_id=Path(fpath).stem,
+                detection_channel=str(settings.get('detect_channel_idx', 1)),
+                threshold_value=float(settings['threshold']),
+                measurement_channel=str(settings.get('measure_channel_idx', 0)),
+                min_area=settings['min_area'],
+                max_area=settings['max_area'],
+                min_circularity=settings['min_circularity'],
+                max_circularity=1.0,
+                bg_method='manual_roi' if classified else 'none',
+                input_path=str(fpath),
+                notes=notes,
+                status=status,
+                min_pct_above_bg=settings.get('min_pct_above_bg'),
+                results=results,
+                duration_seconds=duration,
+            )
+        except Exception as e:
+            print(f"[BrainSlice] [!] Batch row for {Path(fpath).name} not "
+                  f"written to the tracker: {e}")
+            return str(e) or type(e).__name__
+        if data is not None:
+            data['run_id'] = run_id
+        self.session_run_ids.append(run_id)
+        return None
 
     def _batch_enter_roi_mode(self):
         """Enter sequential ROI annotation mode."""
@@ -3770,11 +3883,14 @@ class BrainSliceWidget(QWidget):
             data['summary'] = summary_results
             data['detail'] = detail
             data['roi_done'] = True
+            data['status'] = BATCH_COUNTED
         else:
-            # No ROIs drawn -- still mark as done with no ROI data
+            # No ROIs drawn -- still mark as done with no ROI data; the
+            # export says so in its own row (BATCH_NO_ROI).
             data['roi_done'] = True
             data['summary'] = []
             data['detail'] = None
+            data['status'] = BATCH_NO_ROI
 
         # Advance
         self._batch_current_idx += 1
@@ -3787,7 +3903,13 @@ class BrainSliceWidget(QWidget):
             self._batch_load_current_image()
 
     def _batch_skip_image(self):
-        """Skip current image without counting."""
+        """Skip current image without counting. An image already counted
+        (reached again with Previous) keeps its count."""
+        names = list(self._batch_results.keys())
+        if 0 <= self._batch_current_idx < len(names):
+            data = self._batch_results[names[self._batch_current_idx]]
+            if data.get('status', BATCH_NOT_REVIEWED) == BATCH_NOT_REVIEWED:
+                data['status'] = BATCH_SKIPPED
         self._batch_current_idx += 1
         self._batch_load_current_image()
 
@@ -3803,9 +3925,36 @@ class BrainSliceWidget(QWidget):
             f"Batch ROI annotation complete: {done}/{total} images. Ready to export.")
         self.status_label.setText("Click 'Export Batch Results' to save.")
 
+    def _batch_summary_rows(self):
+        """The exported summary: for every image of the batch, in folder
+        order, its ROI rows when counted, else ONE row saying what happened
+        to it (no ROI drawn / skipped / not reviewed / failed: <why>).
+
+        WHY: the summary used to hold the counted images only. A skipped
+        image, one counted with no ROI drawn and one that could not be read
+        all simply vanished from it, indistinguishable from an image that
+        was never in the folder."""
+        failed = getattr(self, "_batch_failed", None) or {}
+        order = getattr(self, "_batch_order", None) or (
+            list(self._batch_results) + [n for n in failed if n not in self._batch_results])
+        rows = []
+        for name in order:
+            if name in failed:
+                rows.append({'sample': name, 'status': f"failed: {failed[name]}"})
+                continue
+            data = self._batch_results.get(name)
+            if data is None:
+                continue
+            status = data.get('status', BATCH_NOT_REVIEWED)
+            if status == BATCH_COUNTED and data['summary']:
+                rows.extend(dict(r, status=BATCH_COUNTED) for r in data['summary'])
+            else:
+                rows.append({'sample': name, 'status': status})
+        return rows
+
     def _batch_export(self):
         """Export accumulated batch results to CSV files."""
-        if not self._batch_results:
+        if not self._batch_results and not getattr(self, "_batch_failed", None):
             return
 
         import pandas as pd
@@ -3822,18 +3971,18 @@ class BrainSliceWidget(QWidget):
         if not path:
             return
 
-        # Build master summary
-        all_summary = []
+        # Build master summary: one or more rows for EVERY image
+        all_summary = self._batch_summary_rows()
         all_detail = []
         for name, data in self._batch_results.items():
-            if data['summary']:
-                all_summary.extend(data['summary'])
             if data['detail'] is not None:
                 all_detail.append(data['detail'])
 
         # Write summary
         if all_summary:
-            summary_df = pd.DataFrame(all_summary)
+            summary_df = pd.DataFrame(all_summary, columns=[
+                'sample', 'status', 'roi', 'total', 'positive', 'negative',
+                'fraction'])
             summary_df.to_csv(path, index=False)
 
         # Write detail

@@ -540,12 +540,27 @@ class SliceTracker:
         status: str = 'started',
         script_version: str = '1.0.0',
         min_pct_above_bg: Optional[float] = None,
+        results: Optional[Dict[str, Any]] = None,
+        duration_seconds: Optional[float] = None,
     ) -> str:
         """Log a particle analysis run.
 
         min_pct_above_bg: the positive rule (a particle is positive when at
         least this % of its pixels are above background).
+        results: result columns (names from RESULT_FIELDS) to write in the
+        same row, for a run logged once it has finished. WHY: the batch in
+        the napari window logs each image after analyzing it, in ONE write
+        with its final status, so no row of it can be left 'started' by a
+        second write the file refuses. A name that is not a result column
+        raises ValueError before anything is written; None values are left
+        blank.
         """
+        results = dict(results or {})
+        unknown = sorted(k for k in results if k not in RESULT_FIELDS)
+        if unknown:
+            raise ValueError(
+                "log_particle_analysis cannot record %s: not a result column"
+                % ", ".join(unknown))
         run_id = self._generate_run_id('particle_analysis', sample_id)
 
         row = {
@@ -569,6 +584,11 @@ class SliceTracker:
             'script_version': script_version,
             'hostname': self._get_hostname(),
         }
+        if duration_seconds is not None:
+            row['duration_seconds'] = duration_seconds
+        for field, value in results.items():
+            if value is not None:
+                row[field] = value
 
         row = self._add_hierarchy_fields(row, sample_id)
         self._write_row(row)
