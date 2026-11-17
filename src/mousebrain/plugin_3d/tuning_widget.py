@@ -179,41 +179,49 @@ class BrainLoaderWorker(QThread):
 
 
 class ZarrConverterWorker(QThread):
-    """Convert TIFF stack to Zarr for fast future loading."""
+    """Convert one brain folder's channel TIFF stacks to Zarr for fast loading.
+
+    The worker carries its own folder and converts every channel of it in
+    turn (ch0, then ch1). The widget used to keep the folder and the channel
+    being converted in its own fields and start a new worker for ch1 from the
+    finish handler; a second conversion started meanwhile (another Load, or
+    Convert pressed during the automatic conversion) overwrote those fields,
+    and two builds ran on the same channel. Now one worker owns one folder and
+    the widget refuses to start another while it runs
+    (TuningWidget._zarr_busy).
+    """
     progress = Signal(str, int)  # message, percent
     finished = Signal(bool, str)  # success, message
 
-    def __init__(self, tiff_folder, zarr_path):
+    def __init__(self, data_folder, channels=("ch0", "ch1")):
         super().__init__()
-        self.tiff_folder = tiff_folder
-        self.zarr_path = zarr_path
+        self.data_folder = data_folder
+        self.channels = [c for c in channels if (data_folder / c).is_dir()]
 
     def run(self):
         try:
-            import zarr
-            import tifffile
-            from natsort import natsorted
-
-            tiff_files = natsorted(self.tiff_folder.glob("*.tif*"))
-            if not tiff_files:
-                self.finished.emit(False, "No TIFF files found")
-                return
-
-            # Written under a partial name and renamed, with the completion
-            # record written last, only when every plane is in
+            # Written under a partial name of its own and renamed, with the
+            # completion record written last, only when every plane is in
             # (mousebrain.zarr_cache): an interrupted conversion is never
             # mistaken for a cache. 10 Z slices per chunk for 3D viewing.
-            from mousebrain.zarr_cache import build
+            from mousebrain.zarr_cache import build, zarr_path_for
 
-            def report(done, total):
-                if done % 50 == 0 or done == total:
-                    self.progress.emit(f"Converting {done}/{total}...", int(100 * done / total))
+            if not self.channels:
+                self.finished.emit(False, "No channel folders found")
+                return
+            for ch in self.channels:
+                tiff_folder = self.data_folder / ch
 
-            self.progress.emit(f"Creating Zarr array ({len(tiff_files)} planes)...", 0)
-            build(self.tiff_folder, self.zarr_path, progress=report)
+                def report(done, total, ch=ch):
+                    if done % 50 == 0 or done == total:
+                        self.progress.emit(f"{ch}: converting {done}/{total}...",
+                                           int(100 * done / total))
+
+                self.progress.emit(f"{ch}: creating Zarr array...", 0)
+                build(tiff_folder, zarr_path_for(tiff_folder), progress=report)
 
             self.progress.emit("Done!", 100)
-            self.finished.emit(True, f"Converted to {self.zarr_path}")
+            self.finished.emit(True, f"Converted {', '.join(self.channels)} in {self.data_folder}")
 
         except Exception as e:
             import traceback
@@ -8302,6 +8310,25 @@ class TuningWidget(QWidget):
             self.approval_status.setStyleSheet("color: orange;")
         self.approval_status.setWordWrap(True)
 
+    def _image_folder_for_load(self):
+        """(source, folder) of the images Load shows and Convert to Zarr
+        caches, or None after telling the person why there is none.
+
+        Priority: manual crop > crop > full extraction, by which holds ch0/."""
+        candidates = (("manual_crop", "2_Cropped_For_Registration_Manual"),
+                      ("cropped", "2_Cropped_For_Registration"),
+                      ("extracted", "1_Extracted_Full"))
+        for source, name in candidates:
+            folder = self.current_brain / name
+            if (folder / "ch0").exists():
+                return source, folder
+        QMessageBox.warning(
+            self, "Error",
+            f"No image data found for {self.current_brain.name}\n"
+            "Expected ch0/ folder in 2_Cropped_For_Registration or 1_Extracted_Full"
+        )
+        return None
+
     def load_brain_into_napari(self):
         """Load the selected brain's channels into napari - mode-aware loading."""
         print("[DEBUG] Button clicked: load_brain_into_napari")
@@ -8321,28 +8348,10 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Loading", "Brain is already loading...")
             return
 
-        # Try folders in priority order: manual_crop > auto_crop > extracted
-        manual_crop_folder = self.current_brain / "2_Cropped_For_Registration_Manual"
-        crop_folder = self.current_brain / "2_Cropped_For_Registration"
-        extract_folder = self.current_brain / "1_Extracted_Full"
-
-        if manual_crop_folder.exists() and (manual_crop_folder / "ch0").exists():
-            data_folder = manual_crop_folder
-            source = "manual_crop"
-            print(f"  Using MANUAL crop folder (takes priority)")
-        elif crop_folder.exists() and (crop_folder / "ch0").exists():
-            data_folder = crop_folder
-            source = "cropped"
-        elif extract_folder.exists() and (extract_folder / "ch0").exists():
-            data_folder = extract_folder
-            source = "extracted"
-        else:
-            QMessageBox.warning(
-                self, "Error",
-                f"No image data found for {self.current_brain.name}\n"
-                "Expected ch0/ folder in 2_Cropped_For_Registration or 1_Extracted_Full"
-            )
+        found = self._image_folder_for_load()
+        if found is None:
             return
+        source, data_folder = found
 
         # Check metadata for which channel is signal
         # Default: ch0=signal, ch1=background
@@ -8395,37 +8404,53 @@ class TuningWidget(QWidget):
         self.brain_loader_worker.finished.connect(self._on_brain_load_finished)
         self.brain_loader_worker.start()
 
+    def _zarr_busy(self) -> bool:
+        """True while a Zarr conversion is running in this widget.
+
+        Only one runs at a time: two at once on the same brain used to build
+        the same channel twice, deleting each other's planes (see
+        ZarrConverterWorker and mousebrain.zarr_cache)."""
+        worker = getattr(self, 'zarr_worker', None)
+        return bool(worker is not None and worker.isRunning())
+
+    def _zarr_cache_complete(self, data_folder) -> bool:
+        """Converted = a COMPLETE, current cache of each channel present
+        (mousebrain.zarr_cache), not merely its folder: an empty or
+        interrupted cache is rebuilt."""
+        from mousebrain.zarr_cache import cache_state
+        return all(cache_state(data_folder / ch)[0] for ch in ("ch0", "ch1")
+                   if (data_folder / ch).is_dir())
+
+    def _start_zarr_worker(self, data_folder, auto: bool) -> None:
+        self._auto_zarr_conversion = auto
+        if hasattr(self, 'convert_zarr_btn'):
+            self.convert_zarr_btn.setEnabled(False)
+            self.convert_zarr_btn.setText("Auto-converting..." if auto else "Converting...")
+        self.zarr_worker = ZarrConverterWorker(data_folder)
+        self.zarr_worker.progress.connect(self._on_zarr_progress)
+        self.zarr_worker.finished.connect(self._on_zarr_finished)
+        self.zarr_worker.start()
+
     def convert_to_zarr(self):
         """Convert current brain's TIFFs to Zarr for instant future loading."""
         print("[DEBUG] Button clicked: convert_to_zarr")
         if not self.current_brain:
             QMessageBox.warning(self, "Error", "Select a brain first")
             return
-
-        # Find data folder (priority: manual_crop > auto_crop > extracted)
-        manual_crop_folder = self.current_brain / "2_Cropped_For_Registration_Manual"
-        crop_folder = self.current_brain / "2_Cropped_For_Registration"
-        extract_folder = self.current_brain / "1_Extracted_Full"
-
-        if manual_crop_folder.exists() and (manual_crop_folder / "ch0").exists():
-            data_folder = manual_crop_folder
-        elif crop_folder.exists() and (crop_folder / "ch0").exists():
-            data_folder = crop_folder
-        elif extract_folder.exists() and (extract_folder / "ch0").exists():
-            data_folder = extract_folder
-        else:
-            QMessageBox.warning(self, "Error", "No image data found")
+        if self._zarr_busy():
+            QMessageBox.warning(self, "Conversion Running",
+                "A Zarr conversion is already running. Wait for it to finish "
+                "(the status line shows its progress), then try again.")
             return
 
-        # Check if already converted
-        zarr_ch0 = data_folder / "ch0.zarr"
-        zarr_ch1 = data_folder / "ch1.zarr"
-        # Converted = a COMPLETE, current cache of each channel present
-        # (mousebrain.zarr_cache), not merely its folder: an empty or
-        # interrupted cache is rebuilt.
-        from mousebrain.zarr_cache import cache_state
-        if all(cache_state(data_folder / ch)[0] for ch in ("ch0", "ch1")
-               if (data_folder / ch).is_dir()):
+        # The folder Load reads (_image_folder_for_load): converting another
+        # one would not make the next load faster.
+        found = self._image_folder_for_load()
+        if found is None:
+            return
+        _source, data_folder = found
+
+        if self._zarr_cache_complete(data_folder):
             QMessageBox.information(self, "Already Converted",
                 "This brain is already converted to Zarr!\n"
                 "Future loads will be instant.")
@@ -8443,119 +8468,60 @@ class TuningWidget(QWidget):
         if reply != QMessageBox.Yes:
             return
 
-        # Disable buttons
-        self.convert_zarr_btn.setEnabled(False)
-        self.convert_zarr_btn.setText("Converting...")
         self.load_brain_btn.setEnabled(False)
-
-        # Convert ch0
-        self.brain_status_label.setText("Converting ch0 to Zarr...")
+        self.brain_status_label.setText("Converting to Zarr...")
         self.brain_status_label.setStyleSheet("color: purple;")
-
-        self._zarr_data_folder = data_folder
-        self._zarr_current_channel = 0
-
-        self.zarr_worker = ZarrConverterWorker(data_folder / "ch0", zarr_ch0)
-        self.zarr_worker.progress.connect(self._on_zarr_progress)
-        self.zarr_worker.finished.connect(self._on_zarr_finished)
-        self.zarr_worker.start()
+        self._start_zarr_worker(data_folder, auto=False)
 
     def _on_zarr_progress(self, message, percent):
         """Handle Zarr conversion progress."""
-        self.brain_status_label.setText(f"ch{self._zarr_current_channel}: {message}")
-        self.convert_zarr_btn.setText(f"Converting... {percent}%")
+        self.brain_status_label.setText(message)
+        if hasattr(self, 'convert_zarr_btn'):
+            self.convert_zarr_btn.setText(f"Converting... {percent}%")
 
     def _on_zarr_finished(self, success, message):
-        """Handle Zarr conversion completion."""
-        if not success:
+        """Handle Zarr conversion completion (every channel of the folder)."""
+        auto = getattr(self, '_auto_zarr_conversion', False)
+        self._auto_zarr_conversion = False
+        if hasattr(self, 'convert_zarr_btn'):
             self.convert_zarr_btn.setEnabled(True)
             self.convert_zarr_btn.setText("Convert to Zarr")
+        loader = getattr(self, 'brain_loader_worker', None)
+        if not (loader is not None and loader.isRunning()):
             self.load_brain_btn.setEnabled(True)
+        if not success:
             self.brain_status_label.setText(f"Conversion failed: {message}")
             self.brain_status_label.setStyleSheet("color: red;")
             QMessageBox.warning(self, "Conversion Failed", message)
             return
 
-        # If we just did ch0, now do ch1
-        if self._zarr_current_channel == 0:
-            ch1_folder = self._zarr_data_folder / "ch1"
-            if ch1_folder.exists():
-                self._zarr_current_channel = 1
-                zarr_ch1 = self._zarr_data_folder / "ch1.zarr"
-                self.zarr_worker = ZarrConverterWorker(ch1_folder, zarr_ch1)
-                self.zarr_worker.progress.connect(self._on_zarr_progress)
-                self.zarr_worker.finished.connect(self._on_zarr_finished)
-                self.zarr_worker.start()
-                return
-
-        # All done!
-        self.convert_zarr_btn.setEnabled(True)
-        self.convert_zarr_btn.setText("Convert to Zarr")
-        self.load_brain_btn.setEnabled(True)
         self.brain_status_label.setText("Conversion complete! Future loads will be instant.")
         self.brain_status_label.setStyleSheet("color: green; font-weight: bold;")
 
         # Only show message box for manual conversions, not auto
-        if not getattr(self, '_auto_zarr_conversion', False):
+        if not auto:
             QMessageBox.information(self, "Conversion Complete",
                 "Brain converted to Zarr format!\n\n"
                 "Future loads will be nearly instant (seconds instead of minutes).")
         else:
-            self._auto_zarr_conversion = False
             print(f"[MouseBrain] Auto-zarr conversion complete!")
 
-    def _auto_start_zarr_conversion(self):
-        """Auto-start zarr conversion in background after brain loads (if not already done)."""
-        if not self.current_brain:
+    def _auto_start_zarr_conversion(self, data_folder=None):
+        """After a load: convert the folder just loaded, in the background,
+        unless its cache is complete or a conversion is already running."""
+        if data_folder is None or not Path(data_folder).is_dir():
             return
-
-        # Find data folder (priority: manual_crop > auto_crop > extracted)
-        manual_crop_folder = self.current_brain / "2_Cropped_For_Registration_Manual"
-        crop_folder = self.current_brain / "2_Cropped_For_Registration"
-        extract_folder = self.current_brain / "1_Extracted_Full"
-
-        if manual_crop_folder.exists() and (manual_crop_folder / "ch0").exists():
-            data_folder = manual_crop_folder
-        elif crop_folder.exists() and (crop_folder / "ch0").exists():
-            data_folder = crop_folder
-        elif extract_folder.exists() and (extract_folder / "ch0").exists():
-            data_folder = extract_folder
-        else:
-            return  # No data folder found
-
-        # Check if zarr already exists
-        zarr_ch0 = data_folder / "ch0.zarr"
-        zarr_ch1 = data_folder / "ch1.zarr"
-        # Converted = a COMPLETE, current cache of each channel present
-        # (mousebrain.zarr_cache), not merely its folder: an empty or
-        # interrupted cache is rebuilt.
-        from mousebrain.zarr_cache import cache_state
-        if all(cache_state(data_folder / ch)[0] for ch in ("ch0", "ch1")
-               if (data_folder / ch).is_dir()):
+        data_folder = Path(data_folder)
+        if self._zarr_cache_complete(data_folder):
             print(f"[MouseBrain] Zarr already exists, skipping auto-conversion")
             return
+        if self._zarr_busy():
+            print(f"[MouseBrain] A Zarr conversion is already running; not starting another")
+            return
 
-        # Start conversion in background (no confirmation needed for auto)
         print(f"[MouseBrain] Auto-starting Zarr conversion in background...")
         print(f"  Data folder: {data_folder}")
-
-        # Mark that this is an auto-conversion (suppress completion dialog)
-        self._auto_zarr_conversion = True
-
-        # Disable manual convert button while auto is running
-        if hasattr(self, 'convert_zarr_btn'):
-            self.convert_zarr_btn.setEnabled(False)
-            self.convert_zarr_btn.setText("Auto-converting...")
-
-        # Store data folder for conversion
-        self._zarr_data_folder = data_folder
-        self._zarr_current_channel = 0
-
-        # Start with ch0
-        self.zarr_worker = ZarrConverterWorker(data_folder / "ch0", zarr_ch0)
-        self.zarr_worker.progress.connect(self._on_zarr_progress)
-        self.zarr_worker.finished.connect(self._on_zarr_finished)
-        self.zarr_worker.start()
+        self._start_zarr_worker(data_folder, auto=True)
 
     def _swap_loaded_layers(self):
         """
@@ -8744,8 +8710,10 @@ class TuningWidget(QWidget):
             if self.session_doc:
                 self.session_doc.log_brain_loaded(source)
 
-            # Auto-start zarr conversion in background if not already done
-            self._auto_start_zarr_conversion()
+            # Auto-start zarr conversion in background if not already done --
+            # of the folder just loaded, never one re-derived from the brain
+            # selected now.
+            self._auto_start_zarr_conversion(loaded_folder)
 
         else:
             self.brain_status_label.setText("Error loading brain")

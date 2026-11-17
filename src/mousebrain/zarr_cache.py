@@ -23,6 +23,19 @@ The rules now:
     says why, and the widget rebuilds the cache.
   * Rebuilding removes the unusable cache folder first. It is a copy made from
     the TIFFs, which are never touched.
+  * Every build writes into a partial folder of its OWN,
+    ``<name>.zarr.partial-<random>``. All builds used to share
+    ``<name>.zarr.partial`` and each started by deleting it, so a second build
+    of the same channel (a second Load, or Convert pressed during the automatic
+    conversion) deleted the first one's planes under it; the first could then
+    rename a folder with planes missing and record it as complete. Now two
+    builds never touch each other's planes, and the last one to finish wins
+    with a complete cache.
+  * A partial folder left by a build that was cut short is removed by the
+    next build of the same channel that completes, but only when nothing has
+    been written into it for ABANDONED_AFTER_S (a running build writes a chunk
+    every few planes, so a folder that quiet is not being built any more). It
+    is unfinished machine output; the TIFFs it was made from are untouched.
 """
 
 import json
@@ -34,6 +47,50 @@ from typing import Callable, Optional, Tuple
 
 COMPLETE_SUFFIX = ".complete.json"
 PARTIAL_SUFFIX = ".partial"
+# A partial folder untouched this long belongs to a build that stopped.
+ABANDONED_AFTER_S = 24 * 3600
+
+
+def _new_partial(zarr_path: Path) -> Path:
+    """A partial folder no other build uses (see the module docstring)."""
+    import uuid
+    return zarr_path.with_name("%s%s-%s" % (zarr_path.name, PARTIAL_SUFFIX, uuid.uuid4().hex[:12]))
+
+
+def _newest_write(folder: Path) -> float:
+    newest = folder.stat().st_mtime
+    for root, _dirs, files in os.walk(folder):
+        for name in files:
+            try:
+                newest = max(newest, os.stat(os.path.join(root, name)).st_mtime)
+            except OSError:
+                pass
+    return newest
+
+
+def remove_abandoned_partials(zarr_path, now: Optional[float] = None) -> list:
+    """Remove partial folders of this cache that no build has written to for
+    ABANDONED_AFTER_S. Returns the folders removed."""
+    import time
+    zarr_path = Path(zarr_path)
+    now = time.time() if now is None else now
+    removed = []
+    prefix = zarr_path.name + PARTIAL_SUFFIX
+    try:
+        siblings = list(zarr_path.parent.iterdir())
+    except OSError:
+        return removed
+    for p in siblings:
+        if not p.is_dir() or not (p.name == prefix or p.name.startswith(prefix + "-")):
+            continue
+        try:
+            if now - _newest_write(p) < ABANDONED_AFTER_S:
+                continue  # maybe another build still writing
+            shutil.rmtree(p)
+            removed.append(p)
+        except OSError:
+            pass
+    return removed
 
 
 def zarr_path_for(tiff_folder) -> Path:
@@ -94,6 +151,7 @@ def _finish(partial: Path, zarr_path: Path, tiff_folder, shape, dtype) -> Path:
     tmp = old_rec.with_name(old_rec.name + ".tmp")
     tmp.write_text(json.dumps(info, indent=1), encoding="utf-8")
     os.replace(tmp, old_rec)  # written LAST: its presence means complete
+    remove_abandoned_partials(zarr_path)
     return zarr_path
 
 
@@ -118,9 +176,7 @@ def build(tiff_folder, zarr_path=None, progress: Optional[Callable[[int, int], N
         raise FileNotFoundError("no TIFF files in %s" % tiff_folder)
     first = read_plane(str(files[0]))
     shape = (len(files),) + tuple(first.shape)
-    partial = zarr_path.with_name(zarr_path.name + PARTIAL_SUFFIX)
-    if partial.exists():
-        shutil.rmtree(partial)
+    partial = _new_partial(zarr_path)
     z = open_array(str(partial), mode="w", shape=shape, dtype=first.dtype,
                    chunks=(10,) + tuple(first.shape))
     for i, f in enumerate(files):
@@ -136,8 +192,6 @@ def write_array(volume, tiff_folder, zarr_path=None, save=None) -> Path:
     if save is None:
         import zarr
         save = zarr.save
-    partial = zarr_path.with_name(zarr_path.name + PARTIAL_SUFFIX)
-    if partial.exists():
-        shutil.rmtree(partial)
+    partial = _new_partial(zarr_path)
     save(str(partial), volume)
     return _finish(partial, zarr_path, tiff_folder, volume.shape, volume.dtype)
