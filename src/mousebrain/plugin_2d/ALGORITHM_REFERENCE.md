@@ -786,9 +786,9 @@ part-way leaves the previous file whole.
 says what and why:
 
 - `[!] Saved analysis of <file> NOT restored: it was made on the image loaded with
-  rotation 180 (this image: None) ...` -- the image is loaded differently from when
+  rotation 180 (this image: 0) ...` -- the image is loaded differently from when
   the analysis was made (most often: channels changed by hand before clicking Load).
-  Nothing is restored, because the outlines would sit on the wrong cells. To see the
+  ("None" in that bracket would mean the setting was not recorded.) Nothing is restored, because the outlines would sit on the wrong cells. To see the
   saved analysis, set the Load tab to what the message names and click **Load**.
 - `[!] Restored for <file>: ... NOT restored: labels.npz unreadable (...)` -- one file
   is damaged, or its outlines are a different size from the image (the image file was

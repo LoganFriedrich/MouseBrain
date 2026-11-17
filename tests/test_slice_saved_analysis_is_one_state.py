@@ -55,7 +55,7 @@ def _open(tmp_path, monkeypatch, name="PRJ_01_01_S1.tif"):
 def _draw_roi(w):
     w.roi_shapes_layer = FakeShapes("ROIs", [SQUARE])
     w.viewer.layers.append(w.roi_shapes_layer)
-    w._roi_names = ["DCN"]
+    w._roi_names = ["ROI_A"]
 
 
 def test_a_re_analysis_with_no_particles_replaces_the_saved_particles(tmp_path, monkeypatch):
@@ -96,7 +96,7 @@ def test_cleared_rois_are_saved_as_none_drawn(tmp_path, monkeypatch):
 def test_a_result_that_is_gone_from_memory_is_gone_from_the_folder(tmp_path, monkeypatch):
     w, image = _open(tmp_path, monkeypatch)
     w._pa_results = pd.DataFrame({"label": [1], "area": [10]})
-    w._roi_detail_data = pd.DataFrame({"roi": ["DCN"], "total": [3]})
+    w._roi_detail_data = pd.DataFrame({"roi": ["ROI_A"], "total": [3]})
     w._save_analysis_state()
     detail = image.parent / "PRJ_01_01_S1_analysis" / "roi_detail.csv"
     assert detail.exists()
@@ -174,7 +174,7 @@ def test_an_error_part_way_through_a_restore_leaves_the_folder_untouched(tmp_pat
     nuclei[2:4, 2:4] = 1
     w.nuclei_labels = nuclei
     w.cell_measurements = pd.DataFrame({"label": [1], "is_positive": [True]})
-    w._roi_detail_data = pd.DataFrame({"roi": ["DCN"], "total": [1]})
+    w._roi_detail_data = pd.DataFrame({"roi": ["ROI_A"], "total": [1]})
     w._save_analysis_state()
     folder = image.parent / "PRJ_01_01_S1_analysis"
     before = {p.name: p.read_bytes() for p in folder.iterdir()}

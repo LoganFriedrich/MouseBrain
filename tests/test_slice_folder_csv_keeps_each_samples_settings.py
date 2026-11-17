@@ -43,10 +43,10 @@ def test_the_roi_results_csv_does_the_same(tmp_path, monkeypatch):
     folder = tmp_path / "SLIDES"
     folder.mkdir()
     w = make_widget(tmp_path, monkeypatch, "unused")
-    w._roi_names = ["DCN"]
+    w._roi_names = ["ROI_A"]
     for sample, threshold in (("PRJ_01_01_S1", 40), ("PRJ_01_01_S2", 55)):
         w.current_file = folder / f"{sample}.tif"
-        w._roi_detail_data = pd.DataFrame({"roi": ["DCN"], "total": [3]})
+        w._roi_detail_data = pd.DataFrame({"roi": ["ROI_A"], "total": [3]})
         w._pa_get_settings = lambda t=threshold: {"threshold": t}
         w._append_to_folder_csv()
 
