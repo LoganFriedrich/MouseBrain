@@ -590,6 +590,11 @@ a row that has more values than the header has columns, writing stops with a
 message asking for the file to be repaired: it is never rewritten in a way that
 would lose those values.
 
+Opening a tracker written by an older version adds the newer columns to its header
+once: that is one rewrite, under the lock and through a temporary file, with every
+value kept. It also happens on read-only paths, such as the batch looking up the
+tuned parameters, so a read of an old tracker can briefly take the lock.
+
 ### Run Loading
 
 Previous runs can be reloaded from the widget's Run History panel. The measurements CSV is read back from disk, and the colocalization visualization is re-displayed in napari. This allows:
