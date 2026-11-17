@@ -116,6 +116,54 @@ def discover_training_yamls(paradigm: str) -> list:
     return found
 
 
+# The file a finished training writes into its output folder. WHY: the napari
+# Setup & Tuning widget used to decide that a training had finished by counting
+# the model files in the whole models folder -- so a model written by another
+# training, or copied in by hand, counted as "done", and so did a training
+# that failed after saving a checkpoint. The widget now reads this file from
+# the folder IT told the training to write into (--output): present = finished,
+# with the model file named; absent once the process has ended = not finished.
+DONE_RECORD = "DONE.json"
+
+
+def final_model_file(output_dir: Path):
+    """The model file a training left in ``output_dir``, or None.
+
+    The custom loop saves model.keras (model.h5 when .keras cannot be
+    written); cellfinder's own training, the fallback, names its file itself.
+    So this looks at what is on disk: model.keras, then model.h5, then the
+    newest other .keras/.h5 that is not an epoch checkpoint."""
+    output_dir = Path(output_dir)
+    for name in ("model.keras", "model.h5"):
+        if (output_dir / name).is_file():
+            return output_dir / name
+    found = []
+    for pattern in ("*.keras", "*.h5"):
+        for f in output_dir.glob(pattern):
+            low = f.stem.lower()
+            if "epoch" in low or "checkpoint" in low:
+                continue
+            found.append(f)
+    if not found:
+        return None
+    return max(found, key=lambda f: f.stat().st_mtime)
+
+
+def write_done_record(output_dir: Path, exp_id, model_path) -> Path:
+    """Write ``<output_dir>/DONE.json`` (tracker exp_id, model file, time)
+    through a temporary file swapped in, so a reader never sees half a file."""
+    output_dir = Path(output_dir)
+    record = {
+        "exp_id": exp_id,
+        "model_path": str(model_path),
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    tmp = output_dir / (DONE_RECORD + ".tmp")
+    tmp.write_text(json.dumps(record, indent=1), encoding="utf-8")
+    tmp.replace(output_dir / DONE_RECORD)
+    return output_dir / DONE_RECORD
+
+
 def run_cellfinder_train(
     yaml_paths: list,
     output_dir: Path,
@@ -749,6 +797,13 @@ Examples:
             patience=args.patience,
         )
 
+        # A training is finished only when it left a model file: a run
+        # that reports success with nothing to classify with is a failure.
+        model_file = final_model_file(output_dir) if success else None
+        if success and model_file is None:
+            print(f"[!] Training reported success but left no model file in {output_dir}")
+            success = False
+
         # Update tracker
         tracker.update_status(
             exp_id,
@@ -757,7 +812,14 @@ Examples:
             train_loss=best_loss,
             train_accuracy=best_accuracy,
         )
-    
+
+    # The finished-training record (DONE_RECORD says why): only for a
+    # training that finished with a model file, and before the post-run
+    # commands and the rating question, so whoever waits on this training
+    # learns it is done as soon as its model exists.
+    if success:
+        write_done_record(output_dir, exp_id, model_file)
+
     print(f"\n{'='*60}")
     if success:
         print(f"COMPLETED in {duration/60:.1f} minutes")

@@ -7146,6 +7146,20 @@ class TuningWidget(QWidget):
         """
         print("[DEBUG] Button clicked: start_training")
 
+        # One training from this window at a time. A second start used to
+        # replace the handle of the first (so its end was never seen) and add
+        # a second completion timer; two trainings also compete for the same
+        # processors and graphics card.
+        running = getattr(self, '_training_process', None)
+        if running is not None and running.poll() is None:
+            run = getattr(self, '_training_run', None) or {}
+            QMessageBox.warning(
+                self, "Training Already Running",
+                "A training started from this window is still running.\n\n"
+                f"Its model will be written to:\n{run.get('output_dir', '(unknown)')}\n\n"
+                "Wait for it to finish (the console shows its progress), then start another.")
+            return
+
         script = _REPO_ROOT / "scripts" / "utils" / "util_train_model.py"
         if not script.exists():
             # Fallback to SCRIPTS_DIR (legacy location)
@@ -7245,41 +7259,51 @@ class TuningWidget(QWidget):
             if model:
                 cmd.extend(["--continue-from", str(model)])
 
-        # Store current model count before training
-        self._models_before_training = self._count_models()
+        # The widget names the folder the training writes into, so it knows
+        # where to look for the training's finished record (DONE.json, see
+        # util_train_model.DONE_RECORD). Completion used to be guessed from
+        # the number of model files in the whole models folder, which any
+        # other model file changed.
+        from datetime import datetime as _datetime
+        output_dir = MODELS_DIR / f"model_{_datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        cmd.extend(["--output", str(output_dir)])
 
-        # Check if auto-classify is enabled
+        # What this training was started for travels with it: the brain
+        # selected now and, when auto-classify is on, that classification
+        # will follow. Selecting another brain resets the widget's per-brain
+        # fields, so the completion check must not rely on them.
         auto_classify = getattr(self, 'auto_classify_after_training', None)
-        if auto_classify and auto_classify.isChecked():
-            self._training_detection_exp_id = getattr(self, 'last_run_id', None)
-            print(f"[MouseBrain] Training started. Will auto-classify detection: {self._training_detection_exp_id}")
+        auto = bool(auto_classify and auto_classify.isChecked())
+        self._training_run = {
+            'output_dir': output_dir,
+            'brain': self.current_brain,
+            'auto_classify': auto,
+            'detection_exp_id': getattr(self, 'last_run_id', None) if auto else None,
+        }
 
-            self._training_process = subprocess.Popen(cmd)
+        # The handle is kept whether or not auto-classify is on, so a second
+        # start can be refused and the end of this one is always reported.
+        # stdin=DEVNULL: the script asks for a rating when it has a terminal;
+        # started from a napari opened in a terminal it would wait for an
+        # answer nobody sees, and never end.
+        self._training_process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
 
-            from qtpy.QtCore import QTimer
-            self._training_check_timer = QTimer()
-            self._training_check_timer.timeout.connect(self._check_training_complete)
-            self._training_check_timer.start(5000)
+        from qtpy.QtCore import QTimer
+        self._training_check_timer = QTimer()
+        self._training_check_timer.timeout.connect(self._check_training_complete)
+        self._training_check_timer.start(5000)
 
-            QMessageBox.information(
-                self, "Training Started",
-                f"Training started in background.\n\n"
-                f"Data: {data_note}\n"
-                f"Training fresh on all accumulated data.\n\n"
-                f"Classification will run automatically when training completes.\n"
-                f"You can continue working while training runs."
-            )
-        else:
-            subprocess.Popen(cmd)
-            QMessageBox.information(
-                self, "Training Started",
-                f"Training started in background.\n\n"
-                f"Data: {data_note}\n"
-                f"Training fresh on all accumulated data.\n\n"
-                f"Check the console for progress."
-            )
+        QMessageBox.information(
+            self, "Training Started",
+            f"Training started in background.\n\n"
+            f"Data: {data_note}\n"
+            f"Model folder: {output_dir}\n\n"
+            + ("Classification will run automatically when training completes.\n"
+               if auto else "Check the console for progress.\n")
+            + "You can continue working while training runs."
+        )
 
-        print(f"[MouseBrain] Training started: {data_note}")
+        print(f"[MouseBrain] Training started: {data_note} -> {output_dir}")
 
     def _find_most_recent_model(self):
         """Find the most recent model file to continue training from."""
@@ -7300,108 +7324,96 @@ class TuningWidget(QWidget):
 
         return None
 
-    def _count_models(self) -> int:
-        """Count the number of model files in MODELS_DIR."""
-        if not MODELS_DIR.exists():
-            return 0
-
-        count = 0
-        for item in MODELS_DIR.rglob("*.keras"):
-            count += 1
-        for item in MODELS_DIR.rglob("*.h5"):
-            count += 1
-        return count
-
     def _check_training_complete(self):
-        """Check if training has completed by detecting new model files."""
-        if not hasattr(self, '_training_process'):
+        """Report the end of the training this window started (timer, every 5 s).
+
+        A training is finished when its process has ended AND it wrote its
+        finished record, ``<its model folder>/DONE.json``, which names the
+        model file (util_train_model.DONE_RECORD). A process that ended
+        without that record did not finish -- whatever its exit code, and
+        whatever other model files appeared in the models folder meanwhile.
+        """
+        process = getattr(self, '_training_process', None)
+        if process is None or process.poll() is None:
+            return
+        exit_code = process.poll()
+        timer = getattr(self, '_training_check_timer', None)
+        if timer is not None:
+            timer.stop()
+        run = getattr(self, '_training_run', None) or {}
+        output_dir = run.get('output_dir')
+
+        record = None
+        if output_dir is not None:
+            try:
+                record = json.loads((Path(output_dir) / "DONE.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+        model_path = (record or {}).get('model_path')
+        if not model_path or not Path(model_path).is_file():
+            QMessageBox.warning(
+                self, "Training Did Not Finish",
+                f"The training process ended (exit code {exit_code}) without "
+                f"recording a finished model in:\n{output_dir}\n\n"
+                "No new model is available and nothing was classified. "
+                "Check the console for the error.")
             return
 
-        # Check if process is still running
-        poll_result = self._training_process.poll()
+        print(f"[MouseBrain] Training complete. New model: {model_path}")
+        self.refresh_models()
 
-        if poll_result is not None:
-            # Process finished
-            self._training_check_timer.stop()
+        if run.get('auto_classify'):
+            print("[MouseBrain] Auto-classifying with the new model...")
+            self._auto_classify_with_new_model(model_path, run)
+        else:
+            print("[MouseBrain] Training complete. Auto-classify was off; nothing classified.")
 
-            # Check if new model was created
-            models_after = self._count_models()
-            models_before = getattr(self, '_models_before_training', 0)
+    def _auto_classify_with_new_model(self, model_path, run):
+        """Classify the training's brain with the model that training made.
 
-            if models_after > models_before:
-                # New model detected!
-                newest_model = self._get_newest_model()
-                model_name = Path(newest_model).parent.name + "/" + Path(newest_model).name if newest_model else "unknown"
-                print(f"[MouseBrain] Training complete! New model: {model_name}")
-                self.refresh_models()
-
-                # Auto-classify if checkbox is enabled and we have a detection
-                auto_classify_enabled = getattr(self, 'auto_classify_after_training', None)
-                detection_exp_id = getattr(self, '_training_detection_exp_id', None)
-
-                if auto_classify_enabled and auto_classify_enabled.isChecked() and detection_exp_id:
-                    # Run classification automatically (no confirmation dialog)
-                    print(f"[MouseBrain] Auto-classifying detection {detection_exp_id}...")
-                    self._auto_classify_with_new_model()
-                elif detection_exp_id:
-                    # Checkbox unchecked but we have a detection - just notify
-                    print(f"[MouseBrain] Training complete. Auto-classify disabled, skipping classification.")
-                else:
-                    print(f"[MouseBrain] Training complete. No detection loaded to classify.")
-            else:
-                QMessageBox.warning(
-                    self, "Training Issue",
-                    f"Training process exited (code: {poll_result}) "
-                    f"but no new model was detected.\n\n"
-                    f"Check the console for errors."
-                )
-
-    def _auto_classify_with_new_model(self):
-        """Run classification with the newest model on the stored detection."""
-        if not hasattr(self, '_training_detection_exp_id') or not self._training_detection_exp_id:
-            print("[MouseBrain] No detection exp_id stored for auto-classification")
+        ``model_path`` is the model file the training recorded as its own
+        (never "the newest file in the models folder"); ``run`` is what the
+        training was started for (start_training). Classification runs only
+        when that brain is still the selected one and the model can be
+        selected in the model list -- otherwise it would classify another
+        brain, or with another model, and say it was this training's result.
+        """
+        brain = run.get('brain')
+        if brain is None or self.current_brain is None or Path(brain) != Path(self.current_brain):
+            QMessageBox.information(
+                self, "Not Classified Automatically",
+                f"Training finished, but the brain it was started for "
+                f"({Path(brain).name if brain else 'none'}) is no longer the selected one.\n\n"
+                f"Select that brain and run classification with the new model:\n{model_path}")
             return
 
-        # Get the newest model
-        newest_model = self._get_newest_model()
-        if not newest_model:
-            QMessageBox.warning(self, "No Model", "Could not find the newly trained model.")
-            return
-
-        # Select the new model in the dropdown
+        # Select the new model in the dropdown. The first entry (the default
+        # model) has no file, so entries are compared as paths, never with
+        # "in", which failed on that entry.
+        found = False
         if hasattr(self, 'model_combo'):
-            # Find and select the new model
+            target = os.path.normcase(os.path.normpath(str(model_path)))
             for i in range(self.model_combo.count()):
-                if newest_model in self.model_combo.itemData(i):
+                data = self.model_combo.itemData(i)
+                if data and os.path.normcase(os.path.normpath(str(data))) == target:
                     self.model_combo.setCurrentIndex(i)
+                    found = True
                     break
+        if not found:
+            QMessageBox.warning(
+                self, "Not Classified Automatically",
+                f"Training finished, but its model is not in the model list:\n{model_path}\n\n"
+                "Nothing was classified. Click Refresh, choose the model and run "
+                "classification yourself.")
+            return
 
-        # Set flag so we know to run auto-compare after classification
-        self._auto_classify_triggered = True
-
-        # Run classification
-        print(f"[MouseBrain] Auto-classifying with model: {newest_model}")
-        self._run_classification_worker()
-
-    def _get_newest_model(self) -> str:
-        """Get the path to the most recently modified model file."""
-        if not MODELS_DIR.exists():
-            return None
-
-        model_files = []
-        for ext in ['*.keras', '*.h5']:
-            for f in MODELS_DIR.rglob(ext):
-                # Skip checkpoints
-                if 'epoch' in f.stem.lower() or 'checkpoint' in f.stem.lower():
-                    continue
-                model_files.append((f.stat().st_mtime, str(f)))
-
-        if not model_files:
-            return None
-
-        # Return newest
-        model_files.sort(key=lambda x: x[0], reverse=True)
-        return model_files[0][1]
+        # The run that comes back is marked as the automatic one by the run
+        # itself (run_classification(auto=True) puts it in the run's own
+        # record), so an automatic attempt that stopped early leaves nothing
+        # behind that would make the next run by hand count as automatic.
+        print(f"[MouseBrain] Auto-classifying with model: {model_path}")
+        if not self.run_classification(auto=True):
+            print("[MouseBrain] Automatic classification did not start (see the message shown).")
 
     def refresh_models(self):
         """Refresh the list of available models.
@@ -7479,17 +7491,29 @@ class TuningWidget(QWidget):
         for _, display_name, file_path in model_files:
             self.model_combo.addItem(display_name, file_path)
 
-    def run_classification(self):
+    def run_classification(self, *_ignored, auto=False):
         """
         Run cell classification using the selected model.
 
         Applies a trained neural network to cell candidates to filter out
         false positives. This is the key step between detection and final counts.
+
+        ``auto``: started by auto-classify after a training (keyword-only: a
+        button's clicked signal passes a positional 'checked' value). Returns
+        True when the classification was started, False when it stopped
+        before starting (the reason is shown in a message).
         """
         print("[DEBUG] Button clicked: run_classification")
         if not self.current_brain:
             QMessageBox.warning(self, "Error", "Load a brain first")
-            return
+            return False
+        # One classification at a time: the button is disabled while one
+        # runs, but auto-classify after a training does not go through it.
+        worker = getattr(self, 'classification_worker', None)
+        if worker is not None and worker.isRunning():
+            QMessageBox.warning(self, "Classification Running",
+                                "A classification is already running. Wait for it to finish.")
+            return False
 
         # Check for candidates
         candidates_folder = self.current_brain / "4_Cell_Candidates"
@@ -7500,7 +7524,7 @@ class TuningWidget(QWidget):
                 "Run detection first (Detection tab → Run Test Detection),\n"
                 "or run the full detection in the Pipeline tab."
             )
-            return
+            return False
 
         # The candidates are the file step 5 would classify
         # (pipeline_status.find_candidates) -- one rule for every reader, so
@@ -7514,7 +7538,7 @@ class TuningWidget(QWidget):
                 self, "No Candidates Found",
                 f"No cell candidates XML found in:\n{candidates_folder}"
             )
-            return
+            return False
 
         # Get selected model
         model_path = self.model_combo.currentData()
@@ -7522,11 +7546,11 @@ class TuningWidget(QWidget):
 
         if not use_default and not model_path:
             QMessageBox.warning(self, "Error", "Select a model first")
-            return
+            return False
 
         if not use_default and not Path(model_path).exists():
             QMessageBox.warning(self, "Error", f"Model not found: {model_path}")
-            return
+            return False
 
         # Get signal channel path (priority: manual_crop > auto_crop)
         # The images the atlas was fitted to (config.registered_input);
@@ -7537,7 +7561,7 @@ class TuningWidget(QWidget):
                 self.current_brain, fallback=("manual", "cropped"))
         except RegisteredImagesMissing as e:
             QMessageBox.warning(self, "Registered images missing", str(e))
-            return
+            return False
 
         # The same rule as Load and detection (brain_context.channel_roles)
         signal_ch, _conflict = _signal_channel_of(data_folder, legacy="pipeline")
@@ -7545,7 +7569,7 @@ class TuningWidget(QWidget):
 
         if not signal_path.exists():
             QMessageBox.warning(self, "Error", f"Signal channel not found: {signal_path}")
-            return
+            return False
 
         # Get voxel sizes
         if self.metadata:
@@ -7579,7 +7603,7 @@ class TuningWidget(QWidget):
                 self, "Error",
                 (f"The images in the viewer were not loaded for {self.current_brain.name}. "
                  if other_images else "Signal layer not loaded. ") + "Load this brain first.")
-            return
+            return False
 
         # The cubes are cut from the loaded layer at the candidates' positions,
         # which are positions in the images the atlas was fitted to. A layer
@@ -7598,7 +7622,7 @@ class TuningWidget(QWidget):
                 f"{data_folder}\n\n"
                 "Nothing was classified. Load the brain again (Load Brain into "
                 "Napari loads the registered images), then run classification.")
-            return
+            return False
 
         signal_array = signal_layer.data
         background_array = background_layer.data if background_layer else signal_array
@@ -7610,7 +7634,7 @@ class TuningWidget(QWidget):
             print(f"[MouseBrain] Loaded {len(points)} candidates from {candidates_xml.name}")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load candidates: {e}")
-            return
+            return False
 
         # Log to tracker — determine parent experiment from candidates source
         exp_id = None
@@ -7675,12 +7699,14 @@ class TuningWidget(QWidget):
         # The run's own record travels with the worker: the finish handler
         # used the widget's _last_class_output, which a brain change resets
         # (see _on_classification_finished).
-        run = {'brain': self.current_brain, 'exp_id': exp_id, 'output_path': output_path}
+        run = {'brain': self.current_brain, 'exp_id': exp_id, 'output_path': output_path,
+               'auto': bool(auto)}
         self.classification_worker.finished.connect(
             lambda ok, msg, found, rej, eid, run=run:
                 self._on_classification_finished(ok, msg, found, rej, eid, run=run))
         self._hold_brain_list()
         self.classification_worker.start()
+        return True
 
     def _on_classification_finished(self, success, message, cells_found, rejected, exp_id,
                                     run=None):
@@ -7696,10 +7722,11 @@ class TuningWidget(QWidget):
         self.classify_btn.setEnabled(True)
         self.classify_btn.setText("Run Classification")
 
-        # Check if this was triggered by auto-classify after training
-        auto_triggered = getattr(self, '_auto_classify_triggered', False)
-        if auto_triggered:
-            self._auto_classify_triggered = False  # Reset flag
+        # Started by auto-classify after training? The run says so itself
+        # (run_classification(auto=True)). A widget-wide flag used to say it,
+        # and an automatic attempt that stopped before starting left the flag
+        # set, so the next run by hand was loaded without asking.
+        auto_triggered = bool(run.get('auto'))
 
         if success:
             # Update tracker
