@@ -8820,6 +8820,24 @@ class TuningWidget(QWidget):
             # Reset view
             self.viewer.reset_view()
 
+            # Another brain was selected while this one loaded: the images are
+            # this (loaded) brain's and are tagged so; nothing of the brain
+            # selected now is put over them. The automatic loads below
+            # (Best/recent detections and classifications) and the Zarr
+            # conversion are for the brain selected, so they are skipped, and
+            # the status line says which brain is on screen. Load the selected
+            # brain to work on it.
+            if not self._run_brain_is_selected(loaded_brain):
+                selected = self.current_brain.name if self.current_brain else "none"
+                self.brain_status_label.setText(
+                    f"Loaded: {loaded_brain.name} ({source}) -- but {selected} is "
+                    f"selected now. Its detections were not loaded; press Load "
+                    f"Brain into Napari to load {selected}.")
+                self.brain_status_label.setStyleSheet("color: orange; font-weight: bold;")
+                print(f"[MouseBrain] Loaded {loaded_brain.name}, but {selected} is "
+                      f"selected now; automatic point loads and Zarr conversion skipped\n")
+                return
+
             # Load additional data based on checkboxes
             extras_loaded = []
 
@@ -8848,7 +8866,7 @@ class TuningWidget(QWidget):
                 if recent_class_loaded:
                     extras_loaded.append("recent classification")
 
-            status_msg = f"Loaded: {self.current_brain.name} ({source})"
+            status_msg = f"Loaded: {loaded_brain.name} ({source})"
             if extras_loaded:
                 status_msg += f" + {', '.join(extras_loaded)}"
 
