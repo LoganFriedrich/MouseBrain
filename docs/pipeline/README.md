@@ -601,6 +601,34 @@ millimetres from where they are (up-down on brains imaged `iar`, front-back as
 well on `ipr`) and removed an essentially arbitrary set as "surface". Any
 classification made before that date went through that wrong pre-filter.
 
+**The previous classification is kept.** Step 5 writes the brain's production
+classification, `5_Classified_Cells/cells.xml` and `rejected.xml` -- the files
+step 6 counts. While it works (hours), the run writes into
+`5_Classified_Cells/_in_progress/<date>_<time>/`, and the production files stay
+exactly where they are -- so a run that fails, is stopped with Ctrl-C, is
+killed, or is cut off by a restart, a power loss or a lost network drive leaves
+the brain's classification unchanged. Only when the run has finished and saved
+its files does step 5, in one short step, move the files already there (and
+their record, below) into `5_Classified_Cells/_archive/<date>_<time>/` (kept,
+never deleted) and move the new files in. What a failed run wrote goes into
+`_archive/<date>_<time>_failed/`. A run that was killed outright leaves its
+`_in_progress/<date>_<time>/` folder behind; that folder is never counted, and
+the next step 5 run of the brain moves it into `_archive/<date>_<time>_stopped/`.
+(Should a stop land in the split second of the swap itself and leave
+`5_Classified_Cells` with no `cells.xml`, the previous files are in the newest
+`_archive/<date>_<time>/` folder and the new ones in `_in_progress/`: move
+either set back into `5_Classified_Cells`.) Beside the new files,
+`promoted_from.json` names the tracker run that wrote them (`exp_id`), how
+(`"how": "step 5"`, or `"promoted"` for a Setup & Tuning run made production
+with **Promote to production**), when, and where the previous files went. In
+the tracker, the run's `output_path` is the new `cells.xml`, and the run that
+wrote the previous files has its `output_path` moved to their folder in the
+archive -- the same as step 4 does with candidates. Why: step 5 used to write
+over the previous classification with no copy, and every step 5 row named the
+same folder, so no row could be matched to the file it had written. To go back
+to an earlier classification, move its files from the archive folder back into
+`5_Classified_Cells` (moving the current ones aside first) and count again.
+
 ### Script 6: Regional Counting
 ```bash
 # Interactive mode

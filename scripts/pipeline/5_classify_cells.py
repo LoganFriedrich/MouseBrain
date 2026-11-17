@@ -63,6 +63,9 @@ from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, iter_brain
 from mousebrain.config import MODELS_DIR as DEFAULT_MODELS_DIR
 from mousebrain.config import parse_brain_name
 from mousebrain.config import registered_candidate_folders, registered_input
+from mousebrain.classification_runs import (discard_staged, follow_files_into_archive,
+                                            install_staged, staging_folder,
+                                            sweep_stopped_runs)
 
 FOLDER_CROPPED = "2_Cropped_For_Registration"
 FOLDER_DETECTION = "4_Cell_Candidates"
@@ -720,19 +723,50 @@ Examples:
     # If this stops part-way (an error, Ctrl-C, a crash inside the tool),
     # the tracker row is set to failed instead of staying 'started' forever.
     with tracker.finish_or_fail(exp_id):
-        # Run classification
-        success, duration, cells_found, rejected = run_cellfinder_classify(
-            signal_path=signal_path,
-            candidates_path=candidates,
-            output_path=output_path,
-            model_path=model_path,
-            voxel_sizes=voxel_sizes,
-            cube_size=args.cube_size,
-            batch_size=args.batch_size,
-            n_free_cpus=args.n_free_cpus,
-            background_path=background_path,
-        )
-    
+        # The run writes into 5_Classified_Cells/_in_progress/<time>/, never
+        # into the production folder (mousebrain.classification_runs says
+        # why): the production cells.xml stays in place for the whole
+        # multi-hour run, so a stop no handler sees -- the process killed, a
+        # restart, power or the share lost -- leaves it untouched. Only a run
+        # that finished swaps its files in, in one short step that archives
+        # the previous ones.
+        for left in sweep_stopped_runs(pipeline_folder):
+            print(f"    An earlier run that was stopped left files; kept in {left}")
+        staged = staging_folder(pipeline_folder)
+        try:
+            # Run classification
+            success, duration, cells_found, rejected = run_cellfinder_classify(
+                signal_path=signal_path,
+                candidates_path=candidates,
+                output_path=staged,
+                model_path=model_path,
+                voxel_sizes=voxel_sizes,
+                cube_size=args.cube_size,
+                batch_size=args.batch_size,
+                n_free_cpus=args.n_free_cpus,
+                background_path=background_path,
+            )
+        except BaseException:
+            discard_staged(staged, pipeline_folder, "failed")
+            raise
+        if success and (staged / "cells.xml").exists():
+            archived, prev_id, _ = install_staged(
+                staged, pipeline_folder, exp_id,
+                source="5_classify_cells.py %s" % SCRIPT_VERSION, how="step 5")
+            if archived:
+                print(f"    Previous production classification archived to {archived}")
+            print(f"    Production classification: {output_path / 'cells.xml'}")
+            # This run's row names the file it wrote; the previous writer's
+            # row follows its files into the archive.
+            tracker.update_status(exp_id, output_path=str(output_path / "cells.xml"))
+            follow_files_into_archive(tracker, prev_id, archived, pipeline_folder)
+        else:
+            success = False
+            kept = discard_staged(staged, pipeline_folder, "failed")
+            if kept:
+                print(f"    What the failed run wrote is kept in {kept}; "
+                      f"the production classification is unchanged")
+
         # Update tracker
         tracker.update_status(
             exp_id,
