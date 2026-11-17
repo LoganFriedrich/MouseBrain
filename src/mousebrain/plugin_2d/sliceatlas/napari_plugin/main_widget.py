@@ -1938,7 +1938,7 @@ class BrainSliceWidget(QWidget):
         # Remove analysis layers from viewer
         for name in ('Particles', 'Positive/Negative', 'Selected Particle',
                      'Threshold Mask', 'Binary', 'Signal Mask', 'Signal Outlines',
-                     'ROIs', 'Background ROIs'):
+                     'ROIs', 'Background ROIs', 'Ignore Regions'):
             for layer in list(self.viewer.layers):
                 if layer.name == name:
                     self.viewer.layers.remove(layer)
@@ -1964,6 +1964,12 @@ class BrainSliceWidget(QWidget):
         if hasattr(self, '_roi_names_label'):
             self._update_roi_names_label()
 
+        # Ignore regions are drawn on one image (they are saved with it, in
+        # ignore_regions.json). WHY cleared: the layer and its handle used to
+        # survive, so the previous image's ignore regions were applied to,
+        # and saved with, the next image.
+        self._pa_ignore_shapes_layer = None
+
         # Clear colocalization state
         self.cell_measurements = None
         self.nuclei_labels = None
@@ -1971,6 +1977,16 @@ class BrainSliceWidget(QWidget):
         self._coloc_background = None
         self._coloc_threshold = None
         self._coloc_summary = None
+        # What a colocalization worked out about THIS image's tissue and
+        # background, and the region counts quantification made from it.
+        # WHY cleared: they used to survive, so the diagnostic plot, the QC
+        # images and an export after the next image's colocalization could
+        # show the previous image's tissue mask and background.
+        self._tissue_mask = None
+        self._background_diagnostics = None
+        self._tissue_pixels = None
+        self._coloc_background_surface = None
+        self.region_counts = None
 
         # Reset UI elements
         self.pa_summary_label.setText("")
@@ -2318,6 +2334,16 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(
                 f"{what}: not opened -- {busy} is still running on the image "
                 f"on screen. Wait for it to finish, then try again.")
+            return True
+        if self._batch_roi_mode:
+            # Count & Next counts the ROIs on screen for the batch image it
+            # is on; with another image opened over it they would be counted
+            # for the wrong image. Ending the ROI drawing here would lose the
+            # place in the batch (there is no way back in short of running
+            # the batch again), so the image is refused instead.
+            self.status_label.setText(
+                f"{what}: not opened -- the batch is waiting for ROIs. Finish "
+                f"it with Count & Next or Skip, then open the image.")
             return True
         return False
 
@@ -6583,6 +6609,15 @@ class BrainSliceWidget(QWidget):
 
             # Store and visualize
             self.cell_measurements = measurements
+            # A saved run keeps its measurements only, not the tissue mask or
+            # background diagnostics it was made with. WHY cleared: those
+            # still held the last LIVE run's, and the diagnostic plot drew
+            # them as if they belonged to the run just loaded.
+            self._tissue_mask = None
+            self._background_diagnostics = None
+            self._tissue_pixels = None
+            self._coloc_background_surface = None
+            self.region_counts = None
             self._coloc_background = float(run.get('coloc_background_value', 0))
             # A sigma (background_mean rows) is not a fold change; the
             # plots then use the fold-change spin box, as after a live run.
