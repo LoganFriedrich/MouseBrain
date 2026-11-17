@@ -198,3 +198,134 @@ def labels_with_one_nucleus():
     labels = np.zeros((8, 8), dtype=np.int32)
     labels[2:4, 2:4] = 1
     return labels
+
+
+class FakeLayers(list):
+    """napari's layer list: iterate, test membership, remove, clear."""
+
+    def __init__(self):
+        super().__init__()
+        self.selection = SimpleNamespace(active=None)
+
+
+class FakeViewer:
+    """Just enough of a napari viewer for opening images and drawing results."""
+
+    def __init__(self):
+        self.layers = FakeLayers()
+        self.scale_bar = SimpleNamespace()
+
+    def _add(self, data=None, name=None, **kwargs):
+        layer = SimpleNamespace(name=name, data=data if data is not None else [],
+                                visible=True, contour=0, mode=None)
+        self.layers.append(layer)
+        return layer
+
+    def add_image(self, data, name=None, **kwargs):
+        return self._add(data, name)
+
+    def add_labels(self, data, name=None, **kwargs):
+        return self._add(data, name)
+
+    def add_points(self, data=None, name=None, **kwargs):
+        return self._add(data, name)
+
+    def add_shapes(self, data=None, name=None, **kwargs):
+        return self._add(data, name)
+
+    def names(self):
+        return [layer.name for layer in self.layers]
+
+
+class StubLoader(StubWorker):
+    """An image or folder loader that never runs: the test finishes it."""
+
+    made = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        StubLoader.made.append(self)
+
+
+def make_loading_widget(tmp_path, monkeypatch, sample="PRJ_01_01_S1"):
+    """A stand-in widget that opens images the way the window does --
+    Browse File, Prev/Next, the queue, the Load button -- with loaders that
+    never run. finish_load(w) plays the loader's result back."""
+    from mousebrain.plugin_2d.sliceatlas.napari_plugin import main_widget
+    w = make_widget(tmp_path, monkeypatch, sample)
+    StubLoader.made = []
+    monkeypatch.setattr(workers, "ImageLoaderWorker", StubLoader)
+    monkeypatch.setattr(workers, "FolderLoaderWorker", StubLoader)
+    w.viewer = FakeViewer()
+    w.current_file = None
+    w.current_folder = None
+    w.is_folder_load = False
+    w._chosen_file = None
+    w._loading_file = None
+    w._detection_source = None
+    w.red_channel = w.green_channel = None
+    w.channels = []
+    w.channel_names = []
+    w.metadata = None
+    w.stack_data = None
+    w._nav_siblings = []
+    w._nav_selected_idx = -1
+    w._queue_files = []
+    w._queue_idx = -1
+    w._pa_labels = w._pa_results = w._pa_summary = None
+    w._pa_bg_shapes_layer = None
+    w._pa_ignore_shapes_layer = None
+    w.roi_shapes_layer = None
+    w._roi_names = []
+    w._roi_counts_data = None
+    w._roi_detail_data = None
+    w._tissue_mask = None
+    w._background_diagnostics = None
+    w._tissue_pixels = None
+    w._coloc_background_surface = None
+    w.region_counts = None
+    w._batch_roi_mode = False
+    w._coloc_background = w._coloc_threshold = w._coloc_summary = None
+    w._size_manually_set = False
+    w._peeked_metadata = None
+    w.inset_widget = SimpleNamespace(
+        get_detection_settings=lambda: {"use_insets": False, "inset_manager": None,
+                                        "detect_in_base": True},
+        on_base_loaded=lambda: None)
+    # Controls the stand-in cannot make by name, and widget methods that
+    # only fill controls the tests do not look at.
+    w.progress_bar = Control()
+    w.sample_id_edit = Control(text="")
+    w._update_particle_channel_combos = lambda: None
+    w._pa_get_settings = lambda: {}
+    w._update_roi_names_label = lambda: None
+    w._get_current_slice = lambda arr: arr
+    return w
+
+
+def finish_load(w, success=True, message="ok", shape=(8, 8)):
+    """The running loader reports back (a single image)."""
+    red = np.full(shape, 3.0)
+    green = np.full(shape, 5.0)
+    w._on_load_finished(success, message, red if success else None,
+                        green if success else None, {"channels": []} if success else None, None)
+    return red
+
+
+def browse(w, monkeypatch, path):
+    """Browse File... picks `path`."""
+    from mousebrain.plugin_2d.sliceatlas.napari_plugin import main_widget
+    monkeypatch.setattr(main_widget, "QFileDialog", SimpleNamespace(
+        getOpenFileName=lambda *a, **k: (str(path), ""),
+        getExistingDirectory=lambda *a, **k: str(path)))
+    w._browse_file()
+
+
+def image_files(folder, names):
+    folder.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for name in names:
+        p = folder / name
+        p.write_bytes(b"")
+        paths.append(p)
+    return paths

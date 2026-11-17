@@ -140,6 +140,10 @@ class BrainSliceWidget(QWidget):
         self._pa_results = None  # Results DataFrame
         self._pa_summary = None  # Summary dict
 
+        # The image file last chosen (Browse File, Prev/Next, the queue):
+        # what the Load button opens. See _open_image.
+        self._chosen_file: Optional[Path] = None
+
         # Image navigation
         self._nav_siblings = []
         self._nav_selected_idx = -1
@@ -2263,15 +2267,57 @@ class BrainSliceWidget(QWidget):
 
     def _nav_load_file(self, fpath):
         """Load a file through the normal Load tab pipeline."""
+        self._open_image(fpath)
+
+    # ----- Opening an image: the one way in -----
+
+    def _leave_current_image(self):
+        """Save the results of the image on screen, then forget them.
+
+        WHY: results belong to the image they were made on. Browse File used
+        to switch to a new image without saving or clearing anything, so the
+        previous image's particles, labels and ROIs stayed in memory and the
+        next Save State wrote them into the NEW image's _analysis folder.
+        Every way of opening an image calls this first, while current_file
+        still names the image those results came from."""
         self._save_analysis_state()
         self._clear_analysis_state()
+
+    def _open_image(self, fpath, peek: bool = True) -> bool:
+        """Open one image file. Browse File, Prev/Next + Load Selected, the
+        image queue and the Load button all come through here, so every one
+        of them saves and clears the previous image's results first.
+
+        peek: read the file's metadata first to pick the channels and the
+        pixel size. The Load button passes False so a channel choice made by
+        hand before reloading is kept.
+
+        Returns False when the image was not opened."""
+        fpath = Path(fpath)
+        self._leave_current_image()
+        self._chosen_file = fpath
         self.current_file = fpath
+        self.current_folder = None
         self.is_folder_load = False
         self.file_label.setText(str(fpath.name))
+        self.folder_info_label.setText("")
         self.load_btn.setEnabled(True)
-        self._peek_and_configure(fpath)
-        self._load_image()
+        if peek:
+            self._peek_and_configure(fpath)
+        self._load_single_file(fpath)
         self._nav_update_label()
+        return True
+
+    def _open_folder(self, folder) -> bool:
+        """Open a folder of images as one stack (Browse Folder, then Load).
+        Like _open_image, the previous image's results are saved and cleared
+        first. Returns False when the folder was not opened."""
+        folder = Path(folder)
+        self._leave_current_image()
+        self.current_folder = folder
+        self.is_folder_load = True
+        self._load_folder(folder)
+        return True
 
     def _nav_prev_image(self):
         """Select previous image (does not load)."""
@@ -2535,18 +2581,9 @@ class BrainSliceWidget(QWidget):
         self._queue_prev_btn.setEnabled(self._queue_idx > 0)
         self._queue_next_btn.setEnabled(self._queue_idx < total - 1)
 
-        # Save and clear previous analysis before loading new file
-        self._save_analysis_state()
-        self._clear_analysis_state()
-
-        # Set the file path and trigger normal load
-        self.current_file = fpath
-        self.is_folder_load = False
-        self.file_label.setText(str(fpath))
-        self.load_btn.setEnabled(True)
-
-        # Auto-load the image
-        self._load_image()
+        # The same way in as Browse File: the previous image's results are
+        # saved and cleared first (see _open_image).
+        return self._open_image(fpath)
 
     def _queue_prev(self):
         """Load previous image in queue."""
@@ -4418,21 +4455,11 @@ class BrainSliceWidget(QWidget):
         )
 
         if file_path:
-            self.current_file = Path(file_path)
-            self.current_folder = None
-            self.is_folder_load = False
-            self.file_label.setText(str(self.current_file.name))
-            self.folder_info_label.setText("")
-            self.load_btn.setEnabled(True)
-
             # Auto-set sample ID from filename
-            self.sample_id_edit.setText(self.current_file.stem)
-
-            # Peek at metadata for channel auto-detection and size calibration
-            self._peek_and_configure(self.current_file)
-
-            # Auto-load the image
-            self._load_image()
+            self.sample_id_edit.setText(Path(file_path).stem)
+            # Opens it the one way every image is opened: the previous
+            # image's results are saved and cleared first (_open_image).
+            self._open_image(Path(file_path))
 
     def _browse_folder(self):
         """Open folder browser to select folder of images as stack."""
@@ -4443,8 +4470,10 @@ class BrainSliceWidget(QWidget):
         )
 
         if folder_path:
+            # Only the choice is recorded here; the image on screen (and
+            # current_file, which names it) stays until Load opens the
+            # folder through _open_folder, which saves its results first.
             self.current_folder = Path(folder_path)
-            self.current_file = None
             self.is_folder_load = True
             print(f"[BrainSlice] _browse_folder: folder={self.current_folder}, is_folder_load={self.is_folder_load}")
 
@@ -4573,9 +4602,13 @@ class BrainSliceWidget(QWidget):
         """Load the selected image or folder."""
         print(f"[BrainSlice] _load_image called: is_folder_load={self.is_folder_load}, folder={self.current_folder}, file={self.current_file}")
         if self.is_folder_load:
-            self._load_folder()
+            if self.current_folder is not None:
+                self._open_folder(self.current_folder)
         else:
-            self._load_single_file()
+            target = self._chosen_file or self.current_file
+            if target is not None:
+                # A reload keeps a channel choice made by hand: no peek.
+                self._open_image(target, peek=False)
 
     def _get_z_projection_mode(self) -> str:
         """Get z-projection mode from combo box."""
@@ -4590,11 +4623,14 @@ class BrainSliceWidget(QWidget):
             return 'all'
         return 'max'
 
-    def _load_single_file(self):
-        """Load a single image file."""
-        print(f"[BrainSlice] _load_single_file called: current_file={self.current_file}")
-        if self.current_file is None:
-            print("[BrainSlice] WARNING: current_file is None, returning early!")
+    def _load_single_file(self, fpath=None):
+        """Start the worker that loads one image file. Called only by
+        _open_image, which has already saved and cleared the previous
+        image's results."""
+        fpath = Path(fpath) if fpath is not None else self.current_file
+        print(f"[BrainSlice] _load_single_file called: file={fpath}")
+        if fpath is None:
+            print("[BrainSlice] WARNING: no file to load, returning early!")
             return
 
         self.status_label.setText("Loading image...")
@@ -4603,7 +4639,7 @@ class BrainSliceWidget(QWidget):
         from .workers import ImageLoaderWorker
 
         self.loader_worker = ImageLoaderWorker(
-            self.current_file,
+            fpath,
             red_idx=self.red_channel_spin.value(),
             green_idx=self.green_channel_spin.value(),
             z_projection=self._get_z_projection_mode(),
@@ -4612,12 +4648,14 @@ class BrainSliceWidget(QWidget):
         self.loader_worker.finished.connect(self._on_load_finished)
         self.loader_worker.start()
 
-    def _load_folder(self):
-        """Load folder of images as a stack."""
-        if self.current_folder is None:
+    def _load_folder(self, folder=None):
+        """Start the worker that loads a folder of images as a stack.
+        Called only by _open_folder."""
+        folder = Path(folder) if folder is not None else self.current_folder
+        if folder is None:
             return
 
-        print(f"[BrainSlice] Starting folder load: {self.current_folder}")
+        print(f"[BrainSlice] Starting folder load: {folder}")
         self.status_label.setText("Loading folder as stack...")
         self.load_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
@@ -4630,7 +4668,7 @@ class BrainSliceWidget(QWidget):
             print(f"[BrainSlice] Z-projection mode: {z_mode}")
 
             self.loader_worker = FolderLoaderWorker(
-                self.current_folder,
+                folder,
                 red_idx=self.red_channel_spin.value(),
                 green_idx=self.green_channel_spin.value(),
                 z_projection=z_mode,
