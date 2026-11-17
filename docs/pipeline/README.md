@@ -118,12 +118,13 @@ that is not the brain's own candidates file, nothing is pre-filtered.
 - **A Setup & Tuning test run cannot be pre-filtered.** The button stops with
   "Run Cannot Be Pre-filtered", naming the run, and pre-filters nothing. Why: a
   test run keeps its cells in a folder of its own, outside the brain. A test of
-  part of the stack saves each cell's position counted from the first plane
-  tested, not from the first plane of the brain (napari shifts them only for
-  display), so against the atlas every cell would sit in the wrong plane and the
-  interior / removed counts would be wrong. A whole-stack test run is refused as
-  well, because nothing records that the images it read are the ones the atlas
-  was fitted to. What to do: run step 4 (`4_detect_cells.py`) with the settings
+  part of the stack covers only the planes tested, so its interior / removed
+  counts would not be the brain's; and test runs saved before run files held
+  whole-stack positions count each cell's plane from the first plane tested,
+  so against the atlas every cell would sit in the wrong plane (see "Where a
+  test run's cells are" in SYSTEM_ARCHITECTURE.md). A whole-stack test run is
+  refused as well, because nothing records that the images it read are the
+  ones the atlas was fitted to. What to do: run step 4 (`4_detect_cells.py`) with the settings
   you settled on, then choose that run and pre-filter. Or press **Clear Chosen
   Run** (beside Refresh) so no run is chosen, then **Run Pre-Filter**: the brain's
   candidates file is filtered with no parent run recorded. (Refresh, or reloading
@@ -138,6 +139,13 @@ that is not the brain's own candidates file, nothing is pre-filtered.
 
 It never filters a file under the name of a run that did not write it. When no
 run has been chosen it filters the same file and records no parent run.
+
+**Load Previous** (beside the list of earlier pre-filter runs) loads the
+result of the run picked in that list, so it can be looked at, saved or sent
+to training again. It loads only a run of the brain selected now; a run of
+another brain stops with "Run Belongs To Another Brain" and loads nothing.
+(Before this was corrected the button always ended in "Could not load previous
+result" and loaded nothing.)
 
 **The Setup & Tuning Classify button and a chosen run.** Classify always
 classifies the file step 5 classifies, whatever run is chosen. The tracker row

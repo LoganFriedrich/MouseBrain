@@ -160,6 +160,15 @@ tracker.mark_as_best(run_id)
 - Full-resolution brain from Zarr (fast!)
 - Previous detection results as points layers
 
+**Which images Load shows.** The images the atlas was fitted to -- the folder
+registration recorded (crop, hand crop or full extraction) -- the same images
+detection read from disk and classification use. A brain that is not
+registered yet (or was registered before registration recorded its folder)
+shows its hand crop, else its crop, else its full extraction. If the
+registration names a folder that holds no images any more, Load stops with
+"Registered images missing" and says which folder; register the brain again.
+Convert to Zarr converts the same folder Load shows.
+
 **Workflow**:
 1. Select brain from dropdown
 2. Click "Load Brain" → loads full-res Zarr
@@ -195,14 +204,25 @@ copy of each channel beside its TIFF folder and loads that in seconds. After a
 load from TIFFs it builds the copies in the background (or press "Convert to
 Zarr").
 
-A copy is used only when it is **complete and current**: it is written as
-`ch0.zarr.partial`, renamed to `ch0.zarr` when every plane is in, and then
-`ch0.zarr.complete.json` is written last. A load uses the Zarr copies only if
+A copy is used only when it is **complete and current**: it is written into a
+folder of its own, `ch0.zarr.partial-<random letters>`, renamed to `ch0.zarr`
+when every plane is in, and then `ch0.zarr.complete.json` is written last. A load uses the Zarr copies only if
 both channels have that record, the plane count matches the TIFFs in the folder,
 and no TIFF is newer than the copy. Otherwise the terminal says
 `Not using the Zarr cache (<why>); loading the TIFFs`, the brain loads from its
 TIFFs (slower, always right), and the widget builds a new copy, removing the
 unusable one first (the TIFFs are never touched).
+
+**One conversion at a time.** While a conversion runs (the status line shows
+`ch0: converting 150/600...`), pressing Convert to Zarr says "Conversion
+Running" and starts nothing, and a Load does not start a second automatic
+conversion. One conversion does both channels of the folder, ch0 then ch1.
+(Before, a second conversion could start on the same channel and delete the
+first one's planes under it, leaving a copy with planes missing marked
+complete.) A `.partial-...` folder left by a conversion that was cut short is
+deleted by the next conversion of that channel that finishes, once nothing has
+been written into it for a day; it is an unfinished copy, the TIFFs are never
+touched. You never need to delete these folders by hand.
 
 Caches made before this rule have no completion record, so each is rebuilt once,
 in the background, the next time its brain is loaded. Before the rule, an
@@ -217,12 +237,86 @@ classification, no training-data folder, no "last run". The buttons that act on
 those (Save pre-filter results, Send to training, Promote last run to
 production) are disabled until you make a new one for this brain.
 
+**While a run is going the brain list is greyed out.** Run Test Detection and
+Run Classification hold the list until their run returns, and each run keeps
+its own record (brain, tracker run, folder, first plane tested) from start to
+finish, so the result is saved and the tracker row completed for the brain
+the run was started on. (Before, selecting another brain mid-run reset what
+the finish relied on: the detected cells were not saved, the run stayed
+"started", or the other brain's production cells were offered as the
+classification's result.)
+
+**A load that finishes after you picked another brain** shows the brain it
+loaded, and says so on the status line: `Loaded: <brain loaded> -- but <brain
+selected> is selected now`. Nothing of the selected brain (its Best or recent
+detections and classifications, its Zarr conversion) is put over those
+images. Press Load Brain into Napari to load the brain you selected.
+
 Image layers already in the viewer stay there, but every image layer carries the
 brain and folder it was loaded from. Run Test Detection and Run Classification
 use only layers of the selected brain; if the viewer holds only another brain's
 images they stop with "Images of another brain" -- load this brain first. Each
 detection run records the image folder it read as `input_path` in the tracker,
 and a training-data export records the folder of the images it cut cubes from.
+
+**Run Classification uses only the registered images.** It cuts a small cube
+around every candidate from the loaded signal layer, and the candidates are
+positions in the images the atlas was fitted to. If the layer was loaded from
+any other folder (or carries no record of its folder), it stops with "Loaded
+Images Are Not The Registered Ones", naming both folders, and classifies
+nothing. Load the brain again -- Load shows the registered images -- and run
+it again.
+
+### Which channel holds the cells (the signal)
+
+A brain's `metadata.json` can say which channel is the signal in three ways:
+`channels.signal_channel` (written by extraction, read by steps 3-5), and the
+older `signal_channel` ("ch1") and `channels_swapped` keys. Load, Run Test
+Detection and Run Classification all read them by ONE rule
+(`mousebrain.brain_context.channel_roles`), from the metadata of the folder they
+read: the keys that are present must agree, none present means ch0. When you
+select a brain, the **Swap signal/background channels** checkbox is set from
+that rule (unchecked = ch0 is the signal); detection read from disk follows the
+checkbox, so change it only if you have looked and the other channel shows the
+cells. (Before, the checkbox started checked for every brain and kept the last
+brain's setting, while Load and classification each used a rule of their own.)
+
+If a brain's metadata **contradicts itself** (for example `channels_swapped`
+true but `channels.signal_channel` 0), nothing decides for you: the status line
+shows `[!] the metadata contradicts itself about which channel holds the cells
+(...)`, and the checkbox, Load and classification behave as they did before
+this rule (the checkbox follows `channels_swapped`; Load shows ch1 as the
+signal; classification and steps 3-5 follow `channels.signal_channel`). Look at both channels, then tell
+whoever maintains the brain's metadata which one holds the cells so it can be
+corrected.
+
+**The crop window** (Plugins -> BrainTools -> 3D: 3. Manual Crop) asks "Signal
+Channel (which has the cells?)". It starts on the brain's own answer from its
+extraction metadata; leave it unless the other channel shows the cells.
+Leaving it changes nothing in the crop's channel record. Choosing the other
+channel writes it into the crop's `metadata.json` as `channels.signal_channel`
+(and swaps `background_channel` with it), which steps 3-5 and Setup & Tuning
+read. (Before, the answer was dropped by the process that does the crop.) If
+the extraction metadata contradicts itself, neither channel is chosen and Apply
+Crop says "Choose The Signal Channel" until you pick one. If the metadata names
+a channel the window does not show (ch2 ...), neither is chosen and, left so,
+the crop keeps the metadata's answer.
+
+### Where a test run's cells are (partial-stack runs)
+
+A test of part of the stack ("current slice +/- 25" or a Z range) detects on a
+slice that starts at some plane. Its saved file (`detected_cells.xml` in the
+run's folder under `optimization_runs/<brain>/test_<time>/`) holds every cell's
+plane counted from the first plane of the WHOLE stack, the same as what is
+drawn right after the run, and a file `whole_stack_z.json` beside it says so.
+Runs saved before this was corrected have no such file: their positions are
+counted from the first plane tested, and the widget moves them down by the
+run's first plane when it loads them (the tracker's `det_z_start`; for rows
+logged before that column existed, the `Z<first>-<last>` the widget wrote at
+the start of the run's notes), so Load
+Selected, Load Best and the run list show them at the right depth. The file
+itself is not changed by loading. (Before, every reload put those cells too
+shallow by that many planes.)
 
 **Save (settings to metadata.json)** writes only into the folder the brain's
 metadata was loaded from (the hand crop, else the crop, else the extraction). It
