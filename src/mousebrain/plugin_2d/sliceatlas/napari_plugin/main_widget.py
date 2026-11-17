@@ -1744,6 +1744,13 @@ class BrainSliceWidget(QWidget):
         size_layout.addWidget(self.min_area_spin)
         size_layout.addWidget(QLabel("-"))
         size_layout.addWidget(self.max_area_spin)
+        self.auto_size_btn = QPushButton("Auto size")
+        self.auto_size_btn.setToolTip(
+            "Set Min/Max Area from the image's pixel size (5-30 um nuclei).\n"
+            "Values you type are kept for every image you open after, until\n"
+            "you click this.")
+        self.auto_size_btn.clicked.connect(self._auto_size_filter)
+        size_layout.addWidget(self.auto_size_btn)
         filter_layout.addLayout(size_layout)
 
         # Physical area label (updated when pixel size is known)
@@ -5318,7 +5325,10 @@ class BrainSliceWidget(QWidget):
             voxel = meta.get('voxel_size_um')
             if voxel and voxel.get('x', 1.0) != 1.0:
                 self._pixel_size_um = voxel['x']
-                self._size_manually_set = False
+                # The size filter follows this image's pixel size unless a
+                # person typed it (_size_manually_set). WHY the mark is not
+                # cleared here: opening an image used to clear it, so Browse
+                # File and Prev/Next overwrote a value a person had typed.
                 self._calibrate_from_pixel_size()
                 # Auto-populate LoG pixel_um spinner
                 if hasattr(self, 'log_pixel_um_spin'):
@@ -5368,9 +5378,19 @@ class BrainSliceWidget(QWidget):
         typical_diam_um = 12.0
         diameter_px = max(5, int(typical_diam_um / px))
 
-        self.min_area_spin.setValue(min_area_px)
-        self.max_area_spin.setValue(max_area_px)
-        self.diameter_spin.setValue(diameter_px)
+        # Signals blocked: these boxes report a change as a person's edit
+        # (_on_area_spin_changed marks the filter typed by hand). WHY: setting
+        # them here used to mark the filter typed, so after the first image
+        # it was never set from a pixel size again.
+        for spin, value in ((self.min_area_spin, min_area_px),
+                            (self.max_area_spin, max_area_px),
+                            (self.diameter_spin, diameter_px)):
+            spin.blockSignals(True)
+            try:
+                spin.setValue(value)
+            finally:
+                spin.blockSignals(False)
+        self._update_area_label()
 
         print(f"[BrainSlice] Auto-calibrated from {px:.3f} um/px: "
               f"area={min_area_px}-{max_area_px} px, diameter={diameter_px} px")
@@ -5391,8 +5411,16 @@ class BrainSliceWidget(QWidget):
         )
 
     def _on_area_spin_changed(self):
-        """Handle area spinbox changes — mark as manual and update label."""
+        """A person changed Min/Max Area: keep their values for the images
+        opened after this one (until Auto size), and update the label."""
         self._size_manually_set = True
+        self._update_area_label()
+
+    def _auto_size_filter(self):
+        """Auto size: forget the typed Min/Max Area and set them from the
+        pixel size of the image on screen, as for every image after it."""
+        self._size_manually_set = False
+        self._calibrate_from_pixel_size()
         self._update_area_label()
 
     def _load_image(self):
