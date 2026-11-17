@@ -1167,6 +1167,16 @@ sensitive, balanced, conservative, large_cells -- used to fill that gap. They
 were never tuned on real brains, and the counts they produced looked plausible
 and were not, so they were removed.)
 
+A run marked only **Best** (for its one brain) is never taken in place of a
+missing Paradigm Best. It used to be: with no Paradigm Best -- never marked, or
+archived by mistake -- the newest brain-level Best of the imaging setup quietly
+became the detection method of every brain imaged that way, and step 4 logged it
+as the settled method. Now step 4 stops with the message above until someone
+marks a Paradigm Best. The same rule applies to the classification model step 5
+takes from the tracker: only a classification run marked Paradigm Best for the
+imaging setup counts. (Setup & Tuning still shows a brain's Best; it just never
+runs it for other brains.)
+
 **Changing one setting for a trial.** Give it to step 4 on the command line,
 e.g. `--threshold 9`. The run is logged as `custom`, never as the settled method.
 

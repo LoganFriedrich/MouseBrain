@@ -1278,16 +1278,26 @@ class ExperimentTracker:
     def get_best_for_paradigm(
         self,
         imaging_paradigm: str,
-        exp_type: str = "detection"
+        exp_type: str = "detection",
+        strict: bool = False,
     ) -> Optional[Dict[str, str]]:
         """
         Get the best experiment for an imaging paradigm.
 
-        Use this to auto-apply settings to new brains with the same imaging parameters.
-
         Args:
             imaging_paradigm: e.g., "1p625x_z4"
             exp_type: "detection", "classification", or "training"
+            strict: True returns ONLY the run a person marked Paradigm Best.
+                False (for display only) falls back to the newest run marked
+                Best for any one brain of the setup.
+
+        WHY strict exists: the fallback used to feed the settled method.
+        With no Paradigm Best -- never marked, or archived by mistake -- one
+        brain's Best quietly became the detection method for every brain of
+        its imaging setup, and step 4 logged it as 'paradigm_best'. Anything
+        that RUNS a method (get_paradigm_detection_settings,
+        get_paradigm_model) asks with strict=True, so no Paradigm Best means
+        no settled method, and the caller stops and says so.
 
         Returns:
             The paradigm-best experiment dict, or None
@@ -1302,7 +1312,10 @@ class ExperimentTracker:
                 row.get('paradigm_best') == 'True'):
                 return row
 
-        # Fallback: find any marked_best for this paradigm
+        if strict:
+            return None
+
+        # Display-only fallback: the newest marked_best of this paradigm
         candidates = [
             r for r in rows
             if (r.get('imaging_paradigm') == imaging_paradigm and
@@ -1337,7 +1350,10 @@ class ExperimentTracker:
             detection while 'missing' is non-empty -- it would be filling half
             the method with someone else's numbers.
         """
-        best = self.get_best_for_paradigm(imaging_paradigm, exp_type="detection")
+        # strict: only the run marked Paradigm Best is the settled method
+        # (see get_best_for_paradigm for why one brain's Best never is).
+        best = self.get_best_for_paradigm(imaging_paradigm, exp_type="detection",
+                                          strict=True)
         if not best:
             return None
 
@@ -1374,7 +1390,10 @@ class ExperimentTracker:
         Returns:
             Model path string, or None
         """
-        best = self.get_best_for_paradigm(imaging_paradigm, exp_type="classification")
+        # strict, as for detection: a run marked Best for one brain is never
+        # the model for every brain of the setup.
+        best = self.get_best_for_paradigm(imaging_paradigm, exp_type="classification",
+                                          strict=True)
         if not best:
             return None
         return best.get('class_model_path') or best.get('model_path')
