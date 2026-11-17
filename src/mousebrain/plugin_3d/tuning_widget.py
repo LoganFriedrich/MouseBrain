@@ -4042,12 +4042,22 @@ class TuningWidget(QWidget):
             return
 
         try:
-            runs = self.tracker.search(exp_id=exp_id)
-            if not runs:
+            # One run by its id. (This used to call tracker.search(exp_id=...),
+            # which search() does not accept, so every press ended in
+            # "Could not load previous result" and nothing was loaded.)
+            run = self.tracker.get_experiment(exp_id)
+            if not run:
                 QMessageBox.warning(self, "Not Found", f"Run {exp_id} not found in tracker.")
                 return
-
-            run = runs[0]
+            # Only a pre-filter of the brain selected now: its result can be
+            # saved into this brain's folders.
+            brain_name = self.current_brain.name if self.current_brain else ""
+            if not _run_is_of_brain(run, brain_name):
+                QMessageBox.warning(self, "Run Belongs To Another Brain",
+                    f"Pre-filter run {exp_id} is a run of brain {run.get('brain')}, "
+                    f"but the brain selected is {brain_name or 'none'}.\n"
+                    "Nothing was loaded.")
+                return
             output_path = run.get('output_path', '')
             if not output_path:
                 QMessageBox.warning(self, "No Output", "No output path recorded for this run.")
