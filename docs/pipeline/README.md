@@ -1261,11 +1261,31 @@ machines write it, and every status change rewrites the whole file, so each writ
 - writes a temporary file and swaps it in, so a crash part-way leaves the
   previous file, never a cut-off one.
 
-**A run is never left at `started`.** Steps 3-6 mark their tracker row `failed`
-(with the reason in `notes`) when they stop part-way -- an error, Ctrl-C, a
-crash inside brainreg or cellfinder. Only a process killed outright (the task
-ended from Task Manager, a power cut) can still leave `started`, because it runs
-no code at all on the way out.
+**A run is never left at `started`.** Steps 3-6 and model training
+(`util_train_model.py`) mark their tracker row `failed` (with the reason in
+`notes`) when they stop part-way -- an error, Ctrl-C, a crash inside brainreg or
+cellfinder. Setup & Tuning does the same for its own detection and
+classification runs when napari (or the Setup & Tuning panel) is closed while
+one is still going: the row becomes `failed` with "napari was closed before the
+run finished" in `notes`. (If only the panel was closed and the run then
+finishes after all, its result is still recorded and the row becomes
+`completed`.) Only a process killed outright (the task ended from Task Manager,
+a power cut) can still leave `started`, because it runs no code at all on the
+way out.
+
+**Finding runs that never finished.** In a terminal, in the scripts/utils
+folder:
+
+```bash
+python util_experiments.py unfinished        # every run still 'started'
+python util_experiments.py unfinished 24     # only those begun more than 24 hours ago
+python util_experiments.py view <ID>         # which machine ran it (Machine)
+```
+
+(or choose `8` in the interactive `python util_experiments.py` menu). Each run
+listed is either still running on the machine shown, or was killed and will
+never finish -- check that machine. Before this list existed, such rows could
+only be found by opening the CSV.
 
 ## Requirements
 

@@ -561,6 +561,34 @@ def _detection_parent_of(candidates_xml, tracker, brain_name, chosen_exp_id):
     return _provenance_exp_id(candidates_xml)
 
 
+def fail_runs_left_open(widget, why: str = "napari was closed before the run finished"):
+    """Mark failed every tracker run this widget started that has not finished.
+
+    The widget logs a detection or classification run as 'started' when the
+    button is pressed and sets it to completed/failed when the work returns.
+    Closing napari (or this panel) part-way through used to leave the row at
+    'started' forever, where nobody could tell it from a run still going. The
+    widget keeps the ids it started in ``_runs_in_progress``; this marks each
+    one that the tracker still holds at 'started' as failed, with the reason
+    in its notes (a run that did finish is not touched), and forgets them.
+    Called from closeEvent and from the program's aboutToQuit. Never raises.
+    """
+    open_ids = list(getattr(widget, '_runs_in_progress', None) or [])
+    tracker = getattr(widget, 'tracker', None)
+    if not open_ids or tracker is None:
+        return []
+    try:
+        changed = tracker.fail_unfinished(open_ids, why)
+    except Exception as e:
+        print(f"[MouseBrain] [!] Could not mark unfinished runs failed: {e}")
+        return []
+    try:
+        widget._runs_in_progress.clear()
+    except Exception:
+        pass
+    return changed
+
+
 class TuningWidget(QWidget):
     """Widget for tuning BrainGlobe settings."""
 
@@ -579,6 +607,11 @@ class TuningWidget(QWidget):
         # Session tracking - track runs made during this napari session
         self.current_session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.session_run_ids = []  # Run IDs created during this session
+        # Tracker runs this widget logged as 'started' and has not yet set to
+        # completed/failed. Closing napari marks the ones still open failed
+        # (fail_runs_left_open). Deliberately NOT reset on a brain change: a
+        # run of the previous brain may still be going.
+        self._runs_in_progress = set()
 
         # Training data management - auto-save on every Y/N during curation
         self.training_data_dir = None  # Set when "Create Training Layers" is clicked
@@ -601,6 +634,15 @@ class TuningWidget(QWidget):
 
         # Initialize tracker if available
         self.tracker = ExperimentTracker() if TRACKER_AVAILABLE else None
+        # napari can quit without closing this panel first, so the program's
+        # own quit signal also marks unfinished runs failed.
+        try:
+            from qtpy.QtWidgets import QApplication
+            if QApplication.instance() is not None:
+                QApplication.instance().aboutToQuit.connect(
+                    lambda: fail_runs_left_open(self))
+        except Exception:
+            pass
 
         # Initialize session documenter for auto-documentation
         if SESSION_DOC_AVAILABLE:
@@ -2519,6 +2561,7 @@ class TuningWidget(QWidget):
                 det_z_end=z_end,
                 det_z_center=z_center,
             )
+            self._runs_in_progress.add(self.last_run_id)
 
         # Print all params to terminal
         print(f"\n[MouseBrain] Starting detection with parameters:")
@@ -7368,6 +7411,7 @@ class TuningWidget(QWidget):
                 notes="Run from napari tuning widget (Python API)",
             )
             self._last_class_exp_id = exp_id
+            self._runs_in_progress.add(exp_id)
 
         # Update UI
         self.classify_btn.setEnabled(False)
@@ -11236,4 +11280,8 @@ class TuningWidget(QWidget):
                         f"Session report saved to:\n{report_path}"
                     )
 
+        # The panel is going: a run it started that has not finished never
+        # will (see fail_runs_left_open). After the Cancel check on purpose --
+        # cancelling the close leaves the runs running.
+        fail_runs_left_open(self)
         event.accept()

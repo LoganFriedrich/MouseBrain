@@ -567,18 +567,69 @@ class ExperimentTracker:
     def _fail_if_unfinished(self, exp_id: Optional[str], why: str) -> None:
         if not exp_id:
             return
+        self.fail_unfinished([exp_id], why)
+
+    def fail_unfinished(self, exp_ids, why: str) -> List[str]:
+        """Set each of these runs that is still 'started' to 'failed', with
+        `why` added to its notes, in ONE locked rewrite. A run that already
+        finished (completed, failed, ...) is left exactly as it is. Returns
+        the ids that were changed. Never raises: it is called on the way out
+        of something else (an error, the napari window closing), and must
+        not hide that.
+
+        WHY: a 'started' row that will never finish looks exactly like a run
+        still going, so nobody can tell a crashed run from a running one.
+        The code that started a run marks it failed whenever it can see the
+        run will not finish (finish_or_fail; the tuning widget on close)."""
+        wanted = {e for e in (exp_ids or []) if e}
+        if not wanted:
+            return []
         try:
             def mutate(rows):
+                changed = []
                 for row in rows:
-                    if row.get('exp_id') == exp_id and row.get('status') == 'started':
+                    if row.get('exp_id') in wanted and row.get('status') == 'started':
                         row['status'] = 'failed'
                         row['notes'] = "; ".join(filter(None, [row.get('notes', ''), why]))
-                        return True
-                return False
-            if self._rewrite(mutate):
+                        changed.append(row['exp_id'])
+                return changed
+            changed = self._rewrite(mutate) or []
+            for exp_id in changed:
                 print("[Tracker] Run %s marked failed: %s" % (exp_id, why))
+            return changed
         except Exception as e:  # never hide the original error behind this one
-            print("[Tracker] [!] Could not mark run %s failed: %s" % (exp_id, e))
+            print("[Tracker] [!] Could not mark run(s) %s failed: %s"
+                  % (", ".join(sorted(wanted)), e))
+            return []
+
+    def unfinished(self, older_than_hours: float = 0) -> List[Dict[str, str]]:
+        """Runs still at 'started' that were begun more than
+        `older_than_hours` ago (0: every one), oldest first.
+
+        A run is left at 'started' only when its process was killed outright
+        (Task Manager, a power cut) or by code from before runs were marked
+        failed on the way out -- or it is genuinely still running. This lists
+        them so a person can tell which is which (util_experiments.py
+        unfinished). A row whose start time cannot be read is always listed:
+        its age is unknown, and leaving it out would hide it."""
+        cutoff = None
+        if older_than_hours and older_than_hours > 0:
+            cutoff = datetime.now().timestamp() - older_than_hours * 3600
+        out = []
+        for row in self._read_all():
+            if row.get('status') != 'started':
+                continue
+            if cutoff is not None:
+                try:
+                    started = datetime.fromisoformat(
+                        (row.get('created_at') or '').strip()).timestamp()
+                except ValueError:
+                    started = None
+                if started is not None and started > cutoff:
+                    continue
+            out.append(row)
+        out.sort(key=lambda r: r.get('created_at') or '')
+        return out
 
     # =========================================================================
     # LOGGING METHODS

@@ -728,31 +728,35 @@ Examples:
     print(f"Training Run: {exp_id}")
     print(f"{'='*60}")
 
-    # Run training
-    success, duration, best_loss, best_accuracy = run_cellfinder_train(
-        yaml_paths=yaml_paths,
-        output_dir=output_dir,
-        epochs=args.epochs,
-        learning_rate=args.learning_rate,
-        batch_size=args.batch_size,
-        test_fraction=args.test_fraction,
-        continue_from=args.continue_from,
-        augment=not args.no_augment,
-        n_free_cpus=args.n_free_cpus,
-        early_stopping=not args.no_early_stopping,
-        reduce_lr=not args.no_reduce_lr,
-        nan_guard=not args.no_nan_guard,
-        patience=args.patience,
-    )
-    
-    # Update tracker
-    tracker.update_status(
-        exp_id,
-        status="completed" if success else "failed",
-        duration_seconds=round(duration, 1),
-        train_loss=best_loss,
-        train_accuracy=best_accuracy,
-    )
+    # Run training. finish_or_fail: if training stops part-way -- an error,
+    # Ctrl-C, a crash inside cellfinder -- the run is marked 'failed' with
+    # the reason, instead of sitting at 'started' forever, where nobody
+    # can tell it from a training still going.
+    with tracker.finish_or_fail(exp_id):
+        success, duration, best_loss, best_accuracy = run_cellfinder_train(
+            yaml_paths=yaml_paths,
+            output_dir=output_dir,
+            epochs=args.epochs,
+            learning_rate=args.learning_rate,
+            batch_size=args.batch_size,
+            test_fraction=args.test_fraction,
+            continue_from=args.continue_from,
+            augment=not args.no_augment,
+            n_free_cpus=args.n_free_cpus,
+            early_stopping=not args.no_early_stopping,
+            reduce_lr=not args.no_reduce_lr,
+            nan_guard=not args.no_nan_guard,
+            patience=args.patience,
+        )
+
+        # Update tracker
+        tracker.update_status(
+            exp_id,
+            status="completed" if success else "failed",
+            duration_seconds=round(duration, 1),
+            train_loss=best_loss,
+            train_accuracy=best_accuracy,
+        )
     
     print(f"\n{'='*60}")
     if success:

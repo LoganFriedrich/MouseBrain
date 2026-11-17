@@ -14,6 +14,7 @@ HOW TO USE
     python util_experiments.py compare det_xxx det_yyy  # Compare experiments
     python util_experiments.py rate det_xxx 4    # Rate an experiment
     python util_experiments.py stats             # Show statistics
+    python util_experiments.py unfinished [HOURS] # Runs still 'started' (older than HOURS)
 
 ================================================================================
 INTERACTIVE MODE
@@ -134,6 +135,7 @@ def print_experiment_detail(row: Dict):
         ('Brain', 'brain'),
         ('Status', 'status'),
         ('Created', 'created_at'),
+        ('Machine', 'hostname'),
         ('Duration', 'duration_seconds'),
         ('Rating', 'rating'),
     ]
@@ -270,6 +272,27 @@ def print_statistics(tracker: ExperimentTracker):
 # INTERACTIVE MODE
 # =============================================================================
 
+def print_unfinished(tracker: ExperimentTracker, older_than_hours: float = 0,
+                     verbose: bool = False):
+    """List the runs still at 'started' (tracker.unfinished).
+
+    WHY this exists: every step marks its run 'failed' when it stops
+    part-way, but a process killed outright (Task Manager, a power cut)
+    runs no code on the way out and leaves 'started' behind -- which looks
+    exactly like a run still going. Nothing listed these before. A run
+    listed here that is NOT running any more on any machine never
+    finished; its results, if any, are not to be trusted."""
+    rows = tracker.unfinished(older_than_hours=older_than_hours)
+    title = "Runs still 'started'"
+    if older_than_hours:
+        title += " (begun more than %g h ago)" % older_than_hours
+    print_experiment_table(rows, title, verbose=verbose)
+    if rows:
+        print("Each of these is either still running on some machine, or its")
+        print("process was killed and it will never finish. Check the machine")
+        print("that ran it: 'util_experiments.py view <ID>' shows it as Machine.")
+
+
 def interactive_mode(tracker: ExperimentTracker):
     """Run interactive experiment browser."""
     while True:
@@ -283,6 +306,7 @@ def interactive_mode(tracker: ExperimentTracker):
         print("  5. Rate an experiment")
         print("  6. View experiment details")
         print("  7. Statistics")
+        print("  8. Runs never finished (still 'started')")
         print("  q. Quit")
         print("-" * 60)
         
@@ -376,6 +400,10 @@ def interactive_mode(tracker: ExperimentTracker):
         elif choice == '7':
             # Statistics
             print_statistics(tracker)
+
+        elif choice == '8':
+            hours = input("Only runs begun more than how many hours ago? [0 = all]: ").strip() or "0"
+            print_unfinished(tracker, float(hours))
         
         else:
             print("Invalid choice")
@@ -399,6 +427,7 @@ Commands:
     python experiments.py rate ID RATING [NOTE]  # Rate an experiment
     python experiments.py view ID                # View experiment details
     python experiments.py stats                  # Show statistics
+    python experiments.py unfinished [HOURS]     # Runs still 'started'
 
 Types: detection, training, classification, counts
         """
@@ -406,7 +435,7 @@ Types: detection, training, classification, counts
     
     parser.add_argument('command', nargs='?', default='interactive',
                         choices=['interactive', 'recent', 'search', 'best', 
-                                'compare', 'rate', 'view', 'stats'])
+                                'compare', 'rate', 'view', 'stats', 'unfinished'])
     parser.add_argument('args', nargs='*', help='Command arguments')
     parser.add_argument('--csv', help='Path to experiments CSV')
     parser.add_argument('-v', '--verbose', action='store_true')
@@ -473,6 +502,10 @@ Types: detection, training, classification, counts
     
     elif args.command == 'stats':
         print_statistics(tracker)
+
+    elif args.command == 'unfinished':
+        hours = float(args.args[0]) if args.args else 0
+        print_unfinished(tracker, hours, verbose=args.verbose)
 
 
 if __name__ == '__main__':
