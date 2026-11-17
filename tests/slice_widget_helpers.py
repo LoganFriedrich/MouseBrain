@@ -138,6 +138,59 @@ def make_widget(tmp_path, monkeypatch, sample, backend="StarDist"):
     w.viewer = SimpleNamespace(
         layers=[], add_labels=lambda *a, **k: SimpleNamespace(contour=0),
         add_points=lambda *a, **k: None)
+    w._pa_run_id = None
+    w._pa_classified_with = None
+    w._pa_reclass_pending = None
+    w._pa_reclass_timer = FakeTimer(w)
+    return w
+
+
+class FakeTimer:
+    """The re-classification timer: fire() does what its timeout would."""
+
+    def __init__(self, widget):
+        self.widget, self.active = widget, False
+
+    def start(self):
+        self.active = True
+
+    def stop(self):
+        self.active = False
+
+    def fire(self):
+        if self.active:
+            self.active = False
+            record = getattr(self.widget, "_pa_record_reclassification", None)
+            if record is not None:
+                record()
+
+
+def make_particle_widget(tmp_path, monkeypatch, sample, background):
+    """A stand-in widget with a two-channel image holding one particle that
+    passes the size filter and one that does not, ready for Run Particle
+    Analysis."""
+    w = make_widget(tmp_path, monkeypatch, sample)
+    image = np.zeros((40, 40))
+    image[5:12, 5:12] = 100.0      # a particle kept by the size filter
+    image[30, 30] = 100.0          # one pixel: removed by the size filter
+    w.channels = [image, image * 2]
+    w.pa_det_combo = Control(text="ch0", index=0)
+    w.pa_meas_combo = Control(text="ch1", index=1)
+    w._pa_thresh_spin = Control(value=50)
+    w.pa_min_area = Control(value=4)
+    w.pa_max_area = Control(value=1000)
+    w.pa_min_circ = Control(value=0.0)
+    w.pa_watershed_check = Control(checked=False)
+    w.pa_bg_manual_spin = Control(value=background)
+    w.pa_pos_pct_spin = Control(value=50.0)
+    w.pa_binary_toggle = Control()
+    w.pa_show_signal_mask = Control()
+    w._pa_binary_view = False
+    w._pa_ignore_shapes_layer = None
+    for name in ("_pa_draw_classification_overlay", "_pa_scroll_to_results",
+                 "_save_analysis_state"):
+        setattr(w, name, lambda *a: None)
+    w._pa_register_click_callback = lambda layer: None
     return w
 
 

@@ -28,6 +28,10 @@ from qtpy.QtCore import Qt, QTimer
 import napari
 
 
+# How long the Background / Min % boxes must stay unchanged before a particle
+# re-classification is recorded in the tracker (see _pa_reclassify_live).
+PA_RECLASSIFY_RECORD_DELAY_MS = 1500
+
 # How long ONE tracker write from this window may wait: for another writer's
 # lock, and for the calibration_runs.csv swap while something (most often a
 # spreadsheet program) holds the file open. WHY so short: these writes run on
@@ -106,6 +110,12 @@ class BrainSliceWidget(QWidget):
         # detection row left 'started'). Each result handler reads its own.
         self._detection_run_id: Optional[str] = None
         self._coloc_run_id: Optional[str] = None
+        # The particle analysis whose particles are on screen (its tracker
+        # row), and the (background, min % above background) its saved
+        # classification was last recorded with. Re-classifying with other
+        # values logs a row naming this run (see _pa_reclassify_live).
+        self._pa_run_id: Optional[str] = None
+        self._pa_classified_with = None
         # The detection run that produced the nuclei now in nuclei_labels
         # (None when they have no row: tracker off, or nothing detected
         # yet). WHY kept: a colocalization measures THOSE nuclei, and its row
@@ -588,6 +598,25 @@ class BrainSliceWidget(QWidget):
         self._pa_bg_mask_timer.setSingleShot(True)
         self._pa_bg_mask_timer.setInterval(80)
         self._pa_bg_mask_timer.timeout.connect(self._pa_update_signal_previews)
+
+        # Records a re-classification in the tracker once the Background /
+        # Min % values have stopped changing (see _pa_reclassify_live). WHY
+        # a pause: the background box re-classifies on every step of its
+        # arrows and every typed digit; one row per settled change is
+        # enough, and each write is made on this window's thread. Anything
+        # still waiting is recorded at once before another analysis, a new
+        # image, or the program closing (_pa_record_reclassification).
+        self._pa_reclass_pending = None
+        self._pa_reclass_timer = QTimer()
+        self._pa_reclass_timer.setSingleShot(True)
+        self._pa_reclass_timer.setInterval(PA_RECLASSIFY_RECORD_DELAY_MS)
+        self._pa_reclass_timer.timeout.connect(self._pa_record_reclassification)
+        try:
+            from qtpy.QtWidgets import QApplication
+            if QApplication.instance() is not None:
+                QApplication.instance().aboutToQuit.connect(self._pa_record_reclassification)
+        except Exception:
+            pass
 
         # Extra state
         self._pa_binary_view = False
@@ -1903,10 +1932,16 @@ class BrainSliceWidget(QWidget):
                 if layer.name == name:
                     self.viewer.layers.remove(layer)
 
+        # A re-classification of the image being left that is still waiting
+        # to be recorded is recorded now, under that image's name.
+        self._pa_record_reclassification()
+
         # Clear particle state
         self._pa_labels = None
         self._pa_results = None
         self._pa_summary = None
+        self._pa_run_id = None
+        self._pa_classified_with = None
         self._pa_bg_shapes_layer = None
 
         # Clear ROI state
@@ -2001,6 +2036,9 @@ class BrainSliceWidget(QWidget):
 
             # Save settings + layer visibility
             settings = self._pa_get_settings()
+            # The tracker row of the analysis these particles came from, so a
+            # re-classification after the state is restored can name it.
+            settings['particle_run_id'] = self._pa_run_id
             layer_visibility = {}
             for layer in self.viewer.layers:
                 layer_visibility[layer.name] = layer.visible
@@ -2047,6 +2085,13 @@ class BrainSliceWidget(QWidget):
                     settings = json.load(f)
                 self._pa_apply_settings(settings)
                 restored.append("settings")
+                # The saved classification is the one last recorded in the
+                # tracker (a waiting one is recorded before an image is left),
+                # so restoring it is not a re-classification.
+                self._pa_run_id = settings.get('particle_run_id')
+                if 'bg_value' in settings and 'min_pct_above_bg' in settings:
+                    self._pa_classified_with = (settings['bg_value'],
+                                                settings['min_pct_above_bg'])
 
             # Restore particle labels
             labels_path = analysis_dir / "labels.npz"
@@ -3566,6 +3611,8 @@ class BrainSliceWidget(QWidget):
             return
         if self._refuse_if_analysis_running("Particle analysis"):
             return
+        # The previous particles' re-classification, if one is still waiting.
+        self._pa_record_reclassification()
 
         det_idx = self.pa_det_combo.currentIndex()
         meas_idx = self.pa_meas_combo.currentIndex()
@@ -3608,6 +3655,7 @@ class BrainSliceWidget(QWidget):
                     input_path=str(self.current_file) if self.current_file else None,
                     notes=("watershed split on" if self.pa_watershed_check.isChecked()
                            else None),
+                    min_pct_above_bg=self.pa_pos_pct_spin.value(),
                 )
                 self.last_run_id = pa_run_id
                 self.session_run_ids.append(pa_run_id)
@@ -3732,6 +3780,10 @@ class BrainSliceWidget(QWidget):
                 'n_particles': n,
                 'background': bg_value,
             }
+            # These particles are this run's; a later re-classification names
+            # it (see _pa_reclassify_live).
+            self._pa_run_id = pa_run_id
+            self._pa_classified_with = (bg_value, self.pa_pos_pct_spin.value())
 
             # Remove preview layers and show results
             for lname in ('Particles', 'Positive/Negative',
@@ -3784,6 +3836,8 @@ class BrainSliceWidget(QWidget):
                     mean_intensity = None
                     if n > 0 and 'mean_intensity' in measurements.columns:
                         mean_intensity = float(measurements['mean_intensity'].mean())
+                    n_positive = (int(results['is_positive'].sum())
+                                  if 'is_positive' in results.columns else None)
                     self.tracker.update_status(
                         pa_run_id,
                         status='completed',
@@ -3792,6 +3846,7 @@ class BrainSliceWidget(QWidget):
                         pa_particles_raw=n_raw,
                         pa_bg_value=bg_value,
                         pa_mean_intensity=mean_intensity,
+                        pa_positive_particles=n_positive,
                     )
                 except Exception as e:
                     problem = self._result_not_recorded(pa_run_id, e)
@@ -3904,6 +3959,70 @@ class BrainSliceWidget(QWidget):
 
         # Auto-save after reclassification
         self._save_analysis_state()
+
+        # The saved results now say something the analysis's tracker row does
+        # not: record it, once the values stop changing (see
+        # _pa_record_reclassification). Back at the recorded values, nothing
+        # is waiting any more.
+        if self._pa_same_classification((bg_value, min_pct), self._pa_classified_with):
+            self._pa_reclass_pending = None
+            self._pa_reclass_timer.stop()
+        else:
+            sample_id = self.current_file.stem if self.current_file else ""
+            self._pa_reclass_pending = dict(
+                sample_id=sample_id,
+                parent_run=self._pa_run_id,
+                bg_value=bg_value,
+                min_pct_above_bg=min_pct,
+                particles_found=n,
+                positive_particles=n_pos,
+                input_path=str(self.current_file) if self.current_file else None,
+                measurements_path=(str(self.current_file.parent
+                                       / f"{self.current_file.stem}_analysis"
+                                       / "particles.csv")
+                                   if self.current_file else None),
+            )
+            self._pa_reclass_timer.start()
+
+    @staticmethod
+    def _pa_same_classification(a, b) -> bool:
+        """True when two (background, min %) pairs are the same to the 0.1
+        the boxes show. WHY rounded: a background computed by the analysis
+        has more decimals than the box, and setting the box back to it
+        (restoring a saved state) is not a change."""
+        if a is None or b is None:
+            return False
+        try:
+            return all(round(float(x), 1) == round(float(y), 1) for x, y in zip(a, b))
+        except (TypeError, ValueError):
+            return False
+
+    def _pa_record_reclassification(self, *_):
+        """Write the waiting re-classification to the tracker now (a new
+        particle_analysis row whose parent_run is the analysis that found
+        the particles; see SliceTracker.log_particle_reclassification). Does
+        nothing when none is waiting. Never raises: a row that cannot be
+        written is said in the status bar, since particles.csv already holds
+        the new classification."""
+        pending = getattr(self, '_pa_reclass_pending', None)
+        self._pa_reclass_pending = None
+        timer = getattr(self, '_pa_reclass_timer', None)
+        if timer is not None:
+            timer.stop()
+        if not pending or not self.tracker:
+            return
+        try:
+            run_id = self.tracker.log_particle_reclassification(**pending)
+            self.session_run_ids.append(run_id)
+            self._pa_classified_with = (pending['bg_value'], pending['min_pct_above_bg'])
+        except Exception as e:
+            print(f"[BrainSlice] [!] Re-classification not recorded in the tracker: {e}")
+            try:
+                self.status_label.setText(
+                    f"[!] Re-classification saved to particles.csv but not recorded in "
+                    f"the tracker ({e}) -- is calibration_runs.csv open elsewhere?")
+            except Exception:
+                pass
 
     def _pa_populate_table(self, df):
         """Populate the results table with particle analysis results."""

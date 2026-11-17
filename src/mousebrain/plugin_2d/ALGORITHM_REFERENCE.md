@@ -515,6 +515,37 @@ pixels was used. (Older rows say `manual_roi` for both.) `pa_particles_raw` is t
 number of particles before the size and circularity filters, `pa_particles_found`
 after them, and `pa_mean_intensity` the average of the particles' mean intensities.
 
+A particle-analysis row also records the positive rule, `pa_min_pct_above_bg` (a
+particle is positive when at least this % of its pixels are above the background),
+and how many particles it classified positive, `pa_positive_particles`.
+
+**Re-classifying particles.** After Run Particle Analysis, changing the Background
+value or pressing Apply next to Min % above BG classifies the SAME particles again
+and saves the new classification over the image's `particles.csv` at once. Once the
+two values have stayed unchanged for 1.5 seconds, the tracker gets a new
+`particle_analysis` row for it, `completed`, with:
+
+- `parent_run` -- the analysis that found the particles (blank when those particles
+  have no row: the tracker could not be opened, or the saved state was written before
+  this change);
+- `pa_bg_method` `manual_reclassify`, the new `pa_bg_value` and `pa_min_pct_above_bg`,
+  `pa_particles_found` and the new `pa_positive_particles`;
+- the analysis's particle-finding settings (channels, threshold, size and
+  circularity limits) copied from the parent, and `measurements_path` -- the
+  `particles.csv` that was rewritten;
+- `notes`: `re-classified the particles of <analysis run id>`.
+
+The analysis's own row is never changed: it keeps saying what the analysis
+produced. So the classification now in `particles.csv` is the one in the NEWEST row
+whose `parent_run` is that analysis (or the analysis's own row if there is none).
+Setting the values back to the ones last recorded logs nothing. A change still
+waiting for its 1.5 seconds is recorded at once when you run another particle
+analysis, move to another image, or close napari. If its row cannot be written (the
+file is open in a spreadsheet program), the status bar says
+`[!] Re-classification saved to particles.csv but not recorded in the tracker (...)`.
+Before this change re-classifying left no row at all, so an older `particles.csv`
+may hold a classification that no row describes.
+
 A program that asks the tracker to record a result under a name that is not one of
 its result columns gets an error and nothing is written, instead of the value being
 dropped without a word.

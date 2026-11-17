@@ -67,6 +67,7 @@ RESULT_FIELDS = (
     'coloc_dual_cells', 'coloc_ch1_only_cells', 'coloc_ch2_only_cells', 'coloc_neither_cells',
     'quant_total_regions', 'quant_top_region', 'quant_top_region_count',
     'pa_particles_found', 'pa_particles_raw', 'pa_bg_value', 'pa_mean_intensity',
+    'pa_positive_particles',
     'output_path', 'labels_path', 'measurements_path', 'region_counts_path',
     'reg_transform_path', 'reg_quality_score',
 )
@@ -538,8 +539,13 @@ class SliceTracker:
         notes: Optional[str] = None,
         status: str = 'started',
         script_version: str = '1.0.0',
+        min_pct_above_bg: Optional[float] = None,
     ) -> str:
-        """Log a particle analysis run."""
+        """Log a particle analysis run.
+
+        min_pct_above_bg: the positive rule (a particle is positive when at
+        least this % of its pixels are above background).
+        """
         run_id = self._generate_run_id('particle_analysis', sample_id)
 
         row = {
@@ -556,6 +562,7 @@ class SliceTracker:
             'pa_min_circularity': min_circularity,
             'pa_max_circularity': max_circularity,
             'pa_bg_method': bg_method,
+            'pa_min_pct_above_bg': min_pct_above_bg,
             'input_path': input_path,
             'output_path': output_path,
             'notes': notes,
@@ -563,6 +570,62 @@ class SliceTracker:
             'hostname': self._get_hostname(),
         }
 
+        row = self._add_hierarchy_fields(row, sample_id)
+        self._write_row(row)
+        return run_id
+
+    def log_particle_reclassification(
+        self,
+        sample_id: str,
+        parent_run: Optional[str],
+        bg_value: float,
+        min_pct_above_bg: float,
+        particles_found: int,
+        positive_particles: int,
+        input_path: Optional[str] = None,
+        measurements_path: Optional[str] = None,
+        script_version: str = '1.0.0',
+    ) -> str:
+        """Log a re-classification of an analysis's particles: the same
+        particles, classified again with another background and/or positive
+        rule. Logged complete in one write (it is instantaneous).
+
+        WHY its own row, not an edit of the analysis's row: re-classifying
+        rewrites the saved results (particles.csv) without finding the
+        particles again, and used to leave no trace at all -- the analysis's
+        row still stated the old background and counts. The original row
+        keeps describing what the analysis produced; this row says what the
+        results were changed to and when, and its parent_run is that
+        analysis (blank when the particles on screen have no tracker row).
+        The particle-finding settings are copied from the parent so the row
+        stands on its own.
+        """
+        run_id = self._generate_run_id('particle_analysis', sample_id)
+        parent = self.get_run(parent_run) if parent_run else None
+        copied = {col: parent.get(col, '') for col in (
+            'pa_detection_channel', 'pa_threshold_value', 'pa_measurement_channel',
+            'pa_min_area', 'pa_max_area', 'pa_min_circularity',
+            'pa_max_circularity', 'pa_particles_raw')} if parent else {}
+        row = dict(copied)
+        row.update({
+            'run_id': run_id,
+            'run_type': 'particle_analysis',
+            'sample_id': sample_id,
+            'created_at': datetime.now().isoformat(),
+            'status': 'completed',
+            'pa_bg_method': 'manual_reclassify',
+            'pa_bg_value': bg_value,
+            'pa_min_pct_above_bg': min_pct_above_bg,
+            'pa_particles_found': particles_found,
+            'pa_positive_particles': positive_particles,
+            'parent_run': parent_run,
+            'input_path': input_path,
+            'measurements_path': measurements_path,
+            'notes': ("re-classified the particles of %s" % parent_run if parent_run
+                      else "re-classified particles that have no tracker row"),
+            'script_version': script_version,
+            'hostname': self._get_hostname(),
+        })
         row = self._add_hierarchy_fields(row, sample_id)
         self._write_row(row)
         return run_id

@@ -8,12 +8,11 @@ background came from drawn rectangles even when it was the particles' median.
 update_status() dropped any result it did not know without a word.
 """
 import json
-from types import SimpleNamespace
 
-import numpy as np
 import pytest
 
-from slice_widget_helpers import Control, labels_with_one_nucleus, make_widget
+from slice_widget_helpers import (
+    Control, labels_with_one_nucleus, make_particle_widget, make_widget)
 from mousebrain.plugin_2d.sliceatlas.tracker.slice_tracker import SliceTracker
 
 SAMPLE = "PRJ_01_03_S02"
@@ -80,35 +79,9 @@ def test_a_result_under_an_unknown_name_is_refused_not_dropped(tmp_path):
     assert t.get_run(run_id)["status"] == "started"
 
 
-def _particle_widget(tmp_path, monkeypatch, background):
-    w = make_widget(tmp_path, monkeypatch, SAMPLE)
-    image = np.zeros((40, 40))
-    image[5:12, 5:12] = 100.0      # a particle kept by the size filter
-    image[30, 30] = 100.0          # one pixel: removed by the size filter
-    w.channels = [image, image * 2]
-    w.pa_det_combo = Control(text="ch0")
-    w.pa_meas_combo = Control(text="ch1", index=1)
-    w._pa_thresh_spin = Control(value=50)
-    w.pa_min_area = Control(value=4)
-    w.pa_max_area = Control(value=1000)
-    w.pa_min_circ = Control(value=0.0)
-    w.pa_watershed_check = Control(checked=False)
-    w.pa_bg_manual_spin = Control(value=background)
-    w.pa_pos_pct_spin = Control(value=50.0)
-    w.pa_binary_toggle = Control()
-    w.pa_show_signal_mask = Control()
-    w._pa_binary_view = False
-    w._pa_ignore_shapes_layer = None
-    for name in ("_pa_draw_classification_overlay", "_pa_scroll_to_results",
-                 "_save_analysis_state"):
-        setattr(w, name, lambda *a: None)
-    w._pa_register_click_callback = lambda layer: None
-    return w
-
-
 def test_a_particle_run_row_says_where_its_background_came_from_and_what_was_filtered(
         tmp_path, monkeypatch):
-    w = _particle_widget(tmp_path, monkeypatch, background=0.0)
+    w = make_particle_widget(tmp_path, monkeypatch, SAMPLE, background=0.0)
     w._pa_run_analysis()
     row = _only_row(w, "particle_analysis")
     assert row["status"] == "completed"
@@ -116,6 +89,6 @@ def test_a_particle_run_row_says_where_its_background_came_from_and_what_was_fil
     assert (row["pa_particles_raw"], row["pa_particles_found"]) == ("2", "1")
     assert float(row["pa_mean_intensity"]) == pytest.approx(200.0)
 
-    w2 = _particle_widget(tmp_path / "second", monkeypatch, background=20.0)
+    w2 = make_particle_widget(tmp_path / "second", monkeypatch, SAMPLE, background=20.0)
     w2._pa_run_analysis()
     assert _only_row(w2, "particle_analysis")["pa_bg_method"] == "manual_roi"

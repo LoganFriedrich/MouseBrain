@@ -101,6 +101,8 @@ CSV_COLUMNS = [
     "pa_bg_method",           # Background estimation method
     "pa_bg_value",            # Estimated background value
     "pa_mean_intensity",      # Mean of all particle mean intensities
+    "pa_min_pct_above_bg",    # Positive rule: % of a particle's pixels above background
+    "pa_positive_particles",  # Particles classified positive by that rule
 
     # Paths
     "input_path",
@@ -153,7 +155,7 @@ PARTICLE_ANALYSIS_COLUMNS = [
     "pa_detection_channel", "pa_threshold_value", "pa_measurement_channel",
     "pa_min_area", "pa_max_area", "pa_min_circularity", "pa_max_circularity",
     "pa_particles_found", "pa_particles_raw", "pa_bg_method", "pa_bg_value",
-    "pa_mean_intensity"
+    "pa_mean_intensity", "pa_min_pct_above_bg", "pa_positive_particles",
 ]
 
 # script_version written on colocalization rows whose coloc_threshold_value is
