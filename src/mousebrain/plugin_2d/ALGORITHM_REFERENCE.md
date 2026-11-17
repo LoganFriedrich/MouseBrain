@@ -770,8 +770,11 @@ part-way leaves the previous file whole.
 
 1. **Before it loads,** the Load tab is set to the rotation, z-projection and
    channels the saved analysis was made with, so the picture is the one the analysis
-   was made on. These stay set for the next image you open, like any choice made on
-   the Load tab. (A reload with the **Load** button keeps what the Load tab holds.)
+   was made on. When this changed anything, the status bar says so once the image has
+   loaded (`... -- Load tab set to what its saved analysis was made with: rotation
+   180 (kept for the next image)`): these choices stay set for the next image you
+   open, like any choice made on the Load tab. (A reload with the **Load** button
+   keeps what the Load tab holds.)
 2. **After it loads,** everything saved comes back: particles, nuclei, measurements,
    ROI counts and the shapes you drew. Colocalize turns on when nuclei came back, and
    Run Quantification when measurements came back. A colocalization run on restored
@@ -791,7 +794,11 @@ says what and why:
   is damaged, or its outlines are a different size from the image (the image file was
   replaced). Everything else came back.
 
-In both cases those files stay exactly as they are when the image is saved again.
+- `[!] Saved analysis of <file> only partly restored (...)` -- something went wrong
+  while bringing it back. Nothing in the folder is removed or emptied by the next
+  save; open the image again to retry.
+
+In all cases those files stay exactly as they are when the image is saved again.
 If you make new results that would replace them (for example a new particle analysis),
 they are NOT saved and a message says so: export them (Export CSV) before opening
 another image, or reload the image the way the message names first.
