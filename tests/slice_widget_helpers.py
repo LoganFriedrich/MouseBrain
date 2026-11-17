@@ -7,6 +7,7 @@ isChecked() ... with fixed answers, so the stand-in hands out a generic
 control for any attribute named like a control (..._spin, ..._combo,
 ..._btn ...) and binds the widget's own methods to itself on demand.
 """
+import inspect
 import types
 from types import SimpleNamespace
 
@@ -22,8 +23,8 @@ CONTROL_SUFFIXES = ("_spin", "_combo", "_check", "_btn", "_label", "_edit", "_ta
 class Control:
     """Answers every question a control is asked with a fixed value."""
 
-    def __init__(self, value=1, text="", checked=False):
-        self._value, self._text, self._checked = value, text, checked
+    def __init__(self, value=1, text="", checked=False, index=0):
+        self._value, self._text, self._checked, self._index = value, text, checked, index
         self.enabled = True
 
     def value(self):
@@ -36,7 +37,7 @@ class Control:
         return self._text
 
     def currentIndex(self):
-        return 0
+        return self._index
 
     def isChecked(self):
         return self._checked
@@ -62,6 +63,8 @@ class FakeWidget:
     """BrainSliceWidget's methods on a plain object (see the module note)."""
 
     def __getattr__(self, name):
+        if isinstance(inspect.getattr_static(BrainSliceWidget, name, None), staticmethod):
+            return getattr(BrainSliceWidget, name)
         attr = getattr(BrainSliceWidget, name, None)
         if callable(attr) and not name.startswith("__"):
             bound = types.MethodType(attr, self)

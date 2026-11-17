@@ -50,12 +50,17 @@ CSV_COLUMNS = [
     "det_min_area",
     "det_max_area",
     "det_nuclei_found",
-    "det_backend",  # 'stardist' or 'cellpose'
-    "det_preprocessing",  # JSON string of preprocessing params used
-    "det_raw_count",  # count before any filtering
-    "det_removed_by_size",  # count removed by size filter
-    "det_removed_by_border",  # count removed by border filter
-    "det_removed_by_morphology",  # count removed by morphology filter
+    "det_backend",  # stardist, cellpose, threshold, threshold+log
+    # JSON of EVERY setting the detection ran with (the backend's own
+    # thresholds, preprocessing, filters). WHY: the det_* columns above only
+    # hold the StarDist-style numbers; a threshold or threshold+log run could
+    # not be reproduced from its row without this. Keys sorted.
+    "det_preprocessing",
+    "det_raw_count",  # nuclei found before any filtering
+    "det_removed_by_size",  # removed by the size filter
+    "det_removed_by_border",  # removed for touching the image border
+    "det_removed_by_morphology",  # removed by the solidity/circularity filter
+    "det_removed_by_confidence",  # removed for low confidence
 
     # Colocalization parameters
     "coloc_signal_channel",  # Which channel to measure (e.g., "green", 1)
@@ -90,9 +95,9 @@ CSV_COLUMNS = [
     # Paths
     "input_path",
     "output_path",
-    "labels_path",  # Path to nuclei labels image
+    "labels_path",  # Path to nuclei labels image. Nothing writes it: the window keeps labels in memory only
     "measurements_path",  # Path to per-cell measurements CSV
-    "region_counts_path",  # Path to per-region counts CSV
+    "region_counts_path",  # Path to per-region counts CSV. Nothing writes it: the counts' atlas fit row has the folder
 
     # Linkage
     "parent_run",  # Links colocalization to detection, etc.
@@ -118,7 +123,8 @@ DETECTION_COLUMNS = [
     "det_channel", "det_model", "det_prob_thresh", "det_nms_thresh",
     "det_scale", "det_min_area", "det_max_area", "det_nuclei_found",
     "det_backend", "det_preprocessing", "det_raw_count",
-    "det_removed_by_size", "det_removed_by_border", "det_removed_by_morphology"
+    "det_removed_by_size", "det_removed_by_border", "det_removed_by_morphology",
+    "det_removed_by_confidence",
 ]
 
 COLOCALIZATION_COLUMNS = [

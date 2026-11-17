@@ -14,6 +14,7 @@ Usage:
 """
 
 import csv
+import json
 import os
 import socket
 import hashlib
@@ -53,6 +54,21 @@ REPLACE_RETRY_SECONDS = 30  # a reader on Windows can hold the file open briefly
 # 'error' and the widget 'failed' for the same state, so anything looking for
 # failed runs missed the batch's. update_status turns 'error' into this.
 FAILED = "failed"
+
+
+# The columns update_status() may write: a run's results and output paths,
+# never its identity or its parameters (those are fixed when the run is
+# logged). Anything else given to update_status() is refused (see there).
+RESULT_FIELDS = (
+    'det_nuclei_found', 'det_raw_count', 'det_removed_by_size',
+    'det_removed_by_border', 'det_removed_by_morphology', 'det_removed_by_confidence',
+    'coloc_positive_cells', 'coloc_negative_cells', 'coloc_positive_fraction',
+    'coloc_background_value',
+    'quant_total_regions', 'quant_top_region', 'quant_top_region_count',
+    'pa_particles_found', 'pa_particles_raw', 'pa_bg_value', 'pa_mean_intensity',
+    'output_path', 'labels_path', 'measurements_path', 'region_counts_path',
+    'reg_transform_path', 'reg_quality_score',
+)
 
 
 class TrackerNotConfiguredError(RuntimeError):
@@ -422,8 +438,17 @@ class SliceTracker:
         notes: Optional[str] = None,
         status: str = "started",
         script_version: str = "1.0.0",
+        backend: Optional[str] = None,
+        parameters: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Log a nuclei detection run."""
+        """Log a nuclei detection run.
+
+        backend / parameters: the detection backend and EVERY setting it ran
+        with, stored as det_backend and as JSON in det_preprocessing. WHY:
+        the fixed det_* arguments are StarDist's; a threshold or
+        threshold+log run's own settings were recorded nowhere, so the run
+        could not be reproduced from its row.
+        """
         run_id = self._generate_run_id("detection", sample_id)
 
         row = {
@@ -439,6 +464,9 @@ class SliceTracker:
             "det_scale": scale,
             "det_min_area": min_area,
             "det_max_area": max_area,
+            "det_backend": backend,
+            "det_preprocessing": (json.dumps(parameters, sort_keys=True, default=str)
+                                  if parameters else None),
             "input_path": input_path,
             "output_path": output_path,
             "notes": notes,
@@ -589,7 +617,18 @@ class SliceTracker:
             coloc_negative_cells: int - Negative cells count
             coloc_positive_fraction: float - Fraction positive
             quant_total_regions: int - Number of regions with cells
+
+        A keyword that is not one of RESULT_FIELDS raises ValueError, before
+        anything is written. WHY: an unknown keyword used to be dropped
+        without a word, so a caller recording a result under a misspelt or
+        unsupported name believed it was recorded when nothing was. A value
+        of None is left out (the column keeps what it has).
         """
+        unknown = sorted(k for k in kwargs if k not in RESULT_FIELDS)
+        if unknown:
+            raise ValueError(
+                "update_status cannot record %s: not a result column (allowed: %s)"
+                % (", ".join(unknown), ", ".join(RESULT_FIELDS)))
         updates = {}
 
         if status == 'error':
@@ -599,17 +638,7 @@ class SliceTracker:
         if duration_seconds is not None:
             updates['duration_seconds'] = duration_seconds
 
-        # Map common result fields
-        result_fields = [
-            'det_nuclei_found',
-            'coloc_positive_cells', 'coloc_negative_cells', 'coloc_positive_fraction',
-            'coloc_background_value',
-            'quant_total_regions', 'quant_top_region', 'quant_top_region_count',
-            'pa_particles_found', 'pa_particles_raw', 'pa_bg_value', 'pa_mean_intensity',
-            'output_path', 'labels_path', 'measurements_path', 'region_counts_path',
-            'reg_transform_path', 'reg_quality_score',
-        ]
-        for field in result_fields:
+        for field in RESULT_FIELDS:
             if field in kwargs and kwargs[field] is not None:
                 updates[field] = kwargs[field]
 

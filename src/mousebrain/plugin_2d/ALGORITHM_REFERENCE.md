@@ -467,13 +467,38 @@ Every analysis run is logged to a CSV (`calibration_runs.csv`) with:
 | **Identity** | `run_id`, `sample_id`, `created_at`, `hostname` |
 | **Hierarchy** | `project`, `cohort`, `slice_num` |
 | **Atlas fit** (`registration` rows, written by Run Quantification: `started`, then `completed` or `failed`) | `reg_atlas`, `reg_orientation`, `reg_method`, `reg_ap_position`, `reg_transform_path` |
-| **Detection params** | `det_model`, `det_prob_thresh`, `det_nms_thresh`, `det_scale`, `det_min_area`, `det_max_area` |
+| **Detection params** | `det_backend`, `det_preprocessing` (every setting, see below), `det_model`, `det_prob_thresh`, `det_nms_thresh`, `det_scale`, `det_min_area`, `det_max_area` |
 | **Colocalization params** | `coloc_background_method`, `coloc_threshold_method`, `coloc_threshold_value` |
-| **Results** | `det_nuclei_found`, `coloc_positive_cells`, `coloc_negative_cells`, `coloc_positive_fraction` |
-| **Paths** | `input_path`, `output_path`, `measurements_path`, `labels_path` |
+| **Particle analysis params** | `pa_detection_channel`, `pa_threshold_value`, `pa_measurement_channel`, `pa_min_area`, `pa_max_area`, `pa_min_circularity`, `pa_bg_method` |
+| **Results** | `det_nuclei_found`, `det_raw_count`, `det_removed_by_size` / `_border` / `_morphology` / `_confidence`, `coloc_positive_cells`, `coloc_negative_cells`, `coloc_positive_fraction`, `pa_particles_found`, `pa_particles_raw`, `pa_bg_value`, `pa_mean_intensity` |
+| **Paths** | `input_path`, `output_path`, `measurements_path` (`labels_path` and `region_counts_path` exist but nothing writes them: the window keeps nucleus labels in memory only, and a region count's folder is in its atlas-fit row) |
 | **Quality** | `status`, `rating`, `marked_best`, `notes` |
 
 The file lives at `<MouseBrain_Pipeline>/2D_Slices/2_Data_Summary/calibration_runs.csv`.
+
+**Reproducing a detection from its row.** `det_backend` says which method ran
+(`stardist`, `cellpose`, `threshold`, `threshold+log`) and `det_preprocessing` holds
+every setting the napari window ran it with, as JSON text (for example
+`{"backend": "threshold", "threshold_method": "otsu", "opening_radius": 2, ...}`):
+set the controls of the Detect tab to those values to run it again. `det_prob_thresh`
+and `det_nms_thresh` are StarDist's numbers and are blank for a backend that does not
+use them. When the run finishes, the row also gets how many nuclei were found before
+filtering (`det_raw_count`) and how many each filter removed (`det_removed_by_size`,
+`_border`, `_morphology`, `_confidence`) -- the same numbers the window shows under
+the result. Detections run by the batch keep their settings in `notes`.
+Rows written before this change have only the StarDist numbers (`0` for a threshold
+run) and cannot be reproduced from the row.
+
+**Particle analysis background.** `pa_bg_method` says where the background came from:
+`manual_roi` -- the value in the Background box (measured from drawn rectangles or
+typed in); `percentile_50` -- the box was 0, so the median of the particles' own
+pixels was used. (Older rows say `manual_roi` for both.) `pa_particles_raw` is the
+number of particles before the size and circularity filters, `pa_particles_found`
+after them, and `pa_mean_intensity` the average of the particles' mean intensities.
+
+A program that asks the tracker to record a result under a name that is not one of
+its result columns gets an error and nothing is written, instead of the value being
+dropped without a word.
 
 ### What a run's status means
 

@@ -3581,6 +3581,11 @@ class BrainSliceWidget(QWidget):
         pa_run_id = None
         if self.tracker:
             sample_id = self.current_file.stem if self.current_file else ""
+            # The background the run will really use (see below): the value
+            # in the Background box when it is above 0, otherwise the median
+            # (50th percentile) of the particles' own pixels. WHY: every row
+            # used to say 'manual_roi', also for the median.
+            bg_method = 'manual_roi' if self._pa_get_bg() > 0 else 'percentile_50'
             try:
                 pa_run_id = self.tracker.log_particle_analysis(
                     sample_id=sample_id,
@@ -3591,8 +3596,10 @@ class BrainSliceWidget(QWidget):
                     max_area=self.pa_max_area.value(),
                     min_circularity=self.pa_min_circ.value(),
                     max_circularity=1.0,
-                    bg_method='manual_roi',
+                    bg_method=bg_method,
                     input_path=str(self.current_file) if self.current_file else None,
+                    notes=("watershed split on" if self.pa_watershed_check.isChecked()
+                           else None),
                 )
                 self.last_run_id = pa_run_id
                 self.session_run_ids.append(pa_run_id)
@@ -3627,6 +3634,11 @@ class BrainSliceWidget(QWidget):
                 ws_labels = watershed(-distance, markers, mask=mask)
                 boundaries = find_boundaries(ws_labels, mode='inner')
                 mask[boundaries] = False
+
+            # Particles before the size/circularity filter, for the row's
+            # pa_particles_raw (what the filter removed is otherwise lost).
+            from scipy import ndimage as _ndi
+            n_raw = int(_ndi.label(mask)[1])
 
             labels, particle_props = analyzer.find_particles(
                 mask,
@@ -3761,12 +3773,17 @@ class BrainSliceWidget(QWidget):
                 try:
                     duration = _time_mod.time() - start_time
                     self._saving_to_tracker()
+                    mean_intensity = None
+                    if n > 0 and 'mean_intensity' in measurements.columns:
+                        mean_intensity = float(measurements['mean_intensity'].mean())
                     self.tracker.update_status(
                         pa_run_id,
                         status='completed',
                         duration_seconds=duration,
                         pa_particles_found=n,
+                        pa_particles_raw=n_raw,
                         pa_bg_value=bg_value,
+                        pa_mean_intensity=mean_intensity,
                     )
                 except Exception as e:
                     problem = self._result_not_recorded(pa_run_id, e)
@@ -4876,13 +4893,22 @@ class BrainSliceWidget(QWidget):
             # Log to tracker
             if self.tracker:
                 sample_id = self.sample_id_edit.text() or self.current_file.stem
+                # Every setting goes in the row (det_backend, and all of
+                # params as JSON). WHY: only the StarDist numbers used to be
+                # recorded -- 0.0 for a threshold run's probability and
+                # overlap -- so no run made with another backend could be
+                # reproduced from its row. A number the backend does not use
+                # is left blank rather than written as 0.
                 run_id = self.tracker.log_detection(
                     sample_id=sample_id,
                     model=params.get('model', backend),
-                    prob_thresh=params.get('prob_thresh', 0.0),
-                    nms_thresh=params.get('nms_thresh', 0.0),
+                    prob_thresh=params.get('prob_thresh'),
+                    nms_thresh=params.get('nms_thresh'),
                     min_area=params['min_area'],
                     max_area=params['max_area'],
+                    input_path=str(self.current_file) if self.current_file else None,
+                    backend=backend,
+                    parameters=params,
                     status='started',
                 )
                 self.last_run_id = run_id
@@ -5055,6 +5081,7 @@ class BrainSliceWidget(QWidget):
                         run_id,
                         status='completed',
                         det_nuclei_found=count,
+                        **self._detection_filter_counts(metrics),
                     )
                     self.session_run_ids.append(run_id)
             except Exception as e:
@@ -5092,6 +5119,23 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(f"Error: {message}")
             self.detect_metrics_label.setText("")
             self._fail_run_if_unfinished(run_id, f"detection failed: {message}")
+
+    @staticmethod
+    def _detection_filter_counts(metrics) -> Dict[str, Any]:
+        """The detection worker's before/after-filter counts, as tracker
+        columns. WHY recorded: how many nuclei each filter removed is shown
+        on screen after a run, and without it in the row a run's count
+        cannot be explained later. Counts the metrics do not give are left
+        out (blank in the row)."""
+        if not metrics:
+            return {}
+        names = {'raw_count': 'det_raw_count',
+                 'removed_by_size': 'det_removed_by_size',
+                 'removed_by_border': 'det_removed_by_border',
+                 'removed_by_morphology': 'det_removed_by_morphology',
+                 'removed_by_confidence': 'det_removed_by_confidence'}
+        return {column: metrics[key] for key, column in names.items()
+                if metrics.get(key) is not None}
 
     def _display_detection_metrics(self, metrics: dict):
         """Display detection metrics in the UI."""
