@@ -12,6 +12,7 @@ import sys
 
 import pytest
 
+from example_method import EXAMPLE_METHOD
 from mousebrain import analysis_registry as ar
 from mousebrain.plugin_2d.sliceatlas import tracker as tracker_pkg
 from mousebrain.plugin_2d.sliceatlas.batch import batch_encr as be
@@ -49,7 +50,7 @@ def test_unset_options_come_from_the_analysis_own_approved_method(env, monkeypat
 
     def per_analysis(name, *a, **k):
         asked.append(name)
-        method = dict(ar.DEFAULT_METHOD)
+        method = dict(EXAMPLE_METHOD)
         method.update({"sigma_threshold": 1.5, "soma_dilation": 4,
                        "size_filter_um": [10, 25]})
         return method
@@ -62,15 +63,28 @@ def test_unset_options_come_from_the_analysis_own_approved_method(env, monkeypat
     assert "NOT the approved method" not in capsys.readouterr().out
 
 
-def test_an_analysis_without_an_approved_method_runs_on_builtin_values(env, monkeypatch, capsys):
+def test_an_analysis_without_an_approved_method_runs_only_on_typed_values(env, monkeypatch, capsys):
     monkeypatch.setattr(ar, "approved_method_for", lambda name, *a, **k: None,
                         raising=False)
-    # The diameter range has no built-in value, so with no approved method
-    # it must be typed; everything else falls back to the built-in values.
-    monkeypatch.setattr(sys, "argv", sys.argv + ["--diameter", "9", "24"])
+    # No approved method and nothing typed: there are no built-in values, so
+    # the batch stops and names every setting it needs.
+    with pytest.raises(SystemExit) as exc:
+        be.main()
+    assert exc.value.code == 2 and env == []
+    err = capsys.readouterr().err
+    for option in ("--diameter", "--threshold", "--soma-dilation", "--dilation",
+                   "--bg-percentile", "--threshold-fraction", "--log-threshold"):
+        assert option in err
+    # Everything typed: the batch runs with exactly the typed values.
+    monkeypatch.setattr(sys, "argv", sys.argv + [
+        "--diameter", "9", "24", "--threshold", "0.5", "--soma-dilation", "5",
+        "--dilation", "40", "--bg-percentile", "12",
+        "--threshold-fraction", "0.3", "--log-threshold", "0.01"])
     be.main()
-    assert env[0]["sigma_threshold"] == 0 and env[0]["soma_dilation"] == 6
+    assert env[0]["sigma_threshold"] == 0.5 and env[0]["soma_dilation"] == 5
+    assert env[0]["threshold_fraction"] == 0.3 and env[0]["log_threshold"] == 0.01
     assert (env[0]["min_diameter_um"], env[0]["max_diameter_um"]) == (9, 24)
     out = capsys.readouterr().out
     assert "NOT the approved method" not in out
+    assert "[approved method]" not in out
     assert "Approved:  none for PRJ_Detection" in out

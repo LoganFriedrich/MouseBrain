@@ -9,7 +9,8 @@ import json
 import sys
 from pathlib import Path
 
-from mousebrain.analysis_registry import DEFAULT_METHOD, AnalysisRegistry
+from example_method import EXAMPLE_METHOD
+from mousebrain.analysis_registry import AnalysisRegistry
 from mousebrain.plugin_2d.sliceatlas.batch import batch_encr as be
 
 
@@ -23,7 +24,7 @@ def test_batch_detection_records_its_own_approved_method(tmp_path, monkeypatch, 
     # The batch records the parameters it ran with; it runs with this
     # analysis's own approved method (diameter range included), so its
     # entries match that method and are current.
-    own = dict(DEFAULT_METHOD, threshold_fraction=0.3, size_filter_um=[10, 25])
+    own = dict(EXAMPLE_METHOD, threshold_fraction=0.3, size_filter_um=[10, 25])
     (root / "approved_method.json").write_text(
         json.dumps({"analyses": {"PRJ_Detection": own}}), encoding="utf-8")
 

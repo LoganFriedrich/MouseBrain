@@ -16,6 +16,7 @@ import sys
 import numpy as np
 import pytest
 
+from example_method import write_example_approved_method
 from mousebrain import analysis_registry as ar
 from mousebrain.analysis_registry import AnalysisRegistry
 from mousebrain.plugin_2d.sliceatlas import tracker as tracker_pkg
@@ -36,6 +37,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(tracker_pkg, "SliceTracker", lambda *a, **k: t)
     monkeypatch.setenv("MOUSEBRAIN_REGISTRY_ROOT", str(tmp_path / "registry"))
     monkeypatch.delenv("MOUSEBRAIN_APPROVED_METHOD", raising=False)
+    # The batch has no built-in values: it needs an approved method to run.
+    write_example_approved_method(tmp_path / "registry")
     monkeypatch.setattr(be, "DATA_DIR", tmp_path / "1_Subjects")
     monkeypatch.setattr(be, "SLICES_2D_DIR", tmp_path)
     folder = tmp_path / PROJECT / f"{PROJECT}_01_02_HD_Regions"

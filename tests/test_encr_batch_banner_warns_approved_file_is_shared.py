@@ -10,6 +10,7 @@ The person must be told so before editing it.
 
 import json
 
+from example_method import EXAMPLE_METHOD
 from mousebrain import analysis_registry as ar
 from mousebrain.plugin_2d.sliceatlas.batch import batch_encr as be
 
@@ -24,7 +25,7 @@ def _approved_file(tmp_path, content):
 
 
 def test_hint_says_the_shared_method_is_every_analysis(env, monkeypatch, capsys):
-    t, tmp_path, calls = env      # no approved-method file: the shared method
+    t, tmp_path, calls = env      # the fixture's flat approved-method file: the shared method
     _marked(t, SAMPLE, sigma=1.0)
     _main(monkeypatch, tmp_path)
     out = capsys.readouterr().out
@@ -35,7 +36,7 @@ def test_hint_says_the_shared_method_is_every_analysis(env, monkeypatch, capsys)
 
 def test_a_flat_file_is_shared_too(env, monkeypatch, capsys):
     t, tmp_path, calls = env
-    _approved_file(tmp_path, dict(ar.DEFAULT_METHOD))
+    _approved_file(tmp_path, dict(EXAMPLE_METHOD))
     _marked(t, SAMPLE, sigma=1.0)
     _main(monkeypatch, tmp_path)
     assert "EVERY analysis it holds" in capsys.readouterr().out
@@ -43,7 +44,7 @@ def test_a_flat_file_is_shared_too(env, monkeypatch, capsys):
 
 def test_hint_is_not_given_when_the_file_names_the_batch_analysis(env, monkeypatch, capsys):
     t, tmp_path, calls = env
-    _approved_file(tmp_path, {"analyses": {"PRJ_Detection": dict(ar.DEFAULT_METHOD)}})
+    _approved_file(tmp_path, {"analyses": {"PRJ_Detection": dict(EXAMPLE_METHOD)}})
     _marked(t, SAMPLE, sigma=1.0)
     _main(monkeypatch, tmp_path)
     out = capsys.readouterr().out
@@ -56,7 +57,7 @@ def test_typed_numbers_alone_also_get_the_shared_file_warning(env, monkeypatch, 
     # No marked run: the differing number is typed. A person copying it into
     # the approved-method file changes every analysis's approved method just
     # the same, so the warning must not depend on where the number came from.
-    t, tmp_path, calls = env      # no approved-method file: the shared method
+    t, tmp_path, calls = env      # the fixture's flat approved-method file: the shared method
     _main(monkeypatch, tmp_path, "--threshold", "1.5")
     out = capsys.readouterr().out
     assert "NOT the approved method" in out

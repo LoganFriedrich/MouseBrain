@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from example_method import PROCESS_SINGLE_VALUES
 from mousebrain import config as cfg
 from mousebrain.plugin_2d.sliceatlas import tracker as tracker_pkg
 from mousebrain.plugin_2d.sliceatlas.batch import batch_encr
@@ -79,7 +80,7 @@ def test_the_batch_says_when_its_runs_are_not_logged(tmp_path, monkeypatch, caps
                                                          {"filtered_count": 0}))
     nd2 = tmp_path / "PRJ_01_01_S01.nd2"
     nd2.write_bytes(b"")
-    result = batch_encr.process_single(nd2, tmp_path / "out", min_diameter_um=8.0, max_diameter_um=25.0)
+    result = batch_encr.process_single(nd2, tmp_path / "out", **PROCESS_SINGLE_VALUES)
     assert result["status"] == "no_nuclei"
     out = capsys.readouterr().out
     assert "NOT be logged" in out and "unreadable" in out

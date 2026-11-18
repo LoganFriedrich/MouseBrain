@@ -87,7 +87,7 @@ Usage:
         category="roi_analysis",
         files={"figure": "/path/to/fig.png", "roi_counts": "/path/to/counts.csv"},
         results={"n_nuclei": 13, "n_positive": 12, "positive_fraction": 0.923},
-        method_params=get_approved_method(),
+        method_params={"detection": "threshold+log", "threshold_fraction": 0.3},
         source_files={"nd2": "/path/to/E01_01_S13_DCN.nd2"},
     )
 
@@ -117,7 +117,7 @@ from mousebrain.file_lock import exclusive_file_lock
 __all__ = [
     "AnalysisRegistry",
     "RegistryUnreadableError",
-    "DEFAULT_METHOD",
+    "NO_APPROVED_METHOD_SOURCE",
     "APPROVED_METHOD_FILENAME",
     "default_registry_root",
     "get_approved_method",
@@ -134,21 +134,19 @@ __all__ = [
 # METHOD DEFINITION
 # =============================================================================
 
-# Built-in method parameters used when a lab has not recorded its own (see
-# get_approved_method). Each key is a parameter of the 2D slice analysis:
-DEFAULT_METHOD = {
-    "detection": "threshold+log",       # nucleus detection: intensity threshold + Laplacian-of-Gaussian
-    "threshold_fraction": 0.20,         # threshold as a fraction of the channel's intensity range
-    "log_threshold": 0.005,             # LoG response cut-off for a blob to count as a nucleus
-    "log_decision_tree": True,          # resolve threshold/LoG disagreements with the decision tree
-    "size_filter_um": [8, 25],          # accepted nucleus diameter range, micrometres
-    "colocalization": "background_mean",  # positive if soma signal exceeds the background mean
-    "sigma_threshold": 0,               # extra margin above background, in background std devs
-    "soma_dilation": 6,                 # pixels to dilate each nucleus to sample its soma
-    "background": "gmm",                # background model: gaussian mixture on tissue pixels
-    "background_percentile": 10,        # percentile used when the GMM is not applicable
-    "bg_exclusion_dilation": 50,        # dilation (iterations) around nuclei excluded from background
-}
+# There is NO built-in approved method. WHY: which nuclei count, how bright a
+# nucleus must be and how a cell is called positive are decisions of the lab
+# that uses the tool (its tissue, stain and microscope), not of the code. The
+# tool used to fall back to a parameter set of its own whenever no
+# approved-method file existed, so a machine with no file judged every entry
+# against numbers nobody had approved, and the slice batch ran with them
+# while calling them "the approved method". Now, with no file, nothing is
+# approved: get_approved_method() returns None, every analysis has "no
+# approved method" (approved_method_hash null, nothing counted stale) and the
+# slice batch refuses to run until its values are configured or typed.
+
+# What approved_method_source() reports when no approved method is configured.
+NO_APPROVED_METHOD_SOURCE = "none configured"
 
 # Name of the optional per-installation override, looked up under the registry root.
 APPROVED_METHOD_FILENAME = "approved_method.json"
@@ -157,8 +155,9 @@ APPROVED_METHOD_FILENAME = "approved_method.json"
 def _load_method_file(path: Path, origin: str) -> Dict[str, Any]:
     """Read a method-parameter JSON file (a flat object of name -> value).
 
-    WHY this raises instead of falling back to DEFAULT_METHOD: an override that
-    is configured but unreadable would otherwise be ignored silently, every
+    WHY this raises instead of carrying on as "no approved method": an
+    approved method that is configured but unreadable would otherwise be
+    ignored silently, every
     output would be hashed against the wrong method, and the staleness check
     would report "current" for results produced with parameters nobody chose.
     """
@@ -183,7 +182,7 @@ def _load_method_file(path: Path, origin: str) -> Dict[str, Any]:
 def approved_method_source(registry_root: Optional[Union[str, Path]] = None) -> str:
     """Where the approved method is read from on THIS machine: the
     MOUSEBRAIN_APPROVED_METHOD file, the registry's approved_method.json, or
-    the built-in parameters. Recorded in each manifest header (see
+    NO_APPROVED_METHOD_SOURCE when neither exists. Recorded in each manifest header (see
     AnalysisRegistry._set_approved_header) because the environment variable
     wins and can differ from machine to machine."""
     env_path = os.environ.get("MOUSEBRAIN_APPROVED_METHOD")
@@ -192,7 +191,7 @@ def approved_method_source(registry_root: Optional[Union[str, Path]] = None) -> 
     root = Path(registry_root) if registry_root else default_registry_root()
     if root is not None and (root / APPROVED_METHOD_FILENAME).is_file():
         return str(root / APPROVED_METHOD_FILENAME)
-    return "built-in parameters"
+    return NO_APPROVED_METHOD_SOURCE
 
 
 def _approved_method_file(registry_root: Optional[Union[str, Path]]) -> Optional[Dict[str, Any]]:
@@ -249,7 +248,7 @@ def _per_analysis_table(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return table
 
 
-def get_approved_method(registry_root: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
+def get_approved_method(registry_root: Optional[Union[str, Path]] = None) -> Optional[Dict[str, Any]]:
     """Return the SHARED approved method: the parameters the slice-analysis
     tools run with and that analyses following the shared method are judged by.
 
@@ -259,16 +258,17 @@ def get_approved_method(registry_root: Optional[Union[str, Path]] = None) -> Dic
       1. MOUSEBRAIN_APPROVED_METHOD -- path to a JSON file.
       2. ``<registry root>/approved_method.json`` when that file exists
          (*registry_root* if given, else default_registry_root()).
-      3. DEFAULT_METHOD (the built-in parameters above).
+      3. Neither: None -- there is no approved method. The tool has no
+         built-in one (see NO_APPROVED_METHOD_SOURCE for why).
 
     The file takes one of two forms:
 
-    * flat -- the parameters themselves, with the same keys as
-      DEFAULT_METHOD: ``{"detection": "threshold+log", ...}``;
+    * flat -- the parameters themselves: ``{"detection": "threshold+log",
+      "threshold_fraction": <n>, ...}``;
     * per analysis -- ``{"default": {...}, "analyses": {"<analysis>": {...},
       "<other analysis>": null}}``. Here the shared method is ``"default"``
-      (DEFAULT_METHOD when it is left out); per-analysis entries are read by
-      approved_method_for().
+      (None -- no shared approved method -- when it is left out);
+      per-analysis entries are read by approved_method_for().
 
     Whatever the source, the returned dict has the same flat shape, so method
     hashes computed from it compare with hashes already stored in a registry.
@@ -278,13 +278,15 @@ def get_approved_method(registry_root: Optional[Union[str, Path]] = None) -> Dic
             Defaults to the resolved default root.
 
     Returns:
-        A fresh dict of parameter name -> value (safe to modify).
+        A fresh dict of parameter name -> value (safe to modify), or None
+        when no approved method is configured.
     """
     data = _approved_method_file(registry_root)
     if data is None:
-        return dict(DEFAULT_METHOD)
+        return None
     if _per_analysis_table(data) is not None:
-        return dict(data.get("default") or DEFAULT_METHOD)
+        default = data.get("default")
+        return dict(default) if default else None
     return dict(data)
 
 
@@ -307,7 +309,9 @@ def approved_method_for(
        none).
     2. Otherwise an analysis that follows the shared approved method
        (*follows_approved_method*, declared by the code that registers it)
-       is judged by get_approved_method().
+       is judged by get_approved_method() -- None when no shared approved
+       method is configured (no file, or a per-analysis file without
+       ``"default"``).
     3. Otherwise it has no approved method: None. Its entries are never
        counted as stale; the manifest header says so (hash null).
 

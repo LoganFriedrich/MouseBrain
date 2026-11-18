@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from example_method import write_example_approved_method
 from mousebrain.plugin_2d.sliceatlas.batch import batch_encr as be
 
 PROJECT = "PRJ"
@@ -96,6 +97,13 @@ def test_input_roots_order_and_explicit(tmp_path, monkeypatch):
 
 
 def _run_main(monkeypatch, argv):
+    # The batch has no built-in values; these tests are about finding files,
+    # so they give it an approved method to run with.
+    import tempfile
+    from pathlib import Path as _P
+    folder = _P(tempfile.mkdtemp(prefix="approved_"))
+    monkeypatch.setenv("MOUSEBRAIN_APPROVED_METHOD",
+                       str(write_example_approved_method(folder)))
     monkeypatch.setattr(sys, "argv", ["batch_encr"] + argv)
     return be.main()
 

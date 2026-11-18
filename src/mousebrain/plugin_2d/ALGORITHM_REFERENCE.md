@@ -1066,7 +1066,10 @@ background-exclusion dilation and the two detector settings
   project code the batch was run for (`--project`, e.g. `ENCR_Detection` for
   a project coded `ENCR`); the banner's `Registry:` line names it. It is set in the approved-method file
   (`approved_method.json` under the registry root, or the file named by
-  `MOUSEBRAIN_APPROVED_METHOD`); without that file it is the built-in method.
+  `MOUSEBRAIN_APPROVED_METHOD`). Without that file there is **no approved
+  method**: the tool carries none of its own, so the batch needs every number
+  typed (or two of them from a marked run) and stops, naming each missing
+  one, until they are (see "When a number has no source" below).
   The batch asks the registry for exactly this method, so its banner compares
   with what the registry will compare with. A result made with any number
   that differs from it is registered as **stale**, and shows so in
@@ -1144,8 +1147,9 @@ entry instead of editing the shared method (step 2).
    put that object under `"analyses"` as the entry for `<project>_Detection`:
 
    ```json
-   {"default":  { ...the shared method, as before (or leave "default" out
-                  for the built-in parameters)... },
+   {"default":  { ...the shared method, as before (or leave "default" out:
+                  then an analysis the file does not name has no
+                  approved method)... },
     "analyses": {"<project>_Detection": { ...the object above... }}}
    ```
 
@@ -1176,13 +1180,38 @@ For each number, the first of these that gives one wins:
 
 | Order | Source | Gives |
 |-------|--------|-------|
-| 1 | What you type on the command line (`--threshold`, `--bg-percentile`, `--soma-dilation`, `--dilation`) | that number, even when it equals the default |
+| 1 | What you type on the command line (`--threshold`, `--bg-percentile`, `--soma-dilation`, `--dilation`, `--threshold-fraction`, `--log-threshold`) | that number, even when it equals the approved one |
 | 2 | A colocalization run of **this project** marked best in the tracker (skipped with `--ignore-tracker`) | sigma threshold and background percentile only (its dilations must match; see below) |
-| 3 | The approved method | every number |
-| 4 | Built-in defaults (sigma 0, percentile 10, soma 6 px, exclusion 50, threshold_fraction 0.20, log_threshold 0.005) | every number |
+| 3 | The approved method (the approved-method file) | every number it holds |
+
+There is no fourth source: the batch holds no numbers of its own.
 
 The banner printed at the start lists every number with its source in square
 brackets, e.g. `sigma_threshold=0.5 [marked-best run col_...]`.
+`[approved method]` appears only next to a number that was read from the
+approved-method file.
+
+**When a number has no source**, the batch stops before reading any image,
+writes nothing, and prints one message listing every missing setting with the
+option that types it, e.g.
+
+```
+batch_encr: error: the batch has no value for these settings and holds none of its own; there is no approved method for PRJ_Detection (approved method read from: none configured).
+  size_filter_um (or --diameter MIN MAX): ...
+  threshold_fraction (or --threshold-fraction <value>)
+  log_threshold (or --log-threshold <value>)
+  ...
+```
+
+`approved method read from: none configured` means there is no
+approved-method file at all: write one as in "Making numbers the approved
+method" above (all eleven names), then run `--dry-run` again. If it names a
+file instead, that file lacks the settings listed: add them. A setting
+written in the file as `null` (e.g. `"sigma_threshold": null`) counts as
+missing and is listed the same way -- give it a number. Typing the
+options instead runs the batch once with those numbers; its results are
+registered with "no approved method" to compare with (or as stale, when an
+approved method exists and differs).
 
 The nucleus diameter range follows its own, shorter list: `--diameter MIN MAX`
 typed on the command line, else `size_filter_um` of the approved method. A
@@ -1270,8 +1299,10 @@ python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project PROJECT_A
 ```
 
 `--dry-run` prints the banner and the file list and changes nothing. Read the
-banner before the real run. If it stops with `no nucleus diameter range is
-set`, write `size_filter_um` into the approved-method file (see "The nucleus
+banner before the real run. If it stops with `the batch has no value for these
+settings`, write the settings it lists into the approved-method file (see
+"When a number has no source" above); if it stops with `no nucleus diameter
+range is set`, write `size_filter_um` into that file (see "The nucleus
 diameter range" below), or add `--diameter MIN MAX` to run once at a range you
 type.
 
@@ -1467,16 +1498,16 @@ magnification; it is a setting, and the code carries no range of its own.
 
 - **Where it comes from:** `--diameter MIN MAX` if you type it (for one run),
   else `size_filter_um` in the approved method the batch is judged by (see
-  "Making numbers the approved method"). Without an approved-method file the
-  approved method is the registry's built-in one, and its `size_filter_um` is
-  then the range used: write your own into the file to choose it.
+  "Making numbers the approved method"). Without an approved-method file
+  there is no approved method and no range: the batch stops until you write
+  one into the file or type `--diameter`.
 - **What you see:** the banner's `Detection:` line names the range and its
   source, e.g. `nucleus diameter 12-30 um [approved method]`. Each image's
   tracker detection row records it in its notes, with the pixel-area range it
   became at that image's pixel size, and each registry entry records it as
   `size_filter_um`.
 - **When nothing gives a range** (the approved method has no `size_filter_um`,
-  or the approved-method file gives `<project>_Detection` no approved method at
+  or has it as `null`, or the approved-method file gives `<project>_Detection` no approved method at
   all) and `--diameter` was not typed, the batch stops before reading any
   image and says how to set it. Nothing is written.
 - **When the range is unusable** (not two numbers, the larger first, or 0 or

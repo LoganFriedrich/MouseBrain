@@ -9,7 +9,8 @@ import json
 
 import pytest
 
-from mousebrain.analysis_registry import AnalysisRegistry, DEFAULT_METHOD, get_approved_method
+from example_method import EXAMPLE_METHOD
+from mousebrain.analysis_registry import AnalysisRegistry, get_approved_method
 from mousebrain.plugin_2d.sliceatlas.batch import batch_encr as be
 
 from test_encr_batch_runs_and_records_its_parameters import (  # noqa: F401  (fixture)
@@ -19,7 +20,7 @@ from test_encr_batch_runs_and_records_its_parameters import (  # noqa: F401  (fi
 
 def _approve(tmp_path, monkeypatch, **overrides):
     """Write an approved-method file equal to what the batch runs by default."""
-    method = dict(DEFAULT_METHOD)
+    method = dict(EXAMPLE_METHOD)
     method["size_filter_um"] = [10, 25]
     method.update(overrides)
     f = tmp_path / "approved.json"

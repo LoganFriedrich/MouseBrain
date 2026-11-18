@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from example_method import PROCESS_SINGLE_VALUES
 from mousebrain.plugin_2d.sliceatlas import tracker as tracker_pkg
 from mousebrain.plugin_2d.sliceatlas.batch import batch_encr
 from mousebrain.plugin_2d.sliceatlas.core import (
@@ -87,7 +88,8 @@ def test_error_is_recorded_as_failed(tmp_path):
 
 # process_single has no built-in nucleus size range; any range will do here,
 # since the detector is replaced.
-SIZE_RANGE = {"min_diameter_um": 8.0, "max_diameter_um": 25.0}
+# Every value process_single needs (it has no built-in values).
+SIZE_RANGE = dict(PROCESS_SINGLE_VALUES)
 
 
 @pytest.fixture

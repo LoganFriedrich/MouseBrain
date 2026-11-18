@@ -9,6 +9,7 @@ found only while a project's folder happened to carry that one name.
 import json
 import sys
 
+from example_method import write_example_approved_method
 from mousebrain.plugin_2d.sliceatlas.batch import batch_encr
 from mousebrain.plugin_2d.sliceatlas.cli import run_roi
 from mousebrain.plugin_2d.sliceatlas.core import config as slice_config
@@ -21,6 +22,7 @@ from roi_cli_helpers import (
 
 def test_the_detection_batch_registers_under_its_own_projects_name(tmp_path, monkeypatch):
     reg = pin_registry(monkeypatch, tmp_path)
+    write_example_approved_method(reg)   # the batch has no built-in values
     in_root = tmp_path / "raw" / PROJECT
     in_root.mkdir(parents=True)
     nd2 = in_root / f"{SAMPLE}.nd2"

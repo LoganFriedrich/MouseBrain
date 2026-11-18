@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from example_method import PROCESS_SINGLE_VALUES, write_example_approved_method
 from mousebrain.plugin_2d.sliceatlas import tracker as tracker_pkg
 from mousebrain.plugin_2d.sliceatlas.batch import batch_encr as be
 from mousebrain.plugin_2d.sliceatlas.core import io as io_mod
@@ -37,6 +38,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(tracker_pkg, "SliceTracker", lambda *a, **k: t)
     monkeypatch.setenv("MOUSEBRAIN_REGISTRY_ROOT", str(tmp_path / "registry"))
     monkeypatch.delenv("MOUSEBRAIN_APPROVED_METHOD", raising=False)
+    # The batch has no built-in values: it needs an approved method to run.
+    write_example_approved_method(tmp_path / "registry")
     monkeypatch.setattr(be, "DATA_DIR", tmp_path / "1_Subjects")
     monkeypatch.setattr(be, "SLICES_2D_DIR", tmp_path)
     monkeypatch.setattr(vis_mod, "save_all_qc_figures", lambda **k: [])
@@ -139,11 +142,13 @@ def test_resolve_parameters_precedence():
     assert values["background_percentile"] == 20.0 and "r1" in sources["background_percentile"]
     assert values["soma_dilation"] == 4 and sources["soma_dilation"] == "approved method"
     assert values["threshold_fraction"] == 0.3
+    # Nothing typed, marked or approved: no value at all (there is no
+    # built-in one), and every setting is reported missing.
     values, sources = be.resolve_parameters(
         {"threshold": None, "soma_dilation": None, "dilation": None, "bg_percentile": None},
         {}, {})
-    assert values == be.BUILTIN_PARAMETERS
-    assert set(sources.values()) == {"built-in default"}
+    assert values == {} and sources == {}
+    assert be.unset_parameters(values) == list(be.BATCH_PARAMETERS)
 
 
 # --- the stated detection parameters are the ones used --------------------------
@@ -154,7 +159,7 @@ def test_banner_states_the_diameter_range_detection_uses(env, monkeypatch, capsy
     _run_main(monkeypatch, ["--project", PROJECT, "--dry-run", "--ignore-tracker",
                             "--output", str(tmp_path / "out")])
     out = capsys.readouterr().out
-    lo, hi = be.batch_approved_method("PRJ_Detection")["size_filter_um"]   # no file: the registry's method
+    lo, hi = be.batch_approved_method("PRJ_Detection")["size_filter_um"]   # the fixture's approved method
     assert f"nucleus diameter {lo}-{hi} um" in out
     assert "px" not in out.split("Detection:")[1].split("\n")[0].replace("pixel", "")
 
@@ -184,7 +189,8 @@ def test_tracker_row_records_the_areas_the_detector_applied(env, monkeypatch):
     monkeypatch.setattr(det_mod, "detect_with_log_augmentation", spy)
     lo, hi = 10, 25
     result = be.process_single(_nd2(tmp_path), tmp_path / "out",
-                               min_diameter_um=lo, max_diameter_um=hi)
+                               **dict(PROCESS_SINGLE_VALUES,
+                                      min_diameter_um=lo, max_diameter_um=hi))
     assert result["status"] == "completed", result
     assert (applied["min_diameter_um"], applied["max_diameter_um"]) == (lo, hi)
     det_rows = t.search(run_type="detection")

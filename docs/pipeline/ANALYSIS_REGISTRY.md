@@ -85,15 +85,25 @@ purpose). The approved method is never written in the code; it comes from, in
 this order:
 
 1. the file named by the environment variable `MOUSEBRAIN_APPROVED_METHOD`;
-2. `Registry/approved_method.json`;
-3. the tool's built-in slice-analysis parameters, when neither exists.
+2. `Registry/approved_method.json`.
+
+When neither exists, **nothing is approved**: the tool has no approved method
+of its own. Every analysis then has "no approved method"
+(`approved_method_hash: null` in its manifest, nothing counted as stale), and
+the 2D slice batch refuses to run until each of its settings is written into
+the file or typed on its command line (see
+`src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, section 6). WHY: which
+nuclei count and how a cell is called positive are your lab's decisions for
+its tissue and microscope. Earlier versions fell back to a parameter set built
+into the tool, judged every result against it and printed it as "the approved
+method" although nobody had approved it.
 
 Either file is plain JSON written in a text editor; a UTF-8 byte-order mark
 (added by some editors and by Windows PowerShell) is accepted.
 
 ### Not every analysis has one
 
-The built-in parameters (and a plain `approved_method.json`) describe the
+A plain `approved_method.json` (the parameters alone) describes the
 **slice analysis** -- the parameters the slice batch tools run with. The 3D
 region counts and the 3D orientation checks record their own parameters
 (atlas, detection and classification settings, check version), which can never
@@ -143,12 +153,14 @@ mousebrain-registry --name 3D_Orientation_Check --no-approved-method --stale
   means "this analysis has no approved method".
 - An analysis not named there is judged by `"default"` if it follows the
   shared method, and has no approved method otherwise. Leaving `"default"`
-  out means the built-in parameters.
+  out means there is no shared approved method: an analysis the file does
+  not name then has none.
 - The slice DETECTION batch (`<project>_Detection`, one analysis per
   project code) runs with the approved
   method of its analysis (its own entry under `"analyses"` if you gave it
   one, else `"default"`) for every number not typed on its command line or
-  taken from a run marked best, and records, as the parameters of each
+  taken from a run marked best -- and stops, naming each one, when a number
+  has none of these sources -- and records, as the parameters of each
   result, the values it ACTUALLY ran with. A result made with any other
   value is therefore stale, and its banner says so before it runs (see
   `src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, section 6).
@@ -216,7 +228,7 @@ one `Registry/approved_method.json`.
 To check, look at the header line `mousebrain-registry --name <analysis>`
 prints: `recorded <time> on <machine>, from <source>`. The source is
 `MOUSEBRAIN_APPROVED_METHOD=<file>`, the path of `approved_method.json`, or
-`built-in parameters`. The same three fields are in `registry.json`
+`none configured` (no file: nothing is approved). The same three fields are in `registry.json`
 (`approved_method_recorded_at`, `approved_method_recorded_on`,
 `approved_method_source`).
 

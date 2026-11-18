@@ -30,15 +30,18 @@ PARAMETERS (chosen per run; the banner shows each value and where it came from)
   approved method (batch_size_range). The code holds no range of its own: when
   neither gives one the batch stops before any sample and says how to set it.
   sigma threshold, background percentile, soma dilation (px), background
-  exclusion dilation (iterations), detector threshold_fraction / log_threshold.
-  Each is taken from, in order:
-    1. the command line (--threshold, --bg-percentile, --soma-dilation, --dilation)
+  exclusion dilation (iterations), detector threshold_fraction / log_threshold
+  (BATCH_PARAMETERS). Each is taken from, in order:
+    1. the command line (--threshold, --bg-percentile, --soma-dilation,
+       --dilation, --threshold-fraction, --log-threshold)
     2. a colocalization run of this project marked best in the tracker (sigma
        threshold and background percentile only; see get_tuned_parameters for
        which runs count)
     3. the approved method the registry judges this batch's entries by
        (batch_approved_method)
-    4. BUILTIN_PARAMETERS
+  There is no step 4: the code holds no value of its own for any of them.
+  When one is given by none of the three, the batch stops before any sample
+  and names every missing setting and how to give it (unset_parameters_message).
   --ignore-tracker skips step 2. A marked run's sigma is used only at the soma
   and exclusion dilations it was made at: when the batch would take a number
   from the marked run and run at other dilations, it stops before processing
@@ -116,16 +119,23 @@ BATCH_FIXED_METHOD = {
     "background": "gmm",
 }
 
-# Last-resort values, used only when neither the command line, a marked-best
-# run nor the approved method gives one. Equal to the detector's and the
-# registry's built-in defaults.
-BUILTIN_PARAMETERS = {
-    "sigma_threshold": 0,
-    "soma_dilation": 6,
-    "bg_exclusion_dilation": 50,
-    "background_percentile": 10,
-    "threshold_fraction": 0.20,
-    "log_threshold": 0.005,
+# The settings the batch decides per run (approved-method key -> the
+# command-line option that sets it). There are NO built-in values for them.
+# WHY: how bright a nucleus must be, how large a ring is measured and how far
+# above background a cell must be are decisions of the lab that runs the
+# batch, made for its tissue and microscope. The batch used to fall back to
+# values of its own when nothing else gave one, and -- because the registry
+# also fell back to a parameter set of its own when no approved-method file
+# existed -- printed them as "[approved method]". Each must now come from the
+# command line, a marked-best run or the approved-method file; otherwise the
+# batch stops and says which (unset_parameters_message).
+BATCH_PARAMETERS = {
+    "sigma_threshold": "--threshold",
+    "soma_dilation": "--soma-dilation",
+    "bg_exclusion_dilation": "--dilation",
+    "background_percentile": "--bg-percentile",
+    "threshold_fraction": "--threshold-fraction",
+    "log_threshold": "--log-threshold",
 }
 
 # The registry analysis the batch registers its outputs under is
@@ -148,9 +158,14 @@ def batch_approved_method(analysis: str) -> dict:
     method; filling unset options from, and comparing the banner against, the
     general one would then announce "approved" numbers the registry reports
     as stale. A registry without per-analysis methods has one approved method
-    (get_approved_method) and that is the one used. A per-analysis entry of
-    null means "no approved method": the batch then fills unset options from
-    BUILTIN_PARAMETERS and the banner compares with nothing.
+    (get_approved_method) and that is the one used.
+
+    Returns {} when there is no approved method for *analysis*: no
+    approved-method file at all, a per-analysis file without "default" that
+    does not name it, or an entry of null. The batch then takes every value
+    from the command line or a marked-best run, and stops naming what is
+    missing. Nothing is reported as "[approved method]" in that case: the
+    registry has no built-in approved method.
 
     Raises RuntimeError when an approved-method file is set but unreadable.
     """
@@ -158,7 +173,7 @@ def batch_approved_method(analysis: str) -> dict:
     per_analysis = getattr(ar, "approved_method_for", None)
     if per_analysis is not None:
         return dict(per_analysis(analysis) or {})
-    return ar.get_approved_method()
+    return dict(ar.get_approved_method() or {})
 
 
 def approved_method_is_shared(analysis: str) -> bool:
@@ -197,6 +212,8 @@ _CLI_TO_METHOD_KEY = {
     "soma_dilation": "soma_dilation",
     "dilation": "bg_exclusion_dilation",
     "bg_percentile": "background_percentile",
+    "threshold_fraction": "threshold_fraction",
+    "log_threshold": "log_threshold",
 }
 # marked-best run (get_tuned_parameters key) -> approved-method key
 _TUNED_TO_METHOD_KEY = {
@@ -210,22 +227,31 @@ def resolve_parameters(cli: dict, tuned: dict, approved: dict) -> tuple:
 
     Precedence, per parameter: a value typed on the command line, then a
     marked-best run (sigma threshold and background percentile only), then
-    the approved method, then BUILTIN_PARAMETERS.
+    the approved method. A parameter none of them gives is LEFT OUT of both
+    returned dicts -- there is no built-in value (BATCH_PARAMETERS says why);
+    unset_parameters() lists the missing ones and main() stops on them.
 
     WHY "typed" means "not None": the options used to default to a number and
     a tracker value replaced the option whenever it EQUALLED that number, so
     typing the default on purpose (e.g. --threshold 0) was overridden.
+    WHY an approved-method key whose value is null counts as unset: a
+    hand-edited approved_method.json can hold ``"sigma_threshold": null``.
+    Taken as given, it was labeled "approved method", unset_parameters()
+    saw nothing missing, and the detector later failed with a bare
+    TypeError instead of the message that names the setting to supply.
 
     Args:
         cli: argparse values keyed by dest (threshold, soma_dilation,
-            dilation, bg_percentile); None = not given.
+            dilation, bg_percentile, threshold_fraction, log_threshold);
+            None = not given.
         tuned: get_tuned_parameters() result ({} when none).
         approved: batch_approved_method() result.
 
     Returns:
         (values, sources): both keyed by approved-method key (sigma_threshold,
         soma_dilation, bg_exclusion_dilation, background_percentile,
-        threshold_fraction, log_threshold).
+        threshold_fraction, log_threshold), holding only the keys some
+        source gave.
     """
     values, sources = {}, {}
     from_cli = {_CLI_TO_METHOD_KEY[k]: v for k, v in cli.items()
@@ -233,16 +259,56 @@ def resolve_parameters(cli: dict, tuned: dict, approved: dict) -> tuple:
     from_tuned = {_TUNED_TO_METHOD_KEY[k]: v for k, v in tuned.items()
                   if k in _TUNED_TO_METHOD_KEY}
     runs = ", ".join(tuned.get("source_runs", []))
-    for key, builtin in BUILTIN_PARAMETERS.items():
+    for key in BATCH_PARAMETERS:
         if key in from_cli:
             values[key], sources[key] = from_cli[key], "command line"
         elif key in from_tuned:
             values[key], sources[key] = from_tuned[key], f"marked-best run {runs}"
-        elif key in approved:
+        elif approved.get(key) is not None:
             values[key], sources[key] = approved[key], "approved method"
-        else:
-            values[key], sources[key] = builtin, "built-in default"
     return values, sources
+
+
+def unset_parameters(values: dict) -> list:
+    """The BATCH_PARAMETERS keys resolve_parameters() found no value for."""
+    return [key for key in BATCH_PARAMETERS if key not in values]
+
+
+def unset_parameters_message(missing: list, size_problem, approved: dict,
+                             analysis: str, source: str) -> str:
+    """One message naming every setting the batch has no value for, and how
+    to give each one.
+
+    WHY one message for all of them: a person setting the batch up for the
+    first time would otherwise fix one setting, run again, and be stopped by
+    the next. WHY it says where the approved method was looked for: on a
+    machine with no approved-method file the answer is "none configured",
+    and the fix is to write that file, not to look for a typo in it.
+
+    *missing*: from unset_parameters(); *size_problem*: the SizeRangeNotSet
+    message, or None when the diameter range is set; *source*: where the
+    approved method is read from (analysis_registry.approved_method_source).
+    """
+    if not approved:
+        where = (f"there is no approved method for {analysis} (approved "
+                 f"method read from: {source}).")
+    else:
+        where = (f"the approved method for {analysis} (from {source}) "
+                 "leaves them out or gives them no value (null).")
+    lines = ["the batch has no value for these settings and holds none of "
+             "its own; " + where]
+    if size_problem:
+        lines.append(f"  size_filter_um (or --diameter MIN MAX): {size_problem}")
+    for key in missing:
+        lines.append(f"  {key} (or {BATCH_PARAMETERS[key]} <value>)")
+    lines.append(
+        "Give each one in the approved-method file -- as \"<name>\": <value> "
+        f"inside the \"{analysis}\" entry when the file names analyses, else "
+        "under \"default\" or at the top level -- or type the option shown "
+        "for this run only. The file is approved_method.json in the registry "
+        "folder, or the file named by MOUSEBRAIN_APPROVED_METHOD. See "
+        "plugin_2d/ALGORITHM_REFERENCE.md, section 6.")
+    return "\n".join(lines)
 
 
 class SizeRangeNotSet(Exception):
@@ -296,7 +362,7 @@ def batch_size_range(typed, approved: dict, analysis: str) -> tuple:
     """
     if typed is not None:
         return _check_size_range(list(typed), "--diameter", analysis), "command line"
-    if "size_filter_um" not in approved:
+    if approved.get("size_filter_um") is None:   # absent or null: not set
         why = ("there is no approved method for this batch"
                if not approved else
                "the approved method has no size_filter_um")
@@ -783,15 +849,15 @@ def failure_is_the_samples(step: str, exc: BaseException) -> bool:
 def process_single(
     nd2_path: Path,
     output_dir: Path,
-    threshold: float = 0,
-    dilation: int = BUILTIN_PARAMETERS['bg_exclusion_dilation'],
-    bg_percentile: float = BUILTIN_PARAMETERS['background_percentile'],
-    soma_dilation: int = BUILTIN_PARAMETERS['soma_dilation'],
-    sigma_threshold: float = BUILTIN_PARAMETERS['sigma_threshold'],
+    threshold: float = None,
+    dilation: int = None,
+    bg_percentile: float = None,
+    soma_dilation: int = None,
+    sigma_threshold: float = None,
     min_diameter_um: float = None,
     max_diameter_um: float = None,
-    threshold_fraction: float = BUILTIN_PARAMETERS['threshold_fraction'],
-    log_threshold: float = BUILTIN_PARAMETERS['log_threshold'],
+    threshold_fraction: float = None,
+    log_threshold: float = None,
 ) -> dict:
     """
     Process a single ND2 file through detection + colocalization.
@@ -805,6 +871,10 @@ def process_single(
     on its own defaults while the banner, tracker and registry stated other
     values (pixel areas that were never passed, a diameter range it did not
     use), so the record could not be trusted.
+
+    Every parameter after output_dir is required (one left as None raises
+    TypeError before any work): there are no built-in values (see
+    BATCH_PARAMETERS); main() passes the ones it resolved.
 
     Parameters:
         threshold: threshold drawn on the QC figures (main() passes the sigma).
@@ -823,10 +893,19 @@ def process_single(
     A failed run also carries 'failed_at' (the step) and 'failure': 'sample'
     or 'infrastructure' (see failure_is_the_samples).
     """
-    if min_diameter_um is None or max_diameter_um is None:
+    given = {'threshold': threshold, 'dilation': dilation,
+             'bg_percentile': bg_percentile, 'soma_dilation': soma_dilation,
+             'sigma_threshold': sigma_threshold,
+             'min_diameter_um': min_diameter_um,
+             'max_diameter_um': max_diameter_um,
+             'threshold_fraction': threshold_fraction,
+             'log_threshold': log_threshold}
+    not_given = [name for name, value in given.items() if value is None]
+    if not_given:
         # A programming error, not the sample's fault: say so before any work.
-        raise TypeError("process_single needs min_diameter_um and "
-                        "max_diameter_um (see batch_size_range)")
+        raise TypeError("process_single needs " + ", ".join(not_given)
+                        + " (no built-in values; see BATCH_PARAMETERS and "
+                        "batch_size_range)")
     from ..core.io import load_image, extract_channels
     from ..core.detection import detect_with_log_augmentation, diameter_range_to_area_px
     from ..core.colocalization import ColocalizationAnalyzer
@@ -1125,9 +1204,10 @@ def main():
                         help='Project root directory (default: <2D data dir>/<project>)')
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT,
                         help=f'Output directory (default: {DEFAULT_OUTPUT})')
-    # The four options below default to None = "not typed". Each unset one is
-    # filled from a marked-best run, then the approved method, then the
-    # built-in default (resolve_parameters). There are no --min-area /
+    # The options below default to None = "not typed". Each unset one is
+    # filled from a marked-best run, then the approved method
+    # (resolve_parameters); there is no built-in value, so one that none of
+    # them gives stops the batch with a message. There are no --min-area /
     # --max-area options: the detector never received them; its size range
     # is the diameter range (--diameter, else the approved method).
     parser.add_argument('--threshold', type=float, default=None,
@@ -1143,6 +1223,12 @@ def main():
     parser.add_argument('--bg-percentile', type=float, default=None,
                         help='Background percentile fallback (default: marked-best run, '
                              'else approved method)')
+    parser.add_argument('--threshold-fraction', type=float, default=None,
+                        help='Detector threshold as a fraction of Otsu (default: '
+                             'threshold_fraction of the approved method)')
+    parser.add_argument('--log-threshold', type=float, default=None,
+                        help='LoG blob detection threshold (default: '
+                             'log_threshold of the approved method)')
     parser.add_argument('--diameter', type=float, nargs=2, default=None,
                         metavar=('MIN', 'MAX'),
                         help='Nucleus diameter range in micrometers (default: '
@@ -1207,8 +1293,30 @@ def main():
             conflict_settled_by_typing = True
     values, sources = resolve_parameters(
         {'threshold': args.threshold, 'soma_dilation': args.soma_dilation,
-         'dilation': args.dilation, 'bg_percentile': args.bg_percentile},
+         'dilation': args.dilation, 'bg_percentile': args.bg_percentile,
+         'threshold_fraction': args.threshold_fraction,
+         'log_threshold': args.log_threshold},
         tuned, approved)
+    # Every setting must come from somewhere a person chose: stop before
+    # anything is read or written, naming all that are missing at once
+    # (unset_parameters_message). Without a range there is nothing to detect
+    # with either (batch_size_range says why there is no fallback).
+    missing = unset_parameters(values)
+    size_problem = None
+    try:
+        size_range, size_source = batch_size_range(args.diameter, approved, analysis)
+    except SizeRangeNotSet as e:
+        size_problem = str(e)
+    if missing:
+        try:
+            from mousebrain.analysis_registry import approved_method_source
+            source = approved_method_source()
+        except Exception as e:   # the source is only named in the message
+            source = f"(could not be determined: {e})"
+        parser.error(unset_parameters_message(
+            missing, size_problem, approved, analysis, source))
+    if size_problem:
+        parser.error(size_problem)
     # A sigma chosen at other dilations than the batch runs at: stop, unless
     # the person typed the batch's dilation (then it was chosen knowingly and
     # the banner repeats the difference). WHY only when a number came from the
@@ -1234,12 +1342,6 @@ def main():
             "or use --ignore-tracker.")
     # What this run will record in the registry, and where it parts from the
     # approved method (those entries are reported stale by check_staleness).
-    # Before anything is read or written: without a range there is nothing
-    # to detect with (batch_size_range says why there is no fallback).
-    try:
-        size_range, size_source = batch_size_range(args.diameter, approved, analysis)
-    except SizeRangeNotSet as e:
-        parser.error(str(e))
     method_params = batch_method_params(approved, values, size_range)
     differs = sorted(k for k in set(method_params) | set(approved)
                      if method_params.get(k) != approved.get(k))

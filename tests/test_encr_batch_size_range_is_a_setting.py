@@ -12,7 +12,8 @@ import json
 
 import pytest
 
-from mousebrain.analysis_registry import AnalysisRegistry, DEFAULT_METHOD, get_approved_method
+from example_method import EXAMPLE_METHOD
+from mousebrain.analysis_registry import AnalysisRegistry, get_approved_method
 from mousebrain.plugin_2d.sliceatlas.batch import batch_encr as be
 from mousebrain.plugin_2d.sliceatlas.core import detection as det_mod
 
@@ -49,7 +50,7 @@ def test_the_approved_range_reaches_the_detector_and_the_entry_is_current(
         env, monkeypatch, capsys, approved_range):
     t, tmp_path = env
     _write_approved(tmp_path, monkeypatch,
-                    dict(DEFAULT_METHOD, size_filter_um=approved_range))
+                    dict(EXAMPLE_METHOD, size_filter_um=approved_range))
     _fake_loader(monkeypatch, *_synthetic_image())
     seen = _spy_detector(monkeypatch)
     _nd2(tmp_path)
@@ -69,7 +70,7 @@ def test_the_approved_range_reaches_the_detector_and_the_entry_is_current(
 
 def test_a_typed_range_wins_and_is_recorded_as_not_approved(env, monkeypatch, capsys):
     t, tmp_path = env
-    _write_approved(tmp_path, monkeypatch, dict(DEFAULT_METHOD, size_filter_um=[8, 25]))
+    _write_approved(tmp_path, monkeypatch, dict(EXAMPLE_METHOD, size_filter_um=[8, 25]))
     _fake_loader(monkeypatch, *_synthetic_image())
     seen = _spy_detector(monkeypatch)
     _nd2(tmp_path)
@@ -86,12 +87,12 @@ def test_a_typed_range_wins_and_is_recorded_as_not_approved(env, monkeypatch, ca
 
 @pytest.mark.parametrize("data", [
     # a per-analysis entry for the batch that leaves the range out
-    {"analyses": {"PRJ_Detection": {k: v for k, v in DEFAULT_METHOD.items()
+    {"analyses": {"PRJ_Detection": {k: v for k, v in EXAMPLE_METHOD.items()
                                      if k != "size_filter_um"}}},
     # the batch's analysis is told it has no approved method at all
     {"analyses": {"PRJ_Detection": None}},
     # a flat approved method without the range
-    {k: v for k, v in DEFAULT_METHOD.items() if k != "size_filter_um"},
+    {k: v for k, v in EXAMPLE_METHOD.items() if k != "size_filter_um"},
 ])
 def test_no_range_anywhere_stops_before_any_sample(env, monkeypatch, capsys, data):
     t, tmp_path = env
@@ -112,7 +113,7 @@ def test_no_range_anywhere_stops_before_any_sample(env, monkeypatch, capsys, dat
 @pytest.mark.parametrize("bad", [[25, 8], [0, 25], [10], ["10", "25"], [True, 25]])
 def test_an_unusable_approved_range_stops(env, monkeypatch, capsys, bad):
     t, tmp_path = env
-    _write_approved(tmp_path, monkeypatch, dict(DEFAULT_METHOD, size_filter_um=bad))
+    _write_approved(tmp_path, monkeypatch, dict(EXAMPLE_METHOD, size_filter_um=bad))
     seen = _spy_detector(monkeypatch)
     _nd2(tmp_path)
     with pytest.raises(SystemExit) as exc:
@@ -129,6 +130,11 @@ def test_a_typed_range_runs_when_the_batch_has_no_approved_method(env, monkeypat
     _fake_loader(monkeypatch, *_synthetic_image())
     seen = _spy_detector(monkeypatch)
     _nd2(tmp_path)
+    # With no approved method every other setting must be typed as well
+    # (the batch has no built-in values).
     _run_main(monkeypatch, ["--project", PROJECT, "--output", str(tmp_path / "out"),
-                            "--ignore-tracker", "--diameter", "9", "24"])
+                            "--ignore-tracker", "--diameter", "9", "24",
+                            "--threshold", "0", "--soma-dilation", "6",
+                            "--dilation", "50", "--bg-percentile", "10",
+                            "--threshold-fraction", "0.2", "--log-threshold", "0.005"])
     assert seen == [(9, 24)]

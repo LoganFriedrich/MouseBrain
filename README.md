@@ -77,7 +77,10 @@ that produced it. The registry lives inside the pipeline data folder:
   whose measurements they counted, so they go stale with it. (The other
   producers still record the approved method whatever they ran with.) The 2D
   batch script prints where each of its parameters came from and warns
-  before it runs with anything that is not the approved method. Marking a run best in
+  before it runs with anything that is not the approved method. Nothing is
+  approved until a lab writes its approved-method file: the tool has no
+  built-in parameters, and the batch stops, naming each missing setting,
+  until every one is in the file or typed. Marking a run best in
   the BrainSlice Run History panel chooses the batch's sigma and percentile
   but does not change the approved method; how to do both is in
   `src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, section 6.

@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
+from example_method import EXAMPLE_METHOD
 import mousebrain.analysis_registry as ar
 from mousebrain.analysis_registry import (
-    DEFAULT_METHOD,
     AnalysisRegistry,
     default_registry_root,
     get_approved_method,
@@ -115,7 +115,7 @@ def test_register_output_data_file_goes_to_exports_sample_dir(tmp_path):
         category="detection",
         files={"measurements": str(csv_file)},
         results={"n_nuclei": 28, "n_positive": 15},
-        method_params=DEFAULT_METHOD,
+        method_params=EXAMPLE_METHOD,
         source_files={"nd2": str(tmp_path / "src" / f"{SAMPLE}.nd2")},
     )
 
@@ -131,7 +131,7 @@ def test_register_output_data_file_goes_to_exports_sample_dir(tmp_path):
     assert entry["is_current"] is True
     assert entry["animal"] == "E01_01"
     assert entry["region"] == "DCN"
-    assert entry["method_hash"] == AnalysisRegistry.get_method_hash(DEFAULT_METHOD)
+    assert entry["method_hash"] == AnalysisRegistry.get_method_hash(EXAMPLE_METHOD)
     rel = entry["outputs"]["measurements"]
     assert not Path(rel).is_absolute()
     assert (root / rel) == expected
@@ -148,7 +148,7 @@ def test_register_output_figure_goes_to_figures_animal_region_dir(tmp_path):
         category="roi_analysis",
         files={"figure": str(fig_file)},
         results={"n_nuclei": 13, "n_positive": 12, "positive_fraction": 0.923},
-        method_params=DEFAULT_METHOD,
+        method_params=EXAMPLE_METHOD,
     )
 
     expected = root / "figures" / "A" / "E01_01" / "DCN" / fig_file.name
@@ -167,7 +167,7 @@ def test_register_output_skips_missing_source_file(tmp_path):
     dest = reg.register_output(
         sample=SAMPLE, category="detection",
         files={"measurements": str(tmp_path / "does_not_exist.csv")},
-        results={}, method_params=DEFAULT_METHOD,
+        results={}, method_params=EXAMPLE_METHOD,
     )
     assert dest == {}
     assert reg.get_entry(SAMPLE)["outputs"] == {}
@@ -183,18 +183,18 @@ def test_check_staleness(tmp_path):
     reg.register_output(
         sample=SAMPLE, category="detection",
         files={"measurements": str(csv_file)}, results={},
-        method_params=DEFAULT_METHOD,
+        method_params=EXAMPLE_METHOD,
     )
 
-    assert reg.check_staleness(DEFAULT_METHOD) == []
-    assert reg.check_staleness(dict(DEFAULT_METHOD)) == []  # same content, new dict
+    assert reg.check_staleness(EXAMPLE_METHOD) == []
+    assert reg.check_staleness(dict(EXAMPLE_METHOD)) == []  # same content, new dict
 
-    changed = dict(DEFAULT_METHOD, soma_dilation=8)
+    changed = dict(EXAMPLE_METHOD, soma_dilation=8)
     stale = reg.check_staleness(changed)
     assert len(stale) == 1
     assert stale[0]["sample"] == SAMPLE
     assert stale[0]["diff_keys"] == ["soma_dilation"]
-    assert stale[0]["registered_hash"] == AnalysisRegistry.get_method_hash(DEFAULT_METHOD)
+    assert stale[0]["registered_hash"] == AnalysisRegistry.get_method_hash(EXAMPLE_METHOD)
     assert stale[0]["current_hash"] == AnalysisRegistry.get_method_hash(changed)
     assert reg.get_stale_samples(changed) == [SAMPLE]
 
@@ -210,7 +210,7 @@ def test_invalidate_archives_files_and_flags_entry(tmp_path):
     dest = reg.register_output(
         sample=SAMPLE, category="roi_analysis",
         files={"roi_counts": str(csv_file), "figure": str(fig_file)},
-        results={}, method_params=DEFAULT_METHOD,
+        results={}, method_params=EXAMPLE_METHOD,
     )
 
     invalidated = reg.invalidate(sample=SAMPLE)
@@ -227,7 +227,7 @@ def test_invalidate_archives_files_and_flags_entry(tmp_path):
     assert "invalidated_at" in entry
 
     # Stale entries are not reported again, and a second invalidate is a no-op.
-    assert reg.check_staleness(dict(DEFAULT_METHOD, soma_dilation=8)) == []
+    assert reg.check_staleness(dict(EXAMPLE_METHOD, soma_dilation=8)) == []
     assert reg.invalidate(sample=SAMPLE) == []
 
 
@@ -238,7 +238,7 @@ def test_invalidate_all(tmp_path):
         reg.register_output(
             sample=sample, category="detection",
             files={"measurements": str(csv_file)}, results={},
-            method_params=DEFAULT_METHOD,
+            method_params=EXAMPLE_METHOD,
         )
     assert sorted(reg.invalidate()) == ["E01_01_S13_DCN", "E01_01_S14_DCN"]
     assert all(not e["is_current"] for e in reg.get_all_entries().values())
@@ -248,14 +248,18 @@ def test_invalidate_all(tmp_path):
 # (e) approved method
 # ---------------------------------------------------------------------------
 
-def test_get_approved_method_default_is_a_copy():
-    method = get_approved_method()
-    assert method == DEFAULT_METHOD
-    assert method is not DEFAULT_METHOD
+def test_with_no_approved_method_file_nothing_is_approved(tmp_path):
+    # There is no built-in approved method: with no file, nothing is
+    # approved, so no entry is judged against numbers nobody chose.
+    assert get_approved_method() is None
+    assert get_approved_method(tmp_path) is None
+    assert ar.approved_method_for("A", tmp_path) is None
+    assert ar.approved_method_source(tmp_path) == ar.NO_APPROVED_METHOD_SOURCE
+    assert not hasattr(ar, "DEFAULT_METHOD")
 
 
 def test_get_approved_method_json_under_root(monkeypatch, tmp_path):
-    override = dict(DEFAULT_METHOD, threshold_fraction=0.25)
+    override = dict(EXAMPLE_METHOD, threshold_fraction=0.25)
     (tmp_path / "approved_method.json").write_text(json.dumps(override), encoding="utf-8")
 
     # explicit root
@@ -271,9 +275,9 @@ def test_get_approved_method_json_under_root(monkeypatch, tmp_path):
 
 
 def test_get_approved_method_env_file_wins(monkeypatch, tmp_path):
-    root_override = dict(DEFAULT_METHOD, threshold_fraction=0.25)
+    root_override = dict(EXAMPLE_METHOD, threshold_fraction=0.25)
     (tmp_path / "approved_method.json").write_text(json.dumps(root_override), encoding="utf-8")
-    env_override = dict(DEFAULT_METHOD, soma_dilation=9)
+    env_override = dict(EXAMPLE_METHOD, soma_dilation=9)
     env_file = tmp_path / "method.json"
     env_file.write_text(json.dumps(env_override), encoding="utf-8")
     monkeypatch.setenv("MOUSEBRAIN_APPROVED_METHOD", str(env_file))
@@ -330,7 +334,7 @@ def test_register_roi_counts_accepts_row_list(tmp_path):
     reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
     counts_path = reg.register_roi_counts(
         sample=SAMPLE, region="DCN", roi_results=rows,
-        method_params=DEFAULT_METHOD,
+        method_params=EXAMPLE_METHOD,
         source_files={"nd2": str(tmp_path / f"{SAMPLE}.nd2")},
     )
 
@@ -354,7 +358,7 @@ def test_register_roi_counts_keeps_dual_columns(tmp_path):
     rows = [{"name": "TOTAL", "total": 10, "dual": 4, "red_only": 3, "green_only": 2, "neither": 1}]
     reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
     counts_path = reg.register_roi_counts(
-        sample=SAMPLE, region="DCN", roi_results=rows, method_params=DEFAULT_METHOD,
+        sample=SAMPLE, region="DCN", roi_results=rows, method_params=EXAMPLE_METHOD,
     )
     lines = counts_path.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "roi,total,positive,negative,fraction,dual,green_only,neither,red_only"
@@ -370,7 +374,8 @@ def test_cli_main_root_and_hidden_alias(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Total entries: 0" in out
     assert str(tmp_path) in out
-    assert "All entries are current." in out
+    # No approved-method file: nothing is approved, so nothing is compared.
+    assert "No approved method is declared" in out
 
     assert ar.main(["--name", "A", "--db-root", str(tmp_path)]) == 0
     assert ar._cli_main is ar.main
@@ -389,7 +394,7 @@ def test_an_unreadable_manifest_is_kept_not_replaced_by_an_empty_one(tmp_path):
     with pytest.raises(RuntimeError, match="unreadable"):
         reg.register_output(sample=SAMPLE, category="detection",
                             files={"measurements": str(csv_file)}, results={},
-                            method_params=DEFAULT_METHOD)
+                            method_params=EXAMPLE_METHOD)
 
     kept = reg.set_aside_files()
     # Kept outside the mirrored exports folder (see test_the_mirrored_...).
@@ -407,7 +412,7 @@ def test_an_unreadable_manifest_is_kept_not_replaced_by_an_empty_one(tmp_path):
     # The next registration adds to it; the kept file is untouched.
     reg.register_output(sample=SAMPLE, category="detection",
                         files={"measurements": str(csv_file)}, results={},
-                        method_params=DEFAULT_METHOD)
+                        method_params=EXAMPLE_METHOD)
     assert list(reg.get_all_entries()) == [SAMPLE]
     assert kept[0].read_text(encoding="utf-8") == damaged
 
@@ -428,7 +433,7 @@ def test_if_no_new_manifest_can_be_written_the_damaged_one_is_put_back(tmp_path,
     with pytest.raises(RuntimeError, match="no new manifest"):
         reg.register_output(sample=SAMPLE, category="detection",
                             files={"measurements": str(csv_file)}, results={},
-                            method_params=DEFAULT_METHOD)
+                            method_params=EXAMPLE_METHOD)
     assert reg.registry_path.read_text(encoding="utf-8") == damaged
     assert reg.set_aside_files() == []
     assert not (reg.exports_dir / SAMPLE).exists()
@@ -457,7 +462,7 @@ def test_a_valid_manifest_with_a_byte_order_mark_is_read_and_never_set_aside(tmp
     reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
     reg.register_output(sample="E01_01_S01_DCN", category="detection",
                         files={"measurements": str(csv_file)}, results={},
-                        method_params=DEFAULT_METHOD)
+                        method_params=EXAMPLE_METHOD)
     text = reg.registry_path.read_text(encoding="utf-8")
     reg.registry_path.write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
 
@@ -465,7 +470,7 @@ def test_a_valid_manifest_with_a_byte_order_mark_is_read_and_never_set_aside(tmp
     assert list(fresh.get_all_entries()) == ["E01_01_S01_DCN"]
     fresh.register_output(sample=SAMPLE, category="detection",
                           files={"measurements": str(csv_file)}, results={},
-                          method_params=DEFAULT_METHOD)
+                          method_params=EXAMPLE_METHOD)
 
     assert fresh.set_aside_files() == []
     assert sorted(fresh.get_all_entries()) == sorted(["E01_01_S01_DCN", SAMPLE])
@@ -475,7 +480,7 @@ def test_a_valid_manifest_with_a_byte_order_mark_is_read_and_never_set_aside(tmp
 
 
 def test_an_approved_method_file_with_a_byte_order_mark_is_read(tmp_path):
-    override = dict(DEFAULT_METHOD, threshold_fraction=0.25)
+    override = dict(EXAMPLE_METHOD, threshold_fraction=0.25)
     (tmp_path / "approved_method.json").write_bytes(
         b"\xef\xbb\xbf" + json.dumps(override).encode("utf-8"))
     assert get_approved_method(tmp_path) == override
@@ -526,7 +531,7 @@ def test_two_registrations_at_once_both_land(tmp_path, monkeypatch):
         try:
             reg.register_output(sample=sample, category="detection",
                                 files={"measurements": str(csv_file)}, results={},
-                                method_params=DEFAULT_METHOD)
+                                method_params=EXAMPLE_METHOD)
         except Exception as e:  # pragma: no cover - surfaced below
             errors.append(e)
 
@@ -578,7 +583,7 @@ def test_a_registration_copying_one_slow_file_keeps_its_lock(tmp_path, monkeypat
         try:
             reg.register_output(sample=sample, category="detection",
                                 files={"measurements": str(f)}, results={},
-                                method_params=DEFAULT_METHOD)
+                                method_params=EXAMPLE_METHOD)
         except Exception as e:  # pragma: no cover - surfaced below
             errors.append(e)
 
@@ -609,20 +614,20 @@ def test_a_lock_left_by_a_crashed_writer_is_taken_over(tmp_path):
 
     reg.register_output(sample=SAMPLE, category="detection",
                         files={"measurements": str(csv_file)}, results={},
-                        method_params=DEFAULT_METHOD)
+                        method_params=EXAMPLE_METHOD)
     assert list(reg.get_all_entries()) == [SAMPLE]
     assert not lock.exists()
 
 
 _WRITER = """
 import sys
-from mousebrain.analysis_registry import AnalysisRegistry, DEFAULT_METHOD
+from mousebrain.analysis_registry import AnalysisRegistry
 root, src, worker, n = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 reg = AnalysisRegistry(analysis_name="A", registry_root=root)
 for i in range(n):
     reg.register_output(sample="E%02d_01_S%02d_DCN" % (worker, i + 1),
                         category="detection", files={"measurements": src},
-                        results={"i": i}, method_params=DEFAULT_METHOD)
+                        results={"i": i}, method_params={"detection": "threshold+log"})
 """
 
 _READER = """
@@ -717,7 +722,7 @@ def test_the_mirrored_exports_folder_holds_only_outputs_and_the_manifest(tmp_pat
     monkeypatch.setattr(ar.os, "replace", replace)
     reg.register_output(sample=SAMPLE, category="roi_analysis",
                         files={"measurements": str(csv_file), "figure": str(fig_file)},
-                        results={}, method_params=DEFAULT_METHOD)
+                        results={}, method_params=EXAMPLE_METHOD)
     assert seen
     for names in seen:
         assert set(names) <= {"measurements.csv", "registry.json"}, names
@@ -730,7 +735,7 @@ def test_a_set_aside_manifest_is_kept_outside_the_mirrored_folder(tmp_path):
     with pytest.raises(RuntimeError):
         reg.register_output(sample=SAMPLE, category="detection",
                             files={"measurements": str(csv_file)}, results={},
-                            method_params=DEFAULT_METHOD)
+                            method_params=EXAMPLE_METHOD)
     exported = [p.name for p in (reg.registry_root / "exports").rglob("*") if p.is_file()]
     assert exported == ["registry.json"]  # the new, empty manifest only
     kept = reg.set_aside_files()
@@ -747,15 +752,15 @@ def test_the_registry_adds_no_folders_of_its_own(tmp_path):
     reg = AnalysisRegistry(analysis_name="A", registry_root=root)
     reg.register_output(sample=SAMPLE, category="roi_analysis",
                         files={"measurements": str(csv_file), "figure": str(fig_file)},
-                        results={}, method_params=DEFAULT_METHOD)
+                        results={}, method_params=EXAMPLE_METHOD)
     reg.register_roi_counts(SAMPLE, "DCN", {"TOTAL": {"total": 1, "positive": 1,
                                                       "negative": 0, "fraction": 1.0}},
-                            method_params=DEFAULT_METHOD)
+                            method_params=EXAMPLE_METHOD)
     reg.registry_path.write_text("{not json", encoding="utf-8")
     with pytest.raises(RuntimeError):
         reg.register_output(sample=SAMPLE, category="detection",
                             files={"measurements": str(csv_file)}, results={},
-                            method_params=DEFAULT_METHOD)
+                            method_params=EXAMPLE_METHOD)
     assert sorted(p.name for p in root.iterdir()) == ["exports", "figures", "logs"]
     assert [p.name for p in (root / "logs").iterdir() if p.is_dir()] == []
     logs = sorted(p.name for p in (root / "logs").iterdir())
@@ -773,7 +778,7 @@ def _set_one_aside(tmp_path, damaged):
     with pytest.raises(RuntimeError):
         reg.register_output(sample=SAMPLE, category="detection",
                             files={"measurements": str(csv_file)}, results={},
-                            method_params=DEFAULT_METHOD)
+                            method_params=EXAMPLE_METHOD)
     return reg, csv_file
 
 
@@ -798,7 +803,7 @@ def test_the_next_manifest_records_each_set_aside_one_until_it_is_dealt_with(tmp
     reg, csv_file = _set_one_aside(tmp_path, damaged)
     reg.register_output(sample=SAMPLE, category="detection",
                         files={"measurements": str(csv_file)}, results={},
-                        method_params=DEFAULT_METHOD)
+                        method_params=EXAMPLE_METHOD)
     header = json.loads(reg.registry_path.read_text(encoding="utf-8"))
     [record] = header["set_aside_manifests"]
     assert record["file"] == reg.set_aside_files()[0].name
@@ -811,7 +816,7 @@ def test_the_next_manifest_records_each_set_aside_one_until_it_is_dealt_with(tmp
     reg.set_aside_files()[0].unlink()
     reg.register_output(sample="E01_01_S02_DCN", category="detection",
                         files={"measurements": str(csv_file)}, results={},
-                        method_params=DEFAULT_METHOD)
+                        method_params=EXAMPLE_METHOD)
     header = json.loads(reg.registry_path.read_text(encoding="utf-8"))
     assert "set_aside_manifests" not in header
 
@@ -962,7 +967,7 @@ def _register_two(tmp_path):
         dests[sample] = reg.register_output(
             sample=sample, category="roi_analysis",
             files={"figure": str(one_fig), "measurements": str(one_csv)},
-            results={}, method_params=DEFAULT_METHOD)
+            results={}, method_params=EXAMPLE_METHOD)
     return reg, dests
 
 
@@ -1134,14 +1139,14 @@ def test_an_analysis_named_in_the_approved_file_is_judged_by_its_own_method(
     reg_c = AnalysisRegistry(analysis_name="C", registry_root=tmp_path)
     reg_c.register_output(sample=SAMPLE, category="detection",
                           files={"measurements": str(csv_file)}, results={},
-                          method_params=DEFAULT_METHOD)
+                          method_params=EXAMPLE_METHOD)
     assert reg_c._read_registry()["approved_method_hash"] is None
     assert "No approved method is declared" in _stale_report(tmp_path, "C", capsys)
 
-    # An analysis the file does not name follows the shared method, which
-    # is the built-in default when the file gives no "default".
-    assert get_approved_method(tmp_path) == DEFAULT_METHOD
-    assert ar.approved_method_for("D", tmp_path) == DEFAULT_METHOD
+    # An analysis the file does not name follows the shared method, and the
+    # file gives no "default": there is none (no built-in one either).
+    assert get_approved_method(tmp_path) is None
+    assert ar.approved_method_for("D", tmp_path) is None
     assert ar.approved_method_for("D", tmp_path, follows_approved_method=False) is None
 
 
@@ -1195,16 +1200,18 @@ def _header(reg):
 
 def test_the_header_follows_a_changed_approved_method_on_the_next_write(tmp_path):
     csv_file, _ = _make_source_files(tmp_path)
+    (tmp_path / "approved_method.json").write_text(json.dumps(EXAMPLE_METHOD),
+                                                   encoding="utf-8")
     reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
     reg.register_output(sample=SAMPLE, category="detection",
                         files={"measurements": str(csv_file)}, results={},
-                        method_params=DEFAULT_METHOD)
-    assert _header(reg)["approved_method_hash"] == AnalysisRegistry.get_method_hash(DEFAULT_METHOD)
+                        method_params=EXAMPLE_METHOD)
+    assert _header(reg)["approved_method_hash"] == AnalysisRegistry.get_method_hash(EXAMPLE_METHOD)
 
     # The lab approves a new method; the next registration records it in the
     # header, so an integrator counting "stale vs approved" from the header
     # now sees the first entry as stale.
-    changed = dict(DEFAULT_METHOD, soma_dilation=8)
+    changed = dict(EXAMPLE_METHOD, soma_dilation=8)
     (tmp_path / "approved_method.json").write_text(json.dumps(changed), encoding="utf-8")
     reg.register_output(sample="E01_01_S14_DCN", category="detection",
                         files={"measurements": str(csv_file)}, results={},
@@ -1224,8 +1231,8 @@ def test_refresh_approved_rewrites_the_header_without_registering(tmp_path, caps
     reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
     reg.register_output(sample=SAMPLE, category="detection",
                         files={"measurements": str(csv_file)}, results={},
-                        method_params=DEFAULT_METHOD)
-    changed = dict(DEFAULT_METHOD, soma_dilation=8)
+                        method_params=EXAMPLE_METHOD)
+    changed = dict(EXAMPLE_METHOD, soma_dilation=8)
     (tmp_path / "approved_method.json").write_text(json.dumps(changed), encoding="utf-8")
     entries_before = _header(reg)["entries"]
 
@@ -1244,6 +1251,8 @@ def test_a_producer_declaration_reaches_an_existing_manifest(tmp_path):
     # A manifest written before analyses declared whether they follow the
     # shared method: the producer's next write records its declaration.
     csv_file, _ = _make_source_files(tmp_path)
+    (tmp_path / "approved_method.json").write_text(json.dumps(EXAMPLE_METHOD),
+                                                   encoding="utf-8")
     old = AnalysisRegistry(analysis_name="B", registry_root=tmp_path)
     old.register_output(sample=SAMPLE, category="qc",
                         files={"measurements": str(csv_file)}, results={},
@@ -1264,7 +1273,7 @@ def test_a_file_holding_only_a_default_is_the_per_analysis_form(tmp_path):
     # {"default": {...}} with no "analyses" table used to be read as the flat
     # form: a method with one parameter named "default", so every entry of
     # every analysis following the shared method showed as stale.
-    shared = dict(DEFAULT_METHOD, soma_dilation=8)
+    shared = dict(EXAMPLE_METHOD, soma_dilation=8)
     (tmp_path / "approved_method.json").write_text(
         json.dumps({"default": shared}), encoding="utf-8")
     assert get_approved_method(tmp_path) == shared
@@ -1357,6 +1366,8 @@ def test_the_cli_records_that_an_old_manifest_has_no_approved_method(tmp_path, c
     # method, and --refresh-approved alone keeps that; --no-approved-method
     # records the declaration without waiting for the producer's next run.
     csv_file, _ = _make_source_files(tmp_path)
+    (tmp_path / "approved_method.json").write_text(json.dumps(EXAMPLE_METHOD),
+                                                   encoding="utf-8")
     old = AnalysisRegistry(analysis_name="B", registry_root=tmp_path)
     old.register_output(sample=SAMPLE, category="qc",
                         files={"measurements": str(csv_file)}, results={},
@@ -1382,7 +1393,7 @@ def test_the_stale_report_names_a_broken_approved_method_file(tmp_path, capsys):
     reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
     reg.register_output(sample=SAMPLE, category="detection",
                         files={"measurements": str(csv_file)}, results={},
-                        method_params=DEFAULT_METHOD)
+                        method_params=EXAMPLE_METHOD)
     (tmp_path / "approved_method.json").write_text("{not json", encoding="utf-8")
     capsys.readouterr()
     assert ar.main(["--name", "A", "--root", str(tmp_path), "--stale"]) == 1
@@ -1397,17 +1408,18 @@ def test_the_header_records_where_the_approved_method_came_from(tmp_path, monkey
     reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
     reg.register_output(sample=SAMPLE, category="detection",
                         files={"measurements": str(csv_file)}, results={},
-                        method_params=DEFAULT_METHOD)
-    assert _header(reg)["approved_method_source"] == "built-in parameters"
+                        method_params=EXAMPLE_METHOD)
+    assert _header(reg)["approved_method_source"] == ar.NO_APPROVED_METHOD_SOURCE
+    assert _header(reg)["approved_method_hash"] is None
     assert _header(reg)["approved_method_recorded_on"] == ar._get_hostname()
 
-    (tmp_path / "approved_method.json").write_text(json.dumps(DEFAULT_METHOD),
+    (tmp_path / "approved_method.json").write_text(json.dumps(EXAMPLE_METHOD),
                                                    encoding="utf-8")
     reg.refresh_approved_method()
     assert _header(reg)["approved_method_source"] == str(tmp_path / "approved_method.json")
 
     elsewhere = tmp_path / "machine_override.json"
-    elsewhere.write_text(json.dumps(DEFAULT_METHOD), encoding="utf-8")
+    elsewhere.write_text(json.dumps(EXAMPLE_METHOD), encoding="utf-8")
     monkeypatch.setenv("MOUSEBRAIN_APPROVED_METHOD", str(elsewhere))
     reg.refresh_approved_method()
     assert _header(reg)["approved_method_source"] == "MOUSEBRAIN_APPROVED_METHOD=%s" % elsewhere
@@ -1421,12 +1433,12 @@ def test_invalidate_logs_each_retired_entry_with_its_record(tmp_path):
     reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
     reg.register_output(sample="E01_01_S01_DCN", category="roi_analysis",
                         files={}, results={"n_nuclei": 7, "note": "a\tb\nc"},
-                        method_params=DEFAULT_METHOD)
+                        method_params=EXAMPLE_METHOD)
     method_hash = reg.get_entry("E01_01_S01_DCN")["method_hash"]
     reg.invalidate(sample="E01_01_S01_DCN")
     reg.register_output(sample="E01_01_S01_DCN", category="roi_analysis",
                         files={}, results={"n_nuclei": 9},
-                        method_params=DEFAULT_METHOD)
+                        method_params=EXAMPLE_METHOD)
 
     lines = [l.split("\t") for l in
              (reg.logs_dir / "A.log").read_text(encoding="utf-8").splitlines()]
@@ -1437,7 +1449,7 @@ def test_invalidate_logs_each_retired_entry_with_its_record(tmp_path):
     record = json.loads(retired[0][5])
     assert record["results"] == {"n_nuclei": 7, "note": "a\tb\nc"}
     assert record["method_hash"] == method_hash
-    assert record["method_params"] == json.loads(json.dumps(DEFAULT_METHOD))
+    assert record["method_params"] == json.loads(json.dumps(EXAMPLE_METHOD))
     assert record["invalidated_at"]
     # The summary line is still written after the per-entry lines.
     assert [f[2] for f in lines].index("invalidate") > [f[2] for f in lines].index("invalidate_entry")

@@ -5,6 +5,7 @@ measurements file, so a re-detection (new measurements, new method) left the
 old counts looking current.
 """
 
+from example_method import write_example_approved_method
 from mousebrain.analysis_registry import AnalysisRegistry, get_approved_method
 from mousebrain.plugin_2d.sliceatlas.cli import run_roi
 
@@ -49,6 +50,7 @@ def test_counts_carry_the_detection_runs_method_and_name_the_measurements(tmp_pa
 
 def test_counts_on_a_detection_that_is_not_approved_show_as_stale(tmp_path, monkeypatch):
     reg = pin_registry(monkeypatch, tmp_path)
+    write_example_approved_method(reg)   # something to be stale against
     _registered_detection(tmp_path, reg)
     base = make_dataset(tmp_path)
     write_rois(rois_of(base))
@@ -62,6 +64,7 @@ def test_counts_on_a_detection_that_is_not_approved_show_as_stale(tmp_path, monk
 
 def test_measurements_that_differ_from_the_registered_ones_are_not_tied(tmp_path, monkeypatch, capsys):
     reg = pin_registry(monkeypatch, tmp_path)
+    write_example_approved_method(reg)   # something to be stale against
     det = _registered_detection(tmp_path, reg)
     base = make_dataset(tmp_path)
     write_rois(rois_of(base))
