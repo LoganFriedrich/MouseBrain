@@ -3160,51 +3160,6 @@ class TuningWidget(QWidget):
             import traceback
             traceback.print_exc()
 
-    def _load_detection_results(self):
-        """
-        Load detection results into napari as points layer.
-
-        Uses yellow/orange for candidates (before classification) to distinguish
-        from the cyan/magenta used for classified results.
-        """
-        if not self.last_run_id:
-            return
-
-        # Find the output XML
-        runs_dir = DATA_SUMMARY_DIR / "optimization_runs" / self.current_brain.name
-        if not runs_dir.exists():
-            return
-
-        # Get most recent test folder
-        test_folders = sorted(runs_dir.glob("test_*"), reverse=True)
-        if not test_folders:
-            return
-
-        cells_xml = test_folders[0] / "detected_cells.xml"
-        if not cells_xml.exists():
-            return
-
-        # Parse XML to get cell coordinates
-        try:
-            coords = self._parse_cellfinder_xml(cells_xml)
-            if coords:
-                # Add as points layer - use 'new' style for just-ran detection
-                layer_name = f"Candidates {datetime.now().strftime('%H:%M:%S')} ({len(coords)})"
-                style = self.CELL_COLORS['new']
-                self.viewer.add_points(
-                    coords,
-                    name=layer_name,
-                    size=style['size'],
-                    face_color=style['face'],
-                    border_color=style['edge'],
-                    border_width=style.get('border_width', 0.1),
-                    symbol=style['symbol'],
-                    opacity=style['opacity'],
-                    n_dimensional=True,  # Required for 3D point visibility
-                )
-        except Exception as e:
-            print(f"Error loading detection results: {e}")
-
     def _parse_cellfinder_xml(self, xml_path):
         """Parse cellfinder XML to get cell coordinates."""
         import re
