@@ -143,7 +143,10 @@ keeps the answers like this:
   answers stay saved in its folder) and makes the curation widget let go of
   its candidates, which were the last brain's points. Select the new brain's
   candidates layer and click "Use Selected Layer" again. Answers given on a
-  candidates layer made for another brain are refused with a message.
+  points layer that is recorded as another brain's (detection-run layers carry
+  their brain) are refused with a message. Other points layers, such as
+  classification results, carry no brain: after a brain change, make sure the
+  layer you choose was made for the selected brain.
 - **A review carries on where it stopped.** When you choose a candidates
   layer ("Use Selected Layer"), every candidate that already has a saved answer
   for the selected brain counts as answered again (green = cell, red = not a
@@ -151,12 +154,12 @@ keeps the answers like this:
   starts at the first candidate without an answer. This holds after choosing
   the same layer again and after restarting napari. Candidates you skipped
   (S / Space) are not saved anywhere, so they are asked again. Nothing is
-  restored for a candidates layer made for another brain.
+  restored for a points layer recorded as another brain's.
 - **One answer per point, the last one counts.** Every C or X is saved at once.
   If you change an answer (C, then X on the same candidate), the point moves
   from one file to the other; answering the same way twice saves it once. The
   buttons that add the points of a selected layer to the cells or non-cells
-  bucket work the same way, and refuse a layer made for another brain.
+  bucket work the same way, and refuse a layer recorded as another brain's.
   "Send suspicious to training" (Pre-Filter tab) and "Merge XML batches" only
   add points that have no answer yet: they never change an answer you gave.
 - **Merge XML batches** takes only the selected brain's batches. Batches of
@@ -178,8 +181,11 @@ keeps the answers like this:
   image.** It takes the selected brain's saved answers and its own Signal (and
   Background) layers. If the viewer holds only another brain's images it
   refuses ("No Image of This Brain"); load this brain's images first. Cubes
-  are written to the brain's `cells/` and `non_cells/`; a cube whose answer has
-  since changed is removed, so the folders always match the answers. Points
+  are written to the brain's `cells/` and `non_cells/`. A cube that contradicts
+  the answers -- its point now has the other label, or is saved as both -- is
+  removed, and the message says how many files were removed; cubes of points
+  that have no answer in the files (for example copied in by "Merge Selected ->
+  Shared Pool") are kept. Points
   closer than half a cube (10 planes, 25 pixels) to the image edge are skipped
   and counted in the message.
 - **Training from the pool** ("Shared: <imaging setup>" in the training

@@ -4852,7 +4852,9 @@ class TuningWidget(QWidget):
         fresh_btn.setToolTip(
             "Clear all training cubes from the shared pool for this paradigm.\n"
             "Use this only if you want to completely retrain from scratch.\n"
-            "Per-brain training data is NOT deleted."
+            "This includes the cubes in each brain's folder in the pool;\n"
+            "the curation answers (curated_*.xml) and the brains' own\n"
+            "1_Brains/.../training_data folders are NOT deleted."
         )
         fresh_btn.clicked.connect(self._start_training_fresh)
         sources_layout.addWidget(fresh_btn)
@@ -6011,8 +6013,7 @@ class TuningWidget(QWidget):
                 return False
             record = CurationRecord(self.training_data_dir)
         try:
-            labels = record.read()
-            conflicts = record.conflicts()
+            labels, conflicts = record.read_all()
         except CurationRecordError as e:
             QMessageBox.warning(self, "Saved Answers Unreadable", str(e))
             return False
@@ -6152,8 +6153,9 @@ class TuningWidget(QWidget):
           the viewer holds only another brain's images.
         - Output: <models>/<setup>/training_data/<brain>/cells and non_cells,
           files pCellz{z}y{y}x{x}Ch{0|1}.tif, 50x50 in-plane, 20 planes; a
-          cube whose point no longer has that label is removed, so the
-          folders match the answers. training.yml is written for the brain's
+          cube that contradicts the answers (its point now has the other
+          label, or is saved as both) is removed, other cubes are kept
+          (curation_record.write_brain_cubes). training.yml is written for the brain's
           folder and for the pool (listing every brain's folders).
         """
         print("[DEBUG] Button clicked: export_training_data")
@@ -6173,7 +6175,7 @@ class TuningWidget(QWidget):
             return
         record = CurationRecord(self.training_data_dir)
         try:
-            labels = record.read()
+            labels, conflicts = record.read_all()
         except CurationRecordError as e:
             QMessageBox.warning(self, "Saved Answers Unreadable", str(e))
             return
@@ -6203,7 +6205,7 @@ class TuningWidget(QWidget):
 
         result = write_brain_cubes(
             self.training_data_dir, labels, signal_layer.data,
-            bg_layer.data if has_bg else None)
+            bg_layer.data if has_bg else None, conflicts=conflicts)
         cells_exported = result['cells']
         non_cells_exported = result['non_cells']
         skipped = result['skipped']
@@ -6242,6 +6244,8 @@ class TuningWidget(QWidget):
         status_msg = f"Exported: {cells_exported} cells, {non_cells_exported} non-cells"
         if skipped > 0:
             status_msg += f" ({skipped} skipped)"
+        if result['removed']:
+            status_msg += f" ({result['removed']} contradicted cube file(s) removed)"
         self.export_status_label.setText(status_msg)
 
         channels_note = "both channels" if has_bg else "signal channel only"
@@ -6251,7 +6255,9 @@ class TuningWidget(QWidget):
             f"Non-cells: {non_cells_exported}\n"
             f"Cube size: 50x50x20 voxels\n"
             f"Config: training.yml created\n"
-            f"{f'Skipped (out of bounds): {skipped}' if skipped > 0 else ''}\n\n"
+            f"{f'Skipped (out of bounds): {skipped}' if skipped > 0 else ''}\n"
+            f"Cube files removed because their answer changed: {result['removed']}\n"
+            f"{f'Saved as both cell and non-cell (left out, answer again): {len(conflicts)}' if conflicts else ''}\n\n"
             f"Click 'Train' to start training with this data.")
 
         print(f"[MouseBrain] Training dataset exported to {self.training_data_dir}")
@@ -6995,8 +7001,9 @@ class TuningWidget(QWidget):
     def _start_training_fresh(self):
         """Clear all training cubes from the shared pool for current paradigm.
 
-        Deletes cells/ and non_cells/ in the shared pool directory.
-        Per-brain training data is NOT touched.
+        Deletes the cube folders (cells/, non_cells/) of the pool and of every
+        brain's folder in it. The answers files (curated_*.xml) and the
+        training_data folders inside the brains' own folders are NOT touched.
         """
         import shutil
 
@@ -7035,8 +7042,10 @@ class TuningWidget(QWidget):
             f"  {shared_dir}\n\n"
             f"  Cells: {n_cells} cubes\n"
             f"  Non-cells: {n_non} cubes\n\n"
-            f"Per-brain training data will NOT be deleted.\n"
-            f"You can re-merge per-brain data afterward.\n\n"
+            f"This includes the cubes in every brain's folder in the pool.\n"
+            f"The curation answers (curated_*.xml) and the training_data folders\n"
+            f"inside the brains' own folders will NOT be deleted: export or\n"
+            f"re-merge afterwards to make cubes again.\n\n"
             f"Are you sure?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No

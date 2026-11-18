@@ -189,36 +189,38 @@ class CurationRecord:
     def non_cells_xml(self) -> Path:
         return self.xml_path("non_cells")
 
-    def read(self) -> Dict[str, List[Tuple[int, int, int]]]:
-        """{'cells': [...], 'non_cells': [...]}, each point once.
+    def read_all(self):
+        """(answers, conflicts) from one read of the two files.
 
+        ``answers`` is {'cells': [...], 'non_cells': [...]}, each point once.
         A point found in BOTH files (left there by an older version) belongs
-        to neither until a person answers it again: it is left out here, so it
-        is neither trained on nor counted as reviewed, and ``conflicts()``
-        names it.
+        to neither until a person answers it again: it is left out of
+        ``answers`` -- so it is neither trained on nor counted as reviewed --
+        and listed in ``conflicts``.
         """
         cells = read_points(self.cells_xml)
         non = read_points(self.non_cells_xml)
         both = set(cells) & set(non)
-        return {"cells": [p for p in cells if p not in both],
-                "non_cells": [p for p in non if p not in both]}
+        answers = {"cells": [p for p in cells if p not in both],
+                   "non_cells": [p for p in non if p not in both]}
+        return answers, [p for p in cells if p in both]
+
+    def read(self) -> Dict[str, List[Tuple[int, int, int]]]:
+        """The answers (see read_all); points in both files are left out."""
+        return self.read_all()[0]
 
     def conflicts(self) -> List[Tuple[int, int, int]]:
         """Points that sit in both files (answered both ways by an older version)."""
-        cells = read_points(self.cells_xml)
-        non = set(read_points(self.non_cells_xml))
-        return [p for p in cells if p in non]
+        return self.read_all()[1]
 
-    def _write(self, cells, non) -> None:
-        # Both files are rebuilt from the full lists and swapped in one after
-        # the other; the point being moved is removed from the file it leaves
-        # first, so an interruption between the two swaps loses that one
-        # answer (it is asked again) rather than leaving it under both labels.
+    def _write(self, lists, order) -> None:
+        # Only the files named in ``order`` changed; each is rebuilt from its
+        # full list and swapped in, in that order. A moved point is taken out
+        # of the file it leaves FIRST, so an interruption between the two
+        # swaps loses that one answer (it is asked again) rather than leaving
+        # it under both labels.
         self.folder.mkdir(parents=True, exist_ok=True)
-        old_cells = set(read_points(self.cells_xml))
-        first = ("non_cells", "cells") if len(old_cells - set(cells)) == 0 else ("cells", "non_cells")
-        lists = {"cells": cells, "non_cells": non}
-        for label in first:
+        for label in order:
             _write_whole(self.xml_path(label), _xml_bytes(lists[label]))
 
     def set_label(self, coords: Iterable, label: str) -> Dict[str, int]:
@@ -229,9 +231,8 @@ class CurationRecord:
         Returns counts: added, moved, unchanged.
         """
         other = _other(label)
-        cells = read_points(self.cells_xml)
-        non = read_points(self.non_cells_xml)
-        lists = {"cells": cells, "non_cells": non}
+        lists = {"cells": read_points(self.cells_xml),
+                 "non_cells": read_points(self.non_cells_xml)}
         mine, theirs = lists[label], lists[other]
         mine_set, theirs_set = set(mine), set(theirs)
         added = moved = unchanged = 0
@@ -250,9 +251,10 @@ class CurationRecord:
                 mine_set.add(k)
                 added += 1
         lists[other] = [p for p in theirs if p in theirs_set]
-        lists[label] = mine
-        if added or moved:
-            self._write(lists["cells"], lists["non_cells"])
+        if moved:
+            self._write(lists, (other, label))
+        elif added:
+            self._write(lists, (label,))
         return {"added": added, "moved": moved, "unchanged": unchanged}
 
     def add_unlabelled(self, coords: Iterable, label: str) -> Dict[str, int]:
@@ -263,10 +265,9 @@ class CurationRecord:
         already_answered.
         """
         _other(label)
-        cells = read_points(self.cells_xml)
-        non = read_points(self.non_cells_xml)
-        known = set(cells) | set(non)
-        lists = {"cells": cells, "non_cells": non}
+        lists = {"cells": read_points(self.cells_xml),
+                 "non_cells": read_points(self.non_cells_xml)}
+        known = set(lists["cells"]) | set(lists["non_cells"])
         added = already = 0
         for c in coords:
             k = point_key(c)
@@ -277,7 +278,7 @@ class CurationRecord:
             lists[label].append(k)
             added += 1
         if added:
-            self._write(lists["cells"], lists["non_cells"])
+            self._write(lists, (label,))
         return {"added": added, "already_answered": already}
 
     def answers_for(self, candidates) -> Tuple[Set[int], Set[int]]:
@@ -310,14 +311,17 @@ def cube_name(key, channel: int) -> str:
 
 
 def write_brain_cubes(folder, labels: Dict[str, List[Tuple[int, int, int]]],
-                      signal, background=None) -> Dict[str, int]:
+                      signal, background=None, conflicts=()) -> Dict[str, int]:
     """Cut the cubes for one brain's answers from THAT brain's image.
 
     ``signal`` / ``background`` are the brain's own arrays (z, y, x). Writes
-    ``<folder>/cells`` and ``<folder>/non_cells``. A cube already there for a
-    point that no longer has that label (the answer changed, or the point is
-    in both files) is removed, so the folders always match the answers. Points
+    ``<folder>/cells`` and ``<folder>/non_cells``. Points
     too close to the image edge for a whole cube are skipped and counted.
+
+    Only a cube that CONTRADICTS the answers is removed: one whose point now
+    has the other label, or sits in both answers files (``conflicts``). Cubes
+    of points with no answer in the files -- copied in by "Merge Selected ->
+    Shared Pool", or from an older export -- are kept.
     """
     import numpy as np
     import tifffile
@@ -331,10 +335,10 @@ def write_brain_cubes(folder, labels: Dict[str, List[Tuple[int, int, int]]],
     for label in LABELS:
         d = folder / label
         d.mkdir(parents=True, exist_ok=True)
-        wanted = set(labels.get(label, []))
+        contradicted = set(labels.get(_other(label), [])) | set(conflicts)
         for f in d.iterdir():
             m = _CUBE_NAME.match(f.name)
-            if m and (int(m.group(1)), int(m.group(2)), int(m.group(3))) not in wanted:
+            if m and (int(m.group(1)), int(m.group(2)), int(m.group(3))) in contradicted:
                 f.unlink()
                 out["removed"] += 1
         for key in labels.get(label, []):
