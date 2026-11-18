@@ -852,7 +852,21 @@ back.
 A result that is gone from the window is gone from the folder: a particle analysis
 that found no particles saves an empty particle table, and a new detection (which
 forgets the old colocalization) removes the old `measurements.csv`. Shapes you drew
-and then deleted are saved as an empty list; those files are never deleted. Each
+and then deleted are saved as an empty list; those files are never deleted.
+
+**Removing a whole shapes layer is not the same as deleting its shapes.** If the
+`ROIs`, `Background ROIs` or `Ignore Regions` layer is removed from napari's layer
+list (its delete button, or another plugin), the window cannot tell whether those
+shapes were meant to go, so their saved file (`rois.json`, `bg_rois.json`,
+`ignore_regions.json`) is left exactly as it is; the console says `<file> kept as it
+was: its layer was removed from the layer list`. Opening the image again brings the
+shapes back. To save it as none drawn, click that layer's **Clear** button (**Clear ROIs**
+beside the ROIs or the background ROIs, **Clear** beside Ignore Regions). Drawing new shapes (after Add ROI or the drawing button
+makes a new layer) saves the new shapes in their place, and from that save on the
+file follows the new layer as usual: deleting those shapes later saves the file as
+none drawn. Until new shapes have been saved, the file keeps the shapes from before
+the removal, even if you draw on the new layer and then delete everything again
+before the image is next saved; in that case use **Clear** to save it as none drawn. Each
 file is written to a temporary file first and then swapped in, so a save that fails
 part-way leaves the previous file whole.
 

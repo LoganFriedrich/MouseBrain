@@ -61,6 +61,10 @@ STATE_FILES = (
 # Drawn by a person: an empty state is written as an empty list, never by
 # deleting the file.
 PERSON_DRAWN_FILES = ("rois.json", "bg_rois.json", "ignore_regions.json")
+# The window attribute holding the Shapes layer of each person-drawn file.
+DRAWN_LAYER_ATTRS = (("rois.json", "roi_shapes_layer"),
+                     ("bg_rois.json", "_pa_bg_shapes_layer"),
+                     ("ignore_regions.json", "_pa_ignore_shapes_layer"))
 # Results: an image counts as analyzed only when one of these is saved.
 RESULT_FILES = ("particles.csv", "labels.npz", "measurements.csv",
                 "nuclei.npz", "roi_detail.csv")
@@ -2484,6 +2488,58 @@ class BrainSliceWidget(QWidget):
             }
         return state
 
+    def _note_drawn_layer_gone(self, name: str, layer) -> None:
+        """Remember that the Shapes layer holding `name`'s shapes was removed
+        from napari's layer list by something other than this window (the
+        layer list's delete button, another plugin). Called at a save, and
+        where a drawing button replaces the vanished layer with a new one."""
+        if layer is None or layer in getattr(self.viewer, "layers", []):
+            return
+        gone = getattr(self, "_drawn_layers_gone", None)
+        if gone is None:
+            gone = self._drawn_layers_gone = set()
+        gone.add(name)
+
+    def _drawn_files_kept_as_they_are(self) -> set:
+        """The person-drawn files a save leaves exactly as they are on disk:
+        their layer was removed from napari's layer list, and no shape drawn
+        on a new layer since has been saved (a save that writes such shapes
+        makes the file follow the new layer again, see _save_analysis_state).
+
+        WHY: a removed layer says nothing about what the person wanted --
+        the delete button, another plugin, a mistaken click. A save used to
+        read it as "nothing drawn" and overwrite the saved ROIs with an
+        empty list, so polygons that may have taken an hour to draw were
+        kept nowhere. Clear ROIs (or drawing new shapes) is how a person
+        says what the file should hold now."""
+        kept = set()
+        for name, attr in DRAWN_LAYER_ATTRS:
+            layer = getattr(self, attr, None)
+            self._note_drawn_layer_gone(name, layer)
+            if name not in (getattr(self, "_drawn_layers_gone", None) or ()):
+                continue
+            if (layer is not None and layer in getattr(self.viewer, "layers", [])
+                    and len(layer.data) > 0):
+                continue      # shapes drawn on a new layer since: saved
+            kept.add(name)
+        return kept
+
+    def _forget_drawn_layer_gone(self, name: str, attr: str) -> None:
+        """A Clear button for `name` was clicked: from now on the file holds
+        what the window holds (none drawn). A vanished layer's handle is
+        dropped so the save sees no layer, not a removed one."""
+        layer = getattr(self, attr, None)
+        if layer is not None and layer not in getattr(self.viewer, "layers", []):
+            setattr(self, attr, None)
+        self._forget_drawn_layer_gone_name(name)
+
+    def _forget_drawn_layer_gone_name(self, name: str) -> None:
+        """`name` follows its layer again: a Clear button was clicked, or a
+        save wrote shapes drawn on the layer that replaced the removed one."""
+        gone = getattr(self, "_drawn_layers_gone", None)
+        if gone:
+            gone.discard(name)
+
     def _analysis_settings_to_save(self) -> Dict[str, Any]:
         """settings.json: the particle settings, the load settings the
         pixels were loaded with, and the tracker rows the saved results
@@ -2576,6 +2632,7 @@ class BrainSliceWidget(QWidget):
         # and results made on differently loaded pixels were restored onto
         # it whenever the image kept its shape.
         settings_kept = "settings.json" in blocked
+        drawn_kept = self._drawn_files_kept_as_they_are()
         not_saved = []
         try:
             state["settings.json"] = self._analysis_settings_to_save()
@@ -2586,8 +2643,25 @@ class BrainSliceWidget(QWidget):
                     if payload is not None and name != "settings.json":
                         not_saved.append(name)
                     continue
+                if name in drawn_kept:
+                    # Its layer was removed from the viewer (see
+                    # _drawn_files_kept_as_they_are): nothing in memory says
+                    # what it should hold, so it is left as it is.
+                    if path.exists():
+                        print(f"[BrainSlice] {name} kept as it was: its layer "
+                              f"was removed from the layer list. Use the Clear "
+                              f"button to save it as none drawn.")
+                    continue
                 if payload is not None:
                     _write_state_file(path, payload)
+                    if name in PERSON_DRAWN_FILES:
+                        # The file now holds shapes drawn on the new layer, so
+                        # it follows that layer from here on: deleting those
+                        # shapes later saves "none drawn". WHY only after the
+                        # write: until new shapes are on disk, the file still
+                        # holds the shapes from before the layer was removed,
+                        # and an empty new layer must not empty it.
+                        self._forget_drawn_layer_gone_name(name)
                 elif owned and path.exists():
                     if name in PERSON_DRAWN_FILES:
                         # Drawn by a person: written as an empty list, never
@@ -2747,6 +2821,7 @@ class BrainSliceWidget(QWidget):
         # named as blocked, and the next save would delete or empty them.
         self._restore_blocked = set()
         self._settings_unreadable = False
+        self._drawn_layers_gone = set()
         self._state_restored_for = None
         try:
             restored = self._restore_analysis_files()
@@ -3229,6 +3304,7 @@ class BrainSliceWidget(QWidget):
         self._state_restored_for = None
         self._restore_blocked = set()
         self._settings_unreadable = False
+        self._drawn_layers_gone = set()
         self._not_saved_warned_for = None
         return True
 
@@ -4662,9 +4738,11 @@ class BrainSliceWidget(QWidget):
         self._pa_bg_shapes_layer.events.data.connect(self._pa_on_bg_rois_changed)
 
     def _pa_activate_bg_drawing(self):
-        # Recreate if the layer was removed from the viewer
+        # Recreate if the layer was removed from the viewer (the saved
+        # background ROIs are kept until shapes are drawn or Clear ROIs).
         if (self._pa_bg_shapes_layer is None
                 or self._pa_bg_shapes_layer not in self.viewer.layers):
+            self._note_drawn_layer_gone("bg_rois.json", self._pa_bg_shapes_layer)
             self._pa_setup_bg_shapes_layer()
         if self._pa_bg_shapes_layer is not None:
             self.viewer.layers.selection.active = self._pa_bg_shapes_layer
@@ -4806,6 +4884,7 @@ class BrainSliceWidget(QWidget):
             )
 
     def _pa_clear_bg_rois(self):
+        self._forget_drawn_layer_gone("bg_rois.json", "_pa_bg_shapes_layer")
         if self._pa_bg_shapes_layer is not None:
             self._pa_bg_shapes_layer.data = []
         self.pa_bg_value_label.setText("Background: -- (draw rectangles to measure)")
@@ -5293,6 +5372,10 @@ class BrainSliceWidget(QWidget):
         """Create or activate the Ignore Regions shapes layer."""
         if (self._pa_ignore_shapes_layer is None
                 or self._pa_ignore_shapes_layer not in self.viewer.layers):
+            # The saved ignore regions are kept until shapes are drawn or
+            # Clear is clicked (see _drawn_files_kept_as_they_are).
+            self._note_drawn_layer_gone("ignore_regions.json",
+                                        self._pa_ignore_shapes_layer)
             scale = self._pa_get_scale()
             self._pa_ignore_shapes_layer = self.viewer.add_shapes(
                 name="Ignore Regions",
@@ -5308,6 +5391,7 @@ class BrainSliceWidget(QWidget):
 
     def _pa_clear_ignore_regions(self):
         """Clear all ignore regions."""
+        self._forget_drawn_layer_gone("ignore_regions.json", "_pa_ignore_shapes_layer")
         if (self._pa_ignore_shapes_layer is not None
                 and self._pa_ignore_shapes_layer in self.viewer.layers):
             self._pa_ignore_shapes_layer.data = []
@@ -7998,6 +8082,9 @@ class BrainSliceWidget(QWidget):
         """Add or activate a Shapes layer for drawing ROIs."""
         if self.roi_shapes_layer is not None:
             if self.roi_shapes_layer not in self.viewer.layers:
+                # Removed from the layer list: the saved ROIs are kept until
+                # shapes are drawn or Clear ROIs is clicked.
+                self._note_drawn_layer_gone("rois.json", self.roi_shapes_layer)
                 self.roi_shapes_layer = None
 
         if self.roi_shapes_layer is None:
@@ -8120,6 +8207,7 @@ class BrainSliceWidget(QWidget):
 
     def _clear_rois(self):
         """Clear all ROIs and names."""
+        self._forget_drawn_layer_gone("rois.json", "roi_shapes_layer")
         if self.roi_shapes_layer is not None:
             if self.roi_shapes_layer in self.viewer.layers:
                 self.roi_shapes_layer.data = []
