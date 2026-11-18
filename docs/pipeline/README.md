@@ -1342,9 +1342,14 @@ into its model folder (what Setup & Tuning waits for). Setup & Tuning does the
 same for its own detection and
 classification runs when napari (or the Setup & Tuning panel) is closed while
 one is still going: the row becomes `failed` with "napari was closed before the
-run finished" in `notes`. (If only the panel was closed and the run then
-finishes after all, its result is still recorded and the row becomes
-`completed`.) Only a process killed outright (the task ended from Task Manager,
+run finished" in `notes`. If only the panel was closed (napari stayed open)
+and the run then finishes after all, the row STAYS `failed`: a run's end is
+recorded once, and a row that said `completed` while its notes said it was cut
+off contradicted itself. What the late run found is not lost: a line "a result
+arrived after this run was already 'failed' and was not applied: ..." is added
+to its `notes`, naming the cell counts (and, for a detection, the file it
+wrote), and the files stay in the run's folder. To have a `completed` run, run it again with the panel
+open. Only a process killed outright (the task ended from Task Manager,
 a power cut) can still leave `started`, because it runs no code at all on the
 way out.
 

@@ -2860,11 +2860,15 @@ class TuningWidget(QWidget):
             # output_path as a candidates file, so a widget run marked Best
             # loaded nothing.
             if self.tracker and run_id:
+                # expect_status: closing the panel may already have marked
+                # this run failed; a late result never overwrites that (see
+                # ExperimentTracker.update_status).
                 self.tracker.update_status(
                     run_id,
                     status="completed",
                     det_cells_found=cell_count,
                     output_path=str(saved_xml) if saved_xml else None,
+                    expect_status="started",
                 )
                 getattr(self, '_runs_in_progress', set()).discard(run_id)
 
@@ -2964,7 +2968,7 @@ class TuningWidget(QWidget):
             QMessageBox.information(self, "Detection Complete", message)
         else:
             if self.tracker and run_id:
-                self.tracker.update_status(run_id, status="failed")
+                self.tracker.update_status(run_id, status="failed", expect_status="started")
                 getattr(self, '_runs_in_progress', set()).discard(run_id)
             QMessageBox.warning(self, "Detection Failed", message)
 
@@ -7867,11 +7871,14 @@ class TuningWidget(QWidget):
         if success:
             # Update tracker
             if self.tracker and exp_id:
+                # A late result never overwrites a run the closing panel
+                # already marked failed (see ExperimentTracker.update_status).
                 self.tracker.update_status(
                     exp_id,
                     status="completed",
                     class_cells_found=cells_found,
                     class_rejected=rejected,
+                    expect_status="started",
                 )
 
             # Log to session documenter
@@ -7939,7 +7946,7 @@ class TuningWidget(QWidget):
                     self._load_classified_cells(folder=run_folder)
         else:
             if self.tracker and exp_id:
-                self.tracker.update_status(exp_id, status="failed")
+                self.tracker.update_status(exp_id, status="failed", expect_status="started")
                 getattr(self, '_runs_in_progress', set()).discard(exp_id)
 
             self.classify_status.setText(f"Classification failed:\n{message}")

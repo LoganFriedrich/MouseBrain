@@ -980,10 +980,26 @@ class ExperimentTracker:
         exp_id: str,
         status: Optional[str] = None,
         duration_seconds: Optional[float] = None,
+        expect_status: Optional[str] = None,
         **kwargs
     ) -> bool:
         """
         Update experiment status and results.
+
+        expect_status: apply the update only while the run's status is still
+            this (e.g. 'started'), checked and written in one locked rewrite.
+            If the run has meanwhile been set to something else, its status
+            and results are left as they are, a line saying what arrived is
+            added to its notes, and False is returned.
+
+            WHY: the Setup & Tuning panel marks a run it started 'failed'
+            when the panel is closed while the run is still going (see
+            fail_unfinished). The run's thread can still finish afterwards;
+            its result used to turn that row into 'completed' while its notes
+            said it had been cut off -- a row contradicting itself. A run's
+            end is recorded once: a late result is kept in the notes (so the
+            cells it found and the file it wrote can still be found) but never
+            overwrites the end already recorded.
 
         Common kwargs:
             det_cells_found: int - Detection cell count
@@ -1012,7 +1028,30 @@ class ExperimentTracker:
             if field in kwargs and kwargs[field] is not None:
                 updates[field] = kwargs[field]
 
-        return self._update_row(exp_id, updates)
+        if expect_status is None:
+            return self._update_row(exp_id, updates)
+
+        def mutate(rows):
+            row = next((r for r in rows if r.get('exp_id') == exp_id), None)
+            if row is None:
+                return "missing"
+            if row.get('status') != expect_status:
+                if updates == {'status': row.get('status')}:
+                    # The same end again (a run already marked failed now
+                    # reports failure): nothing new to keep.
+                    return "same"
+                arrived = ", ".join("%s=%s" % (k, v) for k, v in updates.items())
+                late = ("a result arrived after this run was already '%s' and was "
+                        "not applied: %s" % (row.get('status') or '', arrived))
+                row['notes'] = "; ".join(filter(None, [row.get('notes', ''), late]))
+                return "late"
+            row.update({k: str(v) if v is not None else "" for k, v in updates.items()})
+            return "ok"
+        outcome = self._rewrite(mutate)
+        if outcome == "late":
+            print("[Tracker] [!] Run %s had already ended; a later result was added "
+                  "to its notes, not applied" % exp_id)
+        return outcome == "ok"
 
     def rate_experiment(
         self,
