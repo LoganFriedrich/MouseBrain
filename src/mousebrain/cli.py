@@ -308,9 +308,9 @@ def check_dependencies():
 
     sections = [
         ("Core (always required)", core_deps),
-        ("3D Pipeline — pip install mousebrain[3d]", deps_3d),
-        ("2D Pipeline — pip install mousebrain[2d]", deps_2d),
-        ("2D Alignment — pip install mousebrain[2d-alignment]", deps_2d_align),
+        ("3D Pipeline -- pip install mousebrain[3d]", deps_3d),
+        ("2D Pipeline -- pip install mousebrain[2d]", deps_2d),
+        ("2D Alignment -- pip install mousebrain[2d-alignment]", deps_2d_align),
         ("napari Plugins", plugins),
     ]
 
