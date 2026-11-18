@@ -235,6 +235,14 @@ def same_brain_name(logged: Optional[str], brain: str) -> bool:
     return name == want or name.endswith('/' + want)
 
 
+def _bare_brain_name(logged: Optional[str]) -> str:
+    """The brain's own name from a tracker `brain` value: "<mouse>/<brain>"
+    (scripts) and "<brain>" (napari widget) both give "<brain>". Passed to
+    same_brain_name, it matches the rows of this brain in either form."""
+    name = (logged or '').strip().replace(chr(92), '/').rstrip('/')
+    return name.rsplit('/', 1)[-1]
+
+
 # =============================================================================
 # EXPERIMENT TRACKER CLASS
 # =============================================================================
@@ -1198,9 +1206,16 @@ class ExperimentTracker:
             target = next((r for r in rows if r.get('exp_id') == exp_id), None)
             if target is None:
                 return False
+            # The brain is matched as a whole name, in either form (see
+            # same_brain_name and _bare_brain_name): the napari widget logs
+            # "<brain>", the pipeline scripts "<mouse>/<brain>". An exact
+            # string compare left a Best logged in the other form standing,
+            # so the brain had two, and "Load best" took the first in file
+            # order -- the OLDER run.
+            bare = _bare_brain_name(target.get('brain'))
             for row in rows:
                 if (row is not target
-                        and row.get('brain') == target.get('brain')
+                        and same_brain_name(row.get('brain'), bare)
                         and row.get('exp_type') == target.get('exp_type')
                         and row.get('marked_best') == 'True'):
                     row['marked_best'] = ''
@@ -1261,12 +1276,13 @@ class ExperimentTracker:
             paradigm = target.get('imaging_paradigm') or ''
             if not paradigm:
                 return "no_paradigm"
+            bare = _bare_brain_name(target.get('brain'))  # either name form, as in mark_as_best
             for row in rows:
                 if row is target or row.get('exp_type') != target.get('exp_type'):
                     continue
                 if row.get('imaging_paradigm') == paradigm and row.get('paradigm_best') == 'True':
                     row['paradigm_best'] = ''
-                if row.get('brain') == target.get('brain') and row.get('marked_best') == 'True':
+                if same_brain_name(row.get('brain'), bare) and row.get('marked_best') == 'True':
                     row['marked_best'] = ''
             target['paradigm_best'] = 'True'
             target['marked_best'] = 'True'

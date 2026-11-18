@@ -1251,6 +1251,14 @@ run type), and each imaging setup at most one Paradigm Best:
 - *Archiving* a run clears both its Best and its Paradigm Best (no Best
   button archives a run any more; see above). An archived run is never used as
   the settled method, even if an old tracker row still carries the mark.
+- "The brain" means the brain whichever way a run names it. A run made in
+  Setup & Tuning is logged under the brain's own name (`<brain>`), a run made
+  by a pipeline step under `<mouse>/<brain>`; both are the same brain. Marking
+  either kind Best (or Paradigm Best) clears the Best of the other kind too.
+  (It used to clear only a Best logged under exactly the same text, so a brain
+  could end up with two Bests -- two stars in the run list -- and *Load best
+  detection* loaded the older one. Marking the run you want Best again puts
+  that right.)
 - Each change is one locked write of the tracker, so a mark is never left half
   moved.
 - *Load best detection* (the check box when loading a brain in Setup & Tuning)
