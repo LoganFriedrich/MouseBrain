@@ -230,7 +230,8 @@ def _widget(tmp_path):
                  "_schedule_unrecorded_retry", "_retry_unrecorded_results",
                  "_open_tracker", "_run_colocalization", "_run_dual_colocalization",
                  "_on_dual_coloc_finished", "_on_coloc_finished", "_coloc_could_not_start",
-                 "_refuse_if_analysis_running", "_analysis_in_progress"):
+                 "_refuse_if_analysis_running", "_analysis_in_progress",
+                 "_set_new_nuclei"):
         if hasattr(BrainSliceWidget, name):
             setattr(w, name, types.MethodType(getattr(BrainSliceWidget, name), w))
     return w

@@ -6224,9 +6224,10 @@ class BrainSliceWidget(QWidget):
                 results['merged_properties'] = df[mask].reset_index(drop=True)
                 results['total_cells'] = len(results['merged_properties'])
 
-            # Store results
-            self.nuclei_labels = results['merged_labels']
-            self._labels_run_id = run_id
+            # Store results. The previous measurements are forgotten and
+            # Quantify turned off, exactly as after a whole-image detection
+            # (_set_new_nuclei says why).
+            self._set_new_nuclei(results['merged_labels'], run_id)
             count = results['total_cells']
 
             # Update tracker. In its own try, like _on_detect_finished: a
@@ -6310,6 +6311,23 @@ class BrainSliceWidget(QWidget):
         """Handle detection progress updates."""
         self.status_label.setText(message)
 
+    def _set_new_nuclei(self, labels, run_id) -> None:
+        """Put a new detection's nuclei in the window, and forget what was
+        measured on the nuclei they replace.
+
+        Measurements belong to the nuclei they were measured on. WHY
+        forgotten here: after a new detection Quantify stayed on and counted
+        the previous detection's colocalization as if it described these
+        nuclei, and leaving the image saved the old measurements.csv beside
+        the new nuclei.npz as one pair that would be restored together. Both
+        ways of detecting (the whole image, and the image with insets) come
+        through here, so neither can keep the old measurements. Run
+        Colocalization again to measure the new nuclei."""
+        self.nuclei_labels = labels
+        self._labels_run_id = run_id
+        self.cell_measurements = None
+        self.quant_btn.setEnabled(False)
+
     def _on_detect_finished(self, success: bool, message: str, count: int, labels, metrics=None):
         """Handle detection completion."""
         # This detection's own row, and the window is free for the next run.
@@ -6333,14 +6351,7 @@ class BrainSliceWidget(QWidget):
             return
 
         if success:
-            self.nuclei_labels = labels
-            self._labels_run_id = run_id
-            # Measurements belong to the nuclei they were measured on. WHY
-            # forgotten here: after a new detection Quantify stayed on and
-            # counted the previous detection's colocalization as if it
-            # described these nuclei. Run Colocalization again to measure them.
-            self.cell_measurements = None
-            self.quant_btn.setEnabled(False)
+            self._set_new_nuclei(labels, run_id)
 
             # Update tracker (wrapped so failures don't block layer creation)
             record_problem = None
