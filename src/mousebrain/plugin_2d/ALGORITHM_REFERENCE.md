@@ -767,7 +767,14 @@ which, and nothing changes:
 - `<file>: not opened -- <other file> is still loading. Wait for it to finish, then try again.`
 - `<file>: not opened -- detection is still running on the image on screen. ...`
   (or colocalization, or quantification). The result belongs to the image it started
-  on; wait for it.
+  on; wait for it. This also answers a click made while a detection or colocalization
+  result is being written to the tracker (the status bar then said `Saving the result
+  to the calibration tracker...`): the analysis counts as running until its result
+  is on screen and recorded, so the status bar may already show that result by the
+  time you look. Click again. WHY: such a click used to open the next image right
+  then; the image on screen was saved and cleared, and the result was then drawn
+  over the image being loaded, with Colocalize / Run Quantification turned on for
+  it.
 - `<file>: not opened -- the batch is waiting for ROIs. Finish it with Count & Next or
   Skip, then open the image.` The batch's ROI drawing has no way back in once left,
   so the image is refused rather than the batch abandoned.

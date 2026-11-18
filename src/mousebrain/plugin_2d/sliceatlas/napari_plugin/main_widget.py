@@ -541,7 +541,7 @@ class BrainSliceWidget(QWidget):
         self._labels_run_id: Optional[str] = None
         # Which analysis worker is going ('detection' / 'colocalization'),
         # None when none is. Set just before the worker starts and cleared
-        # first thing in its result handler; see _analysis_in_progress.
+        # when its result handler has finished; see _analysis_in_progress.
         self._analysis_running: Optional[str] = None
         # The image array the running detection was started on. A result
         # for any other array is dropped (see _on_detect_finished).
@@ -6507,8 +6507,16 @@ class BrainSliceWidget(QWidget):
             self._detection_run_id = run_id
 
             if use_insets:
-                # Run inset-aware detection (synchronous for now)
-                self._run_inset_detection(params, inset_settings)
+                # Run inset-aware detection (synchronous for now). It counts
+                # as running while it goes: its tracker write lets the window
+                # answer clicks, and an image opened then was saved and
+                # cleared under this detection's feet (see
+                # _on_detect_finished).
+                self._analysis_running = "detection"
+                try:
+                    self._run_inset_detection(params, inset_settings)
+                finally:
+                    self._analysis_running = None
             else:
                 if inset_note:
                     self.status_label.setText(f"Running detection... ({inset_note})")
@@ -6715,10 +6723,26 @@ class BrainSliceWidget(QWidget):
         self.quant_btn.setEnabled(False)
 
     def _on_detect_finished(self, success: bool, message: str, count: int, labels, metrics=None):
-        """Handle detection completion."""
-        # This detection's own row, and the window is free for the next run.
+        """Handle detection completion. The detection counts as running
+        until this handler is done, and only then is the window free.
+
+        WHY: the handler writes the tracker on the window's own thread, and
+        that write lets the window answer clicks waiting meanwhile. With the
+        window already free, a queued Browse / Load opened the next image
+        right then: the image on screen was saved and cleared, and the
+        handler went on to draw this detection's nuclei over the image being
+        loaded and to turn Colocalize back on. Such a click is now refused
+        with "detection is still running" (click again once it is done)."""
+        try:
+            self._handle_detect_result(success, message, count, labels, metrics)
+        finally:
+            self._analysis_running = None
+
+    def _handle_detect_result(self, success: bool, message: str, count: int, labels,
+                              metrics=None):
+        """The body of _on_detect_finished."""
+        # This detection's own row.
         run_id = self._detection_run_id
-        self._analysis_running = None
         self.detect_btn.setEnabled(True)
         print(f"[BrainSlice] _on_detect_finished called: success={success}, count={count}, "
               f"labels type={type(labels)}, labels shape={getattr(labels, 'shape', 'N/A')}")
@@ -7091,9 +7115,9 @@ class BrainSliceWidget(QWidget):
         """Handle colocalization completion."""
         # The run this result belongs to: this colocalization's own row (see
         # _run_colocalization), never another kind of run's. The window is
-        # free for the next run.
+        # free for the next run only when this handler is done (the finally
+        # below; _on_detect_finished says why).
         run_id = self._coloc_run_id
-        self._analysis_running = None
         try:
             print(f"[BrainSlice] _on_coloc_finished: success={success}, message={message}")
             if measurements is not None:
@@ -7208,6 +7232,7 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(f"Colocalization error: {e}")
             self._fail_run_if_unfinished(run_id, f"colocalization result could not be handled: {e}")
         finally:
+            self._analysis_running = None
             self.coloc_btn.setEnabled(True)
             # Whatever ended this, the row does not stay 'started'; a completed
             # or failed row is left as it is.
@@ -7217,9 +7242,9 @@ class BrainSliceWidget(QWidget):
         """Handle dual-channel colocalization completion."""
         # The run this result belongs to: this colocalization's own row (see
         # _run_colocalization), never another kind of run's. The window is
-        # free for the next run.
+        # free for the next run only when this handler is done (the finally
+        # below; _on_detect_finished says why).
         run_id = self._coloc_run_id
-        self._analysis_running = None
         try:
             print(f"[BrainSlice] _on_dual_coloc_finished: success={success}")
 
@@ -7323,6 +7348,7 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(f"Dual colocalization error: {e}")
             self._fail_run_if_unfinished(run_id, f"dual colocalization result could not be handled: {e}")
         finally:
+            self._analysis_running = None
             self.coloc_btn.setEnabled(True)
             # Whatever ended this, the row does not stay 'started'; a completed
             # or failed row is left as it is.
