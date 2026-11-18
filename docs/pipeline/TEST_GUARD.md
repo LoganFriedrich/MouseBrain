@@ -28,7 +28,8 @@ Inside a real lab folder, during the whole test run:
 - changing a file's permissions or time stamp, linking to it;
 - opening a database file there.
 
-Reading is never refused.
+Reading an ordinary file is never refused. Opening a database file is refused
+even when it is only read (the guard cannot tell a read from a write there).
 
 ## Which folders count as "real"
 
