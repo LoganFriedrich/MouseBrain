@@ -1191,7 +1191,10 @@ new detection) makes the image's own result current again. WHY: a loaded run bri
 back its measurements without the nuclei they were measured on. Saved with the image,
 it became a `measurements.csv` with no `nuclei.npz` beside it, which every later
 opening refused and kept, so no later colocalization of that image could be saved
-again. Use **Export CSV** to keep what a loaded run shows.
+again. Use **Export CSV** to keep what a loaded run shows. One exception, not
+decided yet: **Count in ROI(s)** clicked while a loaded run is on screen (and no
+particle analysis is) counts the loaded run's cells, and those ROI counts
+(`roi_detail.csv`) ARE saved with the image, beside the image's own measurements.
 
 In general, `measurements.csv` is saved only beside the nuclei (`nuclei.npz`) it was
 measured on, and the `coloc_run_id` in `settings.json` is the colocalization those
