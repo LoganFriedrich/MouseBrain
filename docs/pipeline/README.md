@@ -987,6 +987,22 @@ folder now. What that means for you:
   "Registered again since you looked" appears and the status line now shows
   the new registration. Look at the new one (load the brain again in
   Registration QC mode) and press Approve again.
+- **Every approve or reject answer is about the registration you were shown --
+  in every window.** The same rule holds for Reject in Setup & Tuning, for the
+  pipeline dashboard (the Approve Registration button, Run Next Step's
+  Approve / Reject question, and Approve anyway...), for RUN_PIPELINE's
+  "Does the registration look good?", and for `util_approve_registration.py`.
+  Each one notes which registration it showed you (the dashboard: when it
+  last drew the brain's status, or when Run Next Step opened the QC picture;
+  RUN_PIPELINE and the script: just before they open the QC picture). If a
+  batch registered the brain again before you answered, **nothing is
+  recorded** -- neither an approval nor a rejection. The dashboard shows
+  "Registered again since you looked" and redraws the status;
+  RUN_PIPELINE and the script print `[FAIL] Nothing approved: ...` (or
+  `Nothing rejected`) and stop. Look at the new registration's QC picture and
+  answer again. (Before, the answer was written for whatever registration
+  was in the folder at that moment, so a registration nobody had looked at
+  could be approved, or turned down, under your name.)
 - **Rejecting is recorded.** Saying the registration is NOT good -- the Reject
   button in Setup & Tuning, the **Reject** button in the pipeline dashboard's
   "Does the registration look good?", "No, reject it (recorded)" in

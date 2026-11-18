@@ -273,6 +273,15 @@ def show_brain_status(brain):
             run_script('3_register_to_atlas.py')
 
     elif status['step'] == 'approve':
+        # The registration the person is about to look at. The answer below
+        # is about THAT one: approve()/reject() refuse it when a batch has
+        # registered the brain again while the person was looking
+        # (registration_approval.RegistrationChanged), instead of signing a
+        # registration nobody saw. Taken before the QC picture is opened.
+        from mousebrain.registration_approval import (RegistrationChanged,
+                                                      current_registration_id)
+        shown_id = current_registration_id(brain['path'] / "3_Registered_Atlas")
+
         # Show where the QC images are
         qc_path = brain['path'] / "3_Registered_Atlas" / "QC_registration_detailed.png"
         print(f"\nFirst, look at the QC image to check if registration is good:")
@@ -297,8 +306,12 @@ def show_brain_status(brain):
             from mousebrain.registration_approval import approve
             try:
                 approve(brain['path'] / "3_Registered_Atlas",
-                        note="approved in RUN_PIPELINE after viewing the QC picture")
+                        note="approved in RUN_PIPELINE after viewing the QC picture",
+                        expected_id=shown_id)
                 print("\n[OK] Registration approved.")
+            except RegistrationChanged as e:
+                print(f"\n[FAIL] Nothing approved: {e}")
+                print("Choose this brain again to see the new registration.")
             except ValueError as e:
                 print(f"\n[FAIL] {e}")
             input("Press Enter to continue...")
@@ -309,8 +322,14 @@ def show_brain_status(brain):
             from mousebrain.registration_approval import reject
             try:
                 reject(brain['path'] / "3_Registered_Atlas",
-                       note="rejected in RUN_PIPELINE after viewing the QC picture")
+                       note="rejected in RUN_PIPELINE after viewing the QC picture",
+                       expected_id=shown_id)
                 print("\n[OK] Registration rejected (recorded). The brain is back at 'Register'.")
+            except RegistrationChanged as e:
+                print(f"\n[FAIL] Nothing rejected: {e}")
+                print("Choose this brain again to see the new registration.")
+                input("Press Enter to continue...")
+                return 'continue'
             except ValueError as e:
                 print(f"\n[FAIL] {e}")
             # Not registered again here: on the same images and settings it

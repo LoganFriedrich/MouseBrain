@@ -44,6 +44,41 @@ from mousebrain.config import BRAINS_ROOT, find_script, iter_brains, parse_brain
 from mousebrain.tracker import ExperimentTracker
 from mousebrain.pipeline_status import brain_status
 
+
+def _registration_id_now(brain_path):
+    """The id of the registration in this brain's folder at this moment
+    (registration_approval.current_registration_id). Recorded when the
+    dashboard SHOWS a registration, so Approve / Reject act only on that one."""
+    from mousebrain.registration_approval import current_registration_id
+    return current_registration_id(Path(brain_path) / "3_Registered_Atlas")
+
+
+def _shown_registration(dashboard):
+    """The registration id the dashboard last SHOWED for the selected brain
+    (the status display, or the QC picture and question of Run Next Step), or
+    None when it has shown none.
+
+    WHY: Approve, Overrule and Reject used to act on whatever registration
+    was in the folder at the click. A batch that registered the brain again
+    after the person had looked got its new, unseen registration approved (or
+    rejected) under that person's name. The answer is now passed to
+    approve()/reject() with this id, which refuse a registration that changed
+    since (registration_approval.RegistrationChanged)."""
+    return getattr(dashboard, '_shown_registration_id', None)
+
+
+def _registration_changed(dashboard, e):
+    """Tell the person nothing was recorded because the brain was registered
+    again since they looked, and show the new state."""
+    QMessageBox.warning(
+        dashboard, "Registered again since you looked",
+        f"Nothing was recorded: {e}\n\nThe status now shows the new "
+        "registration. Look at its QC picture, then decide again.")
+    dashboard.message_label.setText(
+        "Nothing recorded: the brain was registered again since you looked.")
+    dashboard.refresh_brains()
+    dashboard.update_status_display()
+
 # The only detection option the dashboard offers. Its numbers are not here: they
 # are read from the tracker, from the run marked "Paradigm Best" for the brain's
 # imaging setup -- the same lookup step 4 does, so the dashboard shows exactly
@@ -669,6 +704,10 @@ class PipelineDashboard(QWidget):
         if not self.current_brain:
             return
 
+        # Which registration this display shows: the Approve button signs
+        # only that one (see _shown_registration). Taken BEFORE the status is
+        # read, so a registration finished in between is refused, not signed.
+        self._shown_registration_id = _registration_id_now(self.current_brain)
         status = self.get_brain_status(self.current_brain)
 
         # Update progress bar
@@ -731,6 +770,11 @@ class PipelineDashboard(QWidget):
         if not self.current_brain:
             return
 
+        # The registration the questions below are about: the QC picture is
+        # opened and the status text read right after this. Taken first, so a
+        # registration a batch finishes while the person looks is refused at
+        # the answer instead of signed unseen (see _shown_registration).
+        self._shown_registration_id = _registration_id_now(self.current_brain)
         status = self.get_brain_status(self.current_brain)
         brain_name = self.current_brain.name
 
@@ -897,19 +941,25 @@ class PipelineDashboard(QWidget):
             self._approve_current_registration()
 
     def _approve_current_registration(self):
-        """Write the approval of the registration that is in the folder NOW.
+        """Write the approval of the registration the person was shown.
 
         The person has just said yes in a dialog. Both approve paths used to
         run the approval script with a --yes it does not accept, so the script
         stopped with a usage error and nothing was approved. The approval
         names this registration (mousebrain.registration_approval), so a later
-        re-registration is not covered by it.
+        re-registration is not covered by it -- and it is refused when the
+        folder now holds another registration than the one shown
+        (_shown_registration).
         """
-        from mousebrain.registration_approval import approve
+        from mousebrain.registration_approval import RegistrationChanged, approve
         try:
             approve(self.current_brain / "3_Registered_Atlas",
-                    note="approved in the napari pipeline dashboard")
+                    note="approved in the napari pipeline dashboard",
+                    expected_id=_shown_registration(self))
             self.message_label.setText("Registration approved.")
+        except RegistrationChanged as e:
+            _registration_changed(self, e)
+            return
         except ValueError as e:
             QMessageBox.warning(self, "Nothing to approve", str(e))
         self.refresh_brains()
@@ -936,7 +986,7 @@ class PipelineDashboard(QWidget):
         """Approve a registration a person rejected, after a second question.
         The rejection goes into _archive (kept); the approval says it overruled
         one (mousebrain.registration_approval.approve, allow_rejected)."""
-        from mousebrain.registration_approval import approve
+        from mousebrain.registration_approval import RegistrationChanged, approve
         sure = self._choose(
             'Overrule the rejection?',
             'Approve this registration although it was rejected? The rejection '
@@ -948,8 +998,11 @@ class PipelineDashboard(QWidget):
         try:
             approve(self.current_brain / "3_Registered_Atlas",
                     note="approved in the napari pipeline dashboard, overruling a rejection",
-                    allow_rejected=True)
+                    allow_rejected=True, expected_id=_shown_registration(self))
             self.message_label.setText("Registration approved (the rejection was overruled).")
+        except RegistrationChanged as e:
+            _registration_changed(self, e)
+            return
         except ValueError as e:
             QMessageBox.warning(self, "Cannot approve", str(e))
         self.refresh_brains()
@@ -961,14 +1014,19 @@ class PipelineDashboard(QWidget):
         Recorded (mousebrain.registration_approval.reject): every reader then
         shows the brain back at "Register". The No used to only set this
         message, so the next refresh offered the same registration for
-        approval again, to anyone.
+        approval again, to anyone. Like Approve it is refused when the brain
+        was registered again since the person looked (_shown_registration).
         """
-        from mousebrain.registration_approval import reject
+        from mousebrain.registration_approval import RegistrationChanged, reject
         try:
             reject(self.current_brain / "3_Registered_Atlas",
-                   note="rejected in the napari pipeline dashboard")
+                   note="rejected in the napari pipeline dashboard",
+                   expected_id=_shown_registration(self))
             self.message_label.setText(
                 "Registration rejected (recorded). Fix the crop or settings, then register again.")
+        except RegistrationChanged as e:
+            _registration_changed(self, e)
+            return
         except ValueError as e:
             QMessageBox.warning(self, "Nothing to reject", str(e))
         self.refresh_brains()

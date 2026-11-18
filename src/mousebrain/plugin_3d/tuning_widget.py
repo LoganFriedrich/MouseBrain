@@ -10489,10 +10489,36 @@ class TuningWidget(QWidget):
         # no Approve button accepts it. It used to only move an existing
         # approval away, so the next reader showed the registration as merely
         # waiting for approval. Any approval is kept in _archive.
-        from mousebrain.registration_approval import reject
+        #
+        # Like Approve, it is about the registration the person was SHOWN
+        # (_shown_registration_id): a registration a script finished after
+        # they looked is not turned down unseen.
+        from mousebrain.registration_approval import RegistrationChanged, reject
+        shown = getattr(self, '_shown_registration_id', None)
+        if shown is None:
+            self._update_registration_status()
+            QMessageBox.warning(
+                self, "Look first",
+                "The registration status had not been shown for this brain yet. "
+                "It is shown now: look at the registration, then press Reject again.")
+            return
+        qc_shown = getattr(self, '_qc_view_registration_id', None)
+        if qc_shown is not None and qc_shown != shown:
+            QMessageBox.warning(
+                self, "Registered again since you looked",
+                "Nothing was rejected: the registration pictures in the viewer are "
+                "of an earlier registration of this brain. Load the brain again "
+                "(Registration QC mode), look at the new registration, then decide.")
+            return
         try:
             reject(self.current_brain / "3_Registered_Atlas",
-                   note="rejected in the napari Setup & Tuning widget")
+                   note="rejected in the napari Setup & Tuning widget",
+                   expected_id=shown)
+        except RegistrationChanged as e:
+            self._update_registration_status()
+            QMessageBox.warning(self, "Registered again since you looked",
+                                f"Nothing was rejected: {e}")
+            return
         except ValueError as e:
             QMessageBox.warning(self, "Nothing to reject", str(e))
             return

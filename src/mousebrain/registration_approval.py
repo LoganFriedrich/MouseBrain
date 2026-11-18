@@ -98,7 +98,18 @@ What happens to approvals:
                                     one (RegistrationChanged)
   * reject()                     -- a person turned the registration down; the
                                     rejection is recorded and any approval
-                                    goes into ``_archive/``
+                                    goes into ``_archive/``; ``expected_id``
+                                    as for approve()
+
+WHY EVERY WINDOW PASSES THE REGISTRATION IT SHOWED
+A person approves or rejects what they LOOKED AT: the status line, the QC
+picture. Between looking and clicking, a batch can finish registering the
+brain again. Without ``expected_id`` the click signed (or turned down) the new
+registration nobody had seen. Every window that asks (Setup & Tuning, the
+pipeline dashboard, RUN_PIPELINE, the approval script) records
+fingerprint_id() of the registration at the moment it shows it, and passes it
+here; a registration that changed since is refused with RegistrationChanged
+and nothing is written. Use current_registration_id() for that record.
   * retire_for_new_registration() -- registration is about to run again: the
                                      approval and any rejection move into
                                      ``_archive/`` with the registration they
@@ -561,8 +572,25 @@ def _who(name: Optional[str]) -> str:
 
 
 class RegistrationChanged(ValueError):
-    """approve() refused: the folder holds another registration than the one
-    the person was shown (registered again since they looked)."""
+    """approve() or reject() refused: the folder holds another registration
+    than the one the person was shown (registered again since they looked)."""
+
+
+def current_registration_id(reg_folder) -> str:
+    """fingerprint_id() of the registration in this folder now ("" when there
+    is none). A window records this when it SHOWS a registration (status line,
+    QC picture) -- before it reads the status it displays, so that a
+    registration finished in between is refused rather than signed -- and
+    passes it to approve()/reject() as ``expected_id``."""
+    return fingerprint_id(registration_fingerprint(reg_folder))
+
+
+def _refuse_if_changed(reg: Path, current: dict, expected_id: Optional[str], what: str) -> None:
+    if expected_id is not None and fingerprint_id(current) != expected_id:
+        raise RegistrationChanged(
+            "the registration in %s is not the one you were shown: it was "
+            "registered again since. Look at the new registration, then "
+            "%s it." % (reg, what))
 
 
 def approve(reg_folder, approved_by: Optional[str] = None, note: str = "",
@@ -590,11 +618,7 @@ def approve(reg_folder, approved_by: Optional[str] = None, note: str = "",
     current = registration_fingerprint(reg)
     if current is None:
         raise ValueError("no registration to approve in %s (brainreg.json not found)" % reg)
-    if expected_id is not None and fingerprint_id(current) != expected_id:
-        raise RegistrationChanged(
-            "the registration in %s is not the one you were shown: it was "
-            "registered again since. Look at the new registration, then "
-            "approve it." % reg)
+    _refuse_if_changed(reg, current, expected_id, "approve")
     state, text = approval_state(reg)
     if state in (RUNNING, INCOMPLETE, OUT_OF_DATE):
         raise ValueError("cannot approve the registration in %s: %s" % (reg, text))
@@ -614,16 +638,24 @@ def approve(reg_folder, approved_by: Optional[str] = None, note: str = "",
     return record
 
 
-def reject(reg_folder, rejected_by: Optional[str] = None, note: str = "") -> dict:
+def reject(reg_folder, rejected_by: Optional[str] = None, note: str = "",
+           expected_id: Optional[str] = None) -> dict:
     """Record that a person looked at the registration in this folder and
     turned it down. Any approval goes into ``_archive/``; every reader shows
     the brain back at the register step until it is registered again (step 3
     then archives this rejection with the registration it was for). Raises
-    ValueError when there is no registration in the folder."""
+    ValueError when there is no registration in the folder.
+
+    ``expected_id``: as for approve(). A "no" is about the registration the
+    person looked at; a registration finished after they looked has not been
+    seen, so turning it down is refused (RegistrationChanged) and nothing is
+    written -- a rejection blocks the batches from registering the brain
+    again, so a wrong one costs as much as a wrong approval."""
     reg = _reg(reg_folder)
     current = registration_fingerprint(reg)
     if current is None:
         raise ValueError("no registration to reject in %s (brainreg.json not found)" % reg)
+    _refuse_if_changed(reg, current, expected_id, "decide about")
     running = running_registration(reg)
     if running is not None and running["live"]:
         raise ValueError("nothing to reject yet in %s: %s" % (reg, running["text"]))

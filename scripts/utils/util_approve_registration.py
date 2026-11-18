@@ -23,8 +23,9 @@ import argparse
 import sys
 from pathlib import Path
 from mousebrain.registration_approval import (APPROVED, NEEDS_REGISTRATION, NOT_REGISTERED,
-                                              REJECTED, RUNNING, approval_state,
-                                              approve as record_approval, reject)
+                                              REJECTED, RUNNING, RegistrationChanged,
+                                              approval_state, approve as record_approval,
+                                              current_registration_id, reject)
 
 # =============================================================================
 # CONFIGURATION
@@ -79,14 +80,17 @@ def ask_yes_no(question: str):
         print("  Please answer yes or no.")
 
 
-def approve_registration(pipeline_folder: Path, overrule_rejection: bool = False):
+def approve_registration(pipeline_folder: Path, overrule_rejection: bool = False,
+                         expected_id=None):
     """Record that the person running this script approved the registration.
     ``overrule_rejection``: the person was told the registration had been
-    rejected and said they approve it anyway."""
+    rejected and said they approve it anyway. ``expected_id``: the
+    registration they were shown (registration_approval.approve refuses
+    another one)."""
     record_approval(pipeline_folder / FOLDER_REGISTERED,
                     note="approved with util_approve_registration.py"
                     + (" (overruling a rejection)" if overrule_rejection else ""),
-                    allow_rejected=overrule_rejection)
+                    allow_rejected=overrule_rejection, expected_id=expected_id)
     print(f"[OK] Registration approved and marked for: {pipeline_folder.name}")
     return True
 
@@ -177,6 +181,12 @@ Examples:
         print(f"  Run registration first: python 3_register_to_atlas.py --brain {args.brain}")
         sys.exit(1)
 
+    # The registration this run shows the person (status, QC pictures). The
+    # yes/no below is about THAT one: if a batch registers the brain again
+    # while they look, the answer is refused instead of signing (or turning
+    # down) a registration nobody saw. Taken before the state is read.
+    shown_id = current_registration_id(reg_folder)
+
     # A registration that is there but cannot be approved (it did not finish
     # ...): say why and stop, instead of showing pictures and asking a
     # question whose "yes" would be refused.
@@ -249,13 +259,25 @@ Examples:
         if not answer:
             # "no" is a rejection, and it is recorded: every reader shows the
             # brain back at "Register" and nobody approves it by accident.
-            reject(reg_folder, note="rejected with util_approve_registration.py")
+            try:
+                reject(reg_folder, note="rejected with util_approve_registration.py",
+                       expected_id=shown_id)
+            except RegistrationChanged as e:
+                print(f"\n[FAIL] Nothing rejected: {e}")
+                print("  Run this script again to see the new registration.")
+                sys.exit(1)
             print("\n[FAIL] Registration REJECTED (recorded)")
             print("  Adjust the crop or parameters, then register the brain again")
             sys.exit(1)
 
     # Create approval marker
-    approve_registration(pipeline_folder, overrule_rejection=overrule)
+    try:
+        approve_registration(pipeline_folder, overrule_rejection=overrule,
+                             expected_id=shown_id)
+    except RegistrationChanged as e:
+        print(f"\n[FAIL] Nothing approved: {e}")
+        print("  Run this script again to see the new registration.")
+        sys.exit(1)
 
     print(f"\n{'='*60}")
     print("[OK] Registration approved!")
