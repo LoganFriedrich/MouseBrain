@@ -3144,12 +3144,20 @@ class BrainSliceWidget(QWidget):
         was not kept."""
         problem = self._save_analysis_state(warn=False)
         if problem and self.current_file is None:
-            folder = getattr(self, "current_folder", None)
-            name = folder.name if folder is not None else "the folder stack"
-            self._show_not_saved(
-                f"[!] The results on the stack {name} were NOT saved when it "
-                f"was left: results on a folder stack are never saved. Open "
-                f"each image on its own to keep its results.")
+            if getattr(self, "is_folder_load", False):
+                folder = getattr(self, "current_folder", None)
+                name = folder.name if folder is not None else "the folder stack"
+                self._show_not_saved(
+                    f"[!] The results on the stack {name} were NOT saved when "
+                    f"it was left: results on a folder stack are never saved. "
+                    f"Open each image on its own to keep its results.")
+            else:
+                # WHY not the stack wording: with no image and no stack there
+                # is no _analysis folder to write to, and saying "stack" would
+                # send the person looking for the wrong cause.
+                self._show_not_saved(
+                    f"[!] The results on screen were NOT saved when it was "
+                    f"left: no image is open to save them under. ({problem})")
         elif problem:
             name = self.current_file.name
             if not self._ask_leave_unsaved(problem):

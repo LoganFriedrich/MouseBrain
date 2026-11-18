@@ -158,3 +158,21 @@ def test_the_queue_stays_on_the_image_that_was_not_left(tmp_path, monkeypatch):
     assert w.current_file == a and w._loading_file is None
     assert w._queue_idx == 0
     assert "SAMPLE_A" in w._queue_nav_label.text()
+
+
+def test_leaving_results_with_no_image_and_no_stack_does_not_blame_a_stack(tmp_path, monkeypatch):
+    (b,) = image_files(tmp_path / "imgs", ["SAMPLE_B.tif"])
+    w = make_loading_widget(tmp_path, monkeypatch)
+    w.current_file = None
+    w.current_folder = None
+    w.is_folder_load = False
+    _particles(w)
+
+    def broken():
+        raise RuntimeError("no image to save under")
+    monkeypatch.setattr(w, "_analysis_state_in_memory", broken)
+
+    w._open_image(b, peek=False)
+    line = _red_line(w)
+    assert "NOT saved" in line
+    assert "stack" not in line.lower(), line
