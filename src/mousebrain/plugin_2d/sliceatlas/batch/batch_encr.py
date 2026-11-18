@@ -42,7 +42,9 @@ PARAMETERS (chosen per run; the banner shows each value and where it came from)
   There is no step 4: the code holds no value of its own for any of them.
   When one is given by none of the three, the batch stops before any sample
   and names every missing setting and how to give it (unset_parameters_message).
-  --ignore-tracker skips step 2. A marked run's sigma is used only at the soma
+  --ignore-tracker skips step 2. When the tracker cannot be opened, the batch
+  stops too (a run marked best there could not be checked) unless
+  --ignore-tracker is given or both --threshold and --bg-percentile are typed. A marked run's sigma is used only at the soma
   and exclusion dilations it was made at: when the batch would take a number
   from the marked run and run at other dilations, it stops before processing
   unless --soma-dilation / --dilation are typed (dilation_mismatches). With
@@ -400,6 +402,19 @@ def batch_method_params(approved: dict, values: dict, size_range: tuple) -> dict
             for key, value in used.items()}
 
 
+class TrackerUnavailable(Exception):
+    """The tracker could not be opened, so no marked-best run could be checked.
+
+    WHY this stops the batch (main()) instead of carrying on with nothing
+    marked: a run a person marked best CHOOSES the batch's sigma and
+    percentile. When the tracker cannot be opened -- its file held open by a
+    spreadsheet program, a share that dropped out -- the batch cannot tell
+    whether such a run exists; carrying on would silently replace the
+    person's choice with the approved method's numbers while the banner said
+    "no run is marked best".
+    """
+
+
 class TunedParameterConflict(Exception):
     """Two or more marked-best runs of this batch's project give different numbers.
 
@@ -540,18 +555,20 @@ def get_tuned_parameters(verbose: bool = True, project=None, sample_ids=None) ->
         {} when no qualifying run is marked best, else
         {'threshold': float, 'bg_percentile': float (when recorded),
          'source_runs': [run ids]}.
+    Raises:
+        TrackerUnavailable: the tracker could not be opened or read (see its
+            docstring for why this is not the same as "nothing marked").
+        TunedParameterConflict: qualifying runs disagree.
     """
     try:
         from ..tracker import SliceTracker
         tracker = SliceTracker()
+        # limit=None: search() keeps only the 50 newest rows by default, and
+        # an approval made weeks ago must not drop out of sight as new runs
+        # are logged.
+        rows = tracker.search(run_type='colocalization', limit=None)
     except Exception as e:
-        if verbose:
-            print(f"[!] tracker unavailable, no marked-best run can be used: {e}")
-        return {}
-
-    # limit=None: search() keeps only the 50 newest rows by default, and an
-    # approval made weeks ago must not drop out of sight as new runs are logged.
-    rows = tracker.search(run_type='colocalization', limit=None)
+        raise TrackerUnavailable(f"{type(e).__name__}: {e}") from e
     best_rows = [r for r in rows if r.get('marked_best') == 'True']
     elsewhere = [r for r in best_rows
                  if not _run_belongs_to_batch(r, project, sample_ids)]
@@ -1237,7 +1254,8 @@ def main():
     parser.add_argument('--dry-run', action='store_true',
                         help='List files without processing')
     parser.add_argument('--ignore-tracker', action='store_true',
-                        help='Do not use marked-best runs; unset options come from '
+                        help='Do not use marked-best runs (the tracker is not '
+                             'opened to look for them); unset options come from '
                              'the approved method')
     args = parser.parse_args()
 
@@ -1276,10 +1294,25 @@ def main():
     # Set when marked-best runs disagree and the typed numbers settle it, so
     # the banner says that instead of "no run is marked best".
     conflict_settled_by_typing = False
+    # Set when the tracker could not be opened but both numbers a marked run
+    # could supply were typed, so the banner says the tracker was not read.
+    tracker_unread = None
     if not args.ignore_tracker:
         try:
             tuned = get_tuned_parameters(
                 project=args.project, sample_ids={f.stem for f in nd2_files})
+        except TrackerUnavailable as e:
+            # Same rule as for disagreeing marked runs: typing both numbers
+            # makes the marked runs irrelevant; otherwise the person decides.
+            if args.threshold is None or args.bg_percentile is None:
+                parser.error(
+                    "the tracker could not be opened, so a run marked best "
+                    f"there could not be checked: {e}\nClose any program that "
+                    "has the tracker file open (a spreadsheet, for example) "
+                    "and run the batch again. Or type both --threshold and "
+                    "--bg-percentile, or use --ignore-tracker to run without "
+                    "marked-best runs.")
+            tracker_unread = str(e)
         except TunedParameterConflict as e:
             # Typing both numbers a marked run could supply settles the
             # question; otherwise the person has to choose.
@@ -1372,7 +1405,10 @@ def main():
     for k, run, mine in mismatched:
         print(f"[!] {k}: the marked-best run was made at {run}; this batch runs "
               f"at {mine} (typed on the command line)")
-    if conflict_settled_by_typing:
+    if tracker_unread is not None:
+        print(f"Tracker:   could not be opened ({tracker_unread}); not needed, "
+              "because --threshold and --bg-percentile were typed")
+    elif conflict_settled_by_typing:
         print("Tracker:   marked-best runs disagree; none used, because "
               "--threshold and --bg-percentile were typed")
     elif not tuned and not args.ignore_tracker:

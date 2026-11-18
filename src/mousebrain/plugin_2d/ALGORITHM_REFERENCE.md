@@ -1285,6 +1285,17 @@ batch would run at 6 [approved method]`. To go on, do one of these:
 
 A marked run whose notes do not record both dilations is never used.
 
+**When the tracker cannot be opened** (its file is open in another program,
+or the share is not reachable), the batch cannot tell whether a run is marked
+best, so it **stops before processing anything** with `the tracker could not
+be opened, so a run marked best there could not be checked: <reason>`. Close
+the program that has the tracker file open and run again. Or type both
+`--threshold` and `--bg-percentile` (the batch then runs without the tracker,
+and its banner says `Tracker: could not be opened (...); not needed, because
+--threshold and --bg-percentile were typed`), or use `--ignore-tracker`.
+WHY it stops: carrying on would replace the sigma a person chose by marking a
+run with the approved method's, without a word.
+
 When you type **both** `--threshold` and `--bg-percentile`, the marked run
 supplies nothing, so its dilations are not checked and the batch runs with
 what you typed (the same rule that lets typing both settle disagreeing marked
