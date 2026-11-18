@@ -934,7 +934,9 @@ them before leaving.)
 `<folder name>_roi_results.csv`, both beside the images) adds this image's rows to one
 table for the whole folder. Above the table, each sample has its own line,
 `# Settings <sample>: {...}`, with the settings its rows were made with. Appending a
-sample again replaces its rows and its line only. (Older files had a single
+sample again replaces its rows and its line only -- also when another sample's name
+begins with this one's name and `: ` (sample `A` never replaces the line of a sample
+named `A: x`). (Older files had a single
 `# Settings:` line, rewritten on every append, so it described only the sample
 appended last. It is kept, renamed `# Settings (written before each sample's settings
 were kept; they are the last sample appended then):`.) Spreadsheet programs show the

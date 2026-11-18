@@ -156,6 +156,23 @@ _LEGACY_SETTINGS_KEPT = ("# Settings (written before each sample's settings "
                          "were kept; they are the last sample appended then): ")
 
 
+def _is_settings_line_of(line: str, own: str) -> bool:
+    """True when `line` is the settings line that `own` ('# Settings
+    <sample>: ') starts: the prefix followed directly by the settings
+    themselves (one JSON object).
+
+    WHY not the prefix alone: the line of a sample whose name begins with
+    this sample's name and ': ' ('A' and 'A: x') starts with the same text,
+    so saving sample 'A' replaced the settings line of sample 'A: x'."""
+    if not line.startswith(own):
+        return False
+    import json
+    try:
+        return isinstance(json.loads(line[len(own):]), dict)
+    except ValueError:
+        return False
+
+
 def write_folder_csv(master_path, combined, sample_name: str,
                      settings: Dict[str, Any]) -> None:
     """Write a folder-wide results CSV (<folder>_particles.csv,
@@ -179,7 +196,7 @@ def write_folder_csv(master_path, combined, sample_name: str,
                 if not line.startswith("#"):
                     break
                 line = line.rstrip("\r\n")
-                if line.startswith(own):
+                if _is_settings_line_of(line, own):
                     continue
                 if line.startswith(_LEGACY_SETTINGS_PREFIX):
                     line = _LEGACY_SETTINGS_KEPT + line[len(_LEGACY_SETTINGS_PREFIX):]
