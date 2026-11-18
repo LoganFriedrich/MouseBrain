@@ -615,6 +615,18 @@ def _detection_parent_of(candidates_xml, tracker, brain_name, chosen_exp_id):
     return _provenance_exp_id(candidates_xml)
 
 
+def _marked_best(run) -> bool:
+    """Whether a tracker row is marked Best for its brain.
+
+    The tracker writes the text 'True' for a Best and leaves the cell empty
+    otherwise, and every tracker reader compares with 'True'. The run list,
+    its 'Best only' filter, its sort and the layer colors used to test the
+    value for truth instead, so a row holding any other text -- 'False'
+    written by hand or by another program -- showed as Best here while the
+    tracker (and Load best) did not count it."""
+    return (run or {}).get('marked_best') == 'True'
+
+
 def fail_runs_left_open(widget, why: str = "napari was closed before the run finished"):
     """Mark failed every tracker run this widget started that has not finished.
 
@@ -1768,14 +1780,14 @@ class TuningWidget(QWidget):
 
         # Apply filters
         if self.filter_best_only.isChecked():
-            completed = [r for r in completed if r.get('marked_best', False)]
+            completed = [r for r in completed if _marked_best(r)]
         if self.filter_this_session.isChecked():
             completed = [r for r in completed if r.get('exp_id') in self.session_run_ids]
 
         # Sort by priority: Best marked → Same session → Created time (newest first)
         def priority_key(run):
             # Higher values sort first with reverse=True
-            is_best = 2 if run.get('marked_best', False) else 0
+            is_best = 2 if _marked_best(run) else 0
             is_this_session = 1 if run.get('exp_id') in self.session_run_ids else 0
             created = run.get('created_at', '')  # ISO format, so string comparison works
             return (is_best, is_this_session, created)
@@ -1788,7 +1800,7 @@ class TuningWidget(QWidget):
 
             # Build display text with icons
             icons = ""
-            if run.get('marked_best', False):
+            if _marked_best(run):
                 icons += "★ "
             if exp_id in self.session_run_ids:
                 icons += "● "
@@ -2146,7 +2158,7 @@ class TuningWidget(QWidget):
             points[:, 0] += z_shift_on_load(run, output_path)
 
             # Determine styling based on cell_type override or automatic detection
-            is_best = run.get('marked_best', False)
+            is_best = _marked_best(run)
             is_this_session = exp_id in self.session_run_ids
             created = run.get('created_at', '')[:16]
 
@@ -3719,7 +3731,7 @@ class TuningWidget(QWidget):
             completed = [r for r in runs if r.get('status') == 'completed']
             # Sort: best first, then newest
             def priority_key(run):
-                is_best = 2 if run.get('marked_best', False) else 0
+                is_best = 2 if _marked_best(run) else 0
                 is_session = 1 if run.get('exp_id') in self.session_run_ids else 0
                 created = run.get('created_at', '')
                 return (is_best, is_session, created)
@@ -3730,7 +3742,7 @@ class TuningWidget(QWidget):
                 created = run.get('created_at', '')[:16]
                 cells = run.get('det_cells_found', '?')
                 preset = run.get('det_preset', 'custom') or 'custom'
-                is_best = run.get('marked_best', False)
+                is_best = _marked_best(run)
 
                 icons = ""
                 if is_best:
@@ -7963,7 +7975,7 @@ class TuningWidget(QWidget):
         for run in prev_classifications:
             if run.get('exp_id') != new_exp_id:
                 # Prefer marked_best, otherwise take most recent
-                if run.get('marked_best'):
+                if _marked_best(run):
                     prev_run = run
                     break
                 elif prev_run is None:

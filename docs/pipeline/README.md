@@ -1259,6 +1259,11 @@ run type), and each imaging setup at most one Paradigm Best:
   could end up with two Bests -- two stars in the run list -- and *Load best
   detection* loaded the older one. Marking the run you want Best again puts
   that right.)
+- A run counts as Best only when its `marked_best` cell in the tracker holds
+  exactly `True` (what the Best buttons write). The run list's star, its
+  *Best only* filter, its order and the green layer color follow the same
+  rule as *Load best detection*, so a cell edited to `False` (or anything
+  else) by hand never shows as Best.
 - Each change is one locked write of the tracker, so a mark is never left half
   moved.
 - *Load best detection* (the check box when loading a brain in Setup & Tuning)
