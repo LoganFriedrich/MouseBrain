@@ -181,3 +181,41 @@ def test_several_kept_results_wait_together_and_are_all_written_once_the_file_is
 
     assert [w.tracker.get_run(r)["det_nuclei_found"] for r in ids] == ["1", "2", "3"]
     assert not w._unrecorded_results and not (w._unwritable_run_ids & set(ids))
+
+
+def _result_refused_for_another_reason(w):
+    def refuse(*args, **kwargs):
+        raise ValueError("this run needs repair first")
+    w.tracker.record_result_if_started = refuse
+
+
+def test_a_kept_result_the_tracker_will_not_take_says_the_run_is_marked_failed(
+        tmp_path, monkeypatch, capsys):
+    w = _window(tmp_path, monkeypatch)
+    first = _detection_finished_while_held_open(w)
+    _result_refused_for_another_reason(w)
+    capsys.readouterr()
+
+    w._retry_unrecorded_results()
+
+    out = capsys.readouterr().out
+    assert w.tracker.get_run(first)["status"] == "failed"
+    assert "marked failed instead" in out
+    assert "dropped" not in out
+
+
+def test_a_failure_the_file_refuses_is_reported_as_tried_again_not_dropped(
+        tmp_path, monkeypatch, capsys):
+    w = _window(tmp_path, monkeypatch)
+    first = _detection_finished_while_held_open(w)
+    _result_refused_for_another_reason(w)
+    capsys.readouterr()
+
+    with _held_open_like_a_spreadsheet(w.tracker.csv_path):
+        w._retry_unrecorded_results()
+
+    out = capsys.readouterr().out
+    assert w.tracker.get_run(first)["status"] == "started"
+    assert first in w._unrecorded_results  # the failure is kept for the next try
+    assert "will be tried again" in out
+    assert "dropped" not in out

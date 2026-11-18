@@ -7296,11 +7296,25 @@ class BrainSliceWidget(QWidget):
                 refused = e
                 break
             except Exception as e:
-                print(f"[BrainSlice] [!] Run {run_id}: kept result could not be "
-                      f"written and is dropped: {e}")
+                # WHY the wording depends on the outcome: the kept result is
+                # given up (the tracker will not take it), and the run is then
+                # marked failed. If the file refuses that too, the failure is
+                # kept and tried again every cycle, so "dropped" would be
+                # wrong and the same line would repeat with a false claim.
                 pending.pop(run_id, None)
                 self._unwritable_run_ids.discard(run_id)
-                self._fail_run_if_unfinished(run_id, f"result could not be recorded: {e}")
+                if self._fail_run_if_unfinished(
+                        run_id, f"result could not be recorded: {e}"):
+                    print(f"[BrainSlice] [!] Run {run_id}: kept result could not be "
+                          f"written ({e}); the run is marked failed instead")
+                elif run_id in self._unwritable_run_ids:
+                    print(f"[BrainSlice] [!] Run {run_id}: kept result could not be "
+                          f"written ({e}); marking the run failed was refused too "
+                          f"and will be tried again")
+                else:
+                    print(f"[BrainSlice] [!] Run {run_id}: kept result could not be "
+                          f"written ({e}); the run could not be marked failed and "
+                          f"stays 'started' until the tracker file is repaired")
                 continue
             pending.pop(run_id, None)
             self._unwritable_run_ids.discard(run_id)
