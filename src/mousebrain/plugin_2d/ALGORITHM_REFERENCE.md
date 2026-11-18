@@ -143,9 +143,11 @@ These are computed using `skimage.measure.regionprops_table` for mean/max (fast,
 
 ### Step 4: Classification
 
-Each cell is classified as positive or negative based on its mean intensity relative to background:
+Each cell is classified as positive or negative based on its mean intensity relative to background.
 
-#### Fold Change Method (Default)
+The code has eight methods: `background_mean`, `fold_change`, `local_snr`, `adaptive`, `area_fraction`, `absolute`, `percentile` and `zscore` (`classify_positive_negative` in `core/colocalization.py`). Only three are described in this step. Which one is used by default depends on how you run it: the `ColocalizationAnalyzer` API defaults to `fold_change`; `brainslice-coloc` (`--coloc-method`) and the batch (section 6) default to `background_mean`.
+
+#### Fold Change Method (default of the ColocalizationAnalyzer API)
 
 ```
 fold_change = mean_intensity / background
@@ -174,10 +176,10 @@ Classifies the brightest N% of cells as positive. Useful when background estimat
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `background_method` | `'gmm'` | Background estimation method: `'gmm'`, `'percentile'`, `'mode'`, `'mean'` |
+| `background_method` | `'gmm'` for `ColocalizationAnalyzer`; `'percentile'` for the `analyze_colocalization()` convenience function | Background estimation method: `'gmm'`, `'percentile'`, `'mode'`, `'mean'` |
 | `background_percentile` | 10.0 | Percentile value (only used with `'percentile'` method) |
-| `dilation_iterations` | 20 (analyzer) / 50 (widget) | How far to expand nuclei mask to estimate tissue region. Larger = more tissue included |
-| `threshold_method` | `'fold_change'` | Classification method: `'fold_change'`, `'absolute'`, `'percentile'` |
+| `dilation_iterations` | 20 (analyzer) / 10 in the window (single channel, "Nuclei exclusion radius", range 5-200) / 50 for the green channel in dual-channel mode ("BG exclusion radius") | How far to expand nuclei mask to estimate tissue region. Larger = more tissue included |
+| `threshold_method` | `'fold_change'` (API; `brainslice-coloc` and the batch use `'background_mean'`) | Classification method: any of the eight listed above |
 | `threshold_value` | 2.0 | Threshold for classification (interpretation depends on method) |
 
 ### Fallback Strategies

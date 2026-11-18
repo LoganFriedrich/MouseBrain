@@ -36,9 +36,9 @@ The `.ims` file is read using `imaris-ims-file-reader`. Each Z-plane of each cha
 
 The pipeline needs to know which channel contains sparse cell signal and which contains diffuse tissue autofluorescence. It distinguishes them by analyzing texture:
 
-1. **Compute sparsity** — for each channel, threshold at the 95th percentile and measure what fraction of pixels exceed it. The signal channel (c-Fos, GFP) has isolated bright spots, so fewer pixels above the threshold (sparsity < 0.05). The background channel has smoother, more uniform brightness.
-2. **Compute local variance** — the signal channel has higher local variance due to punctate labeling.
-3. The channel with lower sparsity is assigned as signal; the other as background.
+1. **Compute sparsity** -- on 10 evenly spaced planes of each channel: the fraction of pixels above the 99th percentile divided by the fraction above the 90th percentile.
+2. **Compute local variance** -- on the same planes: the mean 5x5 local variance divided by the squared mean brightness. The signal channel has higher local variance due to punctate labeling.
+3. Score = sparsity + local variance; the channel with the HIGHER score is assigned as signal, the other as background.
 
 This assignment is saved to `metadata.json` and used by all downstream scripts.
 
@@ -73,7 +73,7 @@ These are stored in `metadata.json` and passed to brainreg and cellfinder.
 
 ### Known Limitations
 
-- **Channel identification assumes two channels.** Multi-channel (3+) images require manual assignment.
+- **Channel identification with three or more channels** calls the highest-scoring channel signal and every other one background; check `metadata.json` if more than one channel carries cells.
 - **Auto-crop uses width only.** It cannot distinguish brainstem (which should be kept) from cord (which should be removed) when they have similar width.
 - **IMS files on network drives are slow.** Extraction of a typical brain (~500 Z-planes, 2 channels) from a network-mounted `.ims` file can be very slow.
 
@@ -140,7 +140,7 @@ After registration, the user must review QC images and explicitly approve before
 ### Known Limitations
 
 - **Tissue damage confounds registration.** Large lesions, missing tissue, or surgical damage cause local registration errors that propagate to region assignment.
-- **Orientation must be correct.** If the orientation code is wrong, registration will fail silently — the atlas will be mapped to the wrong axes.
+- **Orientation must be correct.** If the orientation code is wrong, registration still runs and maps the atlas onto the wrong axes; check `3_Registered_Atlas/QC_orientation_check.png`, which registration draws before every run.
 - **10 µm atlas resolution.** Small structures below 10 µm are not resolved in the atlas. Cell assignments near region boundaries have inherent ~10 µm uncertainty.
 
 ---
@@ -292,9 +292,10 @@ The registration (Script 3) produces deformation fields that map between sample 
 
 | File | Contents |
 |------|----------|
-| `region_counts.csv` | Per-region cell counts (region name, cell count, hemisphere) |
-| `cells_in_regions.csv` | Per-cell data with region assignments |
-| Summary statistics | Total cells, top regions, lateralization |
+| `6_Region_Analysis/cell_counts_by_region.csv` | Per-region cell counts for the brain |
+| `6_Region_Analysis/cell_counts_elife_grouped.csv` | Counts in the eLife region groups |
+| `6_Region_Analysis/all_points_information.csv` | Per-cell data with region assignments |
+| `2_Data_Summary/region_counts.csv`, `elife_counts.csv` | One row per brain, shared by all brains |
 
 ### Known Limitations
 
@@ -310,12 +311,12 @@ The registration (Script 3) produces deformation fields that map between sample 
 
 ### What It Records
 
-Every analysis run across all pipeline stages is logged to a CSV (`calibration_runs.csv`) with 49+ columns:
+Every analysis run across all pipeline stages is logged to a CSV (`calibration_runs.csv`) with 76 columns (the list `CSV_COLUMNS` in `tracker.py`):
 
 | Field Category | Examples |
 |---------------|----------|
-| **Identity** | `exp_id`, `brain`, `created_at`, `hostname`, `username` |
-| **Hierarchy** | `project`, `cohort`, `subject`, `imaging_params` |
+| **Identity** | `exp_id`, `exp_type`, `brain`, `created_at`, `hostname`, `script_version` |
+| **Hierarchy** | `brain_id`, `project_code`, `project_name`, `cohort`, `subject`, `imaging_paradigm` |
 | **Detection params** | `det_ball_xy`, `det_ball_z`, `det_soma_diameter`, `det_threshold`, `det_preset` |
 | **Classification params** | `class_model_path`, `class_cube_size`, `class_batch_size` |
 | **Registration params** | `reg_atlas`, `reg_orientation`, `reg_voxel_z`, `reg_voxel_xy` |
@@ -329,16 +330,14 @@ Brain names encode experimental hierarchy:
 
 | Format | Example | Parsed As |
 |--------|---------|-----------|
-| Standard | `001_CNT_01_01_1p625x_z4` | brain=349, project=CNT, cohort=01, subject=02, mag=1.625x, zstep=4µm |
+| Standard | `001_CNT_01_01_1p625x_z4` | brain=001, project=CNT, cohort=01, subject=01, mag=1.625x, zstep=4µm |
 | Paradigm | `1p625x_z4` | Imaging paradigm (magnification + Z-step) |
 
 The paradigm is used to retrieve best settings across brains with identical imaging parameters.
 
 ### Paradigm-Best System
 
-When a user marks a run as "best" for a brain, the tracker records the detection parameters and classification model associated with that paradigm. When a new brain with the same paradigm is processed, these proven settings are offered as defaults.
-
-This implements a form of transfer learning at the parameter level — settings optimized on one brain of a given type are automatically suggested for the next brain of the same type.
+Only a run a person marked **Paradigm Best** defines the settled method of its imaging setup (paradigm). Step 4, the pipeline dashboard and the batch runners USE that method for every brain of the same paradigm (they do not merely offer it). Step 4 stops if no run is marked Paradigm Best for the brain's paradigm, unless all eight detection settings are given on its command line. A brain-level Best is never used for other brains. See "The Settled Detection Method" in `docs/pipeline/README.md`.
 
 ---
 
@@ -370,13 +369,13 @@ This implements a form of transfer learning at the parameter level — settings 
 
 | Component | Version | Key Changes |
 |-----------|---------|-------------|
-| Organization | v1.0.0 | Folder structure creation |
+| Organization | v1.0.1 | Folder structure creation |
 | Extraction | v1.4.0 | Gradient-based crop detection, channel identification by sparsity+texture |
 | Registration | v2.0.2 | brainreg with archiving, QC generation, approval gating |
 | Detection | v1.0.1 | Python API (replaces deprecated CLI), settled method (all eight settings) from the tracker |
 | Classification | v1.0.0 | ResNet50 with .keras support, paradigm-best model lookup |
 | Region Counting | v1.0.1 | brainglobe-utils coordinate transformation, per-region CSV |
-| Tracking | — | 49-column CSV with paradigm-best retrieval |
+| Tracking | — | 76-column CSV with paradigm-best retrieval |
 
 ---
 
