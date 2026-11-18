@@ -110,8 +110,11 @@ FILES IT MAY LEAVE IN THE LOCK'S FOLDER
   instant, and is then cleared by a later waiter (see above).
 All three are safe to delete when nothing is holding the lock.
 
-The calibration tracker (mousebrain.tracker) keeps its own, older copy of
-this algorithm for its CSV; it does not use this module.
+Every lock in this package goes through this module: the calibration
+tracker (mousebrain.tracker, calibration_runs.csv), the 2D slice tracker and
+the analysis registry. (The calibration tracker used to keep its own, older
+copy of this algorithm, without the background refresh, with the move-aside
+takeover described above, and with a single-attempt release.)
 """
 
 import os

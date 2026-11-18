@@ -1303,11 +1303,17 @@ This eliminates the months-long manual optimization cycles by keeping a complete
 machines write it, and every status change rewrites the whole file, so each write:
 
 - holds a lock file beside it, `calibration_runs.csv.lock`, for the moment of the
-  write (well under a second). Another machine that wants to write waits and
-  prints `Waiting for the tracker lock (held by ...)`. A lock left by a process
-  that crashed is taken over after 2 minutes (by the file server's clock). If a
-  write ever reports that the tracker has been locked for 5 minutes and nothing
-  is running, delete the `.lock` file.
+  write (usually well under a second). Another machine that wants to write waits
+  and prints `[Tracker] Waiting for the lock on calibration_runs.csv (held by ...)`.
+  While a write is going on, the program doing it refreshes its lock every 30
+  seconds, so a write that is slow because the share is slow is never mistaken
+  for a crashed one. A lock nobody has refreshed for 2 minutes (by the file
+  server's clock) was left by a process that crashed, and the next writer takes
+  it over and prints `[Tracker] [!] Took over a lock left ... by: ...`. If a write
+  ever reports that the tracker has been locked for 5 minutes and nothing is
+  running, delete the `.lock` file. (This is the same lock the slice tracker and
+  the analysis registry use, `mousebrain.file_lock`; a `.lock.break` file beside
+  it is part of the takeover and is also safe to delete when nothing is running.)
 - keeps the file's own column order and every column in it, including columns
   added by a newer version of the code -- an older copy of the code can no
   longer delete them.

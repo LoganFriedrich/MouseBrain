@@ -33,7 +33,6 @@ Usage as CLI:
 
 import csv
 import os
-import socket
 import sys
 import time
 import uuid
@@ -50,6 +49,7 @@ import json
 
 # Default location for the calibration runs CSV
 from mousebrain.config import CALIBRATION_RUNS_CSV as DEFAULT_TRACKER_PATH, parse_brain_name
+from mousebrain.file_lock import exclusive_file_lock
 
 # Experiment types
 EXP_TYPES = ["detection", "training", "classification", "selective_classification", "registration", "counts", "prefilter"]
@@ -207,11 +207,13 @@ DETECTION_METHOD_COLUMNS = {
 # temporary file in the file's own column order (keeping columns this version
 # does not know), and swaps it in with os.replace.
 #
-# The lock is a file created with O_EXCL, which the file server grants to
-# exactly one machine. A holder that crashed leaves it behind, so a lock older
-# than LOCK_STALE_SECONDS -- measured by the FILE SERVER's clock, not this
-# machine's, because the machines' clocks differ -- is taken over. A real
-# holder keeps it well under a second (one CSV rewrite).
+# The lock is mousebrain.file_lock (see ExperimentTracker._csv_lock): a file
+# created with O_EXCL, which the file server grants to exactly one machine. A
+# holder that crashed leaves it behind, so a lock untouched for
+# LOCK_STALE_SECONDS -- measured by the FILE SERVER's clock, not this
+# machine's, because the machines' clocks differ -- is taken over. A live
+# holder refreshes its lock in the background, so a rewrite that is slow on a
+# slow share is never mistaken for a crashed one.
 LOCK_STALE_SECONDS = 120
 LOCK_WAIT_SECONDS = 300
 REPLACE_RETRY_SECONDS = 30  # a reader on Windows can hold the file open briefly
@@ -308,94 +310,29 @@ class ExperimentTracker:
     def _lock_path(self) -> Path:
         return self.csv_path.with_name(self.csv_path.name + ".lock")
 
-    def _server_now(self) -> float:
-        """The file server's current time: the modification time of a file
-        written there just now."""
-        probe = self.csv_path.with_name(".%s.clock-%s" % (self.csv_path.name, uuid.uuid4().hex[:8]))
-        try:
-            probe.write_bytes(b"")
-            return probe.stat().st_mtime
-        finally:
-            try:
-                probe.unlink()
-            except OSError:
-                pass
-
-    def _take_over_stale_lock(self, seen: str) -> bool:
-        """Remove the lock if it is still the one we saw (content `seen`) and
-        it has been held longer than LOCK_STALE_SECONDS by the server's clock.
-        Returns True when the caller should try to take the lock again."""
-        lock = self._lock_path
-        try:
-            age = self._server_now() - lock.stat().st_mtime
-        except FileNotFoundError:
-            return True
-        if age < LOCK_STALE_SECONDS:
-            return False
-        # Move it aside (only one machine's rename can succeed), then check it
-        # is the stale lock we judged and not a fresh one taken meanwhile.
-        aside = lock.with_name(lock.name + ".stale-" + uuid.uuid4().hex[:8])
-        try:
-            os.rename(lock, aside)
-        except OSError:
-            return True
-        try:
-            content = aside.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            content = seen
-        if content != seen:
-            try:
-                os.rename(aside, lock)  # not ours to break: put it back
-            except OSError:
-                pass
-            return True
-        print("[Tracker] [!] Took over a lock left %.0f s ago by: %s" % (age, seen.strip()))
-        try:
-            aside.unlink()
-        except OSError:
-            pass
-        return True
-
     @contextmanager
     def _csv_lock(self):
-        """Hold the tracker's write lock for the duration of the block."""
-        lock = self._lock_path
-        mine = "%s pid %d at %s token %s\n" % (socket.gethostname(), os.getpid(),
-                                               datetime.now().isoformat(timespec="seconds"),
-                                               uuid.uuid4().hex)
-        deadline = time.monotonic() + LOCK_WAIT_SECONDS
-        told = False
-        while True:
-            try:
-                fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-                    f.write(mine)
-                break
-            except (FileExistsError, PermissionError):
-                try:
-                    seen = lock.read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    seen = ""
-                if seen and self._take_over_stale_lock(seen):
-                    continue
-                if time.monotonic() > deadline:
-                    raise TimeoutError(
-                        "the calibration tracker %s is locked by %s for longer than %d s. If "
-                        "nothing is writing to it, delete %s." % (
-                            self.csv_path, seen.strip() or "another process",
-                            LOCK_WAIT_SECONDS, lock))
-                if not told:
-                    print("[Tracker] Waiting for the tracker lock (held by %s)" % (seen.strip() or "?"))
-                    told = True
-                time.sleep(0.2)
-        try:
+        """Hold the tracker's write lock for the duration of the block.
+
+        The lock is mousebrain.file_lock, the same lock the analysis registry
+        and the 2D slice tracker use. WHY not a copy of its own: the tracker
+        used to keep an older copy of that algorithm, which (1) never
+        refreshed a live lock, so a rewrite that took longer than
+        LOCK_STALE_SECONDS on a slow share was judged abandoned and taken over
+        -- two writers at once, and the second rewrite silently dropped the
+        first one's rows; (2) took a lock over by moving it aside and putting
+        it back when it turned out to be fresh, which leaves the lock's name
+        free for a moment so a third writer can take it; and (3) released the
+        lock with one delete, which Windows refuses while another process has
+        the lock file open for a moment to read who holds it -- the lock then
+        stayed behind and every writer waited it out. file_lock refreshes a
+        live lock in the background, takes over an abandoned one only while
+        holding a one-at-a-time breaker, and retries the release. The limits
+        are read here, at call time, so a test or a caller can change them."""
+        with exclusive_file_lock(self.csv_path, "Tracker",
+                                 stale_seconds=LOCK_STALE_SECONDS,
+                                 wait_seconds=LOCK_WAIT_SECONDS):
             yield
-        finally:
-            try:
-                if lock.read_text(encoding="utf-8", errors="replace") == mine:
-                    lock.unlink()
-            except OSError:
-                pass
 
     def _replace(self, tmp: Path) -> None:
         deadline = time.monotonic() + REPLACE_RETRY_SECONDS
