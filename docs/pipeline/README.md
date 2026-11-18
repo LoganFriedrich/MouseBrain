@@ -713,8 +713,11 @@ or is still waiting for approval is **not counted**:
 - `--brain <brain>` (and the pipeline dashboard's Count, Setup & Tuning's
   **Run Region Counts**, RUN_PIPELINE, batch_process and overnight_batch, which
   all run it) prints `[FAILED] Not counted: its registration is not approved
-  (<state>): <why>`, starts no tracker run, and ends with exit code 1, so the
-  window or batch that started it reports a failure.
+  (<state>): <why>`, starts no tracker run, and ends with exit code 1. The
+  pipeline dashboard then says "Error - check console", Setup & Tuning shows
+  "Region Counting Failed" with step 6's last lines, and batch_process and
+  overnight_batch record the brain as failed at the count step; RUN_PIPELINE
+  shows step 6's own output in its terminal.
 - `--all` lists such brains under `Not counted until their registration is
   approved:` with the reason for each, and counts the others. A brain waiting
   for approval is not a failure: `--all` still ends with exit code 0 if every
@@ -741,8 +744,9 @@ would not be counted, and why.
 
 **Exit code.** Step 6 ends with 1 when any brain it was asked to count was not
 counted (refused, or its count failed), else 0. Before, a count that failed
-still ended with 0, and the windows and batches that run step 6 reported it
-as done.
+still ended with 0, and the pipeline dashboard, Setup & Tuning, batch_process
+and overnight_batch -- which judge step 6 by its exit code -- reported it as
+done.
 
 **How the cells are placed in regions, and no quiet second method.** Step 6
 places each cell in an atlas region with BrainGlobe's own transform through the
@@ -803,10 +807,16 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
     promoted to production.
 
   Each prints `Counts of <brain> withdrawn from ...`. Nothing is deleted. The
-  brain's own `6_Region_Analysis` files stay where they are, and RUN_PIPELINE
-  and the dashboard show the brain at "Count" again: once its registration is
-  approved, `6_count_regions.py --all` (or `--brain <brain>`) counts it and
-  puts a fresh row and a fresh registry entry back. Why: the rows used to stay
+  brain's own `6_Region_Analysis` files stay where they are. Where RUN_PIPELINE
+  and the dashboard then show the brain depends on what happened: after a
+  rejection or a re-crop it is back at "Register" (register it again and
+  approve it first); after a new classification it is at "Count". Once its
+  registration is approved, `6_count_regions.py --all` (or `--brain <brain>`)
+  counts it and puts a fresh row and a fresh registry entry back. `--all` is
+  the reliable way to find every brain without a production row: the status
+  readers judge "counted" by the brain's own `6_Region_Analysis` files, so a
+  brain whose count was refused at the end (next bullet) still reads as
+  counted there. Why: the rows used to stay
   until someone counted the brain again -- and the registry entry stayed
   current even then, for rejections and re-crops always -- and nothing told
   them apart from current counts. If a withdrawal cannot be done (the tables
@@ -831,7 +841,13 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   used to be written after the withdrawal, and its files were newer than the
   new `cells.xml`, so it looked current; and a count that could not be
   entered in the registry was called finished, with the problem only in the
-  console.
+  console. Two things to know: the brain's own `6_Region_Analysis` files of
+  such a run were already written, so the dashboard, RUN_PIPELINE and
+  batch_process `--resume` show the brain as counted -- check the run's
+  tracker row or run `6_count_regions.py --all`, which counts it again. And
+  when a brain that already had counts is counted again and this run's
+  writing fails, the brain is left with NO production row (the earlier row
+  is in the archive, its registry entry retired) until it is counted again.
 - **One run at a time changes these tables.** Step 6, the rebuild
   `python regenerate_derived_counts.py` (which remakes `elife_counts.csv` and
   `hemisphere_laterality_analysis.csv` from `region_counts.csv`), and the
@@ -1257,10 +1273,12 @@ in its place, because cell positions only mean something in the images the
 atlas was fitted to. The message is "the registration of <brain> was fitted to
 the images in <folder>, and that folder holds no images". What each tool does:
 step 5, the pre-filter and Setup & Tuning stop with it. Step 6 does NOT count
-that brain -- it prints `[FAILED] Not counted:` with the message, writes no
-counts for it (it does not fall back to the less accurate direct atlas
-lookup either), and goes on with the other brains; its summary line counts
-the brain as failed. Put the images back, or register the brain again on the
+that brain, and does not fall back to the less accurate direct atlas lookup
+either: such a registration reads as out of date ("the images it was fitted
+to are gone: ..."), so it is refused like any registration that is not
+approved -- `--brain` prints `[FAILED] Not counted:` with the message and
+counts it as failed, `--all` lists it under `Not counted until their
+registration is approved:` and goes on with the other brains. Put the images back, or register the brain again on the
 images that are there now.
 
 **Where the results go**

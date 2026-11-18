@@ -2478,10 +2478,10 @@ Examples:
         print("=" * 60)
 
     # Non-zero when any brain asked for was not counted (refused, or its
-    # count failed). WHY: every caller -- the pipeline dashboard, Setup &
-    # Tuning's Run Region Counts, RUN_PIPELINE, batch_process, overnight_batch
-    # -- judges step 6 by its exit code, and a count that failed used to end
-    # with 0, so they reported it as done.
+    # count failed). WHY: the pipeline dashboard, Setup & Tuning's Run Region
+    # Counts, batch_process and overnight_batch judge step 6 by its exit code
+    # (RUN_PIPELINE shows its output in the terminal instead), and a count
+    # that failed used to end with 0, so they reported it as done.
     return 1 if failed_count else 0
 
 
