@@ -476,6 +476,19 @@ Every analysis run is logged to a CSV (`calibration_runs.csv`) with:
 
 The file lives at `<MouseBrain_Pipeline>/2D_Slices/2_Data_Summary/calibration_runs.csv`.
 
+**Saving it from a spreadsheet program.** Saving the file as "CSV UTF-8" puts an
+invisible mark (a byte-order mark) in front of the first column name. The tracker
+reads past that mark, so every run is still found by its `run_id`, and the next
+change the tracker writes removes it. Before this change the mark made the tracker
+add a second, empty `run_id` column and then find none of the existing runs (status
+updates, marking best, the batch's look-up of marked runs all missed them). A file
+left that way -- `run_id` twice in the header, the second copy empty -- is repaired
+the next time the tracker is opened: the two columns become one, each row keeping
+its id. If a row holds two DIFFERENT values under one repeated column name, the
+tracker will not choose between them: it stops with `... has different values ...
+under the repeated column '<name>'. Repair it first.` and changes nothing. Open the
+file, delete the wrong copy of that column, save, and try again.
+
 **Reproducing a detection from its row.** `det_backend` says which method ran
 (`stardist`, `cellpose`, `threshold`, `threshold+log`) and `det_preprocessing` holds
 every setting the napari window ran it with, as JSON text (for example

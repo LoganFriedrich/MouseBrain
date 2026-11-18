@@ -50,6 +50,18 @@ REPLACE_RETRY_SECONDS = 30  # a reader on Windows can hold the file open briefly
 # SliceTracker.__init__ and the widget's _open_tracker). The module values are
 # for the batch, which can afford to wait.
 
+# HOW THE CSV IS READ: every read opens it as 'utf-8-sig'. WHY: a spreadsheet
+# program saving the tracker as "CSV UTF-8" puts a byte-order mark (BOM) in
+# front of the first column name. Read as plain 'utf-8', the first column was
+# then called BOM+'run_id', not 'run_id': the next open "added" a second, empty
+# run_id column, and from then on no existing run could be found by its id
+# (status updates, mark-as-best, failing an unfinished run, the batch's
+# marked-best lookup all missed every old row). 'utf-8-sig' drops the mark
+# and reads a file without one exactly as 'utf-8' does. Writes stay plain
+# 'utf-8' (no mark), so the next rewrite also removes it.
+READ_ENCODING = "utf-8-sig"
+
+
 # The one word for a run that did not finish. WHY: the batch used to write
 # 'error' and the widget 'failed' for the same state, so anything looking for
 # failed runs missed the batch's. update_status turns 'error' into this.
@@ -148,10 +160,14 @@ class SliceTracker:
         """Give a tracker written before the newest columns those columns,
         every existing value kept under its own name, before anything is
         appended to it (see _write_row)."""
-        with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
+        with open(self.csv_path, 'r', newline='', encoding=READ_ENCODING) as f:
             header = next(csv.reader(f), None) or []
-        if all(col in header for col in CSV_COLUMNS):
+        if all(col in header for col in CSV_COLUMNS) and len(set(header)) == len(header):
             return
+        # Also rewritten: a header that names one column twice -- left by an
+        # older version that read a byte-order-marked file (see READ_ENCODING)
+        # and added a second, empty run_id. The rewrite folds the two into one
+        # (see _parse), so the old rows are found by their ids again.
         self._rewrite(lambda rows: None)
 
     # -----------------------------------------------------------------
@@ -196,12 +212,47 @@ class SliceTracker:
                 pass
             raise
 
+    def _parse(self, f):
+        """(header, rows) of an open CSV, every column name once.
+
+        A header that names a column twice is folded into one column. WHY:
+        an older version of this code, reading a file saved with a byte-order
+        mark, took its first column for an unknown one and appended a second,
+        empty 'run_id' (see READ_ENCODING); read as dicts, the empty
+        right-hand copy hid every real id. Each row keeps the one non-empty
+        value of the repeated column. Two DIFFERENT non-empty values under
+        one name cannot be folded without choosing one, so that raises
+        RuntimeError: a person has to look.
+        """
+        reader = csv.reader(f)
+        raw_header = next(reader, None) or []
+        header = list(dict.fromkeys(raw_header))
+        positions = {name: [i for i, h in enumerate(raw_header) if h == name]
+                     for name in header}
+        rows = []
+        for line_no, values in enumerate(reader, start=2):
+            if not values:
+                continue  # a blank line, as csv.DictReader skips it
+            row = {}
+            for name, idx in positions.items():
+                found = [values[i] for i in idx if i < len(values)]
+                filled = list(dict.fromkeys(v for v in found if v != ""))
+                if len(filled) > 1:
+                    raise RuntimeError(
+                        f"{self.csv_path}: line {line_no} has different values "
+                        f"{filled} under the repeated column '{name}'. Repair it first.")
+                row[name] = filled[0] if filled else ("" if found else None)
+            if len(values) > len(raw_header):
+                # Kept the way csv.DictReader keeps them, so _read_locked
+                # can refuse to rewrite a row whose extra values it would drop.
+                row[None] = values[len(raw_header):]
+            rows.append(row)
+        return header, rows
+
     def _read_locked(self):
         """(header, rows) of the file. Call with the lock held."""
-        with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            header = list(reader.fieldnames or [])
-            rows = list(reader)
+        with open(self.csv_path, 'r', newline='', encoding=READ_ENCODING) as f:
+            header, rows = self._parse(f)
         if any(None in row for row in rows):
             # A row with more values than the header has columns: rewriting
             # would drop the extra values. A person has to look.
@@ -293,9 +344,12 @@ class SliceTracker:
         full_row = {col: ("" if row.get(col) is None else row.get(col)) for col in CSV_COLUMNS}
 
         with self._lock():
-            with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
+            with open(self.csv_path, 'r', newline='', encoding=READ_ENCODING) as f:
                 header = next(csv.reader(f), None) or []
-            if header and all(col in header for col in CSV_COLUMNS):
+            # A header naming a column twice goes through the rewrite, which
+            # folds it into one (see _parse), never through a plain append.
+            if (header and len(set(header)) == len(header)
+                    and all(col in header for col in CSV_COLUMNS)):
                 with open(self.csv_path, 'a', newline='', encoding='utf-8') as f:
                     writer = csv.DictWriter(f, fieldnames=header)
                     writer.writerow({c: full_row.get(c, "") for c in header})
@@ -307,9 +361,8 @@ class SliceTracker:
         if not self.csv_path.exists():
             return []
 
-        with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            return list(reader)
+        with open(self.csv_path, 'r', newline='', encoding=READ_ENCODING) as f:
+            return self._parse(f)[1]
 
     def _update_row(self, run_id: str, updates: Dict[str, Any]) -> bool:
         """Update a specific row by run_id. One locked rewrite (see _rewrite)."""
