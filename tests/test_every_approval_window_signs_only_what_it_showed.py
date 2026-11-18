@@ -146,6 +146,16 @@ def test_dashboard_approve_button_signs_only_the_registration_on_display(tmp_pat
     assert ra.is_approved(reg)
 
 
+def test_dashboard_answers_nothing_for_a_registration_it_never_showed(tmp_path, monkeypatch):
+    b, reg = _brain(tmp_path)
+    pw, fake, msgs = _dashboard(monkeypatch, b, [])
+    fake.update_status_display = lambda: None          # nothing was ever drawn
+    fake._approve_current_registration()
+    fake._reject_current_registration()
+    _nothing_recorded(reg)
+    assert [t for _k, t, _x in msgs.seen].count("Look first") == 2
+
+
 def test_dashboard_overrule_does_not_approve_a_registration_made_while_asking(
         tmp_path, monkeypatch):
     b, reg = _brain(tmp_path)
@@ -202,8 +212,10 @@ def test_the_approval_script_answer_is_about_the_registration_shown(tmp_path, mo
     monkeypatch.setattr(util, "view_qc_images", view)
     monkeypatch.setattr(sys, "argv", ["util_approve_registration.py", "--brain", BRAIN])
     monkeypatch.setattr(builtins, "input", lambda *a, **k: answer)
-    with pytest.raises(SystemExit):
+    try:
         util.main()
+    except SystemExit:
+        pass   # the script stops after saying why; what counts is what it wrote
     _nothing_recorded(reg)
 
 

@@ -67,6 +67,20 @@ def _shown_registration(dashboard):
     return getattr(dashboard, '_shown_registration_id', None)
 
 
+def _not_shown_yet(dashboard):
+    """True (and the status is shown, with a 'Look first' message) when the
+    dashboard has shown no registration for this brain yet: an answer is then
+    refused rather than written for a registration nobody looked at."""
+    if _shown_registration(dashboard) is not None:
+        return False
+    dashboard.update_status_display()
+    QMessageBox.warning(
+        dashboard, "Look first",
+        "The registration status had not been shown for this brain yet. It is "
+        "shown now: look at the registration, then answer again.")
+    return True
+
+
 def _registration_changed(dashboard, e):
     """Tell the person nothing was recorded because the brain was registered
     again since they looked, and show the new state."""
@@ -952,6 +966,8 @@ class PipelineDashboard(QWidget):
         (_shown_registration).
         """
         from mousebrain.registration_approval import RegistrationChanged, approve
+        if _not_shown_yet(self):
+            return
         try:
             approve(self.current_brain / "3_Registered_Atlas",
                     note="approved in the napari pipeline dashboard",
@@ -995,6 +1011,8 @@ class PipelineDashboard(QWidget):
         if sure != 'yes':
             self.message_label.setText("Nothing changed; the registration stays rejected.")
             return
+        if _not_shown_yet(self):
+            return
         try:
             approve(self.current_brain / "3_Registered_Atlas",
                     note="approved in the napari pipeline dashboard, overruling a rejection",
@@ -1018,6 +1036,8 @@ class PipelineDashboard(QWidget):
         was registered again since the person looked (_shown_registration).
         """
         from mousebrain.registration_approval import RegistrationChanged, reject
+        if _not_shown_yet(self):
+            return
         try:
             reject(self.current_brain / "3_Registered_Atlas",
                    note="rejected in the napari pipeline dashboard",
