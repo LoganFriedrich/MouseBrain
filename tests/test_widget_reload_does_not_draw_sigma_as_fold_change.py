@@ -73,7 +73,11 @@ def _run_widget_coloc(tracker, monkeypatch, method, local=False):
         _get_current_slice=lambda img: img,
         _on_coloc_progress=None, _on_coloc_finished=None,
     )
-    for name in ("_refuse_if_analysis_running", "_analysis_in_progress"):
+    # The real widget methods the run path calls are bound onto the stand-in,
+    # so it takes the same steps as the window (one of them retries results
+    # the tracker file refused earlier; with none waiting it does nothing).
+    for name in ("_refuse_if_analysis_running", "_analysis_in_progress",
+                 "_retry_unrecorded_results"):
         if hasattr(mw.BrainSliceWidget, name):
             setattr(fake, name, MethodType(getattr(mw.BrainSliceWidget, name), fake))
     mw.BrainSliceWidget._run_colocalization(fake)
