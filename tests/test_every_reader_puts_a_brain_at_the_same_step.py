@@ -16,6 +16,8 @@ from mousebrain.config import record_registered_space
 from mousebrain.pipeline_status import brain_status
 from mousebrain.registration_approval import approve
 
+from count_withdrawal_helpers import put_in_production
+
 PIPELINE = Path(__file__).resolve().parents[1] / "scripts" / "pipeline"
 
 
@@ -69,9 +71,10 @@ def _classified_and_counted(b, candidates_dir="4_Cell_Candidates"):
     "prefiltered_20000101_000000/prefilter_report.json",
     "prefiltered/interior_candidates.xml",
 ])
-def test_a_counted_brain_is_done_not_stuck_at_prefilter(tmp_path, prefilter_output):
+def test_a_counted_brain_is_done_not_stuck_at_prefilter(tmp_path, monkeypatch, prefilter_output):
     b = _brain(tmp_path)
     _classified_and_counted(b)
+    put_in_production(tmp_path, monkeypatch, b.name)
     if prefilter_output:
         out = b / "4_Cell_Candidates" / prefilter_output
         out.parent.mkdir(parents=True, exist_ok=True)

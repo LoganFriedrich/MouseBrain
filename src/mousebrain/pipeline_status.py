@@ -54,7 +54,15 @@ THE RULES (first missing item, in this order, is the brain's step)
             5's ``prefiltered/interior_candidates.xml``. Never the brain's step
             once it is classified -- step 5 pre-filters on its own by default.
   classify  ``5_Classified_Cells/cells.xml`` (the production classification).
-  count     any ``.csv`` in ``6_Region_Analysis``.
+  count     any ``.csv`` in ``6_Region_Analysis`` AND a row for the brain in
+            the production table ``2_Data_Summary/region_counts.csv``
+            (region_counts_io.production_row, the rule ``6_count_regions.py
+            --all`` uses). A withdrawal (rejection, approval taken back,
+            re-crop, re-registration, classification replaced) takes the row
+            out and leaves the brain's own files, so files without a row are
+            shown with the reason and the brain is back at "count". When the
+            table cannot be read the brain is at "count" too, with a reason
+            that says so (never "withdrawn").
 
 STALE OUTPUTS (reported in ``status['stale']`` and treated as NOT done)
 An output made from something that has since been replaced is stale: it
@@ -67,7 +75,10 @@ it. What each output depends on:
   counts          the registration (regions come from the atlas fit) and the
                   classification. Older than either, or made on a registration
                   that is stale: stale. So re-registering always makes the
-                  counts stale.
+                  counts stale. And (brain_status) counts that are no longer
+                  in the production table: stale, even on an approved,
+                  current registration -- the case of a rejection a person
+                  overruled.
   classification  the candidates it classified, and the images. Older than
                   either: stale.
   detection       the images the atlas is fitted to: its coordinates are
@@ -85,6 +96,8 @@ from typing import Dict, List, Optional
 
 from mousebrain.config import (RegisteredImagesMissing, registered_candidate_folders,
                                registered_space)
+from mousebrain.region_counts_io import (NOT_IN_PRODUCTION, TABLE_UNREADABLE,
+                                         production_row)
 from mousebrain.registration_approval import (APPROVED, NEEDS_REGISTRATION,
                                               NOT_REGISTERED, approval_state,
                                               images_problem,
@@ -305,6 +318,25 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
         # counts (a person rejected it ...) are not counts of this brain.
         status["stale"]["count"] = ("counted on a registration that no longer counts: "
                                     + status["register_problem"])
+    if status["counted"] and "count" not in status["stale"]:
+        # The brain's own count files are there and current. "Counted" also
+        # needs its row in the production table (region_counts_io.production_row,
+        # the rule 6_count_regions.py --all uses): a withdrawal takes the row
+        # out and leaves these files. Without this, a brain whose rejection
+        # a person overruled -- the SAME registration approved again -- read
+        # as Complete with no counts in production, and nothing asked for it
+        # to be counted again.
+        in_production = production_row(p.name)
+        if in_production == NOT_IN_PRODUCTION:
+            status["stale"]["count"] = (
+                "its counts are not in the production table region_counts.csv "
+                "(withdrawn when its registration was rejected, its approval taken "
+                "back, or it was cropped or registered again; or never written "
+                "there) -- count it again")
+        elif in_production == TABLE_UNREADABLE:
+            status["stale"]["count"] = (
+                "region_counts.csv could not be read, so it cannot be told whether "
+                "its counts are in production -- check that the file opens, then look again")
     for key in status["stale"]:
         status[_DONE_FLAG[key]] = False
 

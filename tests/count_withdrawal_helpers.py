@@ -90,6 +90,17 @@ def make_lab(tmp_path, monkeypatch):
     return {"summary": s, "registry": registry_root, "root": tmp_path / "1_Brains"}
 
 
+def put_in_production(tmp_path, monkeypatch, brain_folder, mouse="mouse_x"):
+    """A production table (in a temporary 2_Data_Summary that the
+    configuration points at) holding a row for this brain: a counted brain
+    is one with its own count files AND a row in region_counts.csv."""
+    s = tmp_path / "2_Data_Summary"
+    monkeypatch.setattr(config, "DATA_SUMMARY_DIR", s)
+    write_table(s / "region_counts.csv",
+                [{"brain": "%s/%s" % (mouse, brain_folder), "total_cells": "1"}])
+    return s
+
+
 def entry_current(registry_root, sample):
     data = json.loads((registry_root / "exports" / ANALYSIS / "registry.json")
                       .read_text(encoding="utf-8"))

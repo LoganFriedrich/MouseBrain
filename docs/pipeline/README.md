@@ -48,7 +48,7 @@ is the first item on this list that is not done yet:
 | Detect | a candidates file is where step 5 will look: the top of `4_Cell_Candidates`, or `4_Cell_Candidates/from_<the folder the atlas was fitted to>` |
 | Pre-filter | optional (RUN_PIPELINE only). Done when any pre-filter output exists -- a `prefilter_report.json` in a `prefiltered_<time>` folder, or step 5's `prefiltered/interior_candidates.xml`. It is never shown once the brain is classified: step 5 pre-filters on its own by default |
 | Classify | `5_Classified_Cells/cells.xml` exists |
-| Count | a `.csv` exists in `6_Region_Analysis` |
+| Count | a `.csv` exists in `6_Region_Analysis` AND the brain has a row in `2_Data_Summary/region_counts.csv` (the rule `6_count_regions.py --all` uses; a withdrawal takes the row out and leaves the files -- see "Out-of-date counts leave production" under step 6) |
 
 **An extraction that was stopped part-way.** Running step 2 again on a brain
 whose `1_Extracted_Full` already holds planes reuses them (fast) ONLY when they
@@ -812,11 +812,21 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   rejection or a re-crop it is back at "Register" (register it again and
   approve it first); after a new classification it is at "Count". Once its
   registration is approved, `6_count_regions.py --all` (or `--brain <brain>`)
-  counts it and puts a fresh row and a fresh registry entry back. `--all` is
-  the reliable way to find every brain without a production row: the status
-  readers judge "counted" by the brain's own `6_Region_Analysis` files, so a
-  brain whose count was refused at the end (next bullet) still reads as
-  counted there. Why: the rows used to stay
+  counts it and puts a fresh row and a fresh registry entry back.
+  **"Counted" means the brain has a row in `region_counts.csv`**, not only its
+  own `6_Region_Analysis` files: RUN_PIPELINE, the pipeline dashboard,
+  batch_process `--resume` and overnight_batch use the same rule as `--all`.
+  A brain whose files are there but whose row is not is shown at "Count" with
+  the reason `its counts are not in the production table region_counts.csv
+  ... -- count it again` -- for example when a person rejected a registration
+  and then approved the SAME registration again (the rejection withdrew the
+  row; the approval does not put it back). If `region_counts.csv` cannot be
+  read (the share does not answer, the file is open elsewhere), the readers
+  say so instead of calling the counts withdrawn, and `--all` stops with
+  `[FAILED] ... could not be read ... Nothing was counted.` and exit code 1
+  rather than counting every brain again. Why: the readers used to judge
+  "counted" by the brain's own files, so such a brain showed as Complete
+  everywhere with no counts in production. Why the rows used to stay
   until someone counted the brain again -- and the registry entry stayed
   current even then, for rejections and re-crops always -- and nothing told
   them apart from current counts. If a withdrawal cannot be done (the tables
@@ -842,9 +852,9 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   new `cells.xml`, so it looked current; and a count that could not be
   entered in the registry was called finished, with the problem only in the
   console. Two things to know: the brain's own `6_Region_Analysis` files of
-  such a run were already written, so the dashboard, RUN_PIPELINE and
-  batch_process `--resume` show the brain as counted -- check the run's
-  tracker row or run `6_count_regions.py --all`, which counts it again. And
+  such a run were already written, but with no row in `region_counts.csv` the
+  dashboard, RUN_PIPELINE and batch_process `--resume` show the brain at
+  "Count", and `6_count_regions.py --all` counts it again. And
   when a brain that already had counts is counted again and this run's
   writing fails, the brain is left with NO production row (the earlier row
   is in the archive, its registry entry retired) until it is counted again.

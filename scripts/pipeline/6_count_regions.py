@@ -83,7 +83,8 @@ from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, iter_brain
 from mousebrain.config import DATA_SUMMARY_DIR as SUMMARY_DATA_DIR
 from mousebrain.region_counts_io import (append_archive_row, counts_tables_lock,
                                          detection_provenance, write_rows_atomic,
-                                         withdraw_counts, _same_brain)
+                                         withdraw_counts, _same_brain, production_row,
+                                         IN_PRODUCTION, TABLE_UNREADABLE)
 from mousebrain.registration_approval import (APPROVED, approval_state,
                                               current_registration_id)
 from mousebrain.config import (
@@ -156,9 +157,10 @@ def count_cells_in_xml(xml_path: Path) -> int:
         return 0
 
 
-def has_production_row(brain_folder: str) -> bool:
+def has_production_row(brain_folder: str) -> str:
     """Whether region_counts.csv holds a row for this brain (as
-    ``<mouse>/<brain>`` or the bare brain folder name).
+    ``<mouse>/<brain>`` or the bare brain folder name): one of
+    region_counts_io's IN_PRODUCTION, NOT_IN_PRODUCTION, TABLE_UNREADABLE.
 
     WHY this, and not the brain's own 6_Region_Analysis files, is what
     "already counted" means: when a brain's counts are withdrawn (its
@@ -166,14 +168,10 @@ def has_production_row(brain_folder: str) -> bool:
     replaced -- region_counts_io.withdraw_counts) its row leaves the
     production tables but its own 6_Region_Analysis files stay, by design.
     Judged by those files, --all skipped every withdrawn brain and said "No
-    brains need counting" while the brain had no counts in production."""
-    if not REGION_COUNTS_CSV.exists():
-        return False
-    try:
-        with open(REGION_COUNTS_CSV, newline='', encoding='utf-8') as f:
-            return any(_same_brain(r.get('brain'), brain_folder) for r in csv.DictReader(f))
-    except OSError:
-        return False
+    brains need counting" while the brain had no counts in production. The
+    rule is region_counts_io.production_row, the one the status readers use
+    too."""
+    return production_row(brain_folder, REGION_COUNTS_CSV.parent)
 
 
 def registration_countable(pipeline_folder: Path) -> tuple:
@@ -200,8 +198,10 @@ def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT):
     """List all brains that have classification output.
 
     Each brain says whether it has a row in region_counts.csv
-    (``has_counts``, has_production_row) and whether its registration may be
-    counted (``countable`` and, when not, ``not_countable_why``)."""
+    (``has_counts``; ``production_row`` is has_production_row's full answer,
+    which can also be "the table could not be read") and whether its
+    registration may be counted (``countable`` and, when not,
+    ``not_countable_why``)."""
     root = Path(root)
     brains = []
 
@@ -211,13 +211,15 @@ def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT):
         if cells_xml is None:
             continue
         countable, why = registration_countable(pipeline_dir)
+        in_production = has_production_row(pipeline_dir.name)
         brains.append({
             'name': f"{mouse_dir.name}/{pipeline_dir.name}",
             'pipeline': pipeline_dir,
             'mouse': mouse_dir,
             'cells_xml': cells_xml,
             'n_cells': count_cells_in_xml(cells_xml),
-            'has_counts': has_production_row(pipeline_dir.name),
+            'has_counts': in_production == IN_PRODUCTION,
+            'production_row': in_production,
             'countable': countable,
             'not_countable_why': why,
         })
@@ -2285,6 +2287,13 @@ Examples:
         # brain's own files). A brain whose registration is not approved is
         # listed with the reason and left alone: it is waiting for a person.
         brains = list_available_brains(args.root)
+        if any(b['production_row'] == TABLE_UNREADABLE for b in brains):
+            # Without the table nothing can say which brains are counted;
+            # counting "every brain without a row" would count them all again.
+            print(f"\n[FAILED] {REGION_COUNTS_CSV} could not be read, so it cannot be "
+                  f"told which brains are already counted. Nothing was counted. "
+                  f"Check that the file can be opened, then run --all again.")
+            return 1
         waiting = [b for b in brains if not b['countable']]
         to_process = [b for b in brains if b['countable'] and not b['has_counts']]
         if waiting:

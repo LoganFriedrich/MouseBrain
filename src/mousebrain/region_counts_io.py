@@ -333,6 +333,52 @@ def withdraw_counts_or_warn(brain_folder: str, reason: str, summary_dir=None,
         return []
 
 
+# --------------------------------------------------------- is it in production
+# What production_row() answers.
+IN_PRODUCTION = "in_production"
+NOT_IN_PRODUCTION = "not_in_production"
+TABLE_UNREADABLE = "table_unreadable"
+
+
+def production_row(brain_folder: str, summary_dir=None) -> str:
+    """Whether region_counts.csv holds a row for this brain: IN_PRODUCTION,
+    NOT_IN_PRODUCTION (no row, or no table at all), or TABLE_UNREADABLE (the
+    table is there but could not be read -- a share that did not answer, a
+    file being swapped in).
+
+    THE rule for "this brain is counted". Step 6's ``--all`` and every status
+    reader (mousebrain.pipeline_status: RUN_PIPELINE, the pipeline dashboard,
+    batch_process --resume, the overnight batch) use it.
+
+    WHY the production row and not the brain's own 6_Region_Analysis files:
+    when a brain's counts are withdrawn (its registration rejected, its
+    approval taken back, re-registered or re-cropped, its classification
+    replaced -- withdraw_counts) its row leaves the production tables but its
+    own files stay, by design. Judged by those files, a brain whose rejection
+    a person then overruled -- the SAME registration approved again -- showed
+    as Complete everywhere while it had no counts in production, and nothing
+    asked for it to be counted again.
+
+    TABLE_UNREADABLE is kept apart from NOT_IN_PRODUCTION so a moment when
+    the share does not answer is never reported as "the counts were
+    withdrawn" (and never sends a batch off to count every brain again).
+
+    ``summary_dir`` defaults to the configured 2_Data_Summary, read at call
+    time (the folder step 6 writes and withdraw_counts withdraws from)."""
+    if summary_dir is None:
+        from mousebrain import config
+        summary_dir = config.DATA_SUMMARY_DIR
+    table = Path(summary_dir) / COUNT_TABLES[0][0]
+    try:
+        if not table.exists():
+            return NOT_IN_PRODUCTION
+        rows = _read_table(table)[1]
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return TABLE_UNREADABLE
+    return (IN_PRODUCTION if any(_same_brain(r.get("brain"), brain_folder) for r in rows)
+            else NOT_IN_PRODUCTION)
+
+
 # ----------------------------------------------------------------- provenance
 def _same_brain(row_brain: str, brain_folder: str) -> bool:
     row_brain = row_brain or ""

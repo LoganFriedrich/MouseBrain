@@ -19,6 +19,8 @@ from mousebrain import registration_approval as ra
 from mousebrain.config import record_registered_space
 from mousebrain.pipeline_status import brain_status
 
+from count_withdrawal_helpers import put_in_production
+
 ROOT = Path(__file__).resolve().parents[1]
 PIPELINE = ROOT / "scripts" / "pipeline"
 UTILS = ROOT / "scripts" / "utils"
@@ -173,9 +175,10 @@ def _downstream(b, t):
         _set_time(f, t + 10 * i)
 
 
-def test_counts_made_on_an_earlier_registration_are_stale(tmp_path):
+def test_counts_made_on_an_earlier_registration_are_stale(tmp_path, monkeypatch):
     b, reg = _brain(tmp_path)
     _downstream(b, 1_700_000_000 + 200)
+    put_in_production(tmp_path, monkeypatch, b.name)
     ra.approve(reg, approved_by="tester")
     assert brain_status(b)["step"] == "done"
 
