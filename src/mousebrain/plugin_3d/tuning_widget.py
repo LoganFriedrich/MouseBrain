@@ -50,13 +50,6 @@ try:
 except ImportError:
     TRACKER_AVAILABLE = False
 
-try:
-    from util_compare_to_published import PUBLISHED_REFERENCE, map_to_elife_regions
-    REFERENCE_AVAILABLE = True
-except ImportError:
-    PUBLISHED_REFERENCE = {}
-    REFERENCE_AVAILABLE = False
-
 # Import session documenter
 try:
     from .session_documenter import SessionDocumenterWidget
@@ -11710,115 +11703,56 @@ class TuningWidget(QWidget):
             return
         self.region_count_status.setText("Status: Complete! Loading results...")
         self.region_count_status.setStyleSheet("color: green;")
-        self._load_region_comparison()
+        # The count itself succeeded and is on disk: it is logged even when
+        # showing it fails, and a failure to show it is said on the status
+        # line instead of leaving "Loading results..." up for good.
+        try:
+            self._load_region_comparison()
+        except Exception as e:
+            print(f"[MouseBrain] Region counts of {name} were written but could not be shown: {e}")
+            self.region_count_status.setText(
+                f"Status: Counting {name} finished, but its counts could not be shown: {e}")
+            self.region_count_status.setStyleSheet("color: red;")
         if self.session_doc:
             self.session_doc.log_region_count(name)
 
     def _load_region_comparison(self):
-        """Load region counts and populate comparison table with eLife reference."""
+        """Show the selected brain's new region counts in the Results tab.
+
+        Fills the tab's "Allen Atlas" and "eLife Groups" tables from the files
+        step 6 wrote (_refresh_all_results_views) and puts the totals on the
+        status line. It used to fill a comparison table that the Results tab
+        no longer has, so every successful count ended in an error, the
+        status stayed at "Loading results..." and the session log entry was
+        skipped. Comparing with the published reference is done by
+        util_compare_to_published.py (docs/pipeline/OPTIMIZATION_WORKFLOW.md).
+        """
         if not self.current_brain:
             return
 
         output_csv = self.current_brain / "6_Region_Analysis" / "cell_counts_by_region.csv"
         if not output_csv.exists():
-            self.region_count_status.setText("Status: No counts CSV found")
+            self.region_count_status.setText(
+                f"Status: Counting finished but wrote no counts file ({output_csv})")
+            self.region_count_status.setStyleSheet("color: red;")
             return
 
-        # Load counts
         import csv
-        your_counts = {}
-        try:
-            with open(output_csv, 'r') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    region = row.get('region') or row.get('Region') or row.get('region_name', '')
-                    count = row.get('cell_count') or row.get('count') or row.get('cells', '0')
-                    if region:
-                        try:
-                            your_counts[region] = int(count)
-                        except ValueError:
-                            pass
-        except Exception as e:
-            print(f"[MouseBrain] Error reading CSV: {e}")
-            return
+        n_regions = total = 0
+        with open(output_csv, 'r', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                try:
+                    count = int(float(row.get('cell_count') or 0))
+                except ValueError:
+                    continue
+                if count > 0:
+                    n_regions += 1
+                    total += count
 
-        # Map to eLife regions and populate table
-        if REFERENCE_AVAILABLE:
-            mapped_counts = map_to_elife_regions(your_counts)
-            self._populate_comparison_table(mapped_counts)
-            self.region_count_status.setText(
-                f"Status: Loaded {len(your_counts)} regions, {sum(your_counts.values())} total cells"
-            )
-        else:
-            # Just show raw counts
-            self._populate_comparison_table_raw(your_counts)
-            self.region_count_status.setText(
-                f"Status: Loaded (eLife reference not available)"
-            )
-
-    def _populate_comparison_table(self, mapped_counts: dict):
-        """Populate the comparison table with mapped counts vs eLife reference."""
-        self.compare_table.setRowCount(0)
-
-        # Sort: key recovery regions first, then by count difference
-        regions = list(PUBLISHED_REFERENCE.keys())
-        key_first = [r for r in regions if any(k in r for k in [
-            "Pedunculopontine", "Red Nucleus", "Gigantocellular", "Corticospinal"
-        ])]
-        other = [r for r in regions if r not in key_first]
-
-        for region in key_first + sorted(other):
-            ref_mean, ref_std, n = PUBLISHED_REFERENCE[region]
-            your_count = mapped_counts.get(region, 0)
-
-            diff = your_count - ref_mean
-            pct = (your_count / ref_mean * 100) if ref_mean > 0 else 0
-
-            row = self.compare_table.rowCount()
-            self.compare_table.insertRow(row)
-
-            # Region name (highlight key regions)
-            region_item = QTableWidgetItem(region)
-            if any(k in region for k in ["Pedunculopontine", "Red Nucleus", "Gigantocellular"]):
-                region_item.setForeground(QColor('#FF9800'))  # Orange for key
-            self.compare_table.setItem(row, 0, region_item)
-
-            # Your count
-            self.compare_table.setItem(row, 1, QTableWidgetItem(str(your_count)))
-
-            # Reference (mean ± std)
-            self.compare_table.setItem(row, 2, QTableWidgetItem(f"{ref_mean} ± {ref_std}"))
-
-            # Difference
-            diff_item = QTableWidgetItem(f"{diff:+d}")
-            if diff > 0:
-                diff_item.setForeground(QColor('green'))
-            elif diff < 0:
-                diff_item.setForeground(QColor('red'))
-            self.compare_table.setItem(row, 3, diff_item)
-
-            # Match %
-            pct_item = QTableWidgetItem(f"{pct:.0f}%")
-            if 80 <= pct <= 120:
-                pct_item.setForeground(QColor('green'))
-            elif 50 <= pct <= 150:
-                pct_item.setForeground(QColor('#FF9800'))
-            else:
-                pct_item.setForeground(QColor('red'))
-            self.compare_table.setItem(row, 4, pct_item)
-
-    def _populate_comparison_table_raw(self, counts: dict):
-        """Populate table with raw counts (no eLife mapping)."""
-        self.compare_table.setRowCount(0)
-
-        for region, count in sorted(counts.items(), key=lambda x: -x[1]):
-            row = self.compare_table.rowCount()
-            self.compare_table.insertRow(row)
-            self.compare_table.setItem(row, 0, QTableWidgetItem(region))
-            self.compare_table.setItem(row, 1, QTableWidgetItem(str(count)))
-            self.compare_table.setItem(row, 2, QTableWidgetItem("-"))
-            self.compare_table.setItem(row, 3, QTableWidgetItem("-"))
-            self.compare_table.setItem(row, 4, QTableWidgetItem("-"))
+        self._refresh_all_results_views()
+        self.region_count_status.setText(
+            f"Status: Complete - {total:,} cells in {n_regions} regions")
+        self.region_count_status.setStyleSheet("color: green;")
 
     def view_region_csv(self):
         """Open the region counts CSV in the default application."""
