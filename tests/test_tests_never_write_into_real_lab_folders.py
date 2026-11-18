@@ -267,6 +267,20 @@ def test_a_root_the_tool_finds_from_its_own_location_is_guarded(tmp_path):
     assert "REFUSED" in out, out
 
 
+def test_a_root_set_only_in_a_conda_activate_script_is_guarded(tmp_path):
+    """With every lab variable cleared from the shell, the root the conda
+    environment's activate script would set is still guarded."""
+    lab, repo = _lab(tmp_path, ONE_WRITE)
+    prefix = tmp_path / "env"
+    (prefix / "etc" / "conda" / "activate.d").mkdir(parents=True)
+    (prefix / "etc" / "conda" / "activate.d" / "lab.bat").write_text(
+        "set CONNECTOME_ROOT=%s\n" % lab)
+    out = _run_child(repo, _child_env(tmp_path, extra={
+        "CONDA_PREFIX": str(prefix), "CHILD_SIBLING": str(lab / "sibling")}))
+    assert not (lab / "sibling" / "env_root.txt").exists(), out
+    assert "REFUSED" in out, out
+
+
 def test_activate_scripts_and_stored_variables_are_read():
     """The conda activate scripts and the stored environment are read for the
     same names, in every shell's syntax."""
