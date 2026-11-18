@@ -39,6 +39,8 @@ def _manifest(root, analysis):
 def test_save_state_registers_the_saved_result_tables(tmp_path, monkeypatch):
     root = _configure(tmp_path, monkeypatch)
     w, image = _open(tmp_path, monkeypatch)
+    # Measurements are saved beside the nuclei they were measured on.
+    w.nuclei_labels = np.ones((8, 8), dtype=np.int32)
     w.cell_measurements = pd.DataFrame({"label": [1, 2, 3],
                                         "is_positive": [True, False, True]})
     w._roi_detail_data = pd.DataFrame({"roi": ["ROI_A"], "total": [3]})
@@ -83,6 +85,7 @@ def test_with_no_project_configured_nothing_is_registered_and_save_state_says_so
         tmp_path, monkeypatch):
     root = _configure(tmp_path, monkeypatch, project=None)
     w, image = _open(tmp_path, monkeypatch)
+    w.nuclei_labels = np.ones((8, 8), dtype=np.int32)
     w.cell_measurements = pd.DataFrame({"label": [1], "is_positive": [True]})
     w._manual_save_state()
     assert not (root / "exports").exists() or not any((root / "exports").iterdir())

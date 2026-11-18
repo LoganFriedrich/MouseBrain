@@ -1173,6 +1173,29 @@ saved run is loaded, so the diagnostic plot never shows another run's mask as if
 were this run's; region counts are cleared too, so click Run Quantification again
 for the loaded run.
 
+**A loaded run is shown, never saved with the image.** The status bar says `Loaded
+historical run <id> -- shown only, not saved with this image`. While it is on screen,
+every save of the image (Save State, the save when another image is opened, the save
+after a particle analysis) keeps the image's OWN colocalization in its `_analysis`
+folder -- the one that came back when the image was opened or was made since -- and
+`settings.json` keeps naming that colocalization's run. If the image had no
+colocalization of its own, no `measurements.csv` is written. Running Colocalize (or a
+new detection) makes the image's own result current again. WHY: a loaded run brings
+back its measurements without the nuclei they were measured on. Saved with the image,
+it became a `measurements.csv` with no `nuclei.npz` beside it, which every later
+opening refused and kept, so no later colocalization of that image could be saved
+again. Use **Export CSV** to keep what a loaded run shows.
+
+In general, `measurements.csv` is saved only beside the nuclei (`nuclei.npz`) it was
+measured on, and the `coloc_run_id` in `settings.json` is the colocalization those
+measurements came from (not the last Colocalize click, which may have failed, and
+never a run of the previous image).
+
+An `_analysis` folder written before this change can hold a `measurements.csv` with no
+`nuclei.npz` (a loaded run that was saved). Opening that image says `measurements.csv
+has no saved nuclei to belong to`; the file is kept and new measurements are not saved
+beside it until a person moves that file aside.
+
 ### Sample Name Parsing
 
 Sample IDs are automatically parsed to extract hierarchy fields:

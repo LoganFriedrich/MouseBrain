@@ -513,6 +513,19 @@ class BrainSliceWidget(QWidget):
         # detection row left 'started'). Each result handler reads its own.
         self._detection_run_id: Optional[str] = None
         self._coloc_run_id: Optional[str] = None
+        # The colocalization run the measurements in cell_measurements came
+        # from (set where they are set: a finished colocalization, a
+        # restore). WHY not _coloc_run_id: that is the row of the LAST
+        # Colocalize click, set before the run finishes; a run that failed
+        # left the earlier measurements on screen under its own id.
+        self._measurements_run_id: Optional[str] = None
+        # A run loaded from the Run History is shown, never saved with the
+        # image: _history_run_id names it while it is on screen, and
+        # _own_measurements keeps (measurements, run id) of the image's own
+        # colocalization, which is what a save writes meanwhile (see
+        # _measurements_to_save).
+        self._history_run_id: Optional[str] = None
+        self._own_measurements = None
         # The particle analysis whose particles are on screen (its tracker
         # row), and the (background, min % above background) its saved
         # classification was last recorded with. Re-classifying with other
@@ -2403,10 +2416,16 @@ class BrainSliceWidget(QWidget):
         # and saved with, the next image.
         self._pa_ignore_shapes_layer = None
 
-        # Clear colocalization state
+        # Clear colocalization state. The run ids go with what they name.
+        # WHY _coloc_run_id too: it survived, so the next image's settings
+        # could name the previous image's colocalization.
         self.cell_measurements = None
         self.nuclei_labels = None
         self._labels_run_id = None
+        self._coloc_run_id = None
+        self._measurements_run_id = None
+        self._history_run_id = None
+        self._own_measurements = None
         self._coloc_background = None
         self._coloc_threshold = None
         self._coloc_summary = None
@@ -2460,7 +2479,7 @@ class BrainSliceWidget(QWidget):
         state: Dict[str, Any] = {name: None for name in STATE_FILES}
         state["particles.csv"] = getattr(self, "_pa_results", None)
         state["labels.npz"] = getattr(self, "_pa_labels", None)
-        state["measurements.csv"] = getattr(self, "cell_measurements", None)
+        state["measurements.csv"] = self._measurements_to_save()[0]
         state["nuclei.npz"] = getattr(self, "nuclei_labels", None)
         state["roi_detail.csv"] = getattr(self, "_roi_detail_data", None)
 
@@ -2540,6 +2559,28 @@ class BrainSliceWidget(QWidget):
         if gone:
             gone.discard(name)
 
+    def _measurements_to_save(self):
+        """(measurements, the colocalization run they came from) that belong
+        in the image's saved analysis, or (None, None).
+
+        Two rules. A run loaded from the Run History is shown only: what is
+        saved meanwhile is the image's own colocalization (WHY: a loaded run
+        brings back its measurements without its nuclei, and with other
+        nuclei on screen it was measured on a different detection; saved,
+        it became a measurements.csv that the next restore refuses for good
+        and that no later colocalization could replace). And measurements
+        are saved only beside the nuclei they were measured on (the restore
+        refuses measurements without nuclei)."""
+        if getattr(self, "_history_run_id", None) is not None:
+            own = getattr(self, "_own_measurements", None)
+            measurements, run_id = own if own is not None else (None, None)
+        else:
+            measurements = getattr(self, "cell_measurements", None)
+            run_id = getattr(self, "_measurements_run_id", None)
+        if measurements is None or getattr(self, "nuclei_labels", None) is None:
+            return None, None
+        return measurements, run_id
+
     def _analysis_settings_to_save(self) -> Dict[str, Any]:
         """settings.json: the particle settings, the load settings the
         pixels were loaded with, and the tracker rows the saved results
@@ -2557,7 +2598,7 @@ class BrainSliceWidget(QWidget):
         # restored nuclei records its detection as its parent; without the
         # id its tracker row would name no detection.
         settings["detection_run_id"] = getattr(self, "_labels_run_id", None)
-        settings["coloc_run_id"] = getattr(self, "_coloc_run_id", None)
+        settings["coloc_run_id"] = self._measurements_to_save()[1]
         # What the pixels on screen were really loaded with (captured when
         # the load started). A restore compares it with the image it is
         # restoring onto; see _saved_load_mismatch.
@@ -2991,6 +3032,7 @@ class BrainSliceWidget(QWidget):
             else:
                 self.cell_measurements = measurements
                 self._coloc_run_id = (settings or {}).get("coloc_run_id")
+                self._measurements_run_id = self._coloc_run_id
                 self.quant_btn.setEnabled(True)
                 restored.append(f"measurements ({len(measurements)})")
 
@@ -6665,6 +6707,11 @@ class BrainSliceWidget(QWidget):
         self.nuclei_labels = labels
         self._labels_run_id = run_id
         self.cell_measurements = None
+        self._measurements_run_id = None
+        # A run loaded from the Run History, and the measurements kept
+        # behind it, were measured on the nuclei just replaced.
+        self._history_run_id = None
+        self._own_measurements = None
         self.quant_btn.setEnabled(False)
 
     def _on_detect_finished(self, success: bool, message: str, count: int, labels, metrics=None):
@@ -7056,6 +7103,9 @@ class BrainSliceWidget(QWidget):
 
             if success:
                 self.cell_measurements = measurements
+                self._measurements_run_id = run_id
+                self._history_run_id = None       # the image's own again
+                self._own_measurements = None
                 self._tissue_mask = tissue_mask
                 self._coloc_background = summary['background_used']
                 self._coloc_threshold = summary.get('threshold_value', self.thresh_value_spin.value())
@@ -7175,6 +7225,9 @@ class BrainSliceWidget(QWidget):
 
             if success:
                 self.cell_measurements = measurements
+                self._measurements_run_id = run_id
+                self._history_run_id = None       # the image's own again
+                self._own_measurements = None
                 self._coloc_summary = summary
 
                 # Save the measurements CSV, then record the result. Each guarded
@@ -8028,7 +8081,13 @@ class BrainSliceWidget(QWidget):
                 )
                 return
 
-            # Store and visualize
+            # Store and visualize. Shown only, never saved with the image
+            # (see _measurements_to_save): the image's own colocalization is
+            # kept aside and is what a save writes while this run is shown.
+            if getattr(self, "_history_run_id", None) is None:
+                self._own_measurements = (getattr(self, "cell_measurements", None),
+                                          getattr(self, "_measurements_run_id", None))
+            self._history_run_id = run_id
             self.cell_measurements = measurements
             # A saved run keeps its measurements only, not the tissue mask or
             # background diagnostics it was made with. WHY cleared: those
@@ -8068,7 +8127,9 @@ class BrainSliceWidget(QWidget):
                 f"Mean fold change: {s['mean_fold_change']:.2f}"
             )
 
-            self.status_label.setText(f"Loaded historical run {run_id}")
+            self.status_label.setText(
+                f"Loaded historical run {run_id} -- shown only, not saved with "
+                f"this image (its saved analysis keeps its own colocalization)")
             self.quant_btn.setEnabled(True)
 
         except Exception as e:
