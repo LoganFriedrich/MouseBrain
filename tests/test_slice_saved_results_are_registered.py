@@ -63,8 +63,10 @@ def test_save_state_registers_the_saved_result_tables(tmp_path, monkeypatch):
 def test_saving_the_same_results_again_archives_nothing(tmp_path, monkeypatch):
     root = _configure(tmp_path, monkeypatch)
     w, image = _open(tmp_path, monkeypatch)
+    w.nuclei_labels = np.ones((8, 8), dtype=np.int32)
     w.cell_measurements = pd.DataFrame({"label": [1], "is_positive": [True]})
     w._manual_save_state()
+    assert (root / "exports" / "PRJ_Window_Results" / image.stem).exists()
     w._manual_save_state()
     folder = root / "exports" / "PRJ_Window_Results" / image.stem
     assert not (folder / "_archived").exists()
