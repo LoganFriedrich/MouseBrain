@@ -38,6 +38,7 @@ class CurationWidget(QWidget):
     # Signals
     candidate_confirmed = Signal(int)  # index of confirmed candidate
     candidate_rejected = Signal(int)   # index of rejected candidate
+    candidate_skipped = Signal(int)    # index of skipped candidate (saved so it is not asked again)
     curation_complete = Signal(int, int, int)  # confirmed, rejected, skipped
 
     def __init__(self, napari_viewer):
@@ -317,21 +318,30 @@ class CurationWidget(QWidget):
         # SAVED answer (Setup & Tuning keeps them per brain, see
         # mousebrain.curation_record) count as confirmed / rejected again, so
         # choosing the layer again or restarting napari never asks them again.
-        # Skipped candidates are not saved anywhere and are asked again.
+        # Candidates SKIPPED earlier (S / Space) are saved too and count as
+        # skipped again (a third element); a saved answer counts over a skip.
         restored = None
         if self.saved_answers is not None:
             restored = self.saved_answers(selected, self.candidates)
         if restored:
             self.confirmed.update(restored[0])
             self.rejected.update(restored[1])
-            answered = self.confirmed | self.rejected
+            if len(restored) > 2:
+                self.skipped.update(set(restored[2]) - self.confirmed - self.rejected)
+            seen = self.confirmed | self.rejected | self.skipped
             self.current_index = next(
-                (i for i in range(len(self.candidates)) if i not in answered), 0)
+                (i for i in range(len(self.candidates)) if i not in seen), 0)
 
         n_answered = len(self.confirmed) + len(self.rejected)
+        n_skipped = len(self.skipped)
+        already = []
+        if n_answered:
+            already.append(f"{n_answered} already answered")
+        if n_skipped:
+            already.append(f"{n_skipped} skipped before")
         self.layer_label.setText(
             f"Layer: {selected.name} ({len(self.candidates)} candidates"
-            + (f", {n_answered} already answered)" if n_answered else ")"))
+            + (", " + ", ".join(already) + ")" if already else ")"))
         self.layer_label.setStyleSheet("color: #2196F3; font-weight: bold;")
 
         self.progress_bar.setMaximum(len(self.candidates))
@@ -615,6 +625,10 @@ class CurationWidget(QWidget):
             return
 
         self.skipped.add(self.current_index)
+        # Saved by Setup & Tuning (curation_record.mark_skipped), so a resumed
+        # review does not ask it again; if that save fails it calls
+        # forget_answer and the candidate is asked again.
+        self.candidate_skipped.emit(self.current_index)
         self.update_stats()
         self.update_current_info()
         self.go_to_next_unreviewed()

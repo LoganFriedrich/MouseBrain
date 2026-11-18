@@ -28,6 +28,13 @@ WHAT HOLDS NOW
   ``set_label`` moves it when the answer changes; ``add_unlabelled`` adds only
   points that have no answer yet (used for suggestions and old batches, which
   must never overwrite what a person answered).
+* Candidates a person SKIPPED (S / Space: "not sure") are kept in a third
+  file, ``skipped_candidates.xml``, so a review that resumes does not ask
+  them again. A skip is not an answer: it is never shown in the training
+  layers, never cut into cubes, never listed in ``training.yml``, and its
+  name matches none of the ``curated_*`` patterns the training code reads.
+  A later C or X on that point takes it out of the skipped file, and a saved
+  answer always counts over a skip.
 * Both files are written to a temporary file first and swapped in, and a file
   that exists but cannot be read stops the save with an error instead of
   being replaced.
@@ -52,6 +59,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 LABELS = ("cells", "non_cells")
 XML_NAMES = {"cells": "curated_cells.xml", "non_cells": "curated_non_cells.xml"}
+# Not "curated_*": nothing that gathers answers or training data may pick it up.
+SKIPPED_NAME = "skipped_candidates.xml"
 POOL_FOLDER = "training_data"
 
 # BrainGlobe training cubes: 50 x 50 voxels in-plane, 20 planes deep.
@@ -189,6 +198,10 @@ class CurationRecord:
     def non_cells_xml(self) -> Path:
         return self.xml_path("non_cells")
 
+    @property
+    def skipped_xml(self) -> Path:
+        return self.folder / SKIPPED_NAME
+
     def read_all(self):
         """(answers, conflicts) from one read of the two files.
 
@@ -228,9 +241,11 @@ class CurationRecord:
 
         A point that had the other label is moved (taken out of the other
         file); a point that already has this label is not written again.
-        Returns counts: added, moved, unchanged.
+        Returns counts: added, moved, unchanged. An answered point that was
+        skipped before is no longer skipped.
         """
         other = _other(label)
+        coords = list(coords)   # read twice: the answers, then the skips
         lists = {"cells": read_points(self.cells_xml),
                  "non_cells": read_points(self.non_cells_xml)}
         mine, theirs = lists[label], lists[other]
@@ -255,7 +270,60 @@ class CurationRecord:
             self._write(lists, (other, label))
         elif added:
             self._write(lists, (label,))
+        self._unskip(point_key(c) for c in coords)
         return {"added": added, "moved": moved, "unchanged": unchanged}
+
+    def _unskip(self, keys) -> None:
+        # An answer ends a skip. Done after the answer is saved, and an
+        # unreadable skipped file never stops an answer: a saved answer
+        # counts over a skip anyway (skipped_for).
+        if not self.skipped_xml.exists():
+            return
+        try:
+            skipped = read_points(self.skipped_xml)
+        except CurationRecordError:
+            return
+        gone = set(keys)
+        kept = [p for p in skipped if p not in gone]
+        if len(kept) != len(skipped):
+            _write_whole(self.skipped_xml, _xml_bytes(kept))
+
+    def mark_skipped(self, coords: Iterable) -> Dict[str, int]:
+        """Record that a person skipped these points (S / Space), so they are not asked again.
+
+        Only points with no answer are recorded; a skip never changes or
+        replaces an answer. Returns counts: added, already (answered or
+        skipped before).
+        """
+        answers, conflicts = self.read_all()
+        known = (set(answers["cells"]) | set(answers["non_cells"]) | set(conflicts))
+        skipped = read_points(self.skipped_xml)
+        known |= set(skipped)
+        added = already = 0
+        for c in coords:
+            k = point_key(c)
+            if k in known:
+                already += 1
+                continue
+            known.add(k)
+            skipped.append(k)
+            added += 1
+        if added:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            _write_whole(self.skipped_xml, _xml_bytes(skipped))
+        return {"added": added, "already": already}
+
+    def skipped_for(self, candidates) -> Set[int]:
+        """Indices among ``candidates`` that a person skipped and has not answered since."""
+        if candidates is None:
+            return set()
+        skipped = set(read_points(self.skipped_xml))
+        if not skipped:
+            return set()
+        labels = self.read()
+        answered = set(labels["cells"]) | set(labels["non_cells"])
+        return {i for i, c in enumerate(candidates)
+                if point_key(c) in skipped and point_key(c) not in answered}
 
     def add_unlabelled(self, coords: Iterable, label: str) -> Dict[str, int]:
         """Give ``label`` only to points that have no answer yet.

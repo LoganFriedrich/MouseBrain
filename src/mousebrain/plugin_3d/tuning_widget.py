@@ -4693,6 +4693,8 @@ class TuningWidget(QWidget):
             # Connect signals for training bucket updates
             self.curation_widget.candidate_confirmed.connect(self._on_candidate_confirmed)
             self.curation_widget.candidate_rejected.connect(self._on_candidate_rejected)
+            # Skips are saved too (never as answers), so they are not re-asked
+            self.curation_widget.candidate_skipped.connect(self._on_candidate_skipped)
             # A review resumes from the saved answers (curation_record)
             self._wire_curation_widget()
         except Exception as e:
@@ -5700,14 +5702,24 @@ class TuningWidget(QWidget):
         """X in the curation widget: save 'not a cell' for that candidate."""
         self._save_curation_answer(index, 'non_cells', 'curation_rejected')
 
+    def _on_candidate_skipped(self, index: int):
+        """S / Space in the curation widget: remember the skip, so it is not asked again.
+
+        A skip is not an answer: it goes into the brain's skipped file only
+        (curation_record.mark_skipped), never into the training layers or
+        cubes, and never over an answer already saved.
+        """
+        self._save_curation_answer(index, 'skipped', 'curation_skipped')
+
     def _save_curation_answer(self, index: int, label: str, event: str):
-        """Save one curation answer at once into the selected brain's answers.
+        """Save one curation answer (or skip) at once into the selected brain's record.
 
         The curation widget emits the index of the answered candidate; the
-        point is taken from its candidates array. When the answer cannot be
-        saved -- the candidates belong to another brain, no brain is selected,
-        or the file cannot be written -- the person is told, and the curation
-        widget forgets the mark so the candidate is not shown as answered.
+        point is taken from its candidates array. ``label`` is 'cells',
+        'non_cells' or 'skipped'. When it cannot be saved -- the candidates
+        belong to another brain, no brain is selected, or the file cannot be
+        written -- the person is told, and the curation widget forgets the
+        mark so the candidate is not shown as answered (or skipped).
         """
         import numpy as np
 
@@ -5728,9 +5740,12 @@ class TuningWidget(QWidget):
         saved = None
         layer = getattr(cw, 'candidates_layer', None)
         if layer is None or self._points_layer_is_this_brains(layer):
-            # A changed answer moves the point out of the other file
-            # (mousebrain.curation_record).
-            saved = self._save_training_label(coords, label)
+            if label == 'skipped':
+                saved = self._save_skip(coords)
+            else:
+                # A changed answer moves the point out of the other file
+                # (mousebrain.curation_record).
+                saved = self._save_training_label(coords, label)
         if saved is None:
             forget = getattr(cw, 'forget_answer', None)
             if forget is not None:
@@ -5982,13 +5997,14 @@ class TuningWidget(QWidget):
             cw.saved_answers = self._saved_answers_for_layer
 
     def _saved_answers_for_layer(self, layer, candidates):
-        """(indices saved as cells, indices saved as non-cells) among a layer's candidates.
+        """(indices saved as cells, as non-cells, as skipped) among a layer's candidates.
 
         Read from the SELECTED brain's answers files, so a review resumes
         after the layer is chosen again or napari restarts. Nothing is
         restored for a layer made for another brain (its points mean nothing
         on this brain) or when no brain is selected. Reading never creates
-        a folder.
+        a folder. An unreadable skipped file loses only the skips (said in
+        a message); the answers are still restored.
         """
         from mousebrain.curation_record import (
             CurationRecord, CurationRecordError, brain_folder)
@@ -5999,11 +6015,20 @@ class TuningWidget(QWidget):
         if src and src != str(self.current_brain):
             return None
         folder = self.training_data_dir or brain_folder(MODELS_DIR, Path(self.current_brain).name)
+        record = CurationRecord(folder)
         try:
-            return CurationRecord(folder).answers_for(candidates)
+            confirmed, rejected = record.answers_for(candidates)
         except CurationRecordError as e:
             QMessageBox.warning(self, "Saved Answers Unreadable", str(e))
             return None
+        try:
+            skipped = record.skipped_for(candidates)
+        except CurationRecordError as e:
+            QMessageBox.warning(self, "Saved Skips Unreadable",
+                f"{e}\n\nThe saved answers were restored; the candidates you "
+                f"skipped before will be asked again.")
+            skipped = set()
+        return confirmed, rejected, skipped
 
     def _show_curation_record(self, record=None, check_layers: bool = True) -> bool:
         """Make the two training layers show the selected brain's saved answers.
@@ -6045,6 +6070,28 @@ class TuningWidget(QWidget):
                   f"non-cell in {record.folder}; they are left out of training until "
                   f"answered again.")
         return True
+
+    def _save_skip(self, coords):
+        """Save a skip for ``coords`` into the selected brain's record.
+
+        Returns the counts, or None when it was not saved -- and then the
+        person has been told why (the candidate is asked again). Sets up the
+        selected brain's folder first if needed, as an answer does.
+        """
+        from mousebrain.curation_record import CurationRecord, CurationRecordError
+        if self.training_data_dir is None and self.current_brain:
+            self.create_training_layers()
+        if self.training_data_dir is None:
+            QMessageBox.warning(self, "Skip Not Saved",
+                "This skip was NOT saved: no brain is selected.\n\n"
+                "The candidate will be asked again.")
+            return None
+        try:
+            return CurationRecord(self.training_data_dir).mark_skipped(coords)
+        except (CurationRecordError, OSError) as e:
+            QMessageBox.warning(self, "Skip Not Saved",
+                f"This skip was NOT saved, so the candidate will be asked again:\n{e}")
+            return None
 
     def _save_training_label(self, coords, label: str, replace: bool = True):
         """Save answers for ``coords`` into the selected brain's record.

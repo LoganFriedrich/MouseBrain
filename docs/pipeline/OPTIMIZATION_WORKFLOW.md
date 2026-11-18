@@ -128,6 +128,7 @@ keeps the answers like this:
   for its imaging setup:
   `<models folder>/<imaging setup>/training_data/<brain>/`. In it:
   `curated_cells.xml` and `curated_non_cells.xml` (the answers),
+  `skipped_candidates.xml` (candidates you skipped; never training data),
   `cells/` and `non_cells/` (the training cubes, once exported) and
   `training.yml`. "Create Training Layers" points the window at the selected
   brain's folder and shows its saved answers in the layers
@@ -178,11 +179,23 @@ keeps the answers like this:
 - **A review carries on where it stopped.** When you choose a candidates
   layer ("Use Selected Layer"), every candidate that already has a saved answer
   for the selected brain counts as answered again (green = cell, red = not a
-  cell), the layer line says how many ("..., 12 already answered"), and review
-  starts at the first candidate without an answer. This holds after choosing
-  the same layer again and after restarting napari. Candidates you skipped
-  (S / Space) are not saved anywhere, so they are asked again. Nothing is
-  restored for a points layer recorded as another brain's.
+  cell), and so does every candidate you skipped before with S / Space
+  (orange). The layer line says how many ("..., 12 already answered, 3 skipped
+  before"), and review starts at the first candidate that is neither answered
+  nor skipped. This holds after choosing the same layer again and after
+  restarting napari. Nothing is restored for a points layer recorded as
+  another brain's.
+- **Skips are saved, but they are not answers.** Each S / Space is saved at
+  once in the brain's folder, in `skipped_candidates.xml`. A skip is never
+  shown in the training layers, never cut into a training cube and never used
+  for training, and it never replaces an answer: pressing S on a candidate you
+  already answered keeps the answer. To answer a skipped candidate later, go
+  to it with the arrow keys and press C or X: the answer is saved and the skip
+  ends. If a skip cannot be saved, a message "Skip Not Saved" says why and the
+  candidate is asked again. Answers saved by older versions in the pool's own
+  files (`curated_cells.xml` / `curated_non_cells.xml` directly in
+  `training_data/`, without a brain) are NOT counted as answered when a review
+  resumes, because they do not say which brain they belong to.
 - **One answer per point, the last one counts.** Every C or X is saved at once.
   If you change an answer (C, then X on the same candidate), the point moves
   from one file to the other; answering the same way twice saves it once. The
