@@ -1887,6 +1887,43 @@ class AnalysisRegistry:
                   % (len(failed), "y" if len(failed) == 1 else "ies"))
         return invalidated
 
+    def record_failed_attempt(self, sample: str, attempt: Dict[str, Any]) -> bool:
+        """Write on *sample*'s CURRENT entry that the newest run of that
+        sample failed, without retiring the entry.
+
+        Sets ``newest_attempt_failed`` on the entry to *attempt* (what the
+        caller knows: the step it failed at, the error, why the entry was
+        kept) plus ``recorded_at`` and ``hostname``, and writes an
+        ``attempt_failed`` line holding the same JSON to the audit log.
+        Returns True when the entry was marked, False when the sample has no
+        current entry (nothing to mark).
+
+        WHY: a producer keeps an entry current after a failed re-run when
+        the failure cannot be shown to be the sample's (the 2D batch: no
+        other sample of the run got past the failing step, so it may be the
+        software's). The result is then still the current one although the
+        newest attempt on the sample failed -- and that used to be said only
+        in a console line, so whoever pulls the registry saw an unqualified
+        current result. The mark is on the entry itself; the next successful
+        registration of the sample writes a new entry without it. The CLI
+        lists every marked entry.
+        """
+        with self._locked():
+            # Records nothing of its own, so a damaged manifest is left where
+            # it is (as invalidate does).
+            registry = self._read_registry(set_aside_unreadable=False)
+            entry = registry.get("entries", {}).get(sample)
+            if not entry or not entry.get("is_current", True):
+                return False
+            mark = dict(attempt)
+            mark["recorded_at"] = datetime.now().isoformat()
+            mark["hostname"] = _get_hostname()
+            entry["newest_attempt_failed"] = mark
+            self._write_registry(registry)
+        self._log_event("attempt_failed", entry.get("sample", sample), sample,
+                        json.dumps(mark, sort_keys=True, default=str))
+        return True
+
     @staticmethod
     def _retired_record(entry: Dict[str, Any], archived_to: str) -> str:
         """One-line JSON of what a retired entry said, for its log line.
@@ -2192,6 +2229,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"\n  Total entries: {len(entries)}")
     print(f"  Current:       {n_current}")
     print(f"  Invalidated:   {n_stale}")
+    # Current entries whose sample's newest run failed (see
+    # AnalysisRegistry.record_failed_attempt): listed every time, because
+    # their result is still counted as current.
+    contested = sorted([(e.get("sample", k), e["newest_attempt_failed"])
+                        for k, e in entries.items()
+                        if e.get("is_current", True) and e.get("newest_attempt_failed")],
+                       key=lambda pair: pair[0])
+    if contested:
+        print(f"  [!] Current, but the newest run failed: {len(contested)}")
+        for sample, attempt in contested:
+            print("    %s: failed while %s at %s (%s)" % (
+                sample, attempt.get("failed_at", "?"), attempt.get("recorded_at", "?"),
+                attempt.get("error", "")))
     print(f"  Last updated:  {data.get('last_updated', 'never')}")
     recorded_hash = data.get("approved_method_hash")
     print("  Approved method in the header: %s (recorded %s on %s, from %s)" % (

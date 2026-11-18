@@ -339,6 +339,35 @@ hand. If the `replace_entry` line cannot be written, the record is printed
 as `[!] <key> was replaced, but its record could not be written ...`: copy
 it into a text file beside the log, because it is then the only copy.
 
+## A current entry whose newest run failed
+
+The 2D detection batch (`batch_encr`) keeps a sample's earlier entry
+**current** when the sample's re-run fails but the failure cannot be shown
+to be the sample's: it was a data error (wrong channels, an image the
+detector rejects) at a step that no other sample of the same run got past --
+for example a run of that one image only. Such a failure may be the
+software's, so the earlier result is not thrown away. (When another sample
+DID get past that step, the earlier entry is retired; when the failure is a
+share, a missing library or the like, the entry is kept and nothing is
+recorded on it, because that says nothing about the sample.)
+
+The entry is not left looking like an ordinary current result:
+
+- it gets a `newest_attempt_failed` field in `registry.json`: `failed_at`
+  (the step), `error`, `failure` ("sample"), `kept_because`, `method_hash`
+  (the settings of the run that failed), `recorded_at` and `hostname`;
+- `logs/<analysis>.log` gets an `attempt_failed` line with the same JSON;
+- `mousebrain-registry --name <analysis>` lists it under
+  `[!] Current, but the newest run failed: <n>`, one line per sample with
+  the step, the time and the error;
+- the batch's own summary says `[!] <sample>: earlier registry entry kept
+  current ... the failure is recorded on the entry`.
+
+What to do: fix the cause (look at the error) and run the batch again for
+that sample, ideally together with samples that are known to work, so the
+run can tell the sample's fault from the software's. The next successful
+registration of the sample writes a new entry without the field.
+
 ## Invalidating results
 
 `AnalysisRegistry(...).invalidate()` (all current entries) or

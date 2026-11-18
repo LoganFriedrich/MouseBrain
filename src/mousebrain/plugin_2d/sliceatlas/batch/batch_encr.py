@@ -1591,8 +1591,10 @@ def main():
     retired_by_error = []        # (sample, files archived): a failure retired its entry
     not_retired = []             # samples whose entry should retire, files would not move
     kept_after_error = []        # failed samples whose earlier entry stays current
-    kept_unproven = []           # (sample, step): no other sample got past the step
+    kept_unproven = []           # (sample, step, marked on the entry): no other
+                                 # sample got past the step
     sample_failures = []         # (sample, step) of runs that failed on the sample
+    failure_errors = {}          # sample -> the error its run failed with
     registry_errors = []         # (sample, message): a registry call that raised
     not_registered = []          # (sample, message): completed, registering raised
     retired_not_registered = []  # (sample, earlier n, files archived, message):
@@ -1741,6 +1743,7 @@ def main():
         elif result.get('status') == 'error' and registry is not None:
             if result.get('failure') == 'sample':
                 sample_failures.append((nd2_path.stem, result.get('failed_at')))
+                failure_errors[nd2_path.stem] = result.get('error')
             else:
                 try:
                     earlier = registry.get_entry(nd2_path.stem)
@@ -1768,7 +1771,23 @@ def main():
             if not (earlier and earlier.get('is_current', True)):
                 continue   # nothing current to retire
             if not finished.intersection(STEP_EVIDENCE.get(failed_step, ())):
-                kept_unproven.append((sample_id, failed_step))
+                # Kept current, but the failure is written ON the entry
+                # (newest_attempt_failed) and in the registry's audit log.
+                # WHY: this used to be said only in the summary below, so
+                # whoever pulls the registry saw the earlier count as an
+                # unqualified current result although the newest attempt on
+                # the sample failed. Whether such an entry should be retired
+                # outright is not decided here (see the guide).
+                marked = registry.record_failed_attempt(sample_id, {
+                    'failed_at': failed_step,
+                    'error': failure_errors.get(sample_id),
+                    'failure': 'sample',
+                    'kept_because': (f"no other sample of the run got past the "
+                                     f"'{failed_step}' step, so the failure may "
+                                     f"be the software's"),
+                    'method_hash': registry.get_method_hash(method_params),
+                })
+                kept_unproven.append((sample_id, failed_step, marked))
                 continue
             # Every file in the sample's own registry folder goes with the
             # entry, for the same reason as on the no-nuclei path above: a
@@ -1847,11 +1866,13 @@ def main():
               "earlier registry entry could not be retired and is STILL "
               "CURRENT: its files could not be moved to _archived/ (in use?). "
               "Close whatever has them open and run again.")
-    for sample_id, failed_step in kept_unproven:
-        print(f"    {sample_id}: earlier registry entry kept current -- no "
+    for sample_id, failed_step, marked in kept_unproven:
+        print(f"    [!] {sample_id}: earlier registry entry kept current -- no "
               f"other sample of this run got past the '{failed_step}' step, so "
-              "the failure may be the software's, not the sample's; fix the "
-              "cause and run again")
+              "the failure may be the software's, not the sample's; "
+              + ("the failure is recorded on the entry (newest_attempt_failed). "
+                 if marked else "")
+              + "Fix the cause and run again")
     for sample_id in kept_after_error:
         print(f"    {sample_id}: earlier registry entry kept current -- the "
               "failure was not shown to be the sample's; fix it and run again")
