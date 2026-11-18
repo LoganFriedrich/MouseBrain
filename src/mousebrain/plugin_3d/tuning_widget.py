@@ -11684,13 +11684,24 @@ class TuningWidget(QWidget):
         except:
             n_cells = '?'
 
-        # Check for registration
+        # Counting needs a registration a person APPROVED -- the one rule
+        # every reader uses (mousebrain.registration_approval). This used to
+        # check for brainreg.json only, which brainreg writes before it fits
+        # anything: a registration that failed, was stopped, is still running,
+        # was rejected, or no longer fits its re-cropped images was counted,
+        # and its counts (cells placed in the wrong regions) went into the
+        # production files.
+        from mousebrain.registration_approval import APPROVED, approval_state
         reg_folder = self.current_brain / "3_Registered_Atlas"
-        if not reg_folder.exists() or not (reg_folder / "brainreg.json").exists():
+        state, why = approval_state(reg_folder)
+        if state != APPROVED:
             QMessageBox.warning(
-                self, "No Registration",
-                f"Registration not found at:\n{reg_folder}\n\n"
-                "Run registration first (Step 3)."
+                self, "Registration not approved",
+                f"Region counting needs an approved registration. The registration of "
+                f"{self.current_brain.name} is: {why}.\n\n"
+                "Look at its QC pictures and approve it (the 3. Registration tab, or "
+                "util_approve_registration.py --brain <brain>); if it has to be "
+                "registered again, do that first (Step 3), then approve it."
             )
             return
 

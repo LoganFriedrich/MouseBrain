@@ -925,6 +925,25 @@ STARTED. A brain counts as registered only when all four output files are there
   `3_Registered_Atlas/_archive/<date>_<time>_incomplete/`.
 - **Nothing unfinished can be approved**: every Approve button and
   `util_approve_registration.py` refuse, naming the missing files.
+- **Nothing unfinished is counted or recorded as done**:
+  - Setup & Tuning's **Run Region Counts** button (10. Results tab) starts
+    counting only when the brain's registration is APPROVED. Otherwise it
+    shows "Registration not approved" with the registration's state (did not
+    finish, being registered, rejected, out of date, or waiting for
+    approval) and starts nothing: approve it on the 3. Registration tab (or
+    with `util_approve_registration.py --brain <brain>`), registering it again
+    first if it has to be. (Before, the button only looked for
+    `brainreg.json`, so it counted cells on a registration that had not
+    finished, had been rejected, or no longer fit its re-cropped images.)
+  - `util_backfill_registrations.py` (adds calibration-run rows for
+    registrations made before runs were recorded) records only a finished
+    registration that still fits its images and was not rejected. Every other
+    brain is listed under "Not backfilled" with the reason, at the end of the
+    run too; register it again (step 3) if you need it. (Before, any
+    `brainreg.json` became a row with status `completed`.)
+  - `util_optimize_crop.py` scores a trial crop as `SUCCESS` only when all
+    four registration files were written; otherwise the trial is `FAILED`
+    and the line above it names the missing files.
 - **A registration that is RUNNING is not "did not finish".** While brainreg
   works, the folder holds `brainreg.json` and nothing else for a long time --
   exactly what a stopped run leaves. So step 3 writes

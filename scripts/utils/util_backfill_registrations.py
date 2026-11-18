@@ -5,6 +5,16 @@ util_backfill_registrations.py
 Scans existing 3_Registered_Atlas folders and creates tracker entries
 for registrations that happened before tracking was implemented.
 
+Only a FINISHED registration that still fits its images and was not turned
+down is back-filled (mousebrain.registration_approval.approval_state). WHY:
+brainreg writes brainreg.json before it fits anything, so that file alone is
+left behind by a registration that failed, was stopped, or is running right
+now. This script used to record every such folder as status 'completed'
+("Backfilled from existing registration"), and a tracker row is read as a
+finished registration by everything that lists runs. Skipped folders are
+listed with the reason; register those brains again (step 3), and a person
+approves the new registration before anything is counted on it.
+
 Usage:
     python util_backfill_registrations.py
     python util_backfill_registrations.py --dry-run
@@ -48,6 +58,7 @@ def backfill_registrations(dry_run: bool = False):
 
     backfilled = 0
     skipped = 0
+    not_finished = []   # (brain, why): registrations that do not count
 
     # Which folders are brains is ONE rule, config.iter_brains: an archive
     # kept beside a brain is never back-filled into the tracker as a brain.
@@ -68,6 +79,19 @@ def backfill_registrations(dry_run: bool = False):
 
         # Skip archive/optimization folders
         if "_archive" in str(reg_folder) or "_crop_optimization" in str(reg_folder):
+            continue
+
+        # A brainreg.json is no proof that the registration finished, nor that
+        # it still counts (see the module docstring). The one rule every
+        # reader uses decides: running, unfinished, rejected or out-of-date
+        # registrations are not recorded as 'completed'.
+        from mousebrain.registration_approval import (APPROVED, NEEDS_REGISTRATION,
+                                                      approval_state)
+        state, why = approval_state(reg_folder)
+        if state in NEEDS_REGISTRATION:
+            print(f"\nNot backfilled: {brain_name}")
+            print(f"  {why}")
+            not_finished.append((brain_name, why))
             continue
 
         # Found untracked registration - parse metadata
@@ -103,8 +127,7 @@ def backfill_registrations(dry_run: bool = False):
 
         # Approved only when a person approved THIS registration
         # (mousebrain.registration_approval).
-        from mousebrain.registration_approval import is_approved
-        approved = is_approved(reg_folder)
+        approved = state == APPROVED
 
         # Determine initial status
         initial_status = "approved" if approved else "completed"
@@ -147,6 +170,10 @@ def backfill_registrations(dry_run: bool = False):
     print(f"  Previously tracked: {len(tracked_brains)}")
     print(f"  Skipped (already tracked): {skipped}")
     print(f"  Backfilled: {backfilled}")
+    print(f"  Not backfilled (registration not finished, running, rejected or "
+          f"out of date): {len(not_finished)}")
+    for name, why in not_finished:
+        print(f"    {name}: {why}")
     print(f"{'=' * 60}")
 
     if dry_run and backfilled > 0:

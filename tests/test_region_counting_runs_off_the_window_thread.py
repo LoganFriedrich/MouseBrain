@@ -72,8 +72,14 @@ def counting(tmp_path, monkeypatch):
     (w.current_brain / "5_Classified_Cells").mkdir(parents=True)
     (w.current_brain / "5_Classified_Cells" / "cells.xml").write_text(
         "<Marker></Marker>", encoding="utf-8")
-    (w.current_brain / "3_Registered_Atlas").mkdir()
-    (w.current_brain / "3_Registered_Atlas" / "brainreg.json").write_text("{}", encoding="utf-8")
+    # A finished registration a person approved: counting refuses anything
+    # less (a bare brainreg.json is only a registration that STARTED).
+    from mousebrain import registration_approval as ra
+    reg = w.current_brain / "3_Registered_Atlas"
+    reg.mkdir()
+    for name in ra.FINGERPRINT_FILES:
+        (reg / name).write_text("{}", encoding="utf-8")
+    ra.approve(reg, approved_by="tester")
     w.region_count_status = _Status()
     w.run_regions_btn = _Status()
     w.brain_combo = _Status()

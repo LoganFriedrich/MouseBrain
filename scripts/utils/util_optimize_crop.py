@@ -301,7 +301,16 @@ def run_registration(
         result = subprocess.run(cmd, capture_output=True, text=True)
         duration = time.time() - start_time
         
-        success = result.returncode == 0 and (output_folder / "brainreg.json").exists()
+        # Success only when the registration FINISHED: every output file
+        # brainreg writes is there (registration_approval.registration_complete).
+        # brainreg.json alone is written before brainreg fits anything, so a
+        # trial that failed part-way used to be scored as a successful one.
+        from mousebrain.registration_approval import (missing_registration_files,
+                                                      registration_complete)
+        success = result.returncode == 0 and registration_complete(output_folder)
+        if result.returncode == 0 and not success:
+            print(f"    brainreg ended but the registration is incomplete (missing: "
+                  f"{', '.join(missing_registration_files(output_folder))})")
         return success, duration
         
     except Exception as e:
