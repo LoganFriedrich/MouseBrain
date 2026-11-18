@@ -2545,13 +2545,23 @@ class BrainSliceWidget(QWidget):
             print("[BrainSlice] Save skipped: no results to save")
             return None
 
+        # settings.json says what the saved results were made on (the load
+        # settings above all). When it was not restored -- unreadable, or
+        # made on the image loaded with another rotation, z-projection or
+        # channel choice -- it is kept as it is, so no result may be saved
+        # beside it either. WHY: new nuclei or measurements used to be
+        # written next to the OLD settings.json; the next time the image
+        # was opened, the old settings were applied, nothing looked amiss,
+        # and results made on differently loaded pixels were restored onto
+        # it whenever the image kept its shape.
+        settings_kept = "settings.json" in blocked
         not_saved = []
         try:
             state["settings.json"] = self._analysis_settings_to_save()
             analysis_dir.mkdir(exist_ok=True)
             for name, payload in state.items():
                 path = analysis_dir / name
-                if name in blocked:
+                if name in blocked or (settings_kept and name != "settings.json"):
                     if payload is not None and name != "settings.json":
                         not_saved.append(name)
                     continue
@@ -2581,8 +2591,10 @@ class BrainSliceWidget(QWidget):
             msg = (f"[!] {', '.join(not_saved)} of {self.current_file.name} NOT "
                    f"saved: {analysis_dir.name} holds an earlier analysis that "
                    f"could not be restored (see the message shown when the image "
-                   f"was opened), and it is never overwritten. Export these "
-                   f"results now if you need them.")
+                   f"was opened). It is never overwritten, and no new result is "
+                   f"saved beside it, because its settings.json does not "
+                   f"describe the new results. Export these results now if you "
+                   f"need them.")
             self.status_label.setText(msg)
             print(f"[BrainSlice] {msg}")
             self._show_not_saved(msg, about=self.current_file)
@@ -2757,8 +2769,9 @@ class BrainSliceWidget(QWidget):
                            if (analysis_dir / n).exists())
             msg = (f"[!] Saved analysis of {self.current_file.name} NOT restored: "
                    f"it was made on the image loaded with {mismatch}. Its files "
-                   f"are kept and will not be overwritten. To see it, set those "
-                   f"on the Load tab and click Load.")
+                   f"are kept and will not be overwritten, and nothing new is "
+                   f"saved for this image while it is loaded this way. To see "
+                   f"it, set those on the Load tab and click Load.")
             self.status_label.setText(msg)
             print(f"[BrainSlice] {msg}")
             return False
