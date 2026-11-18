@@ -1,10 +1,12 @@
 # The analysis registry: an operator's guide
 
-The analysis registry is where MouseBrain records every result it produces
-(counts, measurements, figures) together with **how** it was made: the method
+The analysis registry is where MouseBrain records the results of the 2D slice
+tools, the 3D region counts (step 6) and the orientation check (counts,
+measurements, figures) together with **how** they were made: the method
 parameters, the source files, the time and the machine. You never have to call
-it yourself -- the pipeline steps and batch tools register their results as
-their last step. This page says what it keeps, what the "approved method" is,
+it yourself -- those tools register their results as their last step. Steps 4
+(detection) and 5 (classification) of the 3D pipeline do not register anything
+yet; their record is the calibration tracker (`calibration_runs.csv`). This page says what it keeps, what the "approved method" is,
 what "stale" means, and what to do when something goes wrong.
 
 Everything below is done with one command, `mousebrain-registry`, run in the
