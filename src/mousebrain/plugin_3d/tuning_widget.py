@@ -1009,8 +1009,10 @@ class TuningWidget(QWidget):
         # Tab 9: Curation & Training (was 8)
         self.tabs.addTab(self.create_curation_tab(), "9. Curate/Train")
 
-        # Tab 10: Results (was 9)
-        self.tabs.addTab(self.create_results_tab(), "10. Results")
+        # Tab 10: Results (was 9). Its index is kept, like the Registration
+        # tab's, so opening it refreshes it (_on_tab_changed); a hard-coded
+        # number went stale when tabs were added and refreshed the wrong tab.
+        self._results_tab_index = self.tabs.addTab(self.create_results_tab(), "10. Results")
 
         # Auto-refresh when switching tabs
         self.tabs.currentChanged.connect(self._on_tab_changed)
@@ -1030,8 +1032,8 @@ class TuningWidget(QWidget):
         # now, not what was there when the brain was selected.
         if index == getattr(self, '_registration_tab_index', None) and self.current_brain:
             self._update_registration_status()
-        # Tab 9 (Results) is index 8 - auto-refresh the results views
-        if index == 8:
+        # The Results tab: show the selected brain's counts as they are now.
+        if index == getattr(self, '_results_tab_index', None):
             self._refresh_all_results_views()
 
     # ==========================================================================

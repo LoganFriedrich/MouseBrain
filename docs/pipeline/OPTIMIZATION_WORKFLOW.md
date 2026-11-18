@@ -269,6 +269,10 @@ Counting always counts the brain's **production** classification,
 Results tab says which run that file came from (from `promoted_from.json`), or
 that there is none yet. To count a different run, promote it first (see above).
 
+Opening the "10. Results" tab (or clicking "Refresh Views") reloads its "Allen
+Atlas" and "eLife Groups" tables from the selected brain's count files in
+`6_Region_Analysis/`. Opening any other tab does not touch them.
+
 "Run Region Counting" runs step 6 in the background with no time limit (a
 whole brain takes far longer than the five minutes it used to be allowed). Meanwhile napari stays usable, the
 status line shows step 6's latest message, the brain list is held, and a second
