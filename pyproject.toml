@@ -113,7 +113,8 @@ mousebrain = ["napari.yaml"]
 # -p no:cacheprovider: pytest's cache plugin makes a pytest-cache-files-*
 # temporary folder and renames it to .pytest_cache. When the repo sits on a
 # network share the rename can fail, leaving the folder behind with permissions
-# only an administrator can clear. The suite needs no cache.
+# only an administrator can clear. The suite needs no cache. If a run turns the
+# cache back on (-o addopts=), tests/conftest.py moves it to the temp folder.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # --ignore-glob: leftover pytest-cache-files-* folders must be skipped BEFORE pytest

@@ -116,3 +116,18 @@ loaded), the run still ends as failed, with a `TEST GUARD:` note at the end.
 - A **separate program** a test starts (a subprocess) is not watched. Tests
   that start one must give it a throwaway folder themselves.
 - A path given relative to an open folder handle (rare, low-level code).
+
+## pytest's cache never goes into the repository
+
+pytest normally keeps a `.pytest_cache` folder in the repository, made by
+renaming a temporary `pytest-cache-files-...` folder into place. On a network
+drive that rename can fail and leave the temporary folder behind with
+permissions only an administrator can clear. So:
+
+- the repository's pytest settings (`pyproject.toml`) switch the cache off
+  (`-p no:cacheprovider`);
+- if a run switches it back on anyway (for example with `-o addopts=`), the
+  test suite moves the cache into the system temp folder.
+
+Leftover `pytest-cache-files-...` folders from before this was in place are
+skipped by the test run; an administrator can delete them.

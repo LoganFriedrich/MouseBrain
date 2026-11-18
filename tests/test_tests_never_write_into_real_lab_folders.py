@@ -309,3 +309,35 @@ def test_os_open_is_judged_by_its_flags():
         guard("open", (target, None, os.O_WRONLY | os.O_CREAT))
     with pytest.raises(PermissionError):
         guard("open", (target, "r+", os.O_RDWR))
+
+
+# -- pytest's cache never lands in the repository -----------------------------
+
+PASSING_TEST = """
+    def test_nothing():
+        assert True
+"""
+
+
+def _cache_leftovers(repo):
+    return sorted(p.name for p in repo.iterdir()
+                  if p.name == ".pytest_cache" or p.name.startswith("pytest-cache-files-"))
+
+
+def test_the_repository_pytest_config_keeps_the_cache_off(tmp_path):
+    """The repository's own pytest settings switch the cache plugin off."""
+    lab, repo = _lab(tmp_path, PASSING_TEST, ini="")
+    (repo / "pytest.ini").unlink()
+    shutil.copy2(TESTS_DIR.parent / "pyproject.toml", repo / "pyproject.toml")
+    out = _run_child(repo, _child_env(tmp_path))
+    assert "1 passed" in out, out
+    assert _cache_leftovers(repo) == [], out
+
+
+def test_a_run_that_turns_the_cache_back_on_writes_it_outside_the_repository(tmp_path):
+    lab, repo = _lab(tmp_path, PASSING_TEST, ini="")
+    (repo / "pytest.ini").unlink()
+    shutil.copy2(TESTS_DIR.parent / "pyproject.toml", repo / "pyproject.toml")
+    out = _run_child(repo, _child_env(tmp_path), "-o", "addopts=")
+    assert "1 passed" in out, out
+    assert _cache_leftovers(repo) == [], out

@@ -64,3 +64,21 @@ def pytest_sessionfinish(session, exitstatus):
             "any test:\n" + shown + "\n")
         if session.exitstatus == 0:
             session.exitstatus = 1
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config):
+    """Second layer behind `-p no:cacheprovider` in pyproject.toml: when a run
+    turns pytest's cache back on (for example `-o addopts=`), put the cache in
+    the temp folder, never in the repository. WHY: the cache is written by
+    renaming a pytest-cache-files-* folder into place; on a network share the
+    rename can fail and leave a folder only an administrator can remove."""
+    cache = getattr(config, "cache", None)
+    if cache is None:
+        return
+    try:
+        cache._cachedir = Path(tempfile.gettempdir()) / (
+            "pytest-cache-" + REPO_ROOT.name)
+    except Exception as exc:  # pytest changed its cache object: say so
+        sys.stderr.write("TEST GUARD: could not move pytest's cache out of the "
+                         "repository (%s); keep -p no:cacheprovider.\n" % exc)
