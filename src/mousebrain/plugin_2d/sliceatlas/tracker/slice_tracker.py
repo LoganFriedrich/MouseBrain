@@ -781,6 +781,65 @@ class SliceTracker:
 
         return self._update_row(run_id, updates)
 
+    def record_result_if_started(
+        self,
+        run_id: str,
+        status: str,
+        duration_seconds: Optional[float] = None,
+        *,
+        lock_wait_seconds: Optional[float] = None,
+        replace_retry_seconds: Optional[float] = None,
+        **kwargs
+    ) -> bool:
+        """Write a run's result (as update_status would) only while its row
+        still says 'started'; True when it was written, False when the row is
+        missing or already finished (nothing written).
+
+        For a result that could not be written when the run finished (the
+        napari window keeps it and tries again later). WHY only a 'started'
+        row: by the time of a later try the row may have been finished some
+        other way, and a late write must never overwrite that. The check and
+        the write are one locked rewrite, so nothing can change the row in
+        between.
+
+        lock_wait_seconds / replace_retry_seconds: this one write's waits
+        (None = the tracker's own). WHY: the window retries on the thread
+        that draws it and passes 0, so a file still held open costs it no
+        wait at all -- the write fails at once (OSError, TimeoutError among
+        them) and is tried again later. Unknown result names raise
+        ValueError before anything is written, as in update_status.
+        """
+        unknown = sorted(k for k in kwargs if k not in RESULT_FIELDS)
+        if unknown:
+            raise ValueError(
+                "record_result_if_started cannot record %s: not a result column"
+                % ", ".join(unknown))
+        if status == 'error':
+            status = FAILED
+        updates = {'status': status}
+        if duration_seconds is not None:
+            updates['duration_seconds'] = duration_seconds
+        updates.update({k: v for k, v in kwargs.items() if v is not None})
+
+        def mutate(rows):
+            for row in rows:
+                if row.get('run_id') == run_id:
+                    if row.get('status') != 'started':
+                        return False
+                    row.update({k: str(v) for k, v in updates.items()})
+                    return True
+            return False
+
+        saved = (self._lock_wait_seconds, self._replace_retry_seconds)
+        if lock_wait_seconds is not None:
+            self._lock_wait_seconds = lock_wait_seconds
+        if replace_retry_seconds is not None:
+            self._replace_retry_seconds = replace_retry_seconds
+        try:
+            return bool(self._rewrite(mutate))
+        finally:
+            self._lock_wait_seconds, self._replace_retry_seconds = saved
+
     def rate_run(self, run_id: str, rating: int, notes: Optional[str] = None) -> bool:
         """Rate a run (1-5 stars) with optional notes."""
         if not 1 <= rating <= 5:

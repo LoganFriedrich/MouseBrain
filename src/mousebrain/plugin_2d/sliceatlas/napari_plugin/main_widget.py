@@ -41,6 +41,11 @@ PA_RECLASSIFY_RECORD_DELAY_MS = 1500
 # cannot be made in this time is reported in the status bar instead.
 GUI_TRACKER_LOCK_WAIT_SECONDS = 10
 GUI_TRACKER_REPLACE_RETRY_SECONDS = 2
+# How often the window tries again to write a finished run's result that the
+# tracker file refused (see _retry_unrecorded_results). Each try waits for
+# nothing -- a file still held open fails at once -- so it never freezes the
+# window.
+UNRECORDED_RESULT_RETRY_MS = 30_000
 
 
 # ----- An image's saved analysis folder -----------------------------------
@@ -453,8 +458,14 @@ class BrainSliceWidget(QWidget):
         # Quantification) can say so instead of silently logging nothing.
         self._tracker_error: Optional[str] = None
         # Runs whose tracker row this window could not write (see
-        # _result_not_recorded): not written to again this session.
+        # _result_not_recorded): no second blocking write is tried for them.
         self._unwritable_run_ids: set = set()
+        # The results of those runs, {run_id: update_status keywords}, kept
+        # to be written once the file can be written again (see
+        # _retry_unrecorded_results), and the timer that tries (made when
+        # first needed).
+        self._unrecorded_results: dict = {}
+        self._unrecorded_retry_timer = None
         self._open_tracker()
 
         # Session tracking
@@ -992,6 +1003,8 @@ class BrainSliceWidget(QWidget):
             from qtpy.QtWidgets import QApplication
             if QApplication.instance() is not None:
                 QApplication.instance().aboutToQuit.connect(self._pa_record_reclassification)
+                # A result still waiting for the tracker gets a last try.
+                QApplication.instance().aboutToQuit.connect(self._last_try_unrecorded_results)
         except Exception:
             pass
 
@@ -4493,6 +4506,9 @@ class BrainSliceWidget(QWidget):
         self.pa_run_btn.setEnabled(False)
         self.status_label.setText("Running particle analysis...")
 
+        # A result an earlier run could not write gets its next try first
+        # (see _retry_unrecorded_results).
+        self._retry_unrecorded_results()
         # Tracker logging
         import time as _time_mod
         start_time = _time_mod.time()
@@ -4698,6 +4714,7 @@ class BrainSliceWidget(QWidget):
 
             # Update tracker
             if self.tracker and pa_run_id:
+                result = None
                 try:
                     duration = _time_mod.time() - start_time
                     self._saving_to_tracker()
@@ -4706,8 +4723,7 @@ class BrainSliceWidget(QWidget):
                         mean_intensity = float(measurements['mean_intensity'].mean())
                     n_positive = (int(results['is_positive'].sum())
                                   if 'is_positive' in results.columns else None)
-                    self.tracker.update_status(
-                        pa_run_id,
+                    result = dict(
                         status='completed',
                         duration_seconds=duration,
                         pa_particles_found=n,
@@ -4716,8 +4732,9 @@ class BrainSliceWidget(QWidget):
                         pa_mean_intensity=mean_intensity,
                         pa_positive_particles=n_positive,
                     )
+                    self.tracker.update_status(pa_run_id, **result)
                 except Exception as e:
-                    problem = self._result_not_recorded(pa_run_id, e)
+                    problem = self._result_not_recorded(pa_run_id, e, result)
                     self.status_label.setText(f"Done - {n} particles found -- {problem}")
 
             # Auto-save analysis state
@@ -5990,6 +6007,9 @@ class BrainSliceWidget(QWidget):
                     self.detect_btn.setEnabled(True)
                     return
 
+            # A result an earlier run could not write gets its next try first
+            # (see _retry_unrecorded_results).
+            self._retry_unrecorded_results()
             # Log to tracker
             if self.tracker:
                 sample_id = self.sample_id_edit.text() or fallback_sample_id(self)
@@ -6126,17 +6146,15 @@ class BrainSliceWidget(QWidget):
             # saved. _result_not_recorded remembers the run so the outer
             # handler does not try a second locked write.
             record_problem = None
+            result = None
             try:
                 if self.tracker and run_id:
                     self._saving_to_tracker()
-                    self.tracker.update_status(
-                        run_id,
-                        status='completed',
-                        det_nuclei_found=count,
-                    )
+                    result = dict(status='completed', det_nuclei_found=count)
+                    self.tracker.update_status(run_id, **result)
                     self.session_run_ids.append(run_id)
             except Exception as e:
-                record_problem = self._result_not_recorded(run_id, e)
+                record_problem = self._result_not_recorded(run_id, e, result)
 
             # Visualize results
             # Remove old detection layers
@@ -6237,18 +6255,16 @@ class BrainSliceWidget(QWidget):
 
             # Update tracker (wrapped so failures don't block layer creation)
             record_problem = None
+            result = None
             try:
                 if self.tracker and run_id:
                     self._saving_to_tracker()
-                    self.tracker.update_status(
-                        run_id,
-                        status='completed',
-                        det_nuclei_found=count,
-                        **self._detection_filter_counts(metrics),
-                    )
+                    result = dict(status='completed', det_nuclei_found=count,
+                                  **self._detection_filter_counts(metrics))
+                    self.tracker.update_status(run_id, **result)
                     self.session_run_ids.append(run_id)
             except Exception as e:
-                record_problem = self._result_not_recorded(run_id, e)
+                record_problem = self._result_not_recorded(run_id, e, result)
 
             # Add labels to napari
             try:
@@ -6446,6 +6462,9 @@ class BrainSliceWidget(QWidget):
         # Get nuclear channel for Manders/Pearson validation metrics
         nuclear_image = self._get_current_slice(self.red_channel)
 
+        # A result an earlier run could not write gets its next try first
+        # (see _retry_unrecorded_results).
+        self._retry_unrecorded_results()
         # Log to tracker -- AFTER the input checks above. WHY: a row logged
         # first and then abandoned by one of those checks stayed 'started'
         # forever.
@@ -6548,6 +6567,9 @@ class BrainSliceWidget(QWidget):
             self.coloc_btn.setEnabled(True)
             return
 
+        # A result an earlier run could not write gets its next try first
+        # (see _retry_unrecorded_results).
+        self._retry_unrecorded_results()
         # Log to tracker -- AFTER the input check above (see _run_colocalization).
         if self.tracker:
             sample_id = self.sample_id_edit.text() or fallback_sample_id(self)
@@ -6622,6 +6644,7 @@ class BrainSliceWidget(QWidget):
                     record_problem = STACK_RESULTS_NOT_SAVED
 
                 # Update tracker (non-fatal if fails)
+                update_kwargs = None
                 try:
                     if self.tracker and run_id:
                         update_kwargs = dict(
@@ -6637,7 +6660,7 @@ class BrainSliceWidget(QWidget):
                         self.tracker.update_status(run_id, **update_kwargs)
                         self.session_run_ids.append(run_id)
                 except Exception as e:
-                    record_problem = self._result_not_recorded(run_id, e)
+                    record_problem = self._result_not_recorded(run_id, e, update_kwargs)
 
                 # Refresh run history panel
                 try:
@@ -6747,6 +6770,7 @@ class BrainSliceWidget(QWidget):
                     record_problem = STACK_RESULTS_NOT_SAVED
 
                 if csv_saved:
+                    update_kwargs = None
                     try:
                         if self.tracker and run_id:
                             # The four classes, each in its own column (see
@@ -6769,7 +6793,7 @@ class BrainSliceWidget(QWidget):
                             self.tracker.update_status(run_id, **update_kwargs)
                             self.session_run_ids.append(run_id)
                     except Exception as e:
-                        record_problem = self._result_not_recorded(run_id, e)
+                        record_problem = self._result_not_recorded(run_id, e, update_kwargs)
 
                 # Visualize with 4-category coloring
                 self._visualize_dual_colocalization(measurements)
@@ -7157,30 +7181,135 @@ class BrainSliceWidget(QWidget):
         except Exception:
             pass
 
-    def _result_not_recorded(self, run_id, error) -> str:
+    def _result_not_recorded(self, run_id, error, result=None) -> str:
         """A finished run whose result could not be written to the tracker
         (most often: calibration_runs.csv open in a spreadsheet program).
         Prints the reason and returns a short line for the status bar, so the
         person sees that this run is not in the run history as completed.
 
+        `result`: the update_status keywords that were being written (status
+        included), or None when the failure came before they were known.
+
         When the write was refused by the FILE (an OSError: the swap refused
         because the CSV is held open, the lock not freed in time), the row is
-        left as it is -- 'started' -- and the line says so: a second write to
-        mark it failed would wait out the same budget again, with the window
-        frozen, and be refused the same way. Otherwise the row is marked
-        failed with the reason."""
+        left as it is -- 'started' -- and the line says so: a second write
+        now would wait out the same budget again, with the window frozen, and
+        be refused the same way. The result is KEPT and written later, once
+        the file takes it (_retry_unrecorded_results). WHY: the run did
+        finish and its result is real; it used to be dropped here, and its
+        row then said 'started' for ever. Otherwise (a failure that is not
+        the file's) the row is marked failed with the reason."""
         why = f"result could not be recorded: {error}"
         print(f"[BrainSlice] [!] Run {run_id}: {why}")
+        retry_later = False
         if isinstance(error, OSError):
             if run_id:
                 self._unwritable_run_ids.add(run_id)
+                if result:
+                    self._unrecorded_results[run_id] = dict(result)
+                    self._schedule_unrecorded_retry()
+                    retry_later = True
             marked = False
         else:
             marked = self._fail_run_if_unfinished(run_id, why)
-        state = ("run marked failed" if marked
-                 else "its row in the tracker still says 'started'")
+        if marked:
+            state = "run marked failed"
+        elif retry_later:
+            state = ("its row in the tracker still says 'started' until the file "
+                     "can be written; the result is saved to it then")
+        else:
+            state = "its row in the tracker still says 'started'"
         return (f"[!] not saved to the tracker ({error}); {state} -- "
                 f"is calibration_runs.csv open elsewhere?")
+
+    def _schedule_unrecorded_retry(self) -> None:
+        """Start the timer that tries the kept results again (see
+        _retry_unrecorded_results). Made on first use, and only where a Qt
+        application is running."""
+        timer = getattr(self, '_unrecorded_retry_timer', None)
+        if timer is None:
+            try:
+                from qtpy.QtWidgets import QApplication
+                if QApplication.instance() is None:
+                    return
+                timer = QTimer()
+                timer.setSingleShot(True)
+                timer.setInterval(UNRECORDED_RESULT_RETRY_MS)
+                timer.timeout.connect(self._retry_unrecorded_results)
+                self._unrecorded_retry_timer = timer
+            except Exception:
+                return
+        try:
+            timer.start()
+        except RuntimeError:
+            pass  # Qt already deleted it (the program is closing)
+
+    def _retry_unrecorded_results(self) -> None:
+        """Try again to write the results the tracker file refused when their
+        runs finished (see _result_not_recorded).
+
+        Runs every UNRECORDED_RESULT_RETRY_MS while one is waiting, before
+        this window logs a new run, and when the program closes
+        (_last_try_unrecorded_results). Each write
+        waits for nothing: a file still held open (or another writer's lock)
+        fails it at once, the window does not freeze, and the result waits
+        for the next try. A result is written only while its row still says
+        'started' (SliceTracker.record_result_if_started), so a row that was
+        finished some other way is never overwritten. Never raises.
+        """
+        pending = getattr(self, '_unrecorded_results', None)
+        if not pending or not self.tracker:
+            return
+        saved, refused = [], None
+        for run_id, result in list(pending.items()):
+            try:
+                written = self.tracker.record_result_if_started(
+                    run_id, lock_wait_seconds=0, replace_retry_seconds=0, **result)
+            except OSError as e:
+                refused = e  # the file still refuses: keep it for the next try
+                continue
+            except Exception as e:
+                print(f"[BrainSlice] [!] Run {run_id}: kept result could not be "
+                      f"written and is dropped: {e}")
+                pending.pop(run_id, None)
+                self._unwritable_run_ids.discard(run_id)
+                self._fail_run_if_unfinished(run_id, f"result could not be recorded: {e}")
+                continue
+            pending.pop(run_id, None)
+            self._unwritable_run_ids.discard(run_id)
+            if written:
+                saved.append(run_id)
+                if run_id not in self.session_run_ids:
+                    self.session_run_ids.append(run_id)
+                print(f"[BrainSlice] [OK] Run {run_id}: result saved to the tracker "
+                      f"(the file had refused it when the run finished)")
+            else:
+                print(f"[BrainSlice] Run {run_id}: kept result not written -- its row "
+                      f"is no longer 'started' (or is gone)")
+        if saved:
+            try:
+                self.status_label.setText(
+                    f"[OK] {len(saved)} earlier result(s) the tracker had refused are "
+                    f"now saved to it ({', '.join(saved)})")
+            except Exception:
+                pass
+        if pending:
+            self._unrecorded_last_refusal = refused
+            self._schedule_unrecorded_retry()
+
+    def _last_try_unrecorded_results(self) -> None:
+        """The program is closing: one last try, and the runs whose result
+        still could not be written are named in the console. WHY named: their
+        rows stay 'started' (nothing in this window runs after it closes), and
+        a person reading the tracker later must be able to tell them apart
+        from a run that is still going."""
+        self._retry_unrecorded_results()
+        pending = getattr(self, '_unrecorded_results', None)
+        if pending:
+            print(f"[BrainSlice] [!] Closing with {len(pending)} finished run(s) whose "
+                  f"result the tracker refused "
+                  f"({getattr(self, '_unrecorded_last_refusal', None)}); their rows still "
+                  f"say 'started': {', '.join(pending)}")
 
     # ----- Run History Methods -----
 

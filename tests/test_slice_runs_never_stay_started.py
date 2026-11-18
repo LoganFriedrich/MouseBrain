@@ -211,6 +211,8 @@ def _widget(tmp_path):
         quant_worker=None,
         session_run_ids=[],
         _unwritable_run_ids=set(),
+        _unrecorded_results={},
+        _unrecorded_retry_timer=None,
         _tracker_error=None,
         status="",
     )
@@ -223,6 +225,7 @@ def _widget(tmp_path):
         setattr(w, name, SimpleNamespace(value=lambda: 1))
     w.bg_local_check = SimpleNamespace(isChecked=lambda: False)
     for name in ("_fail_run_if_unfinished", "_result_not_recorded", "_saving_to_tracker",
+                 "_schedule_unrecorded_retry", "_retry_unrecorded_results",
                  "_open_tracker", "_run_colocalization", "_run_dual_colocalization",
                  "_on_dual_coloc_finished", "_on_coloc_finished", "_coloc_could_not_start",
                  "_refuse_if_analysis_running", "_analysis_in_progress"):

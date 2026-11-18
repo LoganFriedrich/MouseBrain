@@ -112,6 +112,8 @@ def make_widget(tmp_path, monkeypatch, sample, backend="StarDist"):
     w.tracker = SliceTracker(csv_path=tmp_path / "runs.csv")
     w.session_run_ids = []
     w._unwritable_run_ids = set()
+    w._unrecorded_results = {}
+    w._unrecorded_retry_timer = None
     w._tracker_error = None
     w.last_run_id = None
     w._detection_run_id = None

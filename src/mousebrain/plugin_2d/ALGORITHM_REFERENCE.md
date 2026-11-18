@@ -598,7 +598,11 @@ A row stays `started`:
   never arrived;
 - when neither the result nor the failure could be written, because
   `calibration_runs.csv` itself refused the write (see the next paragraph). The
-  napari window then said so in its status bar. The batch printed
+  napari window keeps such a result and writes it as soon as the file takes it,
+  so its row stays `started` only while the file is held open -- or for good if
+  napari was closed before the file was released (the console then printed
+  `Closing with <n> finished run(s) whose result the tracker refused ...; their
+  rows still say 'started': <run ids>`). The batch printed
   `[SliceTracker] [!] Could not mark run ... failed`, and that sample's error in
   `summary.csv` ends with `tracker row <run id> could not be marked failed and
   still reads 'started'`. The batch itself goes on with the next sample.
@@ -616,15 +620,28 @@ insets), colocalization (single- and dual-channel) and particle analysis.
   5 minutes for the lock, 30 seconds for the file), because nobody is waiting on its
   window.
 - If the write still cannot be made, the status bar ends with
-  `[!] not saved to the tracker (<the reason>); its row in the tracker still says 'started' -- is calibration_runs.csv open elsewhere?`.
-  The window does not try a second write to mark the row failed: the file would
-  refuse it the same way and the window would freeze again. (When the write failed
-  for some other reason than the file, the row is marked failed instead and the
-  line says `run marked failed`.)
+  `[!] not saved to the tracker (<the reason>); its row in the tracker still says 'started' until the file can be written; the result is saved to it then -- is calibration_runs.csv open elsewhere?`.
+  The window does not try a second write straight away: the file would refuse it
+  the same way and the window would freeze again. (When the write failed for some
+  other reason than the file, the row is marked failed instead and the line says
+  `run marked failed`.)
+- The window KEEPS the result and tries again: every 30 seconds, each time you
+  start another detection, colocalization or particle analysis, and once more when
+  napari closes. These tries never make the window wait -- if the file is still
+  held open the try fails at once and the next one comes later. **Close the
+  spreadsheet; you do not need to run the analysis again.** Once the result is
+  written the status bar says `[OK] <n> earlier result(s) the tracker had refused
+  are now saved to it (<run ids>)` and the row reads `completed` with its counts.
+  A kept result is written only while its row still says `started`: if the row was
+  changed some other way meanwhile, it is left as it is.
 - The result stays on screen (the nuclei layer, the colocalization colors, the
   particle count). For a colocalization the measurements CSV, which is saved before
-  the tracker is written, is on disk. But the run will not appear as completed in
-  the Run History. Close the spreadsheet and run it again.
+  the tracker is written, is on disk.
+- If napari is closed while the file is still held open, the kept results are lost
+  with the window: their rows stay `started` and the console names them (see "A
+  row stays `started`" above). Those runs have to be run again to be recorded.
+  (Before this change every such row stayed `started`, even after the spreadsheet
+  was closed.)
 
 **When the napari window cannot write a NEW colocalization row** (the file refuses
 the new line, most often because it is open in a spreadsheet program), the
