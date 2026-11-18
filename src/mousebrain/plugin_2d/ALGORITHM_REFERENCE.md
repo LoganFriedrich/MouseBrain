@@ -872,11 +872,49 @@ appended last. It is kept, renamed `# Settings (written before each sample's set
 were kept; they are the last sample appended then):`.) Spreadsheet programs show the
 `#` lines as text rows above the table; skip them when reading the table.
 
-**Not registered yet.** Results saved by this window (the `_analysis` folders, the
-folder-wide CSVs, the measurements CSV a colocalization writes under the subject's
-`4_Quantified` folder, and the CSVs Export Batch Results writes) are not entered in
-the analysis registry, so they do not reach the database. Whether and where they
-should be registered is not decided yet. The batch's images do get tracker rows.
+**What is registered.** Saves from this window are also entered in MouseBrain's own
+analysis registry (`<pipeline root>/Registry/`, see
+`docs/pipeline/ANALYSIS_REGISTRY.md`), so whatever pulls the registry sees them, with
+the settings that produced them. The files are still written where they always were;
+the registry keeps copies.
+
+| What you do | Registered as | Key | What is registered |
+|---|---|---|---|
+| **Save State**, **Count in ROI(s)**, the save after Run Particle Analysis or a re-classification, and the save when another image is opened (colocalization and detection results are registered with the next of these saves) | analysis `<project>_Window_Results` | the image's file name without extension | the result tables this save wrote (`measurements.csv`, `particles.csv`, `roi_detail.csv`), their row counts (and how many are positive), the window's settings (`settings.json` without the save time and layer visibility) as the method, the image and its `_analysis` folder and the tracker run ids as the source |
+| `brainslice-coloc <image> --save <folder>` | analysis `<project>_Coloc_CLI` | the image's file name without extension | the measurements CSV, the summary text and the figure, the summary numbers, every option of the run as the method |
+
+- `<project>` is the configured 2D project, `MOUSEBRAIN_2D_PROJECT` (the same setting
+  the detection batch uses). It is never guessed from a file or folder name. When it
+  is not set, or no registry root is configured, nothing is registered: Save State
+  says `State saved for <image> (not registered: ...)` with what to set, the console
+  says so once per session, and `brainslice-coloc` prints `[!] Saved, but not registered:
+  ...`.
+- These are never registered under `<project>_Detection` or `<project>_ROI_Analysis`.
+  WHY: those hold the detection batch's results and the ROI counts tied to them; a
+  save from the window is often a trial with other settings and must not replace the
+  batch's entry for that image (or retire the ROI counts resting on it).
+- They are not judged by the shared approved method (the window's settings are not
+  the batch's parameters, so every entry would read as stale); give one of these
+  analyses its own entry in `approved_method.json` if your lab approves window
+  settings.
+- Saving the same results again registers nothing new. Saving different results for
+  the same image replaces its entry and moves the earlier files to `_archived/<time>/`
+  in the registry, with the earlier record in the registry's log. When an image's
+  saved state no longer holds any result table (results cleared, or a re-run found
+  nothing), its entry is retired.
+- When the image's `_analysis` folder holds an earlier analysis that could not be
+  restored, nothing is registered for that save (the folder is not this window's
+  analysis).
+- A registry that refuses (another machine holding its lock for more than 10
+  seconds, a damaged manifest) never stops the save: the status bar says `[!] Results
+  of <image> were saved but NOT registered: ...`. Click Save State again to retry.
+- Still not registered: the label images (`labels.npz`, `nuclei.npz`, the
+  `--save` label TIFF), which are large and from which every number in the tables is
+  derived; the folder-wide CSVs of **Append to Folder CSV**; the single-image
+  **Export CSV** / **Export Figure** / **Export TIFF** files (copies of what Save
+  State registers); and the measurements CSV a colocalization writes under the
+  subject's `4_Quantified` folder (where those per-image files should live is not
+  decided yet).
 
 **Results saved before this change** may hold leftovers: a `particles.csv` or
 `rois.json` from an earlier analysis of the same image, kept when a later analysis

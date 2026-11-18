@@ -2548,12 +2548,58 @@ class BrainSliceWidget(QWidget):
             print(f"[BrainSlice] {msg}")
             QMessageBox.warning(self, "Results not saved", msg)
 
+        # Registered only when the folder holds THIS window's results: when
+        # part of it is an earlier analysis that could not be restored
+        # (blocked), registering the folder would record that earlier
+        # analysis as this one.
+        # Only the tables THIS save wrote are registered; a table left on
+        # disk from an analysis the window does not hold is not. The entry
+        # is retired only when the window owns the folder (it was restored
+        # from it) and now holds no result: then the folder holds none
+        # either.
+        if not blocked:
+            written = [name for name, payload in state.items() if payload is not None]
+            self._register_saved_state(analysis_dir, state["settings.json"],
+                                       written, may_retire=owned)
+        else:
+            self._registry_note = ("not registered: the folder holds an earlier "
+                                   "analysis that could not be restored")
+
+    def _register_saved_state(self, analysis_dir, settings, written, may_retire):
+        """Register the result tables just saved for the image on screen in
+        MouseBrain's own analysis registry (core/result_registry.py says
+        which analysis and why). Never raises: a registry problem must not
+        stop the save or the next image from opening. A failure is said in
+        the status bar; "nothing configured to register into" is said once
+        per session in the console and after Save State."""
+        from ..core.result_registry import register_window_state
+        try:
+            outcome, text = register_window_state(
+                self.current_file, analysis_dir, settings, written,
+                may_retire=may_retire,
+                lock_wait_seconds=GUI_TRACKER_LOCK_WAIT_SECONDS)
+        except Exception as e:
+            msg = (f"[!] Results of {self.current_file.name} were saved but NOT "
+                   f"registered: {type(e).__name__}: {e}. Save State again to retry.")
+            self._registry_note = msg
+            self.status_label.setText(msg)
+            print(f"[BrainSlice] {msg}")
+            return
+        self._registry_note = text if outcome is None else ""
+        if outcome is None and not getattr(self, "_registry_unconfigured_said", False):
+            self._registry_unconfigured_said = True
+            print(f"[BrainSlice] Results are saved in each image's _analysis "
+                  f"folder but {text}.")
+
     def _manual_save_state(self):
         """Explicitly save analysis state (triggered by Save State button)."""
+        self._registry_note = ""
         self._save_analysis_state()
         if self.current_file and not self.status_label.text().startswith("[!]"):
+            note = getattr(self, "_registry_note", "")
             self.status_label.setText(
-                f"State saved for {self.current_file.stem}")
+                f"State saved for {self.current_file.stem}"
+                + (f" ({note})" if note else ""))
 
     def _image_shape(self):
         """Shape of the image on screen (the nuclear channel), or None."""

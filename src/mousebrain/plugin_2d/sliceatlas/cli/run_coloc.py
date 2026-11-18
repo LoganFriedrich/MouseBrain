@@ -1751,6 +1751,50 @@ def _save_results(output_dir, measurements, summary, labels, args, fig=None):
                 f.write(f"  {k}: {v}\n")
     print(f"  Saved: {summary_path}")
 
+    written = {"measurements": str(csv_path), "summary": str(summary_path)}
+    if fig is not None:
+        written["figure"] = str(fig_path)
+    _register_saved(args, written, summary)
+
+
+def _plain(value):
+    """A summary value as plain JSON (numpy scalars to Python numbers)."""
+    if isinstance(value, dict):
+        return {str(k): _plain(v) for k, v in value.items()}
+    if hasattr(value, "item") and np.ndim(value) == 0:
+        return value.item()
+    if isinstance(value, (int, float, str, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _register_saved(args, written, summary):
+    """Register what --save wrote in MouseBrain's own analysis registry
+    (analysis <project>_Coloc_CLI; see core/result_registry.py for why its
+    own analysis). The files stay in the --save folder; the registry keeps
+    copies of the measurements, the summary and the figure (not the label
+    image, which is large and from which every number in the tables is
+    derived). method_params are every option this run used. A registry
+    that is not configured, or that refuses, is said in a [!] line; the
+    saved files are complete either way."""
+    try:
+        reg_mod = _import_core('result_registry')
+    except ImportError:
+        print("  [!] Not registered: this installation has no analysis registry.")
+        return
+    method = {k: _plain(v) for k, v in sorted(vars(args).items())
+              if k not in ("file", "save")}
+    results = {k: _plain(v) for k, v in summary.items()}
+    try:
+        outcome, text = reg_mod.register_coloc_cli(args.file, written, method, results)
+    except Exception as e:
+        print(f"  [!] Saved, but NOT registered: {type(e).__name__}: {e}")
+        return
+    if outcome:
+        print(f"  Registered: {text}")
+    else:
+        print(f"  [!] Saved, but {text}.")
+
 
 def main():
     parser = argparse.ArgumentParser(
