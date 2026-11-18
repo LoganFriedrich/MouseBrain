@@ -152,14 +152,30 @@ counts show as **stale** in
 `mousebrain-registry --name <project>_ROI_Analysis --stale` until you count
 again.
 
-**Know this before trusting "current":** the counts are checked against the
-detection run only at the moment they are counted. The detection batch
-records, in each of its entries, the settings it actually ran with; so a
-detection re-run with other settings (a different `--threshold`, say) makes
-the NEW detection entry stale against the approved method, but the ROI
-counts already registered keep the method of the run they were counted
-against and are not looked at again. After re-running the detection for a
-sample, count that sample again: the new count is tied to the new run.
+**When the detection changes, the counts are retired.** Every time the
+detection batch changes a sample's detection, it looks at the sample's
+counts in `<project>_ROI_Analysis` and retires them (they become
+"invalidated", their per-sample CSV moves to `_archived/<time>/`, their row
+leaves `roi_summary_<region>.csv`, and `logs/<project>_ROI_Analysis.log`
+gets an `invalidate_entry` line holding the counts) when:
+
+- the batch registered NEW measurements for the sample whose contents differ
+  from the ones counted -- a re-run with other settings, or with the same
+  settings on a corrected re-export of the image;
+- the re-run found no nuclei in the sample; or
+- the re-run failed on the sample and its detection entry was retired.
+
+A re-run that produces exactly the same measurements file leaves the counts
+current. The batch's summary lists every sample whose counts it retired
+under "ROI counts resting on a detection this run changed"; count those
+samples again with `brainslice-roi batch`. A line starting `[!]` there means
+the counts should have been retired but a file would not move (open in
+another program) or the ROI registry could not be read: they are still
+current. Close whatever has the files open and run the batch again.
+
+**Not covered:** retiring a detection entry by hand (calling
+`invalidate` on `<project>_Detection` yourself) does not retire its ROI
+counts; invalidate the same sample in `<project>_ROI_Analysis` as well.
 
 The counts are recorded as **not tied** -- and always show as stale -- when
 the measurements counted are not the ones the detection run registered: the

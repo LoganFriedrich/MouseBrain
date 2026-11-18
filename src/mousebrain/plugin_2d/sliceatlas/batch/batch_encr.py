@@ -1599,7 +1599,27 @@ def main():
     not_registered = []          # (sample, message): completed, registering raised
     retired_not_registered = []  # (sample, earlier n, files archived, message):
                                  # no nuclei; earlier entry retired, new one not written
+    roi_ties = []                # (sample, retired?, text): ROI counts resting on
+                                 # a detection this run replaced or retired
     start_time = time.time()
+
+    def tie_roi_counts(sample_id, new_measurements_sha):
+        """Retire the sample's ROI counts when this run changed the detection
+        they were counted against (see core/roi_ties.py for why). Never
+        raises: the detection result stands whatever happens here, and the
+        outcome is listed in the summary."""
+        try:
+            from mousebrain.plugin_2d.sliceatlas.core.roi_ties import retire_roi_counts_of
+            outcome, text = retire_roi_counts_of(
+                registry.registry_root, project_code, sample_id, new_measurements_sha)
+        except Exception as _tie_err:
+            outcome, text = False, (
+                f"its ROI counts could not be checked or retired "
+                f"({type(_tie_err).__name__}: {_tie_err}); they may still be "
+                f"current although this run changed the detection they were "
+                f"counted against")
+        if outcome is not None:
+            roi_ties.append((sample_id, outcome, text))
 
     for i, nd2_path in enumerate(nd2_files):
         print(f"\n[{i+1}/{len(nd2_files)}] {nd2_path.name}")
@@ -1630,7 +1650,7 @@ def main():
                             output_files['measurements'] = str(f)
                         elif f.suffix == '.png' and 'overlay' in f.name:
                             output_files['overlay'] = str(f)
-                registry.register_output(
+                placed = registry.register_output(
                     sample=sample_id,
                     category="detection",
                     files=output_files,
@@ -1651,6 +1671,11 @@ def main():
                 # person reads "Completed: n" as "n results registered".
                 print(f"  Registry warning: {_reg_err}")
                 not_registered.append((nd2_path.stem, str(_reg_err)))
+            else:
+                # Counts made against other measurements are retired; an
+                # unchanged re-run (the same bytes) leaves them current.
+                from mousebrain.plugin_2d.sliceatlas.core.roi_ties import file_sha256
+                tie_roi_counts(sample_id, file_sha256((placed or {}).get('measurements')))
 
         # A finished run that found no nuclei is a result, and it is
         # registered like one: 0 nuclei, no files, the parameters it ran with.
@@ -1722,9 +1747,12 @@ def main():
                         (sample_id,
                          (earlier.get('results') or {}).get('n_nuclei'),
                          archived))
+                # No nuclei: no measurements for ROI counts to rest on.
+                tie_roi_counts(sample_id, None)
             except Exception as _reg_err:
                 print(f"  Registry warning: {_reg_err}")
                 if retired:
+                    tie_roi_counts(sample_id, None)
                     # The earlier entry is already retired and its files are
                     # in _archived/, and the 0-nuclei result did not get
                     # registered: the sample has NO current entry. Reported
@@ -1796,6 +1824,7 @@ def main():
             present = _files_to_archive(registry, earlier)
             if registry.invalidate(sample=sample_id, include_own_folder=True):
                 retired_by_error.append((sample_id, present))
+                tie_roi_counts(sample_id, None)
             else:
                 # invalidate could not move a file: the entry is still
                 # current. Said in the summary, not only in invalidate's own
@@ -1880,6 +1909,10 @@ def main():
         print(f"    [!] {sample_id}: the registry could not be read or updated "
               f"for this sample ({message}); its entry is as it was before "
               "this run unless a line above says otherwise")
+    if roi_ties:
+        print("  ROI counts resting on a detection this run changed:")
+        for sample_id, retired, text in roi_ties:
+            print(f"    {'' if retired else '[!] '}{sample_id}: {text}")
     if registry_unavailable:
         print("  [!] Registry: could not be opened "
               f"({registry_unavailable}). NO result of this run was "

@@ -74,7 +74,9 @@ that produced it. The registry lives inside the pipeline data folder:
   that run actually used, so a batch output made with anything other than the
   approved method shows as stale. The ROI counter's entries
   (`<project>_ROI_Analysis`) record the parameters of the detection entry
-  whose measurements they counted, so they go stale with it. (The other
+  whose measurements they counted, so they go stale with it, and the 2D
+  batch retires a sample's ROI counts when it registers different
+  measurements for it, finds no nuclei in it or retires its detection. (The other
   producers still record the approved method whatever they ran with.) The 2D
   batch script prints where each of its parameters came from and warns
   before it runs with anything that is not the approved method. Nothing is

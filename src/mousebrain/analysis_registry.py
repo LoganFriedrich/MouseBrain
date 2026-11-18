@@ -1451,6 +1451,29 @@ class AnalysisRegistry:
                   "logs/%s.log (%s). Its record is: %s"
                   % (key, self.analysis_name, problem, record))
 
+    def _drop_from_region_summary(self, entry: Dict[str, Any],
+                                  placed: List[Tuple[Path, Optional[Path]]]) -> None:
+        """Rewrite the region summary of an ROI-counts *entry* without its
+        sample's row (staged in logs/ and swapped in, the earlier summary
+        kept in *placed* so it can be put back). Nothing is written when the
+        summary does not exist or holds no row of the sample."""
+        sample = entry.get("sample") or ""
+        region = entry.get("region") or ""
+        base_reg = _base_region(region) if region else region
+        summary_path = self.exports_dir / f"roi_summary_{base_reg}.csv"
+        if not sample or not summary_path.is_file():
+            return
+        with open(summary_path, "r", newline="", encoding="utf-8") as f:
+            if not any(row.get("sample") == sample for row in csv.DictReader(f)):
+                return
+        staged = self._staging_path(summary_path.name)
+        try:
+            # No counts for the sample: its old row is dropped, none added.
+            self._update_region_summary(sample, base_reg, {}, out_path=staged)
+            self._place(staged, summary_path, placed, move=True)
+        finally:
+            _unlink_quietly(staged)
+
     def _update_region_summary(
         self,
         sample: str,
@@ -1834,6 +1857,25 @@ class AnalysisRegistry:
                     failed.append(key)
                     continue
 
+                # ROI counts: the sample's row leaves the region summary in
+                # the same step. WHY: the summary is what a reader takes the
+                # region's counts from; a retired count left in it would
+                # still be reported. Undone with the files if the manifest
+                # cannot be written.
+                summary_placed: List[Tuple[Path, Optional[Path]]] = []
+                if entry.get("category") == "roi_counts":
+                    try:
+                        self._drop_from_region_summary(entry, summary_placed)
+                    except Exception as e:
+                        self._undo_placed(summary_placed, key, e)
+                        problem = ("could not take it out of its region summary (%s: %s)"
+                                   % (type(e).__name__, e)) + self._put_back(moved)
+                        print("  [!] %s NOT invalidated, still current: %s" % (key, problem))
+                        self._log_event("invalidate_failed", entry.get("sample", key),
+                                        key, problem)
+                        failed.append(key)
+                        continue
+
                 entry["is_current"] = False
                 entry["invalidated_at"] = datetime.now().isoformat()
                 try:
@@ -1843,6 +1885,7 @@ class AnalysisRegistry:
                     # make the files and the in-memory entry say so too.
                     entry["is_current"] = True
                     entry.pop("invalidated_at", None)
+                    self._undo_placed(summary_placed, key, e)
                     problem = ("the manifest could not be written (%s: %s)"
                                % (type(e).__name__, e)) + self._put_back(moved)
                     print("  [!] %s NOT invalidated, still current: %s" % (key, problem))
@@ -1854,6 +1897,7 @@ class AnalysisRegistry:
                         self._log_event("invalidate", sample or "ALL",
                                         f"{len(invalidated)} entries", timestamp)
                     raise
+                self._discard_replaced(summary_placed)
                 # WHY a line per retired entry, carrying its record: the next
                 # registration of the same sample OVERWRITES this entry in
                 # registry.json, so without it the retired counts and the

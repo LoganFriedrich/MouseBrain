@@ -397,6 +397,13 @@ invalidated. It works one entry at a time and writes the manifest after each:
   before it stops; you see the same `[!] ... NOT invalidated` line. Entries
   done before it stay invalidated.
 
+Invalidating an ROI-counts entry also takes its sample's row out of
+`roi_summary_<region>.csv`, in the same all-or-nothing step: if the summary
+cannot be rewritten, or the manifest cannot be written afterwards, the
+summary and the files are put back and the entry stays current. WHY: the
+summary is where a reader takes a region's counts from, and a retired count
+left in it would still be reported.
+
 `invalidate(sample=..., include_own_folder=True)` also moves every OTHER
 file in the entry's own sample folder (a folder named after the sample alone,
 such as `exports/<analysis>/<sample>/` for a detection entry; its `_archived/`
