@@ -6231,7 +6231,9 @@ class TuningWidget(QWidget):
                 f"NOT saved, because they already have the other answer, are saved as "
                 f"both, or were placed in both layers:\n{shown}{more}\n\n"
                 f"The layers now show the saved answers. To change an answer, answer "
-                f"that candidate again with C or X.")
+                f"that candidate again with C or X. For a point you placed by "
+                f"hand, select it in its training layer and click 'Add Confirmed "
+                f"to Cells Bucket' or 'Add Rejected to Non-Cells Bucket'.")
         return True
 
     def _saved_points_missing_from_layers_ok(self, labels) -> bool:
@@ -6268,7 +6270,9 @@ class TuningWidget(QWidget):
             f"training layer does not take its answer back.\n\n"
             f"- To export the saved answers as they are: click 'Create Training "
             f"Layers' (the layers are redrawn from the saved answers), then export "
-            f"again.\n- To change an answer: answer that candidate again with C or X.")
+            f"again.\n- To change an answer: answer that candidate again with C or X; "
+            f"for a point placed by hand, select it in its training layer and click "
+            f"'Add Confirmed to Cells Bucket' or 'Add Rejected to Non-Cells Bucket'.")
         return False
 
     def _points_layer_is_this_brains(self, layer) -> bool:

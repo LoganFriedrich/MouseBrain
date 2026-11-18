@@ -58,7 +58,7 @@ def test_a_point_placed_against_its_saved_answer_is_not_saved_and_the_person_is_
     w.create_training_layers()
     assert all_saved(w.models, "cells") == [PA]      # the answer is not flipped silently
     assert all_saved(w.models, "non_cells") == []
-    assert any(t == "Points Not Saved" and "z=15 y=30 x=30" in text
+    assert any(t == "Points Not Saved" and "z=15 y=30 x=30" in text and "Add Confirmed to Cells Bucket" in text
                for kind, t, text in w.msgs.seen)
 
 
@@ -116,7 +116,8 @@ def test_an_export_after_points_were_deleted_from_a_layer_stops_and_says_so(
     w.export_training_data()
     assert list(Path(w.models).rglob("pCell*.tif")) == []
     assert all_saved(w.models, "cells") == [PA]                   # the answer is kept
-    assert any(t == "Saved Answers Missing From the Layers" for kind, t, text in w.msgs.seen)
+    assert any(t == "Saved Answers Missing From the Layers" and "Add Rejected to Non-Cells Bucket" in text
+           for kind, t, text in w.msgs.seen)
     w.create_training_layers()                                    # redraw, then export
     w.export_training_data()
     assert any(p.name == "pCellz15y30x30Ch0.tif" for p in Path(w.models).rglob("pCell*.tif"))

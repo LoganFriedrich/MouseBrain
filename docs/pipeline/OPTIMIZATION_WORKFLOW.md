@@ -141,8 +141,12 @@ keeps the answers like this:
   the brain you are leaving -- when you choose another brain. Two cases are NOT
   saved, and a message "Points Not Saved" lists them by z/y/x: a point that
   already has the other answer (or is saved as both), and a point placed in
-  both layers. Saving those would quietly change an answer you gave; answer
-  that candidate again with C or X instead. If a training layer is recorded as
+  both layers. Saving those would quietly change an answer you gave. To change
+  the answer of a candidate, answer that candidate again with C or X. To change
+  the answer of a point you placed by hand (it is not a candidate), select it
+  in its training layer and click "Add Confirmed to Cells Bucket" or "Add
+  Rejected to Non-Cells Bucket": the last answer wins and the point moves to
+  the other file. If a training layer is recorded as
   another brain's and holds points that are not saved for that brain, nothing
   is saved from it and the layers are left as they are ("Another Brain's
   Points"); select that brain again to keep them.
@@ -151,7 +155,8 @@ keeps the answers like this:
   saved answers are missing from the layers, nothing is cut and a message
   "Saved Answers Missing From the Layers" says how many: click "Create
   Training Layers" to redraw them and export again, or, to change an answer,
-  answer that candidate again with C or X.
+  answer that candidate again with C or X (a point placed by hand: select it
+  and use "Add Confirmed to Cells Bucket" / "Add Rejected to Non-Cells Bucket").
 - **"Show Training Data in Napari"** only shows the cubes found on disk, in
   layers named "Cubes on disk: Cells (n)" / "Cubes on disk: Non-Cells (n)".
   Those layers are for looking only: they are never read as answers, never
