@@ -118,6 +118,56 @@ and leave the brain with no classification). What a promotion does:
 Running step 5 again also replaces production (that is what step 5 is for); it
 archives the files it replaces in the same way.
 
+### Curating training data (Setup & Tuning, "9. Curate/Train" tab)
+
+Curation means answering, candidate by candidate, "is this a cell?" (C = cell,
+X = not a cell). Every answer is training data for a classifier, so the window
+keeps the answers like this:
+
+- **Each brain's answers are kept in that brain's own folder**, inside the pool
+  for its imaging setup:
+  `<models folder>/<imaging setup>/training_data/<brain>/`. In it:
+  `curated_cells.xml` and `curated_non_cells.xml` (the answers),
+  `cells/` and `non_cells/` (the training cubes, once exported) and
+  `training.yml`. "Create Training Layers" points the window at the selected
+  brain's folder and shows its saved answers in the layers
+  "Train: Cells (n)" and "Train: Non-Cells (n)". Those layers always show
+  exactly what is saved for the selected brain -- never another brain's points.
+- **One answer per point, the last one counts.** Every C or X is saved at once.
+  If you change an answer (C, then X on the same candidate), the point moves
+  from one file to the other; answering the same way twice saves it once. The
+  buttons that add the points of a selected layer to the cells or non-cells
+  bucket work the same way, and refuse a layer made for another brain.
+  "Send suspicious to training" (Pre-Filter tab) and "Merge XML batches" only
+  add points that have no answer yet: they never change an answer you gave.
+- **Merge XML batches** takes only the selected brain's batches. Batches of
+  other brains, and the pool's own older files (`curated_cells.xml` directly in
+  `training_data/`, which do not say which brain they came from), are left out
+  and named in the message. A point that is a cell in one batch and a non-cell
+  in another is not merged.
+- **Files are never half-written.** Both answers files are written to a
+  temporary file and swapped in. If a saved answers file cannot be read, the
+  window says so ("Answer Not Saved" / "Saved Answers Unreadable") and changes
+  nothing; move the damaged file aside before answering again.
+- **"Create Training Dataset" cuts cubes only from the selected brain's own
+  image.** It takes the selected brain's saved answers and its own Signal (and
+  Background) layers. If the viewer holds only another brain's images it
+  refuses ("No Image of This Brain"); load this brain's images first. Cubes
+  are written to the brain's `cells/` and `non_cells/`; a cube whose answer has
+  since changed is removed, so the folders always match the answers. Points
+  closer than half a cube (10 planes, 25 pixels) to the image edge are skipped
+  and counted in the message.
+- **Training from the pool** ("Shared: <imaging setup>" in the training
+  sources table) trains on every brain folder's cubes: the pool's
+  `training.yml` is rewritten to list each brain's `cells/` and `non_cells/`
+  every time training starts or a brain is exported. Cubes left directly in
+  the pool's own `cells/` and `non_cells/` by older versions are still listed;
+  they carry no brain in their names, so which brain each came from cannot be
+  checked. "Merge to shared pool" copies a brain's cubes into that brain's
+  folder in the pool, and "Start fresh" deletes the cubes of the pool and of
+  every brain folder in it but never the answers files -- export again to cut
+  them anew.
+
 ### Training a model from Setup & Tuning ("9. Curate/Train" tab, "Start Training")
 
 The training runs in its own process (`scripts/utils/util_train_model.py`);

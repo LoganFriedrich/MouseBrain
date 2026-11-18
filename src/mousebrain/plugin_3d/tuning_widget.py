@@ -4164,29 +4164,20 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "No Data", "No suspicious-region candidates to send.")
             return
 
-        # Get or create training layers
-        train_non_cells = self._get_layer_by_type('train_non_cells')
-        if train_non_cells is None:
-            # Create the training layers first
-            self.create_training_layers()
-            train_non_cells = self._get_layer_by_type('train_non_cells')
-
-        if train_non_cells is None:
-            QMessageBox.warning(self, "Error", "Could not create training layers.")
-            return
-
         import numpy as np
         suspicious_coords = np.array(self._prefilter_result['suspicious_coords'])
-        existing = train_non_cells.data
-        combined = np.vstack([existing, suspicious_coords]) if len(existing) > 0 else suspicious_coords
-        train_non_cells.data = combined
+        # Saved into the selected brain's answers as non-cells, but only for
+        # points nobody has answered yet: the pre-filter's guess never
+        # overwrites a person's answer (mousebrain.curation_record).
+        saved = self._save_training_label(suspicious_coords, 'non_cells', replace=False)
+        if saved is None:
+            return
 
-        count = len(suspicious_coords)
         QMessageBox.information(self, "Added to Training",
-            f"Added {count} suspicious-region candidates to Non-Cells training bucket.\n\n"
+            f"Added {saved['added']} suspicious-region candidates to Non-Cells training bucket.\n"
+            f"Left as they were (already answered): {saved['already_answered']}\n\n"
             f"These are from biologically unlikely regions (surface, cerebellar cortex, etc.)\n"
-            f"and will teach the classifier that these signals are not cells.\n"
-            f"Total non-cells in bucket: {len(combined)}")
+            f"and will teach the classifier that these signals are not cells.")
 
     def _load_previous_prefilter(self):
         """Load a previous pre-filter result."""
@@ -4634,8 +4625,9 @@ class TuningWidget(QWidget):
         create_layers_btn.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 8px;")
         create_layers_btn.setToolTip(
             "Creates 'Train: Cells' and 'Train: Non-Cells' layers.\n"
-            "Sets default save location to {brain}/training_data/\n"
-            "After this, every Y/N during curation auto-saves!"
+            "Answers are saved in the selected brain's own folder:\n"
+            "<models>/<imaging setup>/training_data/<brain>/\n"
+            "Every C / X during curation is saved there at once."
         )
         create_layers_btn.clicked.connect(self.create_training_layers)
         status_layout.addWidget(create_layers_btn)
@@ -4669,9 +4661,9 @@ class TuningWidget(QWidget):
         export_btn = QPushButton("Create Training Dataset")
         export_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
         export_btn.setToolTip(
-            "Export curated points to BrainGlobe TIFF cube format.\n"
-            "Creates cells/ and non_cells/ folders with both channels.\n"
-            "Also creates training.yml config file."
+            "Cut BrainGlobe TIFF cubes for the selected brain's saved answers,\n"
+            "from the selected brain's own Signal/Background images only.\n"
+            "Writes cells/ and non_cells/ in the brain's folder and training.yml."
         )
         export_btn.clicked.connect(self.export_training_data)
         action_row.addWidget(export_btn)
@@ -4791,9 +4783,9 @@ class TuningWidget(QWidget):
         merge_xml_btn = QPushButton("Merge Selected into Training Layers")
         merge_xml_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 6px;")
         merge_xml_btn.setToolTip(
-            "Load coordinates from all selected XML batches,\n"
-            "deduplicate, and put them in the training layers.\n"
-            "Then click 'Create Training Dataset' above to export TIFFs."
+            "Add the selected brain's own XML batches to its answers\n"
+            "(points already answered keep their answer; other brains'\n"
+            "batches are left out). Then click 'Create Training Dataset'."
         )
         merge_xml_btn.clicked.connect(self._merge_xml_batches)
         xml_layout.addWidget(merge_xml_btn)
@@ -5719,32 +5711,18 @@ class TuningWidget(QWidget):
         coords = np.array([self.curation_widget.candidates[index]])
         print(f"[MouseBrain] Candidate confirmed: index {index}, coords {coords[0]}")
 
-        # Find or create training cells bucket
-        train_layer = self._get_layer_by_type('train_cells')
-        if train_layer:
-            existing_coords = np.array(train_layer.data)
-            new_coords = np.vstack([existing_coords, coords])
-            train_layer.data = new_coords
-        else:
-            train_layer = self._add_points_layer(
-                coords,
-                f"Training Cells ({len(coords)})",
-                'train_cells',
-                visible=True
-            )
-
-        # Update display
-        self.refresh_training_data_counts()
-
-        # Auto-save to XML (no dialog, just save)
-        self._append_to_training_xml(coords[0], 'cells')
+        # Saved at once into the selected brain's answers; a changed answer
+        # moves the point out of the non-cells file (mousebrain.curation_record).
+        saved = self._save_training_label(coords, 'cells')
+        if saved is None:
+            return
 
         # Log
         if self.session_doc:
             self.session_doc.log_event('curation_confirmed', {
                 'index': index,
                 'point': coords.tolist(),
-                'total_in_bucket': len(train_layer.data),
+                'saved': saved,
             })
 
     def _on_candidate_rejected(self, index: int):
@@ -5771,32 +5749,18 @@ class TuningWidget(QWidget):
         coords = np.array([self.curation_widget.candidates[index]])
         print(f"[MouseBrain] Candidate rejected: index {index}, coords {coords[0]}")
 
-        # Find or create training non-cells bucket
-        train_layer = self._get_layer_by_type('train_non_cells')
-        if train_layer:
-            existing_coords = np.array(train_layer.data)
-            new_coords = np.vstack([existing_coords, coords])
-            train_layer.data = new_coords
-        else:
-            train_layer = self._add_points_layer(
-                coords,
-                f"Training Non-Cells ({len(coords)})",
-                'train_non_cells',
-                visible=True
-            )
-
-        # Update display
-        self.refresh_training_data_counts()
-
-        # Auto-save to XML (no dialog, just save)
-        self._append_to_training_xml(coords[0], 'non_cells')
+        # Saved at once into the selected brain's answers; a changed answer
+        # moves the point out of the cells file (mousebrain.curation_record).
+        saved = self._save_training_label(coords, 'non_cells')
+        if saved is None:
+            return
 
         # Log
         if self.session_doc:
             self.session_doc.log_event('curation_rejected', {
                 'index': index,
                 'point': coords.tolist(),
-                'total_in_bucket': len(train_layer.data),
+                'saved': saved,
             })
 
     def add_confirmed_to_training(self):
@@ -5834,24 +5798,13 @@ class TuningWidget(QWidget):
                 "Layer has no points to add.")
             return
 
-        # Find or create training cells bucket
-        train_layer = self._get_layer_by_type('train_cells')
-        if train_layer:
-            # Append to existing
-            existing_coords = np.array(train_layer.data)
-            new_coords = np.vstack([existing_coords, coords_to_add])
-            train_layer.data = new_coords
-        else:
-            # Create new layer
-            train_layer = self._add_points_layer(
-                coords_to_add,
-                f"Training Cells ({len(coords_to_add)})",
-                'train_cells',
-                visible=True
-            )
-
-        # Update count display
-        self.refresh_training_data_counts()
+        if not self._points_layer_is_this_brains(layer):
+            return
+        # A person chose these points as cells: saved into the selected
+        # brain's answers, moving any of them out of the non-cells file.
+        saved = self._save_training_label(coords_to_add, 'cells')
+        if saved is None:
+            return
 
         # Log
         if self.session_doc:
@@ -5859,7 +5812,7 @@ class TuningWidget(QWidget):
                 'type': 'cells',
                 'count': len(coords_to_add),
                 'source_layer': layer.name,
-                'total_in_bucket': len(train_layer.data),
+                'saved': saved,
             })
 
         print(f"[MouseBrain] Added {len(coords_to_add)} points to training cells bucket")
@@ -5899,24 +5852,13 @@ class TuningWidget(QWidget):
                 "Layer has no points to add.")
             return
 
-        # Find or create training non-cells bucket
-        train_layer = self._get_layer_by_type('train_non_cells')
-        if train_layer:
-            # Append to existing
-            existing_coords = np.array(train_layer.data)
-            new_coords = np.vstack([existing_coords, coords_to_add])
-            train_layer.data = new_coords
-        else:
-            # Create new layer
-            train_layer = self._add_points_layer(
-                coords_to_add,
-                f"Training Non-Cells ({len(coords_to_add)})",
-                'train_non_cells',
-                visible=True
-            )
-
-        # Update count display
-        self.refresh_training_data_counts()
+        if not self._points_layer_is_this_brains(layer):
+            return
+        # A person chose these points as not cells: saved into the selected
+        # brain's answers, moving any of them out of the cells file.
+        saved = self._save_training_label(coords_to_add, 'non_cells')
+        if saved is None:
+            return
 
         # Log
         if self.session_doc:
@@ -5924,7 +5866,7 @@ class TuningWidget(QWidget):
                 'type': 'non_cells',
                 'count': len(coords_to_add),
                 'source_layer': layer.name,
-                'total_in_bucket': len(train_layer.data),
+                'saved': saved,
             })
 
         print(f"[MouseBrain] Added {len(coords_to_add)} points to training non-cells bucket")
@@ -6014,12 +5956,15 @@ class TuningWidget(QWidget):
         return np.array(coords) if coords else np.array([]).reshape(0, 3)
 
     def create_training_layers(self):
-        """Create training bucket layers with default save location.
+        """Set up the selected brain's curation answers and show them.
 
-        This is the streamlined workflow entry point:
-        1. Creates 'Train: Cells' and 'Train: Non-Cells' layers
-        2. Sets default save path to {brain}/training_data/
-        3. Enables auto-save on every Y/N during curation
+        1. The answers live in the brain's OWN folder inside its imaging
+           setup's pool: <models>/<setup>/training_data/<brain>/ (never in
+           the pool itself, where answers from different brains could not be
+           told apart -- mousebrain.curation_record says why).
+        2. 'Train: Cells' / 'Train: Non-Cells' show exactly that brain's saved
+           answers (emptied first, so another brain's points never stay).
+        3. Every C / X during curation is saved there at once.
         """
         print("[DEBUG] Button clicked: create_training_layers")
         if not self.current_brain:
@@ -6027,77 +5972,98 @@ class TuningWidget(QWidget):
                 "Load a brain first before creating training layers.")
             return
 
-        # Determine brain path - use existing path if already a Path, don't reconstruct
-        if isinstance(self.current_brain, Path):
-            brain_path = self.current_brain
-        else:
-            brain_path = Path(self.current_brain)
-
-        # Extract imaging paradigm from brain name for paradigm-specific training
-        from mousebrain.config import parse_brain_name
-        brain_name = brain_path.name
-        parsed = parse_brain_name(brain_name)
-        imaging_paradigm = parsed.get('imaging_params', 'default')
-
-        if not imaging_paradigm:
-            imaging_paradigm = 'default'
-            print(f"[MouseBrain] Warning: Could not parse imaging params from '{brain_name}', using 'default'")
-
-        # Set up training data directory in MODELS_DIR, organized by imaging paradigm
-        # This allows pooling training data across all brains with same imaging settings
-        self.training_data_dir = MODELS_DIR / imaging_paradigm / "training_data"
+        from mousebrain.curation_record import CurationRecord, brain_folder
+        brain_path = Path(self.current_brain)
+        self.training_data_dir = brain_folder(MODELS_DIR, brain_path.name)
         self.training_data_dir.mkdir(parents=True, exist_ok=True)
-        print(f"[MouseBrain] Training data location: {self.training_data_dir}")
-
-        # Set up auto-save XML files
-        self._cells_xml = self.training_data_dir / "curated_cells.xml"
-        self._non_cells_xml = self.training_data_dir / "curated_non_cells.xml"
-
-        # Create or get training layers
-        train_cells = self._get_layer_by_type('train_cells')
-        if not train_cells:
-            import numpy as np
-            train_cells = self._add_points_layer(
-                np.empty((0, 3)),
-                "Train: Cells (0)",
-                'train_cells',
-                visible=True
-            )
-
-        train_non_cells = self._get_layer_by_type('train_non_cells')
-        if not train_non_cells:
-            import numpy as np
-            train_non_cells = self._add_points_layer(
-                np.empty((0, 3)),
-                "Train: Non-Cells (0)",
-                'train_non_cells',
-                visible=True
-            )
+        record = CurationRecord(self.training_data_dir)
+        self._cells_xml = record.cells_xml
+        self._non_cells_xml = record.non_cells_xml
+        print(f"[MouseBrain] Curation answers for {brain_path.name}: {self.training_data_dir}")
 
         # Update UI
         self.training_path_label.setText(f"Auto-save: {self.training_data_dir}")
         self.training_path_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
         self.training_data_path.setText(str(self.training_data_dir))
 
-        # Load existing curated data if any
-        cells_count = 0
-        non_cells_count = 0
-        if self._cells_xml.exists():
-            coords = self._load_xml_coordinates(self._cells_xml)
-            if len(coords) > 0:
-                train_cells.data = coords
-                cells_count = len(coords)
-        if self._non_cells_xml.exists():
-            coords = self._load_xml_coordinates(self._non_cells_xml)
-            if len(coords) > 0:
-                train_non_cells.data = coords
-                non_cells_count = len(coords)
+        self._show_curation_record(record)
 
+    def _show_curation_record(self, record=None) -> bool:
+        """Make the two training layers show the selected brain's saved answers.
+
+        The layers are a VIEW of the answers files: their points are replaced
+        (never appended to) and they are tagged with the brain, so what is on
+        screen is what is saved and what an export will cut.
+        """
+        import numpy as np
+        from mousebrain.curation_record import CurationRecord, CurationRecordError
+        if record is None:
+            if self.training_data_dir is None:
+                return False
+            record = CurationRecord(self.training_data_dir)
+        try:
+            labels = record.read()
+            conflicts = record.conflicts()
+        except CurationRecordError as e:
+            QMessageBox.warning(self, "Saved Answers Unreadable", str(e))
+            return False
+        for role, label, title in (('train_cells', 'cells', 'Train: Cells'),
+                                   ('train_non_cells', 'non_cells', 'Train: Non-Cells')):
+            pts = np.array(labels[label], dtype=float).reshape(-1, 3)
+            layer = self._get_layer_by_type(role)
+            if layer is None:
+                layer = self._add_points_layer(pts, f"{title} ({len(pts)})", role, visible=True)
+            else:
+                layer.data = pts
+                layer.name = f"{title} ({len(pts)})"
+            layer.metadata['source_brain'] = str(self.current_brain)
         self.refresh_training_data_counts()
+        if conflicts:
+            print(f"[MouseBrain] [!] {len(conflicts)} point(s) are saved as BOTH cell and "
+                  f"non-cell in {record.folder}; they are left out of training until "
+                  f"answered again.")
+        return True
 
-        print(f"[MouseBrain] Training layers created. Auto-save to: {self.training_data_dir}")
-        if cells_count > 0 or non_cells_count > 0:
-            print(f"[MouseBrain] Loaded existing curated data: {cells_count} cells, {non_cells_count} non-cells")
+    def _save_training_label(self, coords, label: str, replace: bool = True):
+        """Save answers for ``coords`` into the selected brain's record.
+
+        ``replace=True``: a person's answer; the last answer wins and the point
+        leaves the other file. ``replace=False``: a suggestion; only points
+        with no answer yet are labelled. Returns the counts, or None when
+        nothing was saved -- and then the person has been told so: an answer is
+        never dropped silently.
+        """
+        from mousebrain.curation_record import CurationRecord, CurationRecordError
+        if self.training_data_dir is None:
+            QMessageBox.warning(self, "Answer Not Saved",
+                "This answer was NOT saved: the training layers are not set up "
+                "for the selected brain.\n\nClick 'Create Training Layers', then "
+                "answer again.")
+            return None
+        record = CurationRecord(self.training_data_dir)
+        try:
+            if replace:
+                result = record.set_label(coords, label)
+            else:
+                result = record.add_unlabelled(coords, label)
+        except (CurationRecordError, OSError) as e:
+            QMessageBox.warning(self, "Answer Not Saved",
+                f"This answer was NOT saved:\n{e}")
+            return None
+        self._show_curation_record(record)
+        return result
+
+    def _points_layer_is_this_brains(self, layer) -> bool:
+        """False (and the person is told) when a points layer was made for another brain."""
+        meta = getattr(layer, 'metadata', None) or {}
+        src = meta.get('source_brain')
+        if src and self.current_brain and src != str(self.current_brain):
+            QMessageBox.warning(self, "Another Brain's Points",
+                f"The layer '{layer.name}' holds points of another brain:\n{src}\n\n"
+                f"Answers are saved for the selected brain only:\n{self.current_brain}\n\n"
+                f"Select that brain again, or choose this brain's own layer.")
+            return False
+        return True
 
     def _load_xml_coordinates(self, xml_path):
         """Load coordinates from an XML file."""
@@ -6122,252 +6088,84 @@ class TuningWidget(QWidget):
 
         return np.array(coords) if coords else np.array([]).reshape(0, 3)
 
-    def _append_to_training_xml(self, coord, cell_type: str):
-        """Append a single point to the training XML file.
-
-        This is called automatically on every Y/N during curation.
-        No dialog, no user interaction - just saves immediately.
-        """
-        import xml.etree.ElementTree as ET
-
-        if cell_type == 'cells':
-            xml_path = self._cells_xml
-        else:
-            xml_path = self._non_cells_xml
-
-        if xml_path is None:
-            # Training layers not set up yet
-            return
-
-        # Load existing or create new XML structure
-        if xml_path.exists():
-            try:
-                tree = ET.parse(str(xml_path))
-                root = tree.getroot()
-            except:
-                root = self._create_xml_root(cell_type)
-                tree = ET.ElementTree(root)
-        else:
-            root = self._create_xml_root(cell_type)
-            tree = ET.ElementTree(root)
-
-        # Find or create Marker_Type element
-        marker_type = root.find('.//Marker_Type')
-        if marker_type is None:
-            marker_data = root.find('Marker_Data')
-            if marker_data is None:
-                marker_data = ET.SubElement(root, 'Marker_Data')
-            marker_type = ET.SubElement(marker_data, 'Marker_Type')
-            ET.SubElement(marker_type, 'Type').text = '1'
-
-        # Add new marker
-        marker = ET.SubElement(marker_type, 'Marker')
-        z, y, x = int(coord[0]), int(coord[1]), int(coord[2])
-        ET.SubElement(marker, 'MarkerX').text = str(x)
-        ET.SubElement(marker, 'MarkerY').text = str(y)
-        ET.SubElement(marker, 'MarkerZ').text = str(z)
-
-        # Save immediately
-        tree.write(str(xml_path), encoding='UTF-8', xml_declaration=True)
-
-    def _create_xml_root(self, cell_type: str):
-        """Create XML root structure for training data."""
-        import xml.etree.ElementTree as ET
-
-        root = ET.Element('CellCounter_Marker_File')
-        image_props = ET.SubElement(root, 'Image_Properties')
-        ET.SubElement(image_props, 'Image_Filename').text = 'training_data'
-
-        marker_data = ET.SubElement(root, 'Marker_Data')
-        current_type = ET.SubElement(marker_data, 'Current_Type')
-        current_type.text = '1'
-
-        marker_type = ET.SubElement(marker_data, 'Marker_Type')
-        type_el = ET.SubElement(marker_type, 'Type')
-        type_el.text = '1'
-
-        return root
-
     def _create_training_yaml(self):
-        """Create the training.yml file required by BrainGlobe/cellfinder."""
-        import yaml
-
+        """Write training.yml for the selected brain's folder and for its pool."""
+        from mousebrain.curation_record import write_training_yaml
         if not self.training_data_dir:
             return
-
-        yaml_content = {
-            'data': [
-                {
-                    'bg_channel': 1,
-                    'cell_def': '',
-                    'cube_dir': str(self.training_data_dir / 'cells'),
-                    'signal_channel': 0,
-                    'type': 'cell'
-                },
-                {
-                    'bg_channel': 1,
-                    'cell_def': '',
-                    'cube_dir': str(self.training_data_dir / 'non_cells'),
-                    'signal_channel': 0,
-                    'type': 'no_cell'
-                }
-            ]
-        }
-
-        yaml_path = self.training_data_dir / 'training.yml'
-        with open(yaml_path, 'w') as f:
-            yaml.dump(yaml_content, f, default_flow_style=False)
-
-        print(f"[MouseBrain] Created {yaml_path}")
+        for td in (self.training_data_dir, Path(self.training_data_dir).parent):
+            path = write_training_yaml(td)
+            if path:
+                print(f"[MouseBrain] Wrote {path}")
 
     def export_training_data(self):
-        """Export training bucket layers to BrainGlobe/cellfinder training format.
+        """Cut BrainGlobe/cellfinder training cubes for the selected brain's answers.
 
-        Creates TIFF cubes in {brain}/training_data/cells/ and non_cells/
-        for training a custom classification network.
-
-        BrainGlobe format (VERIFIED from actual training data):
-        - Files: pCellz{z}y{y}x{x}Ch{channel}.tif
-        - BOTH channels saved (Ch0 = signal, Ch1 = background)
-        - Fixed cube size: 50x50 XY, 20 Z
-        - Creates training.yml config file
+        - Points: the selected brain's SAVED answers (curated_cells.xml /
+          curated_non_cells.xml in its folder), never whatever else sits in
+          the training layers, so no other brain's coordinates are cut.
+        - Image: the selected brain's own signal (and background) layers,
+          chosen by brain_context.pick_image_layers; the export refuses when
+          the viewer holds only another brain's images.
+        - Output: <models>/<setup>/training_data/<brain>/cells and non_cells,
+          files pCellz{z}y{y}x{x}Ch{0|1}.tif, 50x50 in-plane, 20 planes; a
+          cube whose point no longer has that label is removed, so the
+          folders match the answers. training.yml is written for the brain's
+          folder and for the pool (listing every brain's folders).
         """
         print("[DEBUG] Button clicked: export_training_data")
-        import napari
-        import numpy as np
-        import tifffile
         from qtpy.QtWidgets import QApplication
+        from mousebrain.brain_context import pick_image_layers
+        from mousebrain.curation_record import (
+            CurationRecord, CurationRecordError, write_brain_cubes)
 
         if not self.current_brain:
             QMessageBox.warning(self, "No Brain",
                 "Load a brain first to export training data.")
             return
 
-        # Get training bucket layers
-        train_cells = self._get_layer_by_type('train_cells')
-        train_non_cells = self._get_layer_by_type('train_non_cells')
+        if self.training_data_dir is None:
+            self.create_training_layers()
+        if self.training_data_dir is None:
+            return
+        record = CurationRecord(self.training_data_dir)
+        try:
+            labels = record.read()
+        except CurationRecordError as e:
+            QMessageBox.warning(self, "Saved Answers Unreadable", str(e))
+            return
 
-        cells_count = len(train_cells.data) if train_cells else 0
-        non_cells_count = len(train_non_cells.data) if train_non_cells else 0
-
-        if cells_count == 0 and non_cells_count == 0:
+        if not labels['cells'] and not labels['non_cells']:
             QMessageBox.warning(self, "No Training Data",
-                "No training data in buckets to export.\n"
+                "No saved answers for this brain to export.\n"
                 "Click 'Create Training Layers' first, then curate some candidates.")
             return
 
-        # Get BOTH signal and background layers
-        signal_layer = None
-        bg_layer = None
-        for layer in self.viewer.layers:
-            if isinstance(layer, napari.layers.Image):
-                name_lower = layer.name.lower()
-                if 'signal' in name_lower:
-                    signal_layer = layer
-                elif 'background' in name_lower or 'bg' in name_lower:
-                    bg_layer = layer
-                else:
-                    # Fallback assignments
-                    if signal_layer is None:
-                        signal_layer = layer
-                    elif bg_layer is None:
-                        bg_layer = layer
-
+        signal_layer, bg_layer, other = pick_image_layers(
+            list(self.viewer.layers), self.current_brain)
         if signal_layer is None:
-            QMessageBox.warning(self, "No Image",
-                "No signal layer found to extract training cubes from.\n"
-                "Load brain data first.")
+            QMessageBox.warning(self, "No Image of This Brain",
+                "No signal image of the selected brain is loaded, so no cubes "
+                "were cut.\n\n"
+                + ("The viewer holds another brain's images; cubes are cut only "
+                   "from the brain the answers were given on.\n\n" if other else "")
+                + "Load this brain's images (Setup tab), then export again.")
             return
-
-        # BrainGlobe uses fixed cube sizes: 50x50 XY, 20 Z
-        cube_xy = 50
-        cube_z = 20
-        half_xy = cube_xy // 2
-        half_z = cube_z // 2
-
-        # Get image data
-        signal_data = np.asarray(signal_layer.data)
-        z_max, y_max, x_max = signal_data.shape
-
-        # Get background data if available
         has_bg = bg_layer is not None
-        if has_bg:
-            bg_data = np.asarray(bg_layer.data)
-        else:
-            print("[MouseBrain] Warning: No background layer found, will only export signal channel")
-            bg_data = None
-
-        # Set up training data directory - always use shared pool by paradigm
-        if self.training_data_dir is None:
-            from mousebrain.config import parse_brain_name
-            brain_name = self.current_brain.name if hasattr(self.current_brain, 'name') else str(self.current_brain)
-            parsed = parse_brain_name(brain_name)
-            imaging_paradigm = parsed.get('imaging_params', 'default') or 'default'
-            self.training_data_dir = MODELS_DIR / imaging_paradigm / "training_data"
-            self.training_data_dir.mkdir(parents=True, exist_ok=True)
-            print(f"[MouseBrain] Training data auto-set to shared pool: {self.training_data_dir}")
-
-        cells_dir = self.training_data_dir / "cells"
-        non_cells_dir = self.training_data_dir / "non_cells"
-
-        cells_dir.mkdir(parents=True, exist_ok=True)
-        non_cells_dir.mkdir(parents=True, exist_ok=True)
-
-        cells_exported = 0
-        non_cells_exported = 0
-        skipped = 0
+        if not has_bg:
+            print("[MouseBrain] Warning: No background layer of this brain, will only export signal channel")
 
         self.export_status_label.setText("Exporting cubes (both channels)...")
         QApplication.processEvents()
 
-        def export_cube(coord, output_dir):
-            """Export a single cube with both channels."""
-            nonlocal skipped
-            z, y, x = int(coord[0]), int(coord[1]), int(coord[2])
+        result = write_brain_cubes(
+            self.training_data_dir, labels, signal_layer.data,
+            bg_layer.data if has_bg else None)
+        cells_exported = result['cells']
+        non_cells_exported = result['non_cells']
+        skipped = result['skipped']
 
-            # Check bounds with BrainGlobe cube sizes
-            if (z - half_z < 0 or z + half_z > z_max or
-                y - half_xy < 0 or y + half_xy > y_max or
-                x - half_xy < 0 or x + half_xy > x_max):
-                skipped += 1
-                return False
-
-            # Extract signal cube (Ch0)
-            signal_cube = signal_data[
-                z - half_z:z + half_z,
-                y - half_xy:y + half_xy,
-                x - half_xy:x + half_xy
-            ]
-
-            # Save signal channel with BrainGlobe naming
-            filename_ch0 = output_dir / f"pCellz{z}y{y}x{x}Ch0.tif"
-            tifffile.imwrite(str(filename_ch0), signal_cube.astype(np.uint16))
-
-            # Extract and save background cube (Ch1) if available
-            if bg_data is not None:
-                bg_cube = bg_data[
-                    z - half_z:z + half_z,
-                    y - half_xy:y + half_xy,
-                    x - half_xy:x + half_xy
-                ]
-                filename_ch1 = output_dir / f"pCellz{z}y{y}x{x}Ch1.tif"
-                tifffile.imwrite(str(filename_ch1), bg_cube.astype(np.uint16))
-
-            return True
-
-        # Export cells
-        if train_cells and len(train_cells.data) > 0:
-            for coord in train_cells.data:
-                if export_cube(coord, cells_dir):
-                    cells_exported += 1
-
-        # Export non-cells
-        if train_non_cells and len(train_non_cells.data) > 0:
-            for coord in train_non_cells.data:
-                if export_cube(coord, non_cells_dir):
-                    non_cells_exported += 1
-
-        # Create training.yml config file
+        # Create training.yml config files (brain folder and pool)
         self._create_training_yaml()
 
         # Log to tracker
@@ -6596,7 +6394,10 @@ class TuningWidget(QWidget):
         batches = []  # (brain_name, date_str, cells_xml, non_cells_xml, n_cells, n_non_cells)
 
         # Helper: find matching cells/non-cells XML pairs
-        def find_xml_pairs(base_dir, source_name):
+        def find_xml_pairs(base_dir, source_name, brain=None):
+            # ``brain``: the brain these answers were given on, or None when
+            # the folder does not say (the pool's own files from older
+            # versions). Merging takes only the selected brain's batches.
             cells_dir = base_dir / "cells"
             non_cells_dir = base_dir / "non_cells"
 
@@ -6655,7 +6456,7 @@ class TuningWidget(QWidget):
                     except (IndexError, ValueError):
                         date_str = ts
 
-                batches.append((source_name, date_str, cells_xml, non_cells_xml, n_cells, n_non))
+                batches.append((source_name, date_str, cells_xml, non_cells_xml, n_cells, n_non, brain))
 
         # Scan per-brain training data
         # Every folder, not config.iter_brains: this gathers labels a person
@@ -6671,7 +6472,7 @@ class TuningWidget(QWidget):
                         continue
                     td = brain_dir / "training_data"
                     if td.exists():
-                        find_xml_pairs(td, brain_dir.name)
+                        find_xml_pairs(td, brain_dir.name, brain_dir.name)
 
         # Scan shared pool
         if MODELS_DIR.exists():
@@ -6680,7 +6481,12 @@ class TuningWidget(QWidget):
                     continue
                 td = paradigm_dir / "training_data"
                 if td.exists():
+                    # The pool's own files (older versions): no brain recorded.
                     find_xml_pairs(td, f"Shared: {paradigm_dir.name}")
+                    # Each brain's own answers folder inside the pool.
+                    for sub in sorted(td.iterdir()):
+                        if sub.is_dir() and sub.name not in ("cells", "non_cells"):
+                            find_xml_pairs(sub, f"Shared: {paradigm_dir.name} / {sub.name}", sub.name)
 
         # Populate table
         self.xml_batches_table.setRowCount(len(batches))
@@ -6689,7 +6495,7 @@ class TuningWidget(QWidget):
         total_cells = 0
         total_non = 0
 
-        for row, (source, date_str, cells_xml, non_cells_xml, n_cells, n_non) in enumerate(batches):
+        for row, (source, date_str, cells_xml, non_cells_xml, n_cells, n_non, _brain) in enumerate(batches):
             # Checkbox
             cb = QCheckBox()
             cb.setChecked(True)
@@ -6747,8 +6553,11 @@ class TuningWidget(QWidget):
     def _merge_xml_batches(self):
         """Merge selected XML batches into the training layers.
 
-        Loads coordinates from all checked XML files, deduplicates by (z,y,x),
-        and populates the 'Train: Cells' and 'Train: Non-Cells' napari layers.
+        Loads coordinates from the checked XML files OF THE SELECTED BRAIN,
+        deduplicates by (z,y,x) and adds the points that have no answer yet
+        to that brain's saved answers (shown in 'Train: Cells' / 'Train:
+        Non-Cells'). Other brains' batches and brainless pool files are left
+        out: the export cuts cubes from the selected brain's image only.
         """
         print("[DEBUG] Button clicked: _merge_xml_batches")
         import numpy as np
@@ -6763,9 +6572,15 @@ class TuningWidget(QWidget):
                 "Load a brain first so training layers can be created.")
             return
 
-        # Collect coordinates from all checked batches
+        # Only the selected brain's batches: a coordinate means something
+        # only on the image it was answered on, and the export cuts cubes
+        # from the selected brain's image. Batches of other brains, and the
+        # pool's old files that do not say which brain they are from, are
+        # left out and named.
+        this_brain = Path(self.current_brain).name
         all_cells = []
         all_non_cells = []
+        left_out = []
 
         for row in range(self.xml_batches_table.rowCount()):
             cb = self.xml_batches_table.cellWidget(row, 0)
@@ -6774,53 +6589,41 @@ class TuningWidget(QWidget):
             if row >= len(self._xml_batch_data):
                 continue
 
-            _, _, cells_xml, non_cells_xml, _, _ = self._xml_batch_data[row]
+            source, _, cells_xml, non_cells_xml, _, _, brain = self._xml_batch_data[row]
+            if brain != this_brain:
+                left_out.append(source)
+                continue
 
             if cells_xml:
-                coords = self._load_xml_coordinates(cells_xml)
-                if len(coords) > 0:
-                    all_cells.append(coords)
-
+                all_cells.extend(map(tuple, self._load_xml_coordinates(cells_xml).astype(int)))
             if non_cells_xml:
-                coords = self._load_xml_coordinates(non_cells_xml)
-                if len(coords) > 0:
-                    all_non_cells.append(coords)
+                all_non_cells.extend(map(tuple, self._load_xml_coordinates(non_cells_xml).astype(int)))
 
-        # Merge and deduplicate
-        if all_cells:
-            merged_cells = np.vstack(all_cells)
-            # Deduplicate by (z, y, x) — round to int and use unique
-            merged_cells = np.unique(merged_cells.astype(int), axis=0).astype(float)
-        else:
-            merged_cells = np.array([]).reshape(0, 3)
+        # A point found as a cell in one batch and as a non-cell in another
+        # has no single answer: it is not merged.
+        both = set(all_cells) & set(all_non_cells)
+        merged_cells = [p for p in dict.fromkeys(all_cells) if p not in both]
+        merged_non_cells = [p for p in dict.fromkeys(all_non_cells) if p not in both]
 
-        if all_non_cells:
-            merged_non_cells = np.vstack(all_non_cells)
-            merged_non_cells = np.unique(merged_non_cells.astype(int), axis=0).astype(float)
-        else:
-            merged_non_cells = np.array([]).reshape(0, 3)
-
-        if len(merged_cells) == 0 and len(merged_non_cells) == 0:
+        if not merged_cells and not merged_non_cells:
             QMessageBox.warning(self, "No Data",
-                "No coordinates found in selected XML batches.")
+                "No coordinates of the selected brain found in the selected XML batches."
+                + ("\n\nLeft out (another brain, or brain not recorded):\n" + "\n".join(left_out)
+                   if left_out else ""))
             return
 
-        # Ensure training layers exist
-        self.create_training_layers()
-
-        # Populate layers
-        train_cells = self._get_layer_by_type('train_cells')
-        train_non_cells = self._get_layer_by_type('train_non_cells')
-
-        if train_cells and len(merged_cells) > 0:
-            train_cells.data = merged_cells
-            train_cells.name = f"Train: Cells ({len(merged_cells)})"
-
-        if train_non_cells and len(merged_non_cells) > 0:
-            train_non_cells.data = merged_non_cells
-            train_non_cells.name = f"Train: Non-Cells ({len(merged_non_cells)})"
-
-        self.refresh_training_data_counts()
+        # Into the selected brain's answers -- only points with no answer yet,
+        # so an older batch never overwrites a newer answer.
+        if self.training_data_dir is None:
+            self.create_training_layers()
+        added = {'added': 0, 'already_answered': 0}
+        for pts, label in ((merged_cells, 'cells'), (merged_non_cells, 'non_cells')):
+            if pts:
+                r = self._save_training_label(np.array(pts), label, replace=False)
+                if r is None:
+                    return
+                added['added'] += r['added']
+                added['already_answered'] += r['already_answered']
 
         # Report
         n_batches = sum(1 for row in range(self.xml_batches_table.rowCount())
@@ -6829,9 +6632,13 @@ class TuningWidget(QWidget):
 
         QMessageBox.information(
             self, "XML Batches Merged",
-            f"Merged {n_batches} batch(es) into training layers:\n\n"
+            f"Merged {n_batches - len(left_out)} batch(es) of {this_brain} into its answers:\n\n"
             f"Cells: {len(merged_cells)} unique coordinates\n"
-            f"Non-cells: {len(merged_non_cells)} unique coordinates\n\n"
+            f"Non-cells: {len(merged_non_cells)} unique coordinates\n"
+            f"Newly saved: {added['added']}; already answered (kept as answered): {added['already_answered']}\n"
+            f"Answered both ways in the batches (not merged): {len(both)}\n"
+            + (f"Left out (another brain, or brain not recorded): {', '.join(left_out)}\n" if left_out else "")
+            + "\n"
             f"Next step: Click 'Create Training Dataset' to export TIFFs,\n"
             f"then 'Start Training' to train the network."
         )
@@ -6862,10 +6669,9 @@ class TuningWidget(QWidget):
                 td = paradigm_dir / "training_data"
                 if not td.exists():
                     continue
-                cells_dir = td / "cells"
-                non_cells_dir = td / "non_cells"
-                n_cells = len(list(cells_dir.glob("*.tif*"))) if cells_dir.exists() else 0
-                n_non = len(list(non_cells_dir.glob("*.tif*"))) if non_cells_dir.exists() else 0
+                # The pool's older brainless cubes plus every brain folder's.
+                from mousebrain.curation_record import count_cubes
+                n_cells, n_non = count_cubes(td)
                 if n_cells > 0 or n_non > 0:
                     sources.append((
                         f"Shared: {paradigm_dir.name}",
@@ -6993,8 +6799,13 @@ class TuningWidget(QWidget):
             td_path = Path(path_item.text())
             yaml_path = td_path / "training.yml"
 
-            # Create training.yml if missing but data exists
-            if not yaml_path.exists():
+            if self._is_pool_folder(td_path):
+                # A pool's training.yml is rewritten every time so that it
+                # names every brain folder's cubes as they are now.
+                from mousebrain.curation_record import write_training_yaml
+                write_training_yaml(td_path)
+            elif not yaml_path.exists():
+                # Create training.yml if missing but data exists
                 self._ensure_training_yaml(td_path)
 
             if yaml_path.exists():
@@ -7003,6 +6814,25 @@ class TuningWidget(QWidget):
                 print(f"[MouseBrain] Warning: No training.yml at {td_path}")
 
         return yaml_paths
+
+    def _is_pool_folder(self, td) -> bool:
+        """True for <models>/<setup>/training_data (a pool), not a brain's own folder."""
+        try:
+            td = Path(td)
+            return (td.name == "training_data"
+                    and td.resolve().parent.parent == Path(MODELS_DIR).resolve())
+        except OSError:
+            return False
+
+    def _source_cube_counts(self, td):
+        """(cell cubes, non-cell cubes) of a training source; a pool counts its brain folders too."""
+        from mousebrain.curation_record import count_cubes
+        td = Path(td)
+        if self._is_pool_folder(td):
+            return count_cubes(td)
+        cells_dir, non_cells_dir = td / "cells", td / "non_cells"
+        return (len(list(cells_dir.glob("*.tif*"))) if cells_dir.exists() else 0,
+                len(list(non_cells_dir.glob("*.tif*"))) if non_cells_dir.exists() else 0)
 
     def _ensure_training_yaml(self, training_data_dir: Path):
         """Create training.yml if it doesn't exist but cells/non_cells dirs do."""
@@ -7050,10 +6880,7 @@ class TuningWidget(QWidget):
         imaging_paradigm = parsed.get('imaging_params', 'default') or 'default'
 
         shared_dir = MODELS_DIR / imaging_paradigm / "training_data"
-        shared_cells = shared_dir / "cells"
-        shared_non_cells = shared_dir / "non_cells"
-        shared_cells.mkdir(parents=True, exist_ok=True)
-        shared_non_cells.mkdir(parents=True, exist_ok=True)
+        shared_dir.mkdir(parents=True, exist_ok=True)
 
         copied_cells = 0
         copied_non = 0
@@ -7075,12 +6902,20 @@ class TuningWidget(QWidget):
                 continue
 
             src_dir = Path(path_item.text())
+            # Into that brain's own folder in the pool: cube names carry no
+            # brain, so two brains' cubes at the same coordinates must never
+            # share a folder (one would be taken for the other and skipped).
+            src_brain = cb.text().split(":", 1)[-1].strip()
+            dest_cells = shared_dir / src_brain / "cells"
+            dest_non_cells = shared_dir / src_brain / "non_cells"
+            dest_cells.mkdir(parents=True, exist_ok=True)
+            dest_non_cells.mkdir(parents=True, exist_ok=True)
 
             # Copy cells
             src_cells = src_dir / "cells"
             if src_cells.exists():
                 for tif in src_cells.glob("*.tif*"):
-                    dest = shared_cells / tif.name
+                    dest = dest_cells / tif.name
                     if dest.exists():
                         skipped += 1
                     else:
@@ -7091,15 +6926,16 @@ class TuningWidget(QWidget):
             src_non = src_dir / "non_cells"
             if src_non.exists():
                 for tif in src_non.glob("*.tif*"):
-                    dest = shared_non_cells / tif.name
+                    dest = dest_non_cells / tif.name
                     if dest.exists():
                         skipped += 1
                     else:
                         shutil.copy2(str(tif), str(dest))
                         copied_non += 1
 
-        # Ensure shared pool has training.yml
-        self._ensure_training_yaml(shared_dir)
+        # The pool's training.yml names every brain folder's cubes
+        from mousebrain.curation_record import write_training_yaml
+        write_training_yaml(shared_dir)
 
         # Refresh the table to reflect new counts
         self._refresh_training_sources()
@@ -7137,11 +6973,12 @@ class TuningWidget(QWidget):
                 f"No shared training pool exists yet for '{imaging_paradigm}'.")
             return
 
-        # Count what would be deleted
-        cells_dir = shared_dir / "cells"
-        non_cells_dir = shared_dir / "non_cells"
-        n_cells = len(list(cells_dir.glob("*.tif*"))) if cells_dir.exists() else 0
-        n_non = len(list(non_cells_dir.glob("*.tif*"))) if non_cells_dir.exists() else 0
+        # Count what would be deleted: the cube folders of the pool and of
+        # every brain folder in it. The answers files (curated_*.xml) are
+        # never deleted; Create Training Dataset cuts the cubes again.
+        from mousebrain.curation_record import count_cubes, pool_cube_dirs
+        cube_dirs = [d for _, d in pool_cube_dirs(shared_dir) if d.exists()]
+        n_cells, n_non = count_cubes(shared_dir)
 
         if n_cells == 0 and n_non == 0:
             QMessageBox.information(self, "Nothing to Clear",
@@ -7166,12 +7003,9 @@ class TuningWidget(QWidget):
             return
 
         # Delete contents (not the directory itself)
-        if cells_dir.exists():
-            shutil.rmtree(str(cells_dir))
-            cells_dir.mkdir()
-        if non_cells_dir.exists():
-            shutil.rmtree(str(non_cells_dir))
-            non_cells_dir.mkdir()
+        for d in cube_dirs:
+            shutil.rmtree(str(d))
+            d.mkdir()
 
         # Remove stale training.yml
         yaml_path = shared_dir / "training.yml"
@@ -7232,11 +7066,9 @@ class TuningWidget(QWidget):
             n_cells = 0
             n_non_cells = 0
             for yp in yaml_paths:
-                td = yp.parent
-                cells_dir = td / "cells"
-                non_cells_dir = td / "non_cells"
-                n_cells += len(list(cells_dir.glob("*.tif*"))) if cells_dir.exists() else 0
-                n_non_cells += len(list(non_cells_dir.glob("*.tif*"))) if non_cells_dir.exists() else 0
+                c, nc = self._source_cube_counts(yp.parent)
+                n_cells += c
+                n_non_cells += nc
 
             if n_cells == 0 or n_non_cells == 0:
                 QMessageBox.warning(self, "Missing Training Data",
