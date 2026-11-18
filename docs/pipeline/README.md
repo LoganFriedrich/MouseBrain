@@ -833,7 +833,12 @@ python util_manual_crop.py --brain 001_CNT_01_01_1p625x_z4
 # 2. Plugins → BrainTools → 3D: 3. Manual Crop
 ```
 
-**Cropping a brain again.** The new crop is first written to
+**Cropping a brain again.** This holds for every way of making a crop: the
+napari Manual Crop tool, `util_manual_crop.py`, step 2 run with `--auto-crop`,
+and `util_apply_crop_from_reference.py --force`. (Step 2's `--auto-crop` and
+the reference-crop script used to write over the existing crop plane by plane;
+stopped part-way, they left a mix of old and new planes that the batches then
+registered without anyone looking.) The new crop is first written to
 `2_Cropped_For_Registration.partial` beside the brain's other folders. Only
 when every plane and its `metadata.json` are written is the previous crop moved
 into `2_Cropped_For_Registration/_archive/<date>_<time>/` (kept, not deleted)

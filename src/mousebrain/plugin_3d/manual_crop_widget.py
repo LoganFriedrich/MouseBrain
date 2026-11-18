@@ -39,7 +39,12 @@ FOLDER_CROPPED = "2_Cropped_For_Registration"
 # =============================================================================
 
 class CropWorker(QThread):
-    """Background thread for cropping operation."""
+    """Background thread for cropping operation.
+
+    Writes the new crop beside the old one and swaps it in only when it is
+    complete, the previous crop archived (crop_subprocess.new_partial /
+    swap_in -- the rule every crop writer follows): a crop stopped part-way
+    leaves the previous crop untouched instead of a folder of mixed planes."""
     progress = Signal(int, int, str)  # current, total, message
     finished = Signal(bool, str)  # success, message
 
@@ -55,8 +60,9 @@ class CropWorker(QThread):
         """Run the crop operation in background."""
         try:
             import tifffile
+            from mousebrain.plugin_3d.crop_subprocess import new_partial, swap_in
 
-            self.output_folder.mkdir(parents=True, exist_ok=True)
+            partial = new_partial(self.output_folder)
 
             # Find all channels
             channels = sorted([d for d in self.source_folder.iterdir()
@@ -69,7 +75,7 @@ class CropWorker(QThread):
                 ch_name = ch_folder.name
                 self.progress.emit(processed, total_files, f"Processing {ch_name}...")
 
-                out_ch = self.output_folder / ch_name
+                out_ch = partial / ch_name
                 out_ch.mkdir(exist_ok=True)
 
                 tiff_files = sorted(ch_folder.glob("Z*.tif"))
@@ -109,8 +115,9 @@ class CropWorker(QThread):
             crop_meta['signal_channel'] = self.signal_channel
             crop_meta['channels_swapped'] = (self.signal_channel == 'ch1')
 
-            with open(self.output_folder / "metadata.json", 'w') as f:
+            with open(partial / "metadata.json", 'w') as f:
                 json.dump(crop_meta, f, indent=2)
+            swap_in(self.output_folder, partial)
 
             self.finished.emit(True, str(self.output_folder))
 
@@ -148,10 +155,15 @@ def find_pipeline_folder_from_layer(layer):
 
 
 def save_cropped_volume(source_folder: Path, output_folder: Path, y_crop: int, metadata: dict, progress_callback=None):
-    """Crop and save all channels from source to output."""
-    import tifffile
+    """Crop and save all channels from source to output.
 
-    output_folder.mkdir(parents=True, exist_ok=True)
+    Built beside ``output_folder`` and swapped in when complete, the previous
+    crop archived (see CropWorker)."""
+    import tifffile
+    from mousebrain.plugin_3d.crop_subprocess import new_partial, swap_in
+
+    final_folder = output_folder
+    output_folder = new_partial(final_folder)
 
     # Find all channels in source
     channels = sorted([d for d in source_folder.iterdir() if d.is_dir() and d.name.startswith("ch")])
@@ -198,6 +210,7 @@ def save_cropped_volume(source_folder: Path, output_folder: Path, y_crop: int, m
 
     with open(output_folder / "metadata.json", 'w') as f:
         json.dump(crop_meta, f, indent=2)
+    swap_in(final_folder, output_folder)
 
 
 # =============================================================================

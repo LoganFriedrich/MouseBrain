@@ -18,6 +18,15 @@ metadata.json, which every reader shows as "not cropped").
 
 A re-crop makes the registration fitted to the earlier crop OUT OF DATE (see
 mousebrain.registration_approval): the brain is back at "Register".
+
+EVERY tool that writes a crop uses this rule (new_partial() + swap_in()):
+this napari crop, step 2's --auto-crop, util_apply_crop_from_reference.py and
+the manual crop widget's own writers. Step 2 and the reference-crop script
+used to write in place and leave mixed planes when stopped, which the batches
+then registered unattended.
+
+This module imports only the standard library at the top, so the pipeline
+scripts can import these two functions without loading napari or Qt.
 """
 
 import os
@@ -30,6 +39,19 @@ from pathlib import Path
 FOLDER_EXTRACTED = "1_Extracted_Full"
 FOLDER_CROPPED = "2_Cropped_For_Registration"
 PARTIAL_SUFFIX = ".partial"
+
+
+def new_partial(output_folder: Path) -> Path:
+    """An empty ``<output_folder>.partial`` folder beside ``output_folder``
+    to build a new crop in. One left there by an earlier crop that was
+    stopped is unfinished work, made only from the extracted images: it is
+    started again from nothing."""
+    output_folder = Path(output_folder)
+    partial = output_folder.with_name(output_folder.name + PARTIAL_SUFFIX)
+    if partial.exists():
+        shutil.rmtree(partial)
+    partial.mkdir(parents=True)
+    return partial
 
 
 def swap_in(output_folder: Path, partial: Path) -> Path:
@@ -158,13 +180,6 @@ def do_crop(pipeline_folder: Path):
 
     source_folder = pipeline_folder / FOLDER_EXTRACTED
     output_folder = pipeline_folder / FOLDER_CROPPED
-    # The new crop is built here and swapped in only when complete (see the
-    # module docstring). A .partial left by an earlier interrupted crop is
-    # unfinished work: it is started again from nothing.
-    partial = pipeline_folder / (FOLDER_CROPPED + PARTIAL_SUFFIX)
-    if partial.exists():
-        shutil.rmtree(partial)
-
     # Load metadata
     meta_path = pipeline_folder / FOLDER_EXTRACTED / "metadata.json"
     metadata = None
@@ -174,7 +189,10 @@ def do_crop(pipeline_folder: Path):
 
     # Perform the crop
     import tifffile
-    partial.mkdir(parents=True)
+    # The new crop is built in <crop folder>.partial and swapped in only when
+    # complete (see the module docstring). A .partial left by an earlier
+    # interrupted crop is unfinished work: it is started again from nothing.
+    partial = new_partial(output_folder)
 
     # Find all channels
     channels = sorted([d for d in source_folder.iterdir()

@@ -113,26 +113,37 @@ def get_full_dimensions(pipeline_folder: Path) -> dict:
 
 def apply_crop(source_folder: Path, output_folder: Path, y_crop: int,
                metadata: dict, dry_run: bool = False):
-    """Apply crop to a brain's extracted data."""
+    """Apply crop to a brain's extracted data.
+
+    The new crop is built in ``<output_folder>.partial`` and swapped in only
+    once every plane, cache and metadata.json are written; the crop that was
+    there goes into ``<output_folder>/_archive/<time>/`` (kept, not deleted)
+    -- crop_subprocess.new_partial / swap_in, the rule every crop tool
+    follows. WHY: this used to write over the existing crop plane by plane
+    (with --force), so a run stopped part-way left old and new planes mixed
+    under the old metadata, which the batches then registered unattended.
+    """
     if dry_run:
         print(f"  [DRY RUN] Would crop to Y={y_crop}")
         return True
 
-    # Create output folder
-    output_folder.mkdir(parents=True, exist_ok=True)
+    from mousebrain.plugin_3d.crop_subprocess import new_partial, swap_in
+    partial = new_partial(output_folder)
+    written = 0
 
     # Get channel folders
     for ch_name in ['ch0', 'ch1']:
         ch_source = source_folder / ch_name
-        ch_output = output_folder / ch_name
+        ch_output = partial / ch_name
 
         if not ch_source.exists():
             continue
 
         ch_output.mkdir(parents=True, exist_ok=True)
 
-        # Also create zarr output folder
-        zarr_output = output_folder / f"{ch_name}.zarr"
+        # Also create zarr output folder (inside the new crop: it moves in
+        # with it, and its completion record still matches the planes)
+        zarr_output = partial / f"{ch_name}.zarr"
 
         tiff_files = sorted(ch_source.glob("Z*.tif"))
         print(f"  Cropping {ch_name}: {len(tiff_files)} slices to Y={y_crop}...")
@@ -146,6 +157,7 @@ def apply_crop(source_folder: Path, output_folder: Path, y_crop: int,
             out_path = ch_output / tiff_path.name
             tifffile.imwrite(str(out_path), cropped)
             cropped_slices.append(cropped)
+            written += 1
 
             if (i + 1) % 200 == 0:
                 print(f"    {i+1}/{len(tiff_files)} slices...")
@@ -162,17 +174,29 @@ def apply_crop(source_folder: Path, output_folder: Path, y_crop: int,
             print(f"  Warning: Could not create zarr (the TIFFs are complete; the widget "
                   f"will build the cache itself): {e}")
 
+    if not written:
+        # Nothing to crop: the crop already there is left as it is.
+        shutil.rmtree(partial)
+        print(f"  ERROR: no extracted planes found in {source_folder} (ch0/ch1); nothing cropped")
+        return False
+
     # Save metadata
     metadata['crop_y_end'] = y_crop
     metadata['crop_y_new'] = y_crop
     metadata['crop_method'] = 'reference_copy'
     metadata['crop_applied_at'] = datetime.now().isoformat()
 
-    meta_path = output_folder / "metadata.json"
+    meta_path = partial / "metadata.json"
     with open(meta_path, 'w') as f:
         json.dump(metadata, f, indent=2)
 
+    # Every plane and the metadata are written: swap the new crop in.
+    previous = swap_in(output_folder, partial)
     print(f"  Saved metadata to {meta_path.name}")
+    if previous:
+        print(f"  The previous crop was moved to: {previous}")
+        print(f"  A registration made on the previous crop is now OUT OF DATE: "
+              f"register the brain again.")
     return True
 
 
@@ -242,7 +266,8 @@ def main():
                 print(f"  SKIP: Already cropped (use --force to overwrite)")
                 continue
             else:
-                print(f"  Warning: Overwriting existing crop")
+                print(f"  Replacing the existing crop (it is kept in "
+                      f"{FOLDER_CROPPED}/_archive/ once the new one is complete)")
 
         # Get target dimensions
         target_dims = get_full_dimensions(target_folder)

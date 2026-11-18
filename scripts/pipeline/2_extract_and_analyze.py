@@ -1145,6 +1145,7 @@ def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
     # CREATE CROPPED COPIES (Y-axis crop to remove cord)
     # Only if auto-crop is enabled (skip_crop=False)
     # =========================================================================
+    crop_partial = None
     if not skip_crop:
         print(f"\n    --- Creating Cropped Copies (started {timestamp()}) ---")
 
@@ -1152,13 +1153,25 @@ def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
         # All Z slices are kept, but each slice is cropped in Y
         print_status(f"Cropping Y dimension: keeping Y=0 to Y={crop_end} ({cropped_y_size}/{original_y} rows)")
 
+        # The new crop is built in 2_Cropped_For_Registration.partial and
+        # swapped in only once every plane and its metadata.json are written
+        # (crop_subprocess.swap_in; the previous crop goes into
+        # 2_Cropped_For_Registration/_archive/<time>/). WHY: this used to
+        # write over the crop already there, plane by plane. A run stopped
+        # part-way left old and new planes mixed (of different heights when
+        # the crop line moved) under the old metadata; the registration was
+        # then out of date and the batches registered the mixed folder
+        # unattended. Stopped now, the previous crop is untouched.
+        from mousebrain.plugin_3d.crop_subprocess import new_partial
+        crop_partial = new_partial(crop_folder)
+
         crop_copy_start = time.time()
 
         for ch_idx in range(num_channels):
             ch_name = ims_info['channels'][ch_idx]['name'] if ch_idx < len(ims_info['channels']) else f"Channel{ch_idx}"
             print_status(f"Cropping channel {ch_idx} ({ch_name}): {num_slices} slices...")
 
-            ch_folder = crop_folder / f"ch{ch_idx}"
+            ch_folder = crop_partial / f"ch{ch_idx}"
             ch_folder.mkdir(exist_ok=True)
             create_thumbs_decoy(ch_folder)
 
@@ -1279,10 +1292,17 @@ def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
             ),
         }
 
-        with open(crop_folder / "metadata.json", 'w') as f:
+        # Into the new crop, then the whole new crop is swapped in (see above).
+        with open(crop_partial / "metadata.json", 'w') as f:
             json.dump(crop_metadata, f, indent=2)
+        from mousebrain.plugin_3d.crop_subprocess import swap_in
+        previous_crop = swap_in(crop_folder, crop_partial)
 
         print_status("Metadata saved to both folders")
+        if previous_crop:
+            print_status(f"The previous crop was moved to: {previous_crop}")
+            print_status("A registration made on the previous crop is now OUT OF DATE: "
+                         "the brain is back at 'Register'.")
     else:
         print_status("Metadata saved to extraction folder")
 
