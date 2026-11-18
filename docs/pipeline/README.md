@@ -854,7 +854,9 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   console. Two things to know: the brain's own `6_Region_Analysis` files of
   such a run were already written, but with no row in `region_counts.csv` the
   dashboard, RUN_PIPELINE and batch_process `--resume` show the brain at
-  "Count", and `6_count_regions.py --all` counts it again. And
+  "Count", and `6_count_regions.py --all` counts it again. The overnight
+  batch's report quotes the last lines step 6 printed (its `[FAILED] ...`
+  reason), not only its error output, which for these refusals is empty. And
   when a brain that already had counts is counted again and this run's
   writing fails, the brain is left with NO production row (the earlier row
   is in the archive, its registry entry retired) until it is counted again.

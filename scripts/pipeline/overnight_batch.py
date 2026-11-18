@@ -410,12 +410,30 @@ def run_classification(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
             log.info(f"[{brain_name}] Classification complete")
             return True, "Classification successful"
         else:
-            return False, f"Classification failed: {result.stderr[:500]}"
+            return False, f"Classification failed: {_failure_text(result)}"
 
     except subprocess.TimeoutExpired:
         return False, "Classification timed out after 1 hour"
     except Exception as e:
         return False, f"Classification error: {e}"
+
+
+def _failure_text(result, limit: int = 500) -> str:
+    """What a failed step said, for the failure message: the END of its
+    error output and of its normal output.
+
+    WHY both, and the end: steps 5 and 6 print why they stopped -- step 6's
+    "[FAILED] Not counted: ..." when it refuses a registration that is not
+    approved, and why it could not publish a count -- to their normal output,
+    as their last lines. Only the start of the error output was kept, so the
+    overnight report for such a failure could be blank."""
+    parts = []
+    for name, text in (("stderr", result.stderr), ("stdout", result.stdout)):
+        text = (text or "").strip()
+        if text:
+            parts.append("%s: ...%s" % (name, text[-limit:]) if len(text) > limit
+                         else "%s: %s" % (name, text))
+    return " | ".join(parts) or "(the step printed nothing; exit code %s)" % result.returncode
 
 
 def run_counting(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
@@ -437,7 +455,7 @@ def run_counting(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
             log.info(f"[{brain_name}] Counting complete")
             return True, "Counting successful"
         else:
-            return False, f"Counting failed: {result.stderr[:500]}"
+            return False, f"Counting failed: {_failure_text(result)}"
 
     except subprocess.TimeoutExpired:
         return False, "Counting timed out after 30 minutes"
