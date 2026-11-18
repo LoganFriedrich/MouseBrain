@@ -11753,15 +11753,24 @@ class TuningWidget(QWidget):
         # The count itself succeeded and is on disk: it is logged even when
         # showing it fails, and a failure to show it is said on the status
         # line instead of leaving "Loading results..." up for good.
+        totals = None
         try:
-            self._load_region_comparison()
+            totals = self._load_region_comparison()
         except Exception as e:
             print(f"[MouseBrain] Region counts of {name} were written but could not be shown: {e}")
             self.region_count_status.setText(
                 f"Status: Counting {name} finished, but its counts could not be shown: {e}")
             self.region_count_status.setStyleSheet("color: red;")
         if self.session_doc:
-            self.session_doc.log_region_count(name)
+            if totals:
+                total, n_regions, output_csv = totals
+                self.session_doc.log_region_count(
+                    name, total_cells=total, regions_counted=n_regions,
+                    output_path=str(output_csv))
+            else:
+                # Totals not read: logged as unknown, never as 0 cells.
+                self.session_doc.log_region_count(
+                    name, total_cells=None, regions_counted=None)
 
     def _load_region_comparison(self):
         """Show the selected brain's new region counts in the Results tab.
@@ -11773,16 +11782,20 @@ class TuningWidget(QWidget):
         status stayed at "Loading results..." and the session log entry was
         skipped. Comparing with the published reference is done by
         util_compare_to_published.py (docs/pipeline/OPTIMIZATION_WORKFLOW.md).
+
+        Returns (total cells, regions with cells, counts file) once the file
+        is read -- also when the tables then fail to fill (said in red) -- so
+        the session log records the real totals; None when there is no file.
         """
         if not self.current_brain:
-            return
+            return None
 
         output_csv = self.current_brain / "6_Region_Analysis" / "cell_counts_by_region.csv"
         if not output_csv.exists():
             self.region_count_status.setText(
                 f"Status: Counting finished but wrote no counts file ({output_csv})")
             self.region_count_status.setStyleSheet("color: red;")
-            return
+            return None
 
         import csv
         n_regions = total = 0
@@ -11796,10 +11809,20 @@ class TuningWidget(QWidget):
                     n_regions += 1
                     total += count
 
-        self._refresh_all_results_views()
+        totals = (total, n_regions, output_csv)
+        try:
+            self._refresh_all_results_views()
+        except Exception as e:
+            print(f"[MouseBrain] Region counts ({total} cells) were written but could not be shown: {e}")
+            self.region_count_status.setText(
+                f"Status: Counted {total:,} cells in {n_regions} regions, but they "
+                f"could not be shown: {e}")
+            self.region_count_status.setStyleSheet("color: red;")
+            return totals
         self.region_count_status.setText(
             f"Status: Complete - {total:,} cells in {n_regions} regions")
         self.region_count_status.setStyleSheet("color: green;")
+        return totals
 
     def view_region_csv(self):
         """Open the region counts CSV in the default application."""

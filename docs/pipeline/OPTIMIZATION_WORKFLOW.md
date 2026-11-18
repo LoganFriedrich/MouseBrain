@@ -299,9 +299,10 @@ status line shows step 6's latest message, the brain list is held, and a second
 click says "Counting Running". When it ends the counts are loaded into the
 Results tab's "Allen Atlas" and "eLife Groups" tables (only if the counted
 brain is still the selected one), the status line says "Complete - N cells in
-M regions", and the count is written to the session log. If the counts were
-written but cannot be shown, the status line says so in red; the count itself
-is still on disk and logged. The Results tab does not compare with the
+M regions", and the count is written to the session log with those totals. If
+the counts were written but cannot be shown, the status line says so in red;
+the count itself is still on disk and logged (with its totals when the counts
+file could be read, otherwise with the totals left blank, never as 0). The Results tab does not compare with the
 published reference; use `util_compare_to_published.py` for that (see below). Closing the
 Setup & Tuning window while counting runs is refused with a message: wait until
 the status line says it finished. If napari itself is closed anyway (or

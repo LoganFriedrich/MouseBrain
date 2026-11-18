@@ -31,9 +31,11 @@ GROUPED = (
 class _Log:
     def __init__(self):
         self.counted = []
+        self.totals = []
 
-    def log_region_count(self, brain_name, *a, **k):
+    def log_region_count(self, brain_name, total_cells=0, regions_counted=0, output_path=""):
         self.counted.append(brain_name)
+        self.totals.append((total_cells, regions_counted))
 
 
 def _counted_widget(tmp_path, monkeypatch):
@@ -69,6 +71,7 @@ def test_a_successful_count_fills_the_results_tables_and_is_logged(tmp_path, mon
     assert w.allen_table.rowCount() == 2
     assert w.elife_table.rowCount() == 1
     assert w.session_doc.counted == [BRAIN_A]
+    assert w.session_doc.totals == [(42, 2)]   # the real totals, not the defaults
     assert w.run_regions_btn.isEnabled()
 
 
@@ -87,3 +90,4 @@ def test_counts_that_cannot_be_shown_are_still_logged_and_said(tmp_path, monkeyp
     assert "could not be shown" in w.region_count_status.text()
     assert "table broke" in w.region_count_status.text()
     assert w.session_doc.counted == [BRAIN_A]
+    assert w.session_doc.totals == [(42, 2)]
