@@ -131,8 +131,31 @@ keeps the answers like this:
   `cells/` and `non_cells/` (the training cubes, once exported) and
   `training.yml`. "Create Training Layers" points the window at the selected
   brain's folder and shows its saved answers in the layers
-  "Train: Cells (n)" and "Train: Non-Cells (n)". Those layers always show
-  exactly what is saved for the selected brain -- never another brain's points.
+  "Train: Cells (n)" and "Train: Non-Cells (n)". After every answer those
+  layers are redrawn from what is saved for the selected brain -- never
+  another brain's points.
+- **Points you place by hand in "Train: Cells" / "Train: Non-Cells"** (napari's
+  add-points mode) are answers too. They are saved into the selected brain's
+  answers before the next answer is saved, before "Create Training Layers"
+  redraws the layers, before "Create Training Dataset" cuts cubes, and -- into
+  the brain you are leaving -- when you choose another brain. Two cases are NOT
+  saved, and a message "Points Not Saved" lists them by z/y/x: a point that
+  already has the other answer (or is saved as both), and a point placed in
+  both layers. Saving those would quietly change an answer you gave; answer
+  that candidate again with C or X instead. If a training layer is recorded as
+  another brain's and holds points that are not saved for that brain, nothing
+  is saved from it and the layers are left as they are ("Another Brain's
+  Points"); select that brain again to keep them.
+- **Deleting a point from a training layer does NOT take its answer back.** It
+  comes back at the next redraw. If you click "Create Training Dataset" while
+  saved answers are missing from the layers, nothing is cut and a message
+  "Saved Answers Missing From the Layers" says how many: click "Create
+  Training Layers" to redraw them and export again, or, to change an answer,
+  answer that candidate again with C or X.
+- **"Show Training Data in Napari"** only shows the cubes found on disk, in
+  layers named "Cubes on disk: Cells (n)" / "Cubes on disk: Non-Cells (n)".
+  Those layers are for looking only: they are never read as answers, never
+  cut into cubes, and never redrawn by an answer.
 - **Every answer is saved, or you are told it was not.** If "Create Training
   Layers" has not been clicked for the selected brain, the first C or X sets
   up that brain's folder by itself and saves the answer there. When an answer

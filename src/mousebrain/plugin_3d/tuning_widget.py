@@ -5881,10 +5881,13 @@ class TuningWidget(QWidget):
         if cells_dir.exists():
             cells_coords = self._load_training_coords(cells_dir)
             if len(cells_coords) > 0:
+                # Own role: these layers only SHOW cubes found on disk. They
+                # are never taken as answer layers (train_cells) and never
+                # replaced by the saved answers.
                 self._add_points_layer(
                     cells_coords,
-                    f"Training Cells ({len(cells_coords)})",
-                    'train_cells',
+                    f"Cubes on disk: Cells ({len(cells_coords)})",
+                    'train_view_cells',
                     visible=True
                 )
                 cells_loaded = len(cells_coords)
@@ -5896,8 +5899,8 @@ class TuningWidget(QWidget):
             if len(non_cells_coords) > 0:
                 self._add_points_layer(
                     non_cells_coords,
-                    f"Training Non-Cells ({len(non_cells_coords)})",
-                    'train_non_cells',
+                    f"Cubes on disk: Non-Cells ({len(non_cells_coords)})",
+                    'train_view_non_cells',
                     visible=True
                 )
                 non_cells_loaded = len(non_cells_coords)
@@ -5942,8 +5945,10 @@ class TuningWidget(QWidget):
            setup's pool: <models>/<setup>/training_data/<brain>/ (never in
            the pool itself, where answers from different brains could not be
            told apart -- mousebrain.curation_record says why).
-        2. 'Train: Cells' / 'Train: Non-Cells' show exactly that brain's saved
-           answers (emptied first, so another brain's points never stay).
+        2. 'Train: Cells' / 'Train: Non-Cells' are redrawn from that brain's
+           saved answers (so another brain's points never stay); points a
+           person placed in them by hand are saved first
+           (_keep_hand_added_points).
         3. Every C / X during curation is saved there at once.
         """
         print("[DEBUG] Button clicked: create_training_layers")
@@ -5999,12 +6004,16 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Saved Answers Unreadable", str(e))
             return None
 
-    def _show_curation_record(self, record=None) -> bool:
+    def _show_curation_record(self, record=None, check_layers: bool = True) -> bool:
         """Make the two training layers show the selected brain's saved answers.
 
         The layers are a VIEW of the answers files: their points are replaced
         (never appended to) and they are tagged with the brain, so what is on
-        screen is what is saved and what an export will cut.
+        screen is what is saved and what an export will cut. Points a person
+        put into a layer by hand are saved first (_keep_hand_added_points);
+        when that is refused, the layers are left as they are, so no point a
+        person placed disappears without a word. ``check_layers=False`` only
+        for a caller that has just done that check itself.
         """
         import numpy as np
         from mousebrain.curation_record import CurationRecord, CurationRecordError
@@ -6012,6 +6021,8 @@ class TuningWidget(QWidget):
             if self.training_data_dir is None:
                 return False
             record = CurationRecord(self.training_data_dir)
+        if check_layers and not self._keep_hand_added_points(record):
+            return False
         try:
             labels, conflicts = record.read_all()
         except CurationRecordError as e:
@@ -6056,6 +6067,9 @@ class TuningWidget(QWidget):
                 "Select the brain whose image you are reviewing, then answer again.")
             return None
         record = CurationRecord(self.training_data_dir)
+        # Points put into the training layers by hand are saved BEFORE this
+        # answer, so that the answer given now is the last one for its point.
+        layers_ok = self._keep_hand_added_points(record)
         try:
             if replace:
                 result = record.set_label(coords, label)
@@ -6065,11 +6079,16 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Answer Not Saved",
                 f"This answer was NOT saved:\n{e}")
             return None
-        self._show_curation_record(record)
+        if layers_ok:
+            self._show_curation_record(record, check_layers=False)
         return result
 
-    def _release_curation_for_brain_change(self):
+    def _release_curation_for_brain_change(self, previous_brain=None):
         """After another brain is chosen: nothing of the last brain's curation stays.
+
+        Points a person put into the training layers by hand are saved into
+        ``previous_brain``'s answers first (the brain they were placed on);
+        layers that cannot be saved are left as they are, with a message.
 
         The 'Auto-save' line and the training folder box go back to "not
         set" (the next answer sets up the new brain's folder), the training
@@ -6085,9 +6104,22 @@ class TuningWidget(QWidget):
         box = getattr(self, 'training_data_path', None)
         if box is not None:
             box.setText("")
+        from mousebrain.curation_record import CurationRecord, brain_folder
+        keep_ok = True
+        if previous_brain:
+            keep_ok = self._keep_hand_added_points(
+                CurationRecord(brain_folder(MODELS_DIR, Path(previous_brain).name)),
+                brain=previous_brain)
+        elif self._hand_added_layers():
+            keep_ok = False
+            QMessageBox.warning(self, "Points Not Saved",
+                "The training layers hold points, and the brain they were placed "
+                "on is not known, so they were not saved.\n\n"
+                "The layers are left as they are. Select the brain they belong to "
+                "and add them with the bucket buttons.")
         for role, title in (('train_cells', 'Train: Cells'), ('train_non_cells', 'Train: Non-Cells')):
             layer = self._get_layer_by_type(role)
-            if layer is not None:
+            if layer is not None and keep_ok:
                 layer.data = np.empty((0, 3))
                 layer.name = f"{title} (0)"
                 layer.metadata['source_brain'] = ''
@@ -6096,6 +6128,148 @@ class TuningWidget(QWidget):
         cw = getattr(self, 'curation_widget', None)
         if cw is not None and hasattr(cw, 'release'):
             cw.release()
+
+    def _hand_added_layers(self):
+        """The training layers that hold any points."""
+        out = []
+        for role in ('train_cells', 'train_non_cells'):
+            layer = self._get_layer_by_type(role)
+            if layer is not None and len(layer.data):
+                out.append(layer)
+        return out
+
+    def _keep_hand_added_points(self, record, brain=None) -> bool:
+        """Save points a person put into the training layers by hand; False = stop.
+
+        WHY: 'Train: Cells' / 'Train: Non-Cells' are replaced by the saved
+        answers after every answer, and the export cuts cubes from the saved
+        answers only. A point a person placed in one of those layers by hand
+        (napari's add-points mode) is an answer too, but it is in no file --
+        without this check it vanished at the next C / X and was never cut.
+
+        Compared as whole voxels (curation_record.point_key), for each layer:
+        * a point with no saved answer is saved with the layer's label;
+        * a point saved with the OTHER label, saved as both, or placed in both
+          layers is NOT saved -- saving it would silently change an answer --
+          and the person is told which points, to answer them with C / X;
+        * a layer recorded as another brain's than ``brain`` (default: the
+          selected brain) whose points are all saved for that brain is fine
+          to replace; one holding points NOT saved for it is refused: nothing
+          is saved from it, the person is told, and False tells the caller
+          to leave the layers as they are.
+        A layer with no brain recorded counts as ``brain``'s (it was emptied
+        when the last brain was left).
+        Deleting a point from a layer does NOT take its answer back: a layer
+        is emptied on every brain change, so a missing point cannot be told
+        from a deliberate deletion. An answer is changed with C / X.
+        """
+        from mousebrain.curation_record import (
+            CurationRecord, CurationRecordError, brain_folder, point_key)
+        brain = brain if brain is not None else self.current_brain
+        layers = {}
+        for role, label in (('train_cells', 'cells'), ('train_non_cells', 'non_cells')):
+            layer = self._get_layer_by_type(role)
+            if layer is None or not len(layer.data):
+                continue
+            src = (getattr(layer, 'metadata', None) or {}).get('source_brain')
+            if src and brain and src != str(brain):
+                # Still showing another brain's answers: nothing is lost by
+                # replacing it when every point is saved for THAT brain.
+                try:
+                    theirs = CurationRecord(
+                        brain_folder(MODELS_DIR, Path(src).name)).read()[label]
+                except CurationRecordError:
+                    theirs = []
+                if set(point_key(p) for p in layer.data) <= set(theirs):
+                    continue
+                QMessageBox.warning(self, "Another Brain's Points",
+                    f"The layer '{layer.name}' holds points of another brain:\n{src}\n\n"
+                    f"They are not saved as answers of\n{brain}\nand the layers "
+                    f"were left as they are. Select that brain again to keep them.")
+                return False
+            layers[label] = [point_key(p) for p in layer.data]
+        if not layers:
+            return True
+        try:
+            saved, conflicts = record.read_all()
+        except CurationRecordError as e:
+            QMessageBox.warning(self, "Saved Answers Unreadable", str(e))
+            return False
+        conflicts = set(conflicts)
+        in_both_layers = set(layers.get('cells', [])) & set(layers.get('non_cells', []))
+        contradicted = []
+        new = {}
+        for label, keys in layers.items():
+            other = 'non_cells' if label == 'cells' else 'cells'
+            mine, theirs = set(saved[label]), set(saved[other])
+            for k in dict.fromkeys(keys):
+                if k in mine:
+                    continue
+                if k in theirs or k in conflicts or k in in_both_layers:
+                    contradicted.append((label, k))
+                else:
+                    new.setdefault(label, []).append(k)
+        for label, keys in new.items():
+            try:
+                record.set_label(keys, label)
+            except (CurationRecordError, OSError) as e:
+                QMessageBox.warning(self, "Points Not Saved",
+                    f"{len(keys)} point(s) placed by hand in the training layer for "
+                    f"'{label}' could NOT be saved:\n{e}\n\nThe layers were left as they are.")
+                return False
+            print(f"[MouseBrain] Saved {len(keys)} point(s) placed by hand in the "
+                  f"'{label}' training layer as answers in {record.folder}")
+            if self.session_doc:
+                self.session_doc.log_event('training_points_added_by_hand', {
+                    'type': label, 'count': len(keys), 'saved_in': str(record.folder)})
+        if contradicted:
+            shown = "\n".join(f"  z={k[0]} y={k[1]} x={k[2]} (placed as {lab})"
+                               for lab, k in contradicted[:20])
+            more = f"\n  ... and {len(contradicted) - 20} more" if len(contradicted) > 20 else ""
+            QMessageBox.warning(self, "Points Not Saved",
+                f"{len(contradicted)} point(s) placed by hand in the training layers were "
+                f"NOT saved, because they already have the other answer, are saved as "
+                f"both, or were placed in both layers:\n{shown}{more}\n\n"
+                f"The layers now show the saved answers. To change an answer, answer "
+                f"that candidate again with C or X.")
+        return True
+
+    def _saved_points_missing_from_layers_ok(self, labels) -> bool:
+        """False (and the person is told) when saved answers were deleted from a training layer.
+
+        WHY: the export cuts the SAVED answers. A person who deleted points
+        from 'Train: Cells' / 'Train: Non-Cells' before exporting would
+        otherwise get cubes for points they removed, without a word (older
+        versions cut from the layer, so deleted points were left out).
+        Whether deleting a point should take its answer back is not decided,
+        so nothing is removed: the export stops and says how to go on. Only a
+        layer recorded as the selected brain's counts -- a layer emptied when
+        the last brain was left carries no brain and says nothing.
+        """
+        from mousebrain.curation_record import point_key
+        missing = {}
+        for role, label in (('train_cells', 'cells'), ('train_non_cells', 'non_cells')):
+            layer = self._get_layer_by_type(role)
+            if layer is None:
+                continue
+            src = (getattr(layer, 'metadata', None) or {}).get('source_brain')
+            if not src or src != str(self.current_brain):
+                continue
+            shown = set(point_key(p) for p in layer.data)
+            gone = [k for k in labels[label] if k not in shown]
+            if gone:
+                missing[label] = gone
+        if not missing:
+            return True
+        lines = "\n".join(f"  {label}: {len(pts)} point(s)" for label, pts in missing.items())
+        QMessageBox.warning(self, "Saved Answers Missing From the Layers",
+            f"Some saved answers are no longer in the training layers (deleted "
+            f"there?):\n{lines}\n\nNo cubes were cut. Deleting a point from a "
+            f"training layer does not take its answer back.\n\n"
+            f"- To export the saved answers as they are: click 'Create Training "
+            f"Layers' (the layers are redrawn from the saved answers), then export "
+            f"again.\n- To change an answer: answer that candidate again with C or X.")
+        return False
 
     def _points_layer_is_this_brains(self, layer) -> bool:
         """False (and the person is told) when a points layer was made for another brain."""
@@ -6146,8 +6320,10 @@ class TuningWidget(QWidget):
         """Cut BrainGlobe/cellfinder training cubes for the selected brain's answers.
 
         - Points: the selected brain's SAVED answers (curated_cells.xml /
-          curated_non_cells.xml in its folder), never whatever else sits in
-          the training layers, so no other brain's coordinates are cut.
+          curated_non_cells.xml in its folder), so no other brain's
+          coordinates are cut. Points placed in the training layers by hand
+          are saved as answers first, or the export stops with a message
+          (_keep_hand_added_points).
         - Image: the selected brain's own signal (and background) layers,
           chosen by brain_context.pick_image_layers; the export refuses when
           the viewer holds only another brain's images.
@@ -6174,10 +6350,16 @@ class TuningWidget(QWidget):
         if self.training_data_dir is None:
             return
         record = CurationRecord(self.training_data_dir)
+        # Points put into 'Train: Cells' / 'Train: Non-Cells' by hand are
+        # answers too: save them before cutting, or stop with a message.
+        if not self._keep_hand_added_points(record):
+            return
         try:
             labels, conflicts = record.read_all()
         except CurationRecordError as e:
             QMessageBox.warning(self, "Saved Answers Unreadable", str(e))
+            return
+        if not self._saved_points_missing_from_layers_ok(labels):
             return
 
         if not labels['cells'] and not labels['non_cells']:
@@ -8468,13 +8650,16 @@ class TuningWidget(QWidget):
         """Handle brain selection."""
         path = self.brain_combo.currentData()
         if path:
+            # The brain being left: points placed by hand in the training
+            # layers are saved as ITS answers (_release_curation_for_brain_change).
+            previous_brain = getattr(self, 'current_brain', None)
             self.current_brain = Path(path)
             # Everything the widget held for the previous brain is dropped
             # (mousebrain.brain_context says why); its image layers stay in the
             # viewer but are tagged with their brain, and runs refuse to use them.
             from mousebrain.brain_context import reset_per_brain_state
             reset_per_brain_state(self)
-            self._release_curation_for_brain_change()
+            self._release_curation_for_brain_change(previous_brain)
             for btn_name in ('prefilter_save_btn', 'prefilter_to_training_btn', 'promote_class_btn'):
                 btn = getattr(self, btn_name, None)
                 if btn is not None:
@@ -9578,6 +9763,24 @@ class TuningWidget(QWidget):
             'border_width': 0.1,
             'description': 'Training bucket: confirmed non-cells'
         },
+        'train_view_cells': {
+            'face': 'transparent',
+            'edge': '#B8A000',        # Dim yellow: shown only, not answers
+            'symbol': 'o',
+            'size': 12,
+            'opacity': 0.15,
+            'border_width': 0.1,
+            'description': 'View only: cell cubes found on disk'
+        },
+        'train_view_non_cells': {
+            'face': 'transparent',
+            'edge': '#AA3333',        # Dim red: shown only, not answers
+            'symbol': 'x',
+            'size': 12,
+            'opacity': 0.15,
+            'border_width': 0.1,
+            'description': 'View only: non-cell cubes found on disk'
+        },
 
         # ----------------------------------------------------------------------
         # PRE-FILTER (atlas-based candidate filtering)
@@ -9688,8 +9891,13 @@ class TuningWidget(QWidget):
                 'class_new_rejected': ['New Rejected', 'Rejected'],
                 'class_diff_gained': ['GAINED:', 'Diff: Gained'],
                 'class_diff_lost': ['LOST:', 'Diff: Lost'],
-                'train_cells': ['Training Cells', 'Train Cells'],
-                'train_non_cells': ['Training Non-Cells', 'Train Non-Cells'],
+                # The answer layers are 'Train: Cells (n)' / 'Train:
+                # Non-Cells (n)'. 'Training Cells' was the Visualize layers'
+                # name; those must never be taken as answer layers.
+                'train_cells': ['Train: Cells'],
+                'train_non_cells': ['Train: Non-Cells'],
+                'train_view_cells': ['Cubes on disk: Cells'],
+                'train_view_non_cells': ['Cubes on disk: Non-Cells'],
                 'archived': ['[archived]'],
             }
 
