@@ -789,6 +789,7 @@ class SliceTracker:
         *,
         lock_wait_seconds: Optional[float] = None,
         replace_retry_seconds: Optional[float] = None,
+        append_note: Optional[str] = None,
         **kwargs
     ) -> bool:
         """Write a run's result (as update_status would) only while its row
@@ -808,6 +809,9 @@ class SliceTracker:
         wait at all -- the write fails at once (OSError, TimeoutError among
         them) and is tried again later. Unknown result names raise
         ValueError before anything is written, as in update_status.
+
+        append_note: text added to the row's notes (after a '; '), e.g. why
+        a run is being marked failed.
         """
         unknown = sorted(k for k in kwargs if k not in RESULT_FIELDS)
         if unknown:
@@ -827,6 +831,9 @@ class SliceTracker:
                     if row.get('status') != 'started':
                         return False
                     row.update({k: str(v) for k, v in updates.items()})
+                    if append_note:
+                        row['notes'] = "; ".join(filter(None, [row.get('notes', ''),
+                                                               append_note]))
                     return True
             return False
 

@@ -7161,11 +7161,32 @@ class BrainSliceWidget(QWidget):
         row was set to failed.
 
         A run whose row this window already could not write (see
-        _result_not_recorded) is not tried again: the same file would refuse
-        it the same way, after another wait with the window frozen."""
+        _result_not_recorded) is not tried here again: the same file would
+        refuse it the same way, after another wait with the window frozen.
+        Such a run's outcome is kept and written by
+        _retry_unrecorded_results instead. WHY this guard matters there too:
+        without it, a 'finally' running after the file was released would
+        mark a run 'failed' whose finished result is waiting to be written.
+
+        When the file refuses THIS write (the tracker's fail_if_unfinished
+        never raises: the row simply still reads 'started' afterwards), the
+        failure is kept the same way and written later. WHY: the row would
+        otherwise say 'started' for ever."""
         if not (self.tracker and run_id) or run_id in self._unwritable_run_ids:
             return False
-        return bool(self.tracker.fail_if_unfinished(run_id, why))
+        if self.tracker.fail_if_unfinished(run_id, why):
+            return True
+        try:
+            # A plain read works while a spreadsheet program holds the file.
+            still_started = (self.tracker.get_run(run_id) or {}).get('status') == 'started'
+        except Exception:
+            still_started = False
+        pending = getattr(self, '_unrecorded_results', None)
+        if still_started and pending is not None:
+            self._unwritable_run_ids.add(run_id)
+            pending[run_id] = {'status': 'failed', 'append_note': why}
+            self._schedule_unrecorded_retry()
+        return False
 
     def _saving_to_tracker(self) -> None:
         """Say a tracker write is coming and let the window repaint first.
@@ -7205,10 +7226,12 @@ class BrainSliceWidget(QWidget):
         if isinstance(error, OSError):
             if run_id:
                 self._unwritable_run_ids.add(run_id)
-                if result:
-                    self._unrecorded_results[run_id] = dict(result)
-                    self._schedule_unrecorded_retry()
-                    retry_later = True
+                # The result when it was known; otherwise the run is kept
+                # to be marked failed, so its row does not stay 'started'.
+                self._unrecorded_results[run_id] = (
+                    dict(result) if result else {'status': 'failed', 'append_note': why})
+                self._schedule_unrecorded_retry()
+                retry_later = bool(result)
             marked = False
         else:
             marked = self._fail_run_if_unfinished(run_id, why)
@@ -7266,8 +7289,12 @@ class BrainSliceWidget(QWidget):
                 written = self.tracker.record_result_if_started(
                     run_id, lock_wait_seconds=0, replace_retry_seconds=0, **result)
             except OSError as e:
-                refused = e  # the file still refuses: keep it for the next try
-                continue
+                # The file still refuses: keep this and every other result
+                # for the next try. WHY stop here: each try reads the whole
+                # file and writes a copy beside it; the others would only be
+                # refused the same way.
+                refused = e
+                break
             except Exception as e:
                 print(f"[BrainSlice] [!] Run {run_id}: kept result could not be "
                       f"written and is dropped: {e}")

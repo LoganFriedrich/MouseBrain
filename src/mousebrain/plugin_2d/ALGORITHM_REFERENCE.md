@@ -634,6 +634,10 @@ insets), colocalization (single- and dual-channel) and particle analysis.
   are now saved to it (<run ids>)` and the row reads `completed` with its counts.
   A kept result is written only while its row still says `started`: if the row was
   changed some other way meanwhile, it is left as it is.
+- The same holds for a run that FAILED while the file was held open (a detection
+  whose model could not be loaded, a colocalization error ...): marking its row
+  `failed` is refused too, so the window keeps that and writes it -- `failed`, with
+  the reason in `notes` -- at the same moments.
 - The result stays on screen (the nuclei layer, the colocalization colors, the
   particle count). For a colocalization the measurements CSV, which is saved before
   the tracker is written, is on disk.

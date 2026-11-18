@@ -144,3 +144,40 @@ def test_the_tracker_writes_a_kept_result_only_over_a_started_row(tmp_path):
     assert t.get_run(done)["det_nuclei_found"] == "3"
     with pytest.raises(ValueError):
         t.record_result_if_started(started, status="completed", det_nucleus_found=1)
+
+
+def test_a_failed_run_the_file_refused_to_mark_is_marked_failed_later(tmp_path, monkeypatch):
+    # A detection that FAILS while the file is held open: marking its row
+    # failed is refused too, and the row used to say 'started' for ever.
+    w = _window(tmp_path, monkeypatch)
+    w._run_detection()
+    run_id = w._detection_run_id
+    with _held_open_like_a_spreadsheet(w.tracker.csv_path):
+        w._on_detect_finished(False, "model could not be loaded", 0, None, {})
+    assert w.tracker.get_run(run_id)["status"] == "started"
+
+    w._analysis_running = None
+    w._run_detection()  # the spreadsheet is closed; the next run starts
+
+    row = w.tracker.get_run(run_id)
+    assert row["status"] == "failed"
+    assert "model could not be loaded" in row["notes"]
+
+
+def test_several_kept_results_wait_together_and_are_all_written_once_the_file_is_free(
+        tmp_path, monkeypatch):
+    w = _window(tmp_path, monkeypatch)
+    ids = [w.tracker.log_detection(sample_id=SAMPLE) for _ in range(3)]
+    for n, run_id in enumerate(ids):
+        w._unwritable_run_ids.add(run_id)
+        w._unrecorded_results[run_id] = {"status": "completed", "det_nuclei_found": n + 1}
+
+    with _held_open_like_a_spreadsheet(w.tracker.csv_path):
+        w._retry_unrecorded_results()
+    assert sorted(w._unrecorded_results) == sorted(ids)
+    assert [w.tracker.get_run(r)["status"] for r in ids] == ["started"] * 3
+
+    w._retry_unrecorded_results()
+
+    assert [w.tracker.get_run(r)["det_nuclei_found"] for r in ids] == ["1", "2", "3"]
+    assert not w._unrecorded_results and not (w._unwritable_run_ids & set(ids))
