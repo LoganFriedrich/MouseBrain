@@ -100,9 +100,13 @@ def make_widget(tmp_path, monkeypatch, sample, backend="StarDist"):
     """A stand-in widget with an image loaded and a tracker in tmp_path.
     Workers are stubs that never run."""
     from mousebrain.plugin_2d.sliceatlas.napari_plugin import main_widget
+    # question: the window's default answer, No (an image whose results
+    # could not be saved is not left; see BrainSliceWidget._ask_leave_unsaved).
     monkeypatch.setattr(main_widget, "QMessageBox",
                         SimpleNamespace(warning=lambda *a, **k: None,
-                                        critical=lambda *a, **k: None))
+                                        critical=lambda *a, **k: None,
+                                        question=lambda *a, **k: 0,
+                                        Yes=1, No=0))
     StubWorker.made = []
     for name in ("DetectionWorker", "ColocalizationWorker", "DualColocalizationWorker",
                  "QuantificationWorker"):

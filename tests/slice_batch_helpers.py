@@ -79,6 +79,7 @@ def make_batch_widget(tmp_path, monkeypatch, images, folder_name="batch_one",
         warning=lambda *a, **k: w.messages.append(a[2] if len(a) > 2 else ""),
         critical=lambda *a, **k: w.messages.append(a[2] if len(a) > 2 else ""),
         information=lambda *a, **k: w.messages.append(a[2] if len(a) > 2 else ""),
+        question=lambda *a, **k: 0,
         Yes=1, No=0))
     w._batch_folder = folder
     w._batch_files = sorted(folder / name for name in images)

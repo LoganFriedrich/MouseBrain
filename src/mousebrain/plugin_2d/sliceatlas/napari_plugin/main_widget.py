@@ -422,6 +422,10 @@ class BrainSliceWidget(QWidget):
         # last restore ran for, and the saved files it did not bring back.
         self._state_restored_for: Optional[Path] = None
         self._restore_blocked: set = set()
+        # The image the "Results not saved" box was last shown for: it is
+        # shown once per image, then the red line under the status bar
+        # carries the message (see _save_analysis_state).
+        self._not_saved_warned_for: Optional[Path] = None
         # The rotation, z-projection and channel numbers the image on screen
         # was REALLY loaded with, captured when its load started (the
         # controls can be changed while it loads). Saved with its analysis,
@@ -603,6 +607,17 @@ class BrainSliceWidget(QWidget):
         self.tracker_warning_label.setWordWrap(True)
         self.tracker_warning_label.setVisible(self.tracker is None)
         layout.addWidget(self.tracker_warning_label)
+
+        # Results that were NOT saved. A separate label for the same reason:
+        # the status bar is overwritten at once ("Loading image...", the
+        # load's progress, the restore), and a message about results that
+        # were not saved used to vanish before anyone could read it. It
+        # stays until the next image is left with everything saved.
+        self.not_saved_label = QLabel("")
+        self.not_saved_label.setStyleSheet("color: #c0392b; font-weight: bold;")
+        self.not_saved_label.setWordWrap(True)
+        self.not_saved_label.setVisible(False)
+        layout.addWidget(self.not_saved_label)
 
         # Progress bar (hidden by default)
         self.progress_bar = QProgressBar()
@@ -2477,14 +2492,17 @@ class BrainSliceWidget(QWidget):
         settings["layer_visibility"] = layer_visibility
         return settings
 
-    def _save_analysis_state(self) -> Optional[str]:
+    def _save_analysis_state(self, warn: bool = True) -> Optional[str]:
         """Save what the window holds for the image on screen into its
         <image name>_analysis folder, as one state (see the note above).
 
         Returns None when everything the window holds is on disk (or there
         was nothing to save), else the reason it is not, as said in the
         status bar. Never raises: an error here would stop the next image
-        from opening."""
+        from opening.
+
+        warn: show the "Results not saved" box (once per image). Leaving an
+        image passes False and asks its own question instead."""
         loading = getattr(self, "_loading_file", None)
         if loading is not None:
             # An image is being replaced: _leave_current_image has already
@@ -2504,6 +2522,7 @@ class BrainSliceWidget(QWidget):
             traceback.print_exc()
             msg = f"[!] Analysis NOT saved: {e}"
             self.status_label.setText(msg)
+            self._show_not_saved(msg, about=self.current_file)
             return msg
         has_results = any(v is not None for v in state.values())
 
@@ -2555,6 +2574,7 @@ class BrainSliceWidget(QWidget):
             traceback.print_exc()
             msg = f"[!] Analysis of {self.current_file.name} NOT fully saved: {e}"
             self.status_label.setText(msg)
+            self._show_not_saved(msg, about=self.current_file)
             return msg
 
         if not_saved:
@@ -2565,8 +2585,19 @@ class BrainSliceWidget(QWidget):
                    f"results now if you need them.")
             self.status_label.setText(msg)
             print(f"[BrainSlice] {msg}")
-            QMessageBox.warning(self, "Results not saved", msg)
+            self._show_not_saved(msg, about=self.current_file)
+            # The box once per image: every auto-save (each analysis, each
+            # re-classification) would show it again. The red line under
+            # the status bar keeps the message in view after that. Not when
+            # an image is being left: the question asked then says it.
+            if warn and getattr(self, "_not_saved_warned_for", None) != self.current_file:
+                self._not_saved_warned_for = self.current_file
+                QMessageBox.warning(self, "Results not saved", msg)
             return msg
+        if getattr(self, "_not_saved_about", None) == self.current_file:
+            # Everything of this image is saved now (e.g. the file was
+            # closed in the other program and Save State clicked again).
+            self._show_not_saved("")
 
         # Registered only when the folder holds THIS window's results: when
         # part of it is an earlier analysis that could not be restored
@@ -3048,16 +3079,76 @@ class BrainSliceWidget(QWidget):
                     self.quant_btn, self.pa_run_btn):
             btn.setEnabled(enabled)
 
-    def _leave_current_image(self):
+    def _show_not_saved(self, text: str, about=None) -> None:
+        """Put `text` in the red line under the status bar ('' hides it).
+
+        about: the image on screen whose results the line says are not
+        saved; a later save that keeps all of them clears it. None for a
+        line about an image already left, which stays until the next image
+        is left with everything saved."""
+        self._not_saved_about = about if text else None
+        label = getattr(self, "not_saved_label", None)
+        if label is None:
+            return
+        label.setText(text)
+        label.setVisible(bool(text))
+
+    def _ask_leave_unsaved(self, problem: str) -> bool:
+        """Ask whether to leave an image whose results could not be saved.
+        True: leave it, and lose them. The default answer is No."""
+        answer = QMessageBox.question(
+            self, "Results not saved",
+            f"{problem}\n\nLeave this image anyway? Its results that were "
+            f"not saved will be lost.\n\nNo (the default) keeps them on "
+            f"screen: export them, or fix the problem (for example close the "
+            f"file in the program that has it open) and click Save State, "
+            f"then open the next image again.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return answer == QMessageBox.Yes
+
+    def _leave_current_image(self) -> bool:
         """Save the results of the image on screen, then forget them.
+        Returns False when the image is NOT left (see below); the caller
+        then opens nothing.
 
         WHY: results belong to the image they were made on. Browse File used
         to switch to a new image without saving or clearing anything, so the
         previous image's particles, labels and ROIs stayed in memory and the
         next Save State wrote them into the NEW image's _analysis folder.
         Every way of opening an image calls this first, while current_file
-        still names the image those results came from."""
-        self._save_analysis_state()
+        still names the image those results came from.
+
+        When the save could not keep everything (a file of the _analysis
+        folder open in another program, or a folder holding an earlier
+        analysis that is never overwritten), the person is asked; unless
+        they choose to leave, the image and its results stay on screen.
+        WHY: the results used to be cleared the moment the save failed, so
+        the advice to export them could not be followed, and the message
+        was overwritten at once by "Loading image...". A folder stack's
+        results are never saved (STACK_RESULTS_NOT_SAVED); leaving a stack
+        is not stopped, and the red line under the status bar says what
+        was not kept."""
+        problem = self._save_analysis_state(warn=False)
+        if problem and self.current_file is None:
+            folder = getattr(self, "current_folder", None)
+            name = folder.name if folder is not None else "the folder stack"
+            self._show_not_saved(
+                f"[!] The results on the stack {name} were NOT saved when it "
+                f"was left: results on a folder stack are never saved. Open "
+                f"each image on its own to keep its results.")
+        elif problem:
+            name = self.current_file.name
+            if not self._ask_leave_unsaved(problem):
+                self._show_not_saved(
+                    f"{problem} -- {name} is still open with its results: "
+                    f"export them, or fix that and click Save State, then "
+                    f"open the next image again.", about=self.current_file)
+                return False
+            self._show_not_saved(
+                f"[!] Results of {name} were NOT saved; they were discarded "
+                f"when you chose to leave it. ({problem})")
+        else:
+            self._show_not_saved("")
         self._clear_analysis_state()
         # The window no longer holds this image's saved analysis, so it no
         # longer owns its _analysis folder (see the note above
@@ -3068,6 +3159,16 @@ class BrainSliceWidget(QWidget):
         # of that image's folder again.
         self._state_restored_for = None
         self._restore_blocked = set()
+        self._not_saved_warned_for = None
+        return True
+
+    def _not_opened_unsaved(self, what: str) -> None:
+        """Status line when an image was not opened because the one on
+        screen has results that could not be saved."""
+        current = self.current_file.name if self.current_file is not None else "the image"
+        self.status_label.setText(
+            f"{what}: not opened -- the results of {current} are NOT saved "
+            f"(see the red line below).")
 
     def _open_image(self, fpath, peek: bool = True) -> bool:
         """Open one image file. Browse File, Prev/Next + Load Selected, the
@@ -3082,7 +3183,9 @@ class BrainSliceWidget(QWidget):
         fpath = Path(fpath)
         if self._refuse_if_busy_for_load(fpath.name):
             return False
-        self._leave_current_image()
+        if not self._leave_current_image():
+            self._not_opened_unsaved(fpath.name)
+            return False
         self._set_analysis_buttons(False)
         if fpath != self.current_file:
             # The Sample ID box names the image every tracker row and export
@@ -3150,7 +3253,9 @@ class BrainSliceWidget(QWidget):
         folder = Path(folder)
         if self._refuse_if_busy_for_load(folder.name):
             return False
-        self._leave_current_image()
+        if not self._leave_current_image():
+            self._not_opened_unsaved(folder.name)
+            return False
         self._set_analysis_buttons(False)
         # Named when it is opened, not when it is chosen (see _open_image):
         # until Load, the image on screen is still the previous one.
@@ -3714,6 +3819,20 @@ class BrainSliceWidget(QWidget):
             return
         if self._refuse_if_analysis_running("Batch analysis"):
             return
+        # The batch ends by leaving the image on screen for its ROI drawing
+        # (_batch_enter_roi_mode). WHY saved now: if that image's results
+        # cannot be saved, the batch is not started -- after it has run, the
+        # only choices left would be to lose them or to give up the batch's
+        # ROI drawing.
+        problem = self._save_analysis_state(warn=False)
+        if problem and self.current_file is not None:
+            self._show_not_saved(problem, about=self.current_file)
+            self.status_label.setText(
+                f"Batch analysis not started: the results of "
+                f"{self.current_file.name} are NOT saved (see the red line "
+                f"below). Export them, or fix that and click Save State, then "
+                f"run the batch again.")
+            return
 
         files = list(self._batch_files)
         settings = self._pa_get_settings()
@@ -3883,7 +4002,16 @@ class BrainSliceWidget(QWidget):
         image opened before the batch, so the next save (Save State, Count
         in ROI(s), opening another image) wrote them into THAT image's
         _analysis folder over its own results."""
-        self._leave_current_image()
+        if not self._leave_current_image():
+            # The person chose to keep the image on screen (its results
+            # could not be saved, see _leave_current_image). The batch's
+            # results stay in memory and can still be exported.
+            self._batch_export_btn.setEnabled(True)
+            self._batch_status_label.setText(
+                "Batch done, but its ROI drawing was not started: the image on "
+                "screen has results that are NOT saved. Export the batch now "
+                "if you need it.")
+            return
         self._forget_image_on_screen()
         self._batch_roi_mode = True
         self._batch_roi_nav.setVisible(True)
