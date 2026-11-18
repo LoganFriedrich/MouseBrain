@@ -2301,7 +2301,11 @@ Examples:
             for b in waiting:
                 print(f"  {b['name']}: {b['not_countable_why']}")
         if not to_process:
-            print("\nNo brains need counting. All done!")
+            if waiting:
+                print(f"\nNothing to count; {len(waiting)} brain(s) are waiting "
+                      f"for approval (listed above).")
+            else:
+                print("\nNo brains need counting. All done!")
             return 0
     
     else:

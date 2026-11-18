@@ -99,6 +99,7 @@ def test_all_lists_an_unapproved_brain_and_does_not_count_it(step6, lab, monkeyp
     assert step6.counted == []
     out = capsys.readouterr().out
     assert NAME in out and "not approved" in out
+    assert "waiting for approval" in out and "All done" not in out
     assert code == 0, "a brain waiting for approval is not a failed count"
 
 

@@ -742,7 +742,9 @@ counts it again, even though its own `6_Region_Analysis` files are still
 there. Why: `--all` used to judge "already counted" by those files, which a
 withdrawal leaves in place on purpose, so it skipped every withdrawn brain and
 said `No brains need counting. All done!`. `--dry-run` shows what would and
-would not be counted, and why.
+would not be counted, and why. When every brain left is waiting for a
+person to approve its registration, `--all` says `Nothing to count; N brain(s)
+are waiting for approval (listed above)` rather than `All done!`.
 
 **Exit code.** Step 6 ends with 1 when any brain it was asked to count was not
 counted (refused, or its count failed), else 0. Before, a count that failed
