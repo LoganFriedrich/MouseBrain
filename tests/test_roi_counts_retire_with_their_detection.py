@@ -102,6 +102,39 @@ def test_a_rerun_with_no_nuclei_retires_the_counts(env, monkeypatch):
     assert _summary_samples(roi) == []
 
 
+def _counted_before_the_tie_existed(tmp_path):
+    """An ROI entry registered under the sample's own name by an earlier
+    producer: no measurements fingerprint."""
+    _earlier_entry(tmp_path)
+    roi = AnalysisRegistry(analysis_name="PRJ_ROI_Analysis",
+                           registry_root=tmp_path / "registry")
+    counts = tmp_path / "src_counts.csv"
+    counts.write_text("roi,total\nTOTAL,7\n", encoding="utf-8")
+    roi.register_output(sample=SAMPLE, category="roi_analysis",
+                        files={"roi_counts": str(counts)}, results={"total": 7},
+                        method_params={"sigma_threshold": 0},
+                        source_files={"nd2": "x.nd2"})
+    return roi
+
+
+def test_counts_without_a_fingerprint_stay_when_the_detection_did_not_change(
+        env, monkeypatch):
+    t, tmp_path, img = env
+    roi = _counted_before_the_tie_existed(tmp_path)
+    _rerun_completes_with(monkeypatch, EARLIER)
+    _run(monkeypatch, tmp_path)
+    assert roi.get_entry(SAMPLE)["is_current"] is True
+
+
+def test_counts_without_a_fingerprint_retire_when_the_detection_changed(
+        env, monkeypatch):
+    t, tmp_path, img = env
+    roi = _counted_before_the_tie_existed(tmp_path)
+    _rerun_completes_with(monkeypatch, "label,is_positive\n1,False\n")
+    _run(monkeypatch, tmp_path)
+    assert roi.get_entry(SAMPLE)["is_current"] is False
+
+
 def test_invalidating_roi_counts_takes_them_out_of_the_region_summary(tmp_path):
     roi = AnalysisRegistry(analysis_name="PRJ_ROI_Analysis", registry_root=tmp_path / "r")
     for sample, total in ((SAMPLE, 7), ("PRJ_01_02_S4_RA", 5)):

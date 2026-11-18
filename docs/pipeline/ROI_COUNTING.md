@@ -166,7 +166,12 @@ gets an `invalidate_entry` line holding the counts) when:
 - the re-run failed on the sample and its detection entry was retired.
 
 A re-run that produces exactly the same measurements file leaves the counts
-current. The batch's summary lists every sample whose counts it retired
+current. Counts registered before this tie existed (entries under the
+sample's own name, with no `measurements_sha256`) cannot say what they were
+counted against: they are retired only when the detection is known to have
+changed (its new measurements differ from the ones it had registered
+before), finds no nuclei, or is retired; otherwise they are left as they
+are. The batch's summary lists every sample whose counts it retired
 under "ROI counts resting on a detection this run changed"; count those
 samples again with `brainslice-roi batch`. A line starting `[!]` there means
 the counts should have been retired but a file would not move (open in

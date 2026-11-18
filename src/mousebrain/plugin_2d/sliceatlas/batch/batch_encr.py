@@ -1603,7 +1603,7 @@ def main():
                                  # a detection this run replaced or retired
     start_time = time.time()
 
-    def tie_roi_counts(sample_id, new_measurements_sha):
+    def tie_roi_counts(sample_id, new_measurements_sha, previous_measurements_sha=None):
         """Retire the sample's ROI counts when this run changed the detection
         they were counted against (see core/roi_ties.py for why). Never
         raises: the detection result stands whatever happens here, and the
@@ -1611,7 +1611,8 @@ def main():
         try:
             from mousebrain.plugin_2d.sliceatlas.core.roi_ties import retire_roi_counts_of
             outcome, text = retire_roi_counts_of(
-                registry.registry_root, project_code, sample_id, new_measurements_sha)
+                registry.registry_root, project_code, sample_id, new_measurements_sha,
+                previous_measurements_sha)
         except Exception as _tie_err:
             outcome, text = False, (
                 f"its ROI counts could not be checked or retired "
@@ -1650,6 +1651,13 @@ def main():
                             output_files['measurements'] = str(f)
                         elif f.suffix == '.png' and 'overlay' in f.name:
                             output_files['overlay'] = str(f)
+                # The measurements registered BEFORE this run, fingerprinted
+                # now (registering moves them to _archived/): counts that
+                # record no fingerprint of their own are retired only when
+                # the detection really changed (core/roi_ties.py).
+                from mousebrain.plugin_2d.sliceatlas.core.roi_ties import (
+                    file_sha256, registered_measurements_sha)
+                previous_sha = registered_measurements_sha(registry, sample_id)
                 placed = registry.register_output(
                     sample=sample_id,
                     category="detection",
@@ -1674,8 +1682,8 @@ def main():
             else:
                 # Counts made against other measurements are retired; an
                 # unchanged re-run (the same bytes) leaves them current.
-                from mousebrain.plugin_2d.sliceatlas.core.roi_ties import file_sha256
-                tie_roi_counts(sample_id, file_sha256((placed or {}).get('measurements')))
+                tie_roi_counts(sample_id, file_sha256((placed or {}).get('measurements')),
+                               previous_sha)
 
         # A finished run that found no nuclei is a result, and it is
         # registered like one: 0 nuclei, no files, the parameters it ran with.
