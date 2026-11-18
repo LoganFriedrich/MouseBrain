@@ -115,3 +115,18 @@ def test_a_withdrawal_with_nothing_to_withdraw_creates_nothing(tmp_path, monkeyp
     monkeypatch.setenv("MOUSEBRAIN_REGISTRY_ROOT", str(tmp_path / "no_registry"))
     assert withdraw_counts(NAME, "test") == []
     assert list(tmp_path.iterdir()) == []
+
+
+def test_registering_again_retires_the_registry_entry_too(lab):
+    """Step 3 moves the old registration into _archive before registering
+    again: the counts made on it leave the tables AND the registry."""
+    pytest.importorskip("brainreg", reason="3_register_to_atlas checks for brainreg on import")
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[1] / "scripts" / "pipeline" / "3_register_to_atlas.py"
+    spec = importlib.util.spec_from_file_location("register_step_registry", path)
+    step3 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(step3)
+    b = make_brain(lab["root"])
+    assert step3.archive_existing_registration(b)
+    _assert_withdrawn(lab)
