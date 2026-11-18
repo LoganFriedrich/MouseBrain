@@ -213,7 +213,8 @@ def main():
     parser.add_argument('--dry-run', '-n', action='store_true',
                         help="Show what would happen without making changes")
     parser.add_argument('--force', '-f', action='store_true',
-                        help="Overwrite existing crops")
+                        help="Replace existing crops (each previous crop is kept in "
+                             "2_Cropped_For_Registration/_archive/ once the new one is complete)")
 
     args = parser.parse_args()
 
