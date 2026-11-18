@@ -564,6 +564,15 @@ network share reconnecting), the tools used to fall back to the old
 runs appended to while the real one sat unseen. The old layout is now used only
 where its `3_Nuclei_Detection` folder really exists.
 
+**In napari** the same situation no longer stops the Setup & Tuning panel from
+opening (it used to fail to open at all). The panel opens, and a red line at
+its top says `[!] Runs will NOT be logged to the calibration tracker: ...`
+with the reason. While that line shows, nothing you run in the panel is
+recorded, and the run list, *Load best detection* and the Best buttons have
+nothing to show. Reconnect the drive (or fix `CONNECTOME_ROOT`), then close the
+panel and open it again from the Plugins menu; the red line is gone once the
+tracker is open.
+
 ## Usage Examples
 
 ### Script 4: Detection

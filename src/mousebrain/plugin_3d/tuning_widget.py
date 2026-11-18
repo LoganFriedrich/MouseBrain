@@ -726,8 +726,26 @@ class TuningWidget(QWidget):
         self._last_class_output = None
         self._last_class_exp_id = None
 
-        # Initialize tracker if available
-        self.tracker = ExperimentTracker() if TRACKER_AVAILABLE else None
+        # Initialize tracker if available. Opening it can be refused: the
+        # tracker will not create a new calibration_runs.csv when its folder
+        # (2_Data_Summary) is not visible -- a share reconnecting, a new
+        # install -- because a fresh empty tracker would quietly orphan the
+        # real one. That refusal used to escape from here and the whole Setup
+        # & Tuning panel failed to open. Now the panel opens without a
+        # tracker and says so in red at the top (_tracker_warning_text) and
+        # in the console; nothing is logged until it is reopened with the
+        # folder visible.
+        self.tracker = None
+        self._tracker_error = None
+        if TRACKER_AVAILABLE:
+            try:
+                self.tracker = ExperimentTracker()
+            except Exception as e:
+                self._tracker_error = str(e)
+                print("[MouseBrain] [!] Calibration tracker not opened; runs will NOT be "
+                      "logged: %s" % e)
+        else:
+            self._tracker_error = "mousebrain.tracker could not be imported"
         # napari can quit without closing this panel first, so the program's
         # own quit signal also marks unfinished runs failed.
         try:
@@ -745,6 +763,14 @@ class TuningWidget(QWidget):
             self.session_doc = None
 
         self.setup_ui()
+
+    def _tracker_warning_text(self) -> str:
+        """The line shown while runs are not being logged ('' when they are)."""
+        if getattr(self, 'tracker', None) is not None:
+            return ""
+        return ("[!] Runs will NOT be logged to the calibration tracker: "
+                + (getattr(self, '_tracker_error', None) or "it could not be opened")
+                + ". Fix this, then close and reopen this panel before tuning.")
 
     def setup_ui(self):
         # Main layout with scroll area
@@ -769,6 +795,15 @@ class TuningWidget(QWidget):
         subtitle = QLabel("Figure out the right settings for your tissue")
         subtitle.setStyleSheet("color: gray;")
         layout.addWidget(subtitle)
+
+        # Why runs are not being logged, in red, while the tracker is not
+        # open (see __init__). Hidden when it is.
+        warning = self._tracker_warning_text()
+        self.tracker_warning_label = QLabel(warning)
+        self.tracker_warning_label.setWordWrap(True)
+        self.tracker_warning_label.setStyleSheet("color: #d9534f; font-weight: bold;")
+        self.tracker_warning_label.setVisible(bool(warning))
+        layout.addWidget(self.tracker_warning_label)
 
         # Brain selector
         brain_group = QGroupBox("Active Brain")
