@@ -141,6 +141,13 @@ Or check what's wrong:
 mousebrain --check
 ```
 
+## Running the tests
+
+`python -m pytest tests` from this folder. The tests can never write into
+your real lab folders: a guard refuses any such write and fails the test that
+tried. What it refuses, which folders it protects and how to add your own:
+[docs/pipeline/TEST_GUARD.md](docs/pipeline/TEST_GUARD.md).
+
 ## Acknowledgments
 
 This tool builds on excellent open-source neuroscience software:
