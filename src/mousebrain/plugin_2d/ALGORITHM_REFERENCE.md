@@ -733,6 +733,19 @@ Every time, in this order:
    "What is saved with an image" below). Then all of them, and its tissue mask,
    background diagnostics and region counts, are cleared. Nothing of one image is
    ever carried onto the next.
+
+   **If its results cannot be saved,** a question comes up first: `Results not
+   saved` with the reason (most often a file of its `_analysis` folder is open in
+   another program, for example `particles.csv` in a spreadsheet program; or the
+   folder holds an earlier analysis that is never overwritten, see below) and
+   `Leave this image anyway?`. **No** (the default) opens nothing: the image and its
+   results stay on screen, the status bar says `<file>: not opened -- the results of
+   <image on screen> are NOT saved (see the red line below)`, and you can export
+   them, or close the file in the other program and click **Save State**, then open
+   the next image again. **Yes** opens the next image and the unsaved results are
+   lost; the red line then says so. (Before this change the results were cleared
+   the moment the save failed and the message was overwritten at once by `Loading
+   image...`, so there was no chance to export them.)
 2. **The Sample ID box is set to the new file's name** (the folder's name for a stack).
    Every tracker row and every Quantify export is filed under this name. A reload of
    the same image keeps a Sample ID you typed by hand.
@@ -760,15 +773,44 @@ which, and nothing changes:
   so the image is refused rather than the batch abandoned.
 - `<file>: not opened -- the batch analysis is still running. ...` -- Run Batch
   Analysis is working through its folder (see "The particle tab's batch").
+- `<file>: not opened -- particle analysis is still running on the image on screen.
+  ...` -- a click made while a particle analysis was saving its result to the
+  tracker. (Before this change that click opened the next image in the middle of
+  the analysis.)
+- `<file>: not opened -- the results of <image on screen> are NOT saved (see the red
+  line below).` -- you answered No to `Leave this image anyway?` (step 1).
+
+**The red line under the status bar** says which results were NOT saved. The status
+bar itself is overwritten by every action (`Loading image...`, the load, the restore),
+so this line stays in view: until the image's results are saved after all (Save State
+once the file is free), or until the next image is left with everything saved. It
+appears when:
+
+- a save could not write everything (a file open in another program, or a folder
+  holding an earlier analysis that is not overwritten);
+- you chose to leave an image whose results could not be saved (`Results of <file>
+  were NOT saved; they were discarded when you chose to leave it`);
+- you left a folder stack that had results (a stack's results are never saved, see
+  below).
+
+**Nothing is saved while an image is loading.** Save State is off on both tabs until
+the image has loaded (a click already on its way says `Save State: nothing saved --
+<file> is still loading`). The image you left was saved when you left it (step 1).
+WHY: until the new image has loaded, the window still names the one it left, whose
+results are already cleared. A save then used to take the empty window for that
+image's state and removed its saved particles, outlines, nuclei and measurements and
+emptied its ROIs, while the status bar said `State saved`.
 
 **If an image cannot be opened** (a damaged or unreadable file), a message says so and
 the window is left with **no image open**: the picture is cleared and the analysis
 buttons are off. Nothing of the previous image is left on screen to be analyzed under
 the wrong name. Click **Load** to try the same file again, or open another image.
 
-**A new detection forgets the previous colocalization.** Its measurements belonged to
-the nuclei that were just replaced, so Run Quantification turns off until you click
-Colocalize again.
+**A new detection forgets the previous colocalization** -- with or without insets.
+Its measurements belonged to the nuclei that were just replaced, so Run Quantification
+turns off until you click Colocalize again, and the old `measurements.csv` is not
+saved beside the new nuclei. (Before this change a detection with insets kept the old
+measurements: Run Quantification counted them as if they described the new nuclei.)
 
 WHY all of this: results are only correct when they are filed under the image they
 were made on. Browse File saves and clears before it switches images, so one image's
@@ -848,8 +890,24 @@ says what and why:
 
 In all cases those files stay exactly as they are when the image is saved again.
 If you make new results that would replace them (for example a new particle analysis),
-they are NOT saved and a message says so: export them (Export CSV) before opening
-another image, or reload the image the way the message names first.
+they are NOT saved and a message says so (a box the first time for each image, then the
+red line): export them (Export CSV) before opening another image, or reload the image
+the way the message names first. Opening another image asks first (step 1).
+
+**While the saved `settings.json` is kept as it is** (the analysis was NOT restored
+because it was made on the image loaded another way, or `settings.json` is
+unreadable), **no new result is saved for that image at all** -- not even one the
+folder does not hold yet (for example the first detection's `nuclei.npz`). WHY:
+`settings.json` says how the image was loaded when its results were made. New nuclei
+or measurements used to be written beside the OLD `settings.json`; opened again, the
+image was loaded the old way and the new results were restored onto pixels they were
+not made on (nothing showed it when the image kept its shape: a channel or
+z-projection change, a 180 degree turn, a 90 degree turn of a square image). Results
+saved like that before this change can be found only by their file times: a result
+file in an `_analysis` folder last written more than a minute after the `saved_at`
+time in its `settings.json` was very likely written beside settings that do not
+describe it, and should be made again. (A folder that was copied can carry
+misleading file times, so look at such a result before trusting or deleting it.)
 
 **`[analyzed <date>]`** after an image's name (beside Prev / Next) means a result is
 saved for it: a particle table, particle outlines, nuclei, measurements or ROI counts.
@@ -858,9 +916,11 @@ saved result's.
 
 **A folder opened as one stack saves nothing.** It has no single image to file
 results under: no `_analysis` folder and no measurements file is written. The status
-bar says `[!] Results on a folder stack are NOT saved ...` when you leave a stack with
-results and after a colocalization on it. Export what you need, or open the image on
-its own. Where a stack's results should be kept is not decided yet.
+bar says `[!] Results on a folder stack are NOT saved ...` after a colocalization on
+it. Leaving a stack that has results is not stopped, but the red line under the status
+bar then says `[!] The results on the stack <folder> were NOT saved when it was left`
+and stays while the next image loads. Export what you need BEFORE opening another image,
+or open the image on its own. Where a stack's results should be kept is not decided yet.
 
 **Append to Folder CSV** (particles: `<folder name>_particles.csv`; ROIs:
 `<folder name>_roi_results.csv`, both beside the images) adds this image's rows to one
@@ -960,6 +1020,14 @@ and the status line ends `[!] <n> image(s) NOT logged to the calibration tracker
 (<the reason>)`. The same happens if an unexpected error occurs while the row is being
 built from that image's results: it is reported as a tracker problem, never as the end of
 the batch, so no image's results are lost before export. The analysis itself carries on.
+
+**Before the batch runs,** the image on screen is saved. If its results cannot be
+saved (see "If its results cannot be saved" above), the batch is not started: `Batch
+analysis not started: the results of <file> are NOT saved ...`. Free the file and
+click Save State, or export them, then run the batch again. (If the save fails only
+once the batch has finished, you are asked `Leave this image anyway?`; No keeps the
+image on screen, the batch's ROI drawing is not started, and Export Batch Results
+stays available.)
 
 **Drawing ROIs.** The image that was open before the batch is first saved to its
 `_analysis` folder and closed: the window then has no image of its own until you
