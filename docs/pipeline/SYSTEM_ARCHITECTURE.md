@@ -20,7 +20,7 @@ The system has two main workflows:
 
 | Term | Definition | Use Context |
 |------|------------|-------------|
-| **Cohort** | A group of brains in same experimental condition (e.g., ENCR_02, CNT_02) | Organization |
+| **Cohort** | A group of brains in same experimental condition (e.g., PROJ_01, PROJ_02) | Organization |
 | **Brain** | A single sample (e.g., 001_CNT_01_01_1p625x_z4) | Unit of processing |
 | **Calibration Run** | A single detection attempt during parameter tuning | Tracked by tracker |
 | **Best** | User-marked preferred calibration run for a brain | Marked with ★ |
@@ -81,8 +81,7 @@ and `logs/`.
 └── {mouse_id}/                           # e.g., 001_CNT_01_01
     └── {brain_id}/                        # e.g., 001_CNT_01_01_1p625x_z4
         ├── 1_Extracted_Full/              # Raw extracted channels from IMS
-        │   ├── ch0/                       # Background channel (typically)
-        │   ├── ch1/                       # Signal channel (typically)
+        │   ├── ch0/, ch1/                 # Which one is the signal is recorded in metadata.json (channels.signal_channel)
         │   └── metadata.json
         │
         ├── 2_Cropped_For_Registration/    # Cropped to remove empty space
@@ -90,7 +89,7 @@ and `logs/`.
         │   ├── ch0.zarr/                  # Zarr for fast loading (used only with ch0.zarr.complete.json)
         │   ├── ch1/
         │   ├── ch1.zarr/
-        │   └── crop_info.json
+        │   └── metadata.json
         │
         ├── 2_Cropped_For_Registration_Manual/  # Optional: manual crop override
         │   ├── ch0/
@@ -104,15 +103,30 @@ and `logs/`.
         │   └── ...
         │
         ├── 4_Cell_Candidates/             # Detection output
-        │   ├── Detected_YYYYMMDD_HHMMSS.xml  # Cell coordinates (BrainGlobe XML format)
+        │   ├── detected_cells.xml         # Cell coordinates (BrainGlobe XML format)
         │   └── ...
         │
         ├── 5_Classified_Cells/            # Classification output
         │   └── ...
         │
-        └── 6_Region_Counts/               # Final counts per atlas region
+        └── 6_Region_Analysis/             # Final counts per atlas region
             └── ...
 ```
+
+Also in each brain folder:
+
+- `0_Raw_IMS/` -- the `.ims` file as delivered (beside `1_Extracted_Full/`).
+- `3_Registered_Atlas/.registration_approved` -- a person's approval of THIS
+  registration; `3_Registered_Atlas/QC_orientation_check.png` -- drawn before
+  every registration; `3_Registered_Atlas/_archive/<time>/` -- earlier
+  registrations, each with its approval.
+- `4_Cell_Candidates/detected_cells.provenance.json` -- which run wrote
+  `detected_cells.xml`; `4_Cell_Candidates/from_<source>/` -- a detection run
+  made before cropping or registration; `4_Cell_Candidates/_archive/<time>/` --
+  earlier step-4 runs.
+- `6_Region_Analysis/cell_counts_by_region.csv` and
+  `cell_counts_elife_grouped.csv` -- the brain's counts per region and per eLife
+  group.
 
 ---
 
@@ -234,12 +248,13 @@ brain, and a new crop left the old crop's cache in use.
 Selecting another brain in the brain list starts that brain from a clean slate:
 its own metadata (never the previous brain's), no pre-filter result, no
 training-data folder, no "last run". The buttons that act on
-those (Save pre-filter results, Send to training, Promote last run to
-production) are disabled until you make a new one for this brain. (Any earlier
+those (Save Filtered Lists, Suspicious -> Non-Cells Training, Promote last run to
+production...) are disabled until you make a new one for this brain. (Any earlier
 classification run of the brain can still be promoted from the run list or the
 Results tab; see OPTIMIZATION_WORKFLOW.md, "Trying a model in napari".)
 
-**While a run is going the brain list is greyed out.** Run Test Detection and
+**While a run is going the brain list is greyed out.** Run Test Detection (the
+button reads **Run Detection** until the first run of the session) and
 Run Classification -- and Run Region Counting on the Results tab -- hold the
 list until their run returns, and each run keeps
 its own record (brain, tracker run, folder, first plane tested) from start to
@@ -327,8 +342,8 @@ never creates a `metadata.json` where there was none -- that file is how the
 status readers know a brain was extracted or cropped -- so a brain with no
 metadata says "Nothing was saved".
 
-### Mode 3: Results Viewer (future)
-**Purpose**: View final cell counts per atlas region.
+### Mode 3: Results (10. Results tab)
+**Purpose**: Region counts of the production classification (**Run Region Counting**), with Allen Atlas and eLife Groups tables.
 
 ---
 
@@ -340,16 +355,12 @@ When loading detection results, the system:
 2. **Filters** to completed runs only
 3. **Sorts** by creation time (newest first)
 4. **Loads**:
-   - `best=True`: Most recent completed run (your best current attempt)
-   - `best=False`: Second most recent (for comparison)
+   - `best=True`: the run marked Best for the brain (if none is marked, the highest-rated run that is not archived, and it says so)
+   - `best=False` (**Load Most Recent Detection**): the second most recent completed run, for comparison (the newest is usually the one on screen)
+
+Any run can also be loaded from the run list with **Load Selected**.
 
 **Fallback**: If tracker unavailable, loads directly from `4_Cell_Candidates/*.xml`
-
-### Current Limitation:
-There's no UI to load arbitrary old runs (e.g., "load run #3 from 12 years ago").
-Only most recent and second-most-recent are accessible via buttons.
-
-**TODO**: Add a dropdown/selector to pick any historical run from tracker.
 
 ---
 
@@ -358,10 +369,10 @@ Only most recent and second-most-recent are accessible via buttons.
 | Button | Action |
 |--------|--------|
 | **Load Brain** | Loads brain into napari (mode-dependent) |
-| **Run Detection** | Executes detection with current parameters, records to tracker |
+| **Run Detection** (labeled **Run Test Detection** after the first run) | Executes detection with current parameters, records to tracker |
 | **Mark Selected Layer as Best** | Moves the selected brain's Best mark to the run the selected points layer shows (refused for a layer that is not a tracked run or belongs to another brain); the previous Best only loses its mark, it is not archived |
 | **Load Best** | Loads the run marked Best for the brain (see "How the Best marks behave" in README.md) |
-| **Load Most Recent** | Loads second-most recent run for comparison |
+| **Load Most Recent Detection** | Loads the second most recent completed run, for comparison (the newest is usually the one on screen) |
 
 ---
 
@@ -375,4 +386,4 @@ Only most recent and second-most-recent are accessible via buttons.
 
 4. **Local files + Tracker**: Tracker provides metadata/search, but actual cell coordinates live in XML files.
 
-5. **Best = Most Recent**: By default, "best" means your most recent attempt. User can override by marking any layer as best.
+5. **Best = what a person marked**: nothing is Best until someone marks it; Load Best falls back to the highest-rated run and says so.
