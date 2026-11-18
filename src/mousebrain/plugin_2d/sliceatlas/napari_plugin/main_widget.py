@@ -226,6 +226,8 @@ def _empty_drawn(name: str, widget) -> Dict[str, Any]:
 # What the window says is running while Run Batch Analysis works through its
 # folder (see BrainSliceWidget._batch_run_analysis).
 BATCH_RUNNING = "the batch analysis"
+# What _analysis_running says while a particle analysis runs.
+PARTICLE_ANALYSIS_RUNNING = "particle analysis"
 
 # What happened to each batch image: the `status` column of the exported
 # summary (see BrainSliceWidget._batch_summary_rows). An image that could not
@@ -2475,17 +2477,34 @@ class BrainSliceWidget(QWidget):
         settings["layer_visibility"] = layer_visibility
         return settings
 
-    def _save_analysis_state(self):
+    def _save_analysis_state(self) -> Optional[str]:
         """Save what the window holds for the image on screen into its
         <image name>_analysis folder, as one state (see the note above).
-        Never raises: an error here would stop the next image from opening."""
+
+        Returns None when everything the window holds is on disk (or there
+        was nothing to save), else the reason it is not, as said in the
+        status bar. Never raises: an error here would stop the next image
+        from opening."""
+        loading = getattr(self, "_loading_file", None)
+        if loading is not None:
+            # An image is being replaced: _leave_current_image has already
+            # saved the previous image's results and cleared them from
+            # memory, but current_file still names it until the new one has
+            # loaded. WHY nothing is written: a save now would see that
+            # image's folder with nothing in memory and remove or empty
+            # every file in it (its particles, labels, nuclei, measurements,
+            # ROIs) -- what Save State, or the auto-save at the end of an
+            # analysis, did when it ran during a load.
+            print(f"[BrainSlice] Save skipped: {Path(loading).name} is loading")
+            return None
         try:
             state = self._analysis_state_in_memory()
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.status_label.setText(f"[!] Analysis NOT saved: {e}")
-            return
+            msg = f"[!] Analysis NOT saved: {e}"
+            self.status_label.setText(msg)
+            return msg
         has_results = any(v is not None for v in state.values())
 
         if self.current_file is None:
@@ -2496,16 +2515,16 @@ class BrainSliceWidget(QWidget):
                 msg = STACK_RESULTS_NOT_SAVED
                 self.status_label.setText(msg)
                 print(f"[BrainSlice] {msg}")
-            else:
-                print("[BrainSlice] Save skipped: no current file")
-            return
+                return msg
+            print("[BrainSlice] Save skipped: no current file")
+            return None
 
         analysis_dir = analysis_dir_for(self.current_file)
         owned = getattr(self, "_state_restored_for", None) == self.current_file
         blocked = set(getattr(self, "_restore_blocked", None) or ()) if owned else set()
         if not has_results and not (owned and analysis_dir.exists()):
             print("[BrainSlice] Save skipped: no results to save")
-            return
+            return None
 
         not_saved = []
         try:
@@ -2534,9 +2553,9 @@ class BrainSliceWidget(QWidget):
             print(f"[BrainSlice] ERROR saving analysis: {e}")
             import traceback
             traceback.print_exc()
-            self.status_label.setText(
-                f"[!] Analysis of {self.current_file.name} NOT fully saved: {e}")
-            return
+            msg = f"[!] Analysis of {self.current_file.name} NOT fully saved: {e}"
+            self.status_label.setText(msg)
+            return msg
 
         if not_saved:
             msg = (f"[!] {', '.join(not_saved)} of {self.current_file.name} NOT "
@@ -2547,6 +2566,7 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(msg)
             print(f"[BrainSlice] {msg}")
             QMessageBox.warning(self, "Results not saved", msg)
+            return msg
 
         # Registered only when the folder holds THIS window's results: when
         # part of it is an earlier analysis that could not be restored
@@ -2564,6 +2584,7 @@ class BrainSliceWidget(QWidget):
         else:
             self._registry_note = ("not registered: the folder holds an earlier "
                                    "analysis that could not be restored")
+        return None
 
     def _register_saved_state(self, analysis_dir, settings, written, may_retire):
         """Register the result tables just saved for the image on screen in
@@ -2593,9 +2614,18 @@ class BrainSliceWidget(QWidget):
 
     def _manual_save_state(self):
         """Explicitly save analysis state (triggered by Save State button)."""
+        loading = getattr(self, "_loading_file", None)
+        if loading is not None:
+            # See _save_analysis_state: nothing is saved while an image is
+            # being replaced. The button is off then; this covers a click
+            # that was already on its way.
+            self.status_label.setText(
+                f"Save State: nothing saved -- {Path(loading).name} is still "
+                f"loading. The image before it was saved when it was left.")
+            return
         self._registry_note = ""
-        self._save_analysis_state()
-        if self.current_file and not self.status_label.text().startswith("[!]"):
+        problem = self._save_analysis_state()
+        if self.current_file and problem is None:
             note = getattr(self, "_registry_note", "")
             self.status_label.setText(
                 f"State saved for {self.current_file.stem}"
@@ -3001,7 +3031,10 @@ class BrainSliceWidget(QWidget):
         refusal in _refuse_if_busy_for_load is what protects; this only
         shows it."""
         for name in ("browse_btn", "browse_folder_btn", "_img_load_btn",
-                     "_roi_img_load_btn", "_queue_browse_btn"):
+                     "_roi_img_load_btn", "_queue_browse_btn",
+                     # Save State: nothing is saved while an image loads
+                     # (see _save_analysis_state).
+                     "_img_save_state_btn", "_roi_save_state_btn"):
             btn = getattr(self, name, None)
             if btn is not None:
                 btn.setEnabled(enabled)
@@ -3026,6 +3059,15 @@ class BrainSliceWidget(QWidget):
         still names the image those results came from."""
         self._save_analysis_state()
         self._clear_analysis_state()
+        # The window no longer holds this image's saved analysis, so it no
+        # longer owns its _analysis folder (see the note above
+        # _analysis_state_in_memory). WHY: current_file keeps naming the
+        # image until the next one has loaded; a save in between saw the
+        # folder as owned with nothing in memory and removed or emptied
+        # every file in it. The restore of the next image takes ownership
+        # of that image's folder again.
+        self._state_restored_for = None
+        self._restore_blocked = set()
 
     def _open_image(self, fpath, peek: bool = True) -> bool:
         """Open one image file. Browse File, Prev/Next + Load Selected, the
@@ -4635,6 +4677,14 @@ class BrainSliceWidget(QWidget):
                 self._pa_could_not_start(e)
                 return
 
+        # Particle analysis runs on the window's own thread, but its tracker
+        # write lets the window answer clicks (_saving_to_tracker). WHY
+        # marked as running: a Load or Browse click waiting then used to
+        # open the next image in the middle of the analysis, and the
+        # analysis's auto-save then ran against the image being left.
+        # Opening an image and every other analysis are refused while it
+        # runs (_analysis_in_progress).
+        self._analysis_running = PARTICLE_ANALYSIS_RUNNING
         try:
             from ..core.particle_analysis import ParticleAnalyzer
             analyzer = ParticleAnalyzer()
@@ -4835,6 +4885,8 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(f"Particle analysis error: {exc}")
             self._fail_run_if_unfinished(pa_run_id, f"particle analysis error: {exc}")
         finally:
+            if self._analysis_running == PARTICLE_ANALYSIS_RUNNING:
+                self._analysis_running = None
             self.pa_run_btn.setEnabled(True)
             # Whatever ended this (an error the handler above did not catch,
             # or a path that never recorded a result), the row does not stay
