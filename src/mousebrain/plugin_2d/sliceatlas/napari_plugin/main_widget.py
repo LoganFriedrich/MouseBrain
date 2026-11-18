@@ -4094,6 +4094,12 @@ class BrainSliceWidget(QWidget):
         else:
             self.status_label.setText(f"Exported {Path(path).name}")
 
+        written = {}
+        if all_summary:
+            written['summary'] = path
+        if all_detail:
+            written['detail'] = detail_path
+
         # Also save the settings used
         if self._batch_settings:
             import json
@@ -4102,6 +4108,43 @@ class BrainSliceWidget(QWidget):
                 settings_path = path.replace('.csv', '_settings.json')
             with open(settings_path, 'w') as f:
                 json.dump(self._batch_settings, f, indent=2)
+            written['settings'] = settings_path
+
+        self._register_batch_export(written, all_summary)
+
+    def _register_batch_export(self, written, summary_rows):
+        """Register what Export Batch Results just wrote in MouseBrain's own
+        analysis registry, under the batch folder's name (see
+        core/result_registry.py). The files stay where the person saved
+        them; the registry keeps copies. Never raises: the export is done
+        whatever happens here, and the status bar says when it was not
+        registered."""
+        from ..core.result_registry import register_window_batch
+        folder = getattr(self, "_batch_folder", None)
+        if not written:
+            return
+        if folder is None:
+            note = "not registered: no batch folder is chosen"
+        else:
+            per_image = {}
+            for row in summary_rows:
+                per_image.setdefault(row.get('sample'), str(row.get('status', '')))
+            counted = sum(1 for s in per_image.values() if s == BATCH_COUNTED)
+            failed = sum(1 for s in per_image.values() if s.startswith("failed"))
+            results = {"images": len(per_image), "counted": counted, "failed": failed,
+                       "other": len(per_image) - counted - failed}
+            try:
+                outcome, text = register_window_batch(
+                    folder, written, self._batch_settings or {}, results,
+                    lock_wait_seconds=GUI_TRACKER_LOCK_WAIT_SECONDS)
+            except Exception as e:
+                outcome, text = False, f"NOT registered: {type(e).__name__}: {e}"
+            if outcome:
+                return
+            note = text
+        msg = f"{self.status_label.text()} -- [!] {note}"
+        self.status_label.setText(msg)
+        print(f"[BrainSlice] Batch export {note}")
 
     # -- helpers ---------------------------------------------------------------
 

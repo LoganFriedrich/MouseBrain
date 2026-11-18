@@ -881,13 +881,15 @@ the registry keeps copies.
 | What you do | Registered as | Key | What is registered |
 |---|---|---|---|
 | **Save State**, **Count in ROI(s)**, the save after Run Particle Analysis or a re-classification, and the save when another image is opened (colocalization and detection results are registered with the next of these saves) | analysis `<project>_Window_Results` | the image's file name without extension | the result tables this save wrote (`measurements.csv`, `particles.csv`, `roi_detail.csv`), their row counts (and how many are positive), the window's settings (`settings.json` without the save time and layer visibility) as the method, the image and its `_analysis` folder and the tracker run ids as the source |
+| **Export Batch Results** | analysis `<project>_Window_Batch` | the batch folder's name | the summary, detail and settings files you saved, how many images were counted / failed / other, the batch settings as the method, the batch folder as the source |
 | `brainslice-coloc <image> --save <folder>` | analysis `<project>_Coloc_CLI` | the image's file name without extension | the measurements CSV, the summary text and the figure, the summary numbers, every option of the run as the method |
 
 - `<project>` is the configured 2D project, `MOUSEBRAIN_2D_PROJECT` (the same setting
   the detection batch uses). It is never guessed from a file or folder name. When it
   is not set, or no registry root is configured, nothing is registered: Save State
   says `State saved for <image> (not registered: ...)` with what to set, the console
-  says so once per session, and `brainslice-coloc` prints `[!] Saved, but not registered:
+  says so once per session, Export Batch Results adds `[!] not registered: ...` to
+  its status line, and `brainslice-coloc` prints `[!] Saved, but not registered:
   ...`.
 - These are never registered under `<project>_Detection` or `<project>_ROI_Analysis`.
   WHY: those hold the detection batch's results and the ROI counts tied to them; a
@@ -975,6 +977,11 @@ other image can be opened and Select Batch Folder is refused.
 | `<name>_summary.csv` | one row per ROI of every counted image, and ONE row for every other image of the folder; the `status` column says what happened to each |
 | `<name>_detail.csv` | every particle of the counted images, with the ROI it fell in |
 | `<name>_settings.json` | the settings the batch ran with |
+
+The files stay where you saved them, and the three are also registered in the
+analysis registry under `<project>_Window_Batch`, keyed by the batch folder's name
+(see "What is registered" above). Exporting the same batch again under another file
+name replaces that entry; the earlier files go to `_archived/<time>/` in the registry.
 
 `status` in the summary is one of:
 

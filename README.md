@@ -86,9 +86,9 @@ that produced it. The registry lives inside the pipeline data folder:
   the BrainSlice Run History panel chooses the batch's sigma and percentile
   but does not change the approved method; how to do both is in
   `src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, section 6.
-- The 2D window's saves (Save State, Count in ROI(s)) and
+- The 2D window's saves (Save State, Count in ROI(s), Export Batch Results) and
   `brainslice-coloc --save` are registered too, each under its own analysis
-  (`<project>_Window_Results`, `<project>_Coloc_CLI`;
+  (`<project>_Window_Results`, `<project>_Window_Batch`, `<project>_Coloc_CLI`;
   `<project>` is `MOUSEBRAIN_2D_PROJECT`, and nothing is registered while it is
   unset) -- see `src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, "What is
   registered".
