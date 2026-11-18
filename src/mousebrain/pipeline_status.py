@@ -311,6 +311,10 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
     status["register_problem"] = (approval_text if approval in NEEDS_REGISTRATION
                                   and approval != NOT_REGISTERED else "")
     status["candidates"] = candidates
+    # True when the brain's count files are there but region_counts.csv could
+    # not be read, so nobody can tell whether it is counted. The batches hold
+    # the brain at the count step on this instead of counting it again.
+    status["count_unknown"] = False
     status["stale"] = (stale_outputs(p, candidates, images=images)
                        if registration_complete(reg) else {})
     if status["register_problem"] and status["counted"]:
@@ -334,6 +338,7 @@ def brain_status(pipeline_dir, include_prefilter: bool = True) -> Dict:
                 "back, or it was cropped or registered again; or never written "
                 "there) -- count it again")
         elif in_production == TABLE_UNREADABLE:
+            status["count_unknown"] = True
             status["stale"]["count"] = (
                 "region_counts.csv could not be read, so it cannot be told whether "
                 "its counts are in production -- check that the file opens, then look again")

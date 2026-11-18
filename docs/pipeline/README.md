@@ -72,7 +72,9 @@ fitted to were made again after it (a re-crop) or are gone: every reader shows
 "Register", its approval no longer counts (step 4 will not run, no Approve
 button accepts it) and step 3's `--batch` registers it again. Counts are stale
 when they are older than the current registration or the classification, or
-were made on an out-of-date registration; a classification when it is older than its
+were made on an out-of-date registration, or when the brain has its count
+files but no row in `2_Data_Summary/region_counts.csv` (its counts were
+withdrawn -- see step 6); a classification when it is older than its
 candidates or the images; detection when it is older than the images the atlas
 is fitted to (or, for a registration that does not record its images, older
 than the registration). Anything made from a stale output is stale too.
@@ -821,12 +823,17 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   ... -- count it again` -- for example when a person rejected a registration
   and then approved the SAME registration again (the rejection withdrew the
   row; the approval does not put it back). If `region_counts.csv` cannot be
-  read (the share does not answer, the file is open elsewhere), the readers
-  say so instead of calling the counts withdrawn, and `--all` stops with
-  `[FAILED] ... could not be read ... Nothing was counted.` and exit code 1
-  rather than counting every brain again. Why: the readers used to judge
-  "counted" by the brain's own files, so such a brain showed as Complete
-  everywhere with no counts in production. Why the rows used to stay
+  read (the share does not answer, the file is open elsewhere; a read is
+  tried three times, half a second apart, first), the readers say so instead
+  of calling the counts withdrawn, and nothing counts on a guess: `--all`
+  stops with `[FAILED] ... could not be read ... Nothing was counted.` and
+  exit code 1, and batch_process and overnight_batch stop the brain at the
+  count step with `Not counted: region_counts.csv could not be read ...`
+  instead of counting it again. Check that the file opens, then run again.
+  Why: the readers used to judge "counted" by the brain's own files, so such
+  a brain showed as Complete everywhere with no counts in production.
+
+  Why withdrawals exist at all: the rows used to stay
   until someone counted the brain again -- and the registry entry stayed
   current even then, for rejections and re-crops always -- and nothing told
   them apart from current counts. If a withdrawal cannot be done (the tables

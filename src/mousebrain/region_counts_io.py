@@ -26,6 +26,7 @@ Used by step 6 (6_count_regions.py). Three things this module fixes:
 
 import csv
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
@@ -340,7 +341,8 @@ NOT_IN_PRODUCTION = "not_in_production"
 TABLE_UNREADABLE = "table_unreadable"
 
 
-def production_row(brain_folder: str, summary_dir=None) -> str:
+def production_row(brain_folder: str, summary_dir=None, attempts: int = 3,
+                   wait: float = 0.5) -> str:
     """Whether region_counts.csv holds a row for this brain: IN_PRODUCTION,
     NOT_IN_PRODUCTION (no row, or no table at all), or TABLE_UNREADABLE (the
     table is there but could not be read -- a share that did not answer, a
@@ -361,7 +363,14 @@ def production_row(brain_folder: str, summary_dir=None) -> str:
 
     TABLE_UNREADABLE is kept apart from NOT_IN_PRODUCTION so a moment when
     the share does not answer is never reported as "the counts were
-    withdrawn" (and never sends a batch off to count every brain again).
+    withdrawn". Callers that would act on the answer hold instead: step 6
+    --all counts nothing, and batch_process / overnight_batch stop the brain
+    at the count step with the reason rather than counting it again.
+
+    The read is tried ``attempts`` times, ``wait`` seconds apart, before the
+    table is called unreadable. WHY: step 6 swaps a new table in whole
+    (os.replace); on Windows a read that meets the swap can fail for a moment
+    although nothing is wrong.
 
     ``summary_dir`` defaults to the configured 2_Data_Summary, read at call
     time (the folder step 6 writes and withdraw_counts withdraws from)."""
@@ -369,12 +378,16 @@ def production_row(brain_folder: str, summary_dir=None) -> str:
         from mousebrain import config
         summary_dir = config.DATA_SUMMARY_DIR
     table = Path(summary_dir) / COUNT_TABLES[0][0]
-    try:
-        if not table.exists():
-            return NOT_IN_PRODUCTION
-        rows = _read_table(table)[1]
-    except (OSError, UnicodeDecodeError, csv.Error):
-        return TABLE_UNREADABLE
+    for attempt in range(max(1, attempts)):
+        try:
+            if not table.exists():
+                return NOT_IN_PRODUCTION
+            rows = _read_table(table)[1]
+            break
+        except (OSError, UnicodeDecodeError, csv.Error):
+            if attempt + 1 >= max(1, attempts):
+                return TABLE_UNREADABLE
+            time.sleep(wait)
     return (IN_PRODUCTION if any(_same_brain(r.get("brain"), brain_folder) for r in rows)
             else NOT_IN_PRODUCTION)
 

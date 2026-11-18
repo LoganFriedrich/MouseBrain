@@ -491,6 +491,17 @@ def run_unless_done(results: dict, brain_path: Path, step: str, redo_from: str,
     again usually means it (for example to apply a newly settled detection
     method, which the file rules cannot see), so every step runs as it always
     has."""
+    if step == 'count':
+        # Whether the brain is already counted is judged by its row in
+        # region_counts.csv. When that table cannot be read nobody can tell,
+        # so the brain is held here with the reason -- never counted again on
+        # a guess (that would archive a good production row and write it anew).
+        from mousebrain.pipeline_status import brain_status
+        status = brain_status(brain_path)
+        if status.get('count_unknown'):
+            why = status['stale'].get('count', 'region_counts.csv could not be read')
+            print(f"    [FAILED] Not counted: {why}")
+            return False, f"Not counted: {why}"
     if skip_finished and step_already_done(brain_path, step, redo_from):
         print("    Already done (output there and current) -- not run again")
         done = [s for s in results.get('skipped_steps', '').split(',') if s]

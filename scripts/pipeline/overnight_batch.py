@@ -179,9 +179,12 @@ def get_brain_status(pipeline_dir: Path) -> Dict[str, bool]:
     readers also show as done.
     """
     s = brain_status(pipeline_dir)
-    return {k: s[k] for k in ('cropped', 'registered', 'approved',
-                              'detected', 'classified', 'counted',
-                              'approval', 'approval_text')}
+    out = {k: s[k] for k in ('cropped', 'registered', 'approved',
+                             'detected', 'classified', 'counted',
+                             'approval', 'approval_text')}
+    out['count_unknown'] = bool(s.get('count_unknown'))
+    out['count_unknown_why'] = s['stale'].get('count', '') if s.get('count_unknown') else ''
+    return out
 
 
 def run_with_retry(func, *args, max_retries: int = MAX_RETRIES, **kwargs) -> Tuple[bool, str]:
@@ -541,6 +544,14 @@ def process_brain(brain_name: str, pipeline_dir: Path, skip_complete: bool = Tru
             return result
 
     # Step 4: Counting
+    if status.get('count_unknown'):
+        # region_counts.csv could not be read, so it cannot be told whether
+        # this brain is counted: hold it with the reason rather than count it
+        # again on a guess (that would archive a good production row).
+        result['steps']['counting'] = 'failed'
+        result['status'] = 'failed'
+        result['error'] = "Not counted: " + status.get('count_unknown_why', '')
+        return result
     if status['counted'] and skip_complete:
         log.info(f"[{brain_name}] Counting already complete, skipping")
         result['steps']['counting'] = 'skipped'

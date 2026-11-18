@@ -117,3 +117,40 @@ def test_count_all_stops_when_the_table_cannot_be_read(tmp_path, monkeypatch, ca
     assert step6.main() == 1
     assert step6.counted == []
     assert "could not be read" in capsys.readouterr().out
+
+
+def _unreadable(lab):
+    table = lab["summary"] / "region_counts.csv"
+    os.replace(table, lab["summary"] / "region_counts.csv.aside")
+    table.mkdir()
+
+
+def test_batch_process_holds_a_brain_when_the_table_cannot_be_read(tmp_path, monkeypatch):
+    lab = make_lab(tmp_path, monkeypatch)
+    b = _counted_brain(lab)
+    _unreadable(lab)
+    bp = _load("batch_process_unreadable", PIPELINE / "batch_process.py")
+    ran = []
+    monkeypatch.setattr(bp, "run_step", lambda name, args: ran.append(name) or (True, "ok"))
+
+    results = {}
+    ok, msg = bp.run_unless_done(results, b, "count", "", "6_count_regions.py",
+                                 ["--brain", b.name], skip_finished=True)
+    assert not ok
+    assert "could not be read" in msg
+    assert ran == []  # step 6 was not run on a guess
+
+
+def test_overnight_batch_holds_a_brain_when_the_table_cannot_be_read(tmp_path, monkeypatch):
+    lab = make_lab(tmp_path, monkeypatch)
+    b = _counted_brain(lab)
+    _unreadable(lab)
+    ob = _load("overnight_unreadable", PIPELINE / "overnight_batch.py")
+    ran = []
+    monkeypatch.setattr(ob, "run_counting", lambda *a: ran.append(a) or (True, "ok"))
+
+    result = ob.process_brain(b.name, b, skip_complete=True)
+    assert ran == []
+    assert result["status"] == "failed"
+    assert result["steps"]["counting"] == "failed"
+    assert "could not be read" in result["error"]
