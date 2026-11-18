@@ -30,6 +30,53 @@ extracted stack, which is useful when registration is waiting on something. It
 is a trial run: it gives you a cell count but not counts per brain region. See
 [Running detection before registration](#running-detection-before-registration).
 
+## How to start the pipeline
+
+There are three ways in; all of them run the same scripts.
+
+**1. The guided menu (`RUN_PIPELINE.py`).** Open an Anaconda Prompt and type:
+
+```
+conda activate <your MouseBrain environment>
+cd <path to the MouseBrain repository>\scripts\pipeline
+python RUN_PIPELINE.py
+```
+
+It takes no options. It lists every brain with the step it is at; type a
+brain's number and it offers the next step for that brain and asks before it
+does anything. `m` opens napari, `h` shows the calibration-run history, `q`
+quits. Each step's output scrolls past in the same window, and after each step
+it waits for you to press Enter.
+
+**2. The napari window.** Type `mousebrain` (in the activated environment),
+then **Plugins -> BrainTools -> 3D: 1. Pipeline Dashboard**, select a brain and
+press **Run Next Step** (see "The Pipeline Dashboard's Run button" below).
+
+**3. One script by hand.** The numbered steps are in the repository's
+`scripts/pipeline` folder and the `util_*.py` helpers in `scripts/utils`. The
+simplest way is to go into the script's folder and run it by its bare name:
+
+```
+conda activate <your MouseBrain environment>
+cd <path to the MouseBrain repository>\scripts\pipeline     # or ...\scripts\utils for a util_*.py
+python 3_register_to_atlas.py --batch --brain <brain>
+```
+
+Every command in these docs written as `python <script>.py ...` means: from
+that script's folder. A script finds its own files from where it is stored,
+not from the folder you are in, so giving the path instead also works (for
+example `python scripts/utils/util_approve_registration.py --brain <brain> --status` from the
+repository folder). If Python answers "can't open file", the path to the
+script is wrong; if it answers `No module named 'mousebrain'`, the environment
+is not activated.
+
+**How long steps may take.** The code states no expected run times, only
+limits after which the batch runners give up: `batch_process.py` stops any one
+step after 2 hours; `overnight_batch.py` stops registration after 2 hours,
+detection after 4 hours, classification after 1 hour and counting after 30
+minutes, and tries each step up to 3 times. A script run by hand, from
+RUN_PIPELINE or from the dashboard has no time limit.
+
 ## Which step is a brain at?
 
 `RUN_PIPELINE.py`, the napari pipeline dashboard (Plugins -> BrainTools -> 3D:
@@ -142,7 +189,7 @@ that is not the brain's own candidates file, nothing is pre-filtered.
 It never filters a file under the name of a run that did not write it. When no
 run has been chosen it filters the same file and records no parent run.
 
-**Load Previous** (beside the list of earlier pre-filter runs) loads the
+**Load Previous Result** (beside the list of earlier pre-filter runs) loads the
 result of the run picked in that list, so it can be looked at, saved or sent
 to training again. It loads only a run of the brain selected now; a run of
 another brain stops with "Run Belongs To Another Brain" and loads nothing.
@@ -379,6 +426,25 @@ console napari was started from **only when the step fails**; after a step that
 succeeds nothing of its output is shown anywhere, so to follow a long step as it
 runs, run the same command from a terminal instead.
 
+**When the dashboard says "Error - check console":**
+
+1. Find the console: it is the terminal window (Anaconda Prompt or PowerShell)
+   in which you typed `mousebrain` (or `napari`). If napari was started some
+   other way (a shortcut, no terminal window), the output went nowhere you can
+   read; use step 3.
+2. Scroll to the end of that window. The failed script's whole output was
+   printed there in one block when it ended. Read the last lines first: the
+   scripts say what stopped them on lines containing `[FAIL]`, `[FAILED]` or
+   `ERROR:`; a block starting `Traceback (most recent call last):` is a crash,
+   and its last line names the error. The section of this README for that step
+   explains the common messages.
+3. To see it again, or to watch it as it runs, run the step's command from the
+   table above in a terminal (see "How to start the pipeline"), for example
+   `python 4_detect_cells.py --brain <brain>` from `scripts/pipeline`.
+4. The dashboard works the brain's step out again from its files when a step
+   ends (and whenever you press **Refresh**), so after you fix the cause,
+   **Run Next Step** offers the step again.
+
 **The "Registration" button under BrainGlobe Tools** opens brainreg's own
 registration widget with the brain's voxel sizes filled in -- for trying
 settings, nothing more. It does NOT fill in an output folder or an orientation:
@@ -399,7 +465,7 @@ part of another brain's name.)
 ## Utility Scripts
 
 ```
-experiment_tracker.py          → Core module: CSV-based experiment logging
+src/mousebrain/tracker.py      → Core module (mousebrain.tracker, not a script): CSV-based calibration-run logging
 util_experiments.py            → Browse/search/rate experiments interactively
 util_optimize_crop.py          → Find optimal Y-crop via iterative testing
 util_train_model.py            → Train custom classification models
@@ -408,14 +474,14 @@ util_registration_qc.py        → Generate registration QC visualizations
 util_approve_registration.py   → Approve registration after QC review
 ```
 
-## What's New
+## Scripts
 
 | Script | Purpose |
 |--------|---------|
 | `4_detect_cells.py` | cellfinder detection with the settled method (see below) |
 | `5_classify_cells.py` | cellfinder classification with trained model |
 | `6_count_regions.py` | brainglobe-segmentation regional counting |
-| `experiment_tracker.py` | Central CSV logging for all experiments |
+| `mousebrain.tracker` (`src/mousebrain/tracker.py`, not a script) | Calibration-run log, `calibration_runs.csv` |
 | `util_experiments.py` | Interactive CLI for viewing/rating experiments |
 | `util_optimize_crop.py` | Find optimal crop using registration quality metrics |
 | `util_train_model.py` | Train custom cell classification networks |
@@ -541,8 +607,9 @@ scripts in `scripts/utils/`. The napari pipeline dashboard, the tuning
 widget's buttons (registration QC, crop optimisation, pipeline comparison,
 region counting) and `batch_process.py` find each script by name beside the
 installed code, so they always run the version that is installed. To run one
-by hand, run it from its folder, e.g.
-`python scripts/utils/util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4`.
+by hand, go into its folder and run it by name, e.g. from `scripts/utils`:
+`python util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4` (see "How to
+start the pipeline" above).
 
 (Before the reorganisation the scripts were copied into the pipeline's
 `3D_Cleared/util_Scripts/`. That folder is data, is empty now, and nothing runs
@@ -570,7 +637,7 @@ where its `3_Nuclei_Detection` folder really exists.
 opening (it used to fail to open at all). The panel opens, and a red line at
 its top says `[!] Runs will NOT be logged to the calibration tracker: ...`
 with the reason. While that line shows, nothing you run in the panel is
-recorded, and the run list, *Load best detection* and the Best buttons have
+recorded, and the run list, *Best detection (highest-rated)* and the Best buttons have
 nothing to show. Reconnect the drive (or fix `CONNECTOME_ROOT`), then close the
 panel and open it again from the Plugins menu; the red line is gone once the
 tracker is open.
@@ -634,7 +701,7 @@ nothing on the run said so.
 
 **Classifying a pre-filter you tuned and saved.** The pre-filter run from
 RUN_PIPELINE's "Pre-filter candidates" step, from `python -m mousebrain.prefilter`,
-or tuned in Setup & Tuning (Save pre-filter results) is saved as
+or tuned in Setup & Tuning (6. Pre-Filter tab, **Save Filtered Lists**) is saved as
 `4_Cell_Candidates/prefiltered_<date>_<time>/interior_candidates.xml`. To classify
 one of those instead of step 5's own default pre-filter:
 
@@ -713,7 +780,7 @@ A brain whose registration was rejected, did not finish, is out of date
 or is still waiting for approval is **not counted**:
 
 - `--brain <brain>` (and the pipeline dashboard's Count, Setup & Tuning's
-  **Run Region Counts**, RUN_PIPELINE, batch_process and overnight_batch, which
+  **Run Region Counting** (10. Results tab), RUN_PIPELINE, batch_process and overnight_batch, which
   all run it) prints `[FAILED] Not counted: its registration is not approved
   (<state>): <why>`, starts no tracker run, and ends with exit code 1. The
   pipeline dashboard then says "Error - check console", Setup & Tuning shows
@@ -994,13 +1061,17 @@ mousebrain-orientation-check 001_CNT_01_01_1p625x_z4
 mousebrain-orientation-check 001_CNT_01_01_1p625x_z4 --orientation sar
 ```
 
+Other options: `--source auto|manual|cropped|full` (which images to draw; `auto`
+when not given), `--atlas <atlas name>`, `--out <png>` (write the picture
+there instead), `--no-register` (do not enter the picture in the registry).
+
 A trial orientation is written as `QC_orientation_check_<orientation>.png`, so the
 declared one's picture is never overwritten. Each picture is entered in
 MouseBrain's analysis registry (analysis `3D_Orientation_Check`; like the
 region counts, not judged by the slice-analysis approved method once its
 manifest records that -- see ANALYSIS_REGISTRY.md) and on the
-registration's tracker row. It takes about two minutes (it reads every sixth
-slice and pixel). To register with a different orientation, set `orientation` in
+registration's tracker row. It takes about two minutes (it reads slices and pixels about 25 micrometers
+apart -- every sixth at 4-micrometer voxels). To register with a different orientation, set `orientation` in
 the brain's `metadata.json` and run registration again.
 
 ### Utility: Registration QC & Approval
@@ -1045,7 +1116,7 @@ STARTED. A brain counts as registered only when all four output files are there
 - **Nothing unfinished can be approved**: every Approve button and
   `util_approve_registration.py` refuse, naming the missing files.
 - **Nothing unfinished is counted or recorded as done**:
-  - Setup & Tuning's **Run Region Counts** button (10. Results tab) starts
+  - Setup & Tuning's **Run Region Counting** button (10. Results tab) starts
     counting only when the brain's registration is APPROVED. Otherwise it
     shows "Registration not approved" with the registration's state (did not
     finish, being registered, rejected, out of date, or waiting for
@@ -1111,7 +1182,7 @@ folder now. What that means for you:
 - **Automated runs never approve.** The overnight batch and batch_process stop a
   brain at "waiting for approval" after registering it; their reports list
   those brains. Only a person approves: `util_approve_registration.py`, the
-  Approve button in Setup & Tuning (Registration QC tab), the Approve button in
+  Approve button in Setup & Tuning (3. Registration tab), the Approve button in
   the pipeline dashboard, or "Yes, approve it" in RUN_PIPELINE.
 - **You cannot approve before registering.** With no `brainreg.json` there is
   nothing to approve, and the buttons say so.
@@ -1431,12 +1502,12 @@ run type), and each imaging setup at most one Paradigm Best:
 - A run counts as Best only when its `marked_best` cell in the tracker holds
   exactly `True` (what the Best buttons write). The run list's star, its
   *Best only* filter, its order and the green layer color follow the same
-  rule as *Load best detection*, so a cell edited to `False` (or anything
+  rule as *Best detection (highest-rated)*, so a cell edited to `False` (or anything
   else) by hand never shows as Best.
 - Each change is one locked write of the tracker, so a mark is never left half
   moved.
-- *Load best detection* (the check box when loading a brain in Setup & Tuning)
-  loads the run MARKED Best for the brain. If none is marked, it loads the
+- *Best detection (highest-rated)* (the check box when loading a brain in Setup & Tuning)
+  loads the run MARKED Best for the brain, despite its label. If none is marked, it loads the
   highest-rated run that has not been archived and labels it "highest rated --
   none is marked best"; if there is none of those either, it loads nothing.
   A run made in Setup & Tuning records the candidates file it wrote
@@ -1471,8 +1542,8 @@ run type), and each imaging setup at most one Paradigm Best:
 
 ## Experiment Tracking
 
-All runs are logged to `experiments.csv` with:
-- Unique experiment ID (e.g., `det_20241218_abc123`)
+All runs are logged to `2_Data_Summary/calibration_runs.csv` with:
+- Unique run ID (e.g., `det_20241218_143052_a1b2c3`: type, date, time, random part)
 - All parameters used
 - Timing information
 - Results (cell counts, etc.)
@@ -1539,7 +1610,13 @@ only be found by opening the CSV.
 ## Requirements
 
 ```bash
-conda activate MouseBrain    # or the full path of the environment if it was created with --prefix
-pip install cellfinder brainreg brainglobe-segmentation brainglobe-atlasapi
-pip install imaris-ims-file-reader tifffile numpy scipy matplotlib h5py
+conda activate <your MouseBrain environment>   # or its full path if it was created with --prefix
+cd <path to the MouseBrain repository>
+pip install -e ".[all]"
 ```
+
+The extras are `[3d]`, `[2d]`, `[2d-cellpose]`, `[2d-alignment]` and `[all]`
+(all of them). Do not pip-install the BrainGlobe packages by hand: the extras
+pin `tensorflow<2.16`, `keras<3` and `zarr<3`, which newer releases would break.
+PyTorch is installed separately, from https://pytorch.org for your machine (see
+the Installation section of the main README).
