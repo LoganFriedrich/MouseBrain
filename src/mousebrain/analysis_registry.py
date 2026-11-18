@@ -67,7 +67,9 @@ Layout (rooted at the registry root, by default <pipeline root>/Registry/)
     from it. No name used here ends in ".log". Adding new folders to a
     registry that people browse was avoided on purpose.
 
-    Invalidated outputs are moved to <their folder>/_archived/<timestamp>/.
+    Invalidated outputs, and the files of an entry replaced by a new
+    registration of the same sample, are moved to
+    <their folder>/_archived/<timestamp>/; nothing registered is deleted.
     Paths recorded in registry.json are RELATIVE to the registry root, so the
     whole folder can be moved or pulled elsewhere and still resolve.
 
@@ -1061,6 +1063,7 @@ class AnalysisRegistry:
         with self._locked() as lock:
             registry = self._read_registry(set_aside_unreadable=True)
             self._set_approved_header(registry)
+            earlier = registry["entries"].get(sample)
 
             output_map: Dict[str, str] = {}
             dest_paths: Dict[str, Path] = {}
@@ -1105,14 +1108,24 @@ class AnalysisRegistry:
                     "hostname": _get_hostname(),
                     "is_current": True,
                 }
+                # The earlier entry's files that this registration does not
+                # write over leave the active folder too, and a replaced
+                # entry is kept (see the note above _set_earlier_aside).
+                self._set_earlier_aside(earlier, set(dest_paths.values()), placed)
+                replacing = self._replaces(earlier, entry, placed)
+                archived_to = self._archive_stamp() if replacing else None
+                if replacing:
+                    entry["replaced_entry"] = self._replaced_pointer(earlier, archived_to)
                 registry["entries"][sample] = entry
                 self._write_registry(registry, refresh_header=False)
             except BaseException as e:
                 self._undo_placed(placed, sample, e)
                 raise
-            self._discard_replaced(placed)
+            self._keep_replaced(placed, sample, archived_to)
 
         # Write audit log
+        if replacing:
+            self._log_replaced(sample, sample, earlier, archived_to)
         self._log_event("register", sample, category, method_hash)
 
         return dest_paths
@@ -1184,7 +1197,9 @@ class AnalysisRegistry:
         with self._locked() as lock:
             registry = self._read_registry(set_aside_unreadable=True)
             self._set_approved_header(registry)
+            earlier = registry["entries"].get(entry_key)
             placed: List[Tuple[Path, Optional[Path]]] = []
+            summary_placed: List[Tuple[Path, Optional[Path]]] = []
             try:
                 staged = self._staging_path(counts_path.name)
                 try:
@@ -1194,20 +1209,32 @@ class AnalysisRegistry:
                     _unlink_quietly(staged)
                 lock.touch()
 
+                # The region summary is DERIVED (one TOTAL row per sample,
+                # rebuilt from the per-sample counts), so the copy it
+                # replaces is dropped, not archived: the earlier counts are
+                # kept in the archived per-sample CSV and the log line.
                 staged = self._staging_path(summary_path.name)
                 try:
                     self._update_region_summary(sample, base_reg, roi_results, out_path=staged)
-                    self._place(staged, summary_path, placed, move=True)
+                    self._place(staged, summary_path, summary_placed, move=True)
                 finally:
                     _unlink_quietly(staged)
 
+                self._set_earlier_aside(earlier, {counts_path}, placed)
+                replacing = self._replaces(earlier, entry, placed)
+                archived_to = self._archive_stamp() if replacing else None
+                if replacing:
+                    entry["replaced_entry"] = self._replaced_pointer(earlier, archived_to)
                 registry["entries"][entry_key] = entry
                 self._write_registry(registry, refresh_header=False)
             except BaseException as e:
-                self._undo_placed(placed, sample, e)
+                self._undo_placed(placed + summary_placed, sample, e)
                 raise
-            self._discard_replaced(placed)
+            self._keep_replaced(placed, sample, archived_to)
+            self._discard_replaced(summary_placed)
 
+        if replacing:
+            self._log_replaced(sample, entry_key, earlier, archived_to)
         self._log_event("register_roi_counts", sample, region, method_hash)
         return counts_path
 
@@ -1301,10 +1328,128 @@ class AnalysisRegistry:
 
     @staticmethod
     def _discard_replaced(placed: List[Tuple[Path, Optional[Path]]]) -> None:
-        """The manifest now describes the new files: drop the kept earlier ones."""
+        """The manifest now describes the new files: drop the kept earlier
+        ones. Used only for the DERIVED region summary; every other replaced
+        file goes through _keep_replaced."""
         for _dest, kept in placed:
             if kept is not None:
                 _unlink_quietly(kept)
+
+    # -----------------------------------------------------------------
+    # Replacing a current entry keeps it, as invalidate does
+    # -----------------------------------------------------------------
+    # WHY: registering a sample again used to overwrite its entry in
+    # registry.json and DELETE the files it replaced, so a re-run (with other
+    # parameters, say) left the earlier counts, parameters and files
+    # nowhere -- the audit log got only a "register" line with the new
+    # hash. Retiring an entry through invalidate keeps both (files in
+    # _archived/<time>/ beside them, the entry's record in an
+    # "invalidate_entry" log line); replacing one now does the same:
+    #   * every file the new registration writes over, and every listed
+    #     file of the earlier entry the new one does not list, is moved to
+    #     _archived/<time>/ beside where it was (never deleted);
+    #   * a "replace_entry" log line holds the earlier entry's record
+    #     (results, method hash, parameters, source files, archived_to);
+    #   * the new entry carries "replaced_entry": when the earlier one was
+    #     registered, its method hash and results, and where its files went.
+    # A registration identical to the current entry (same method hash, same
+    # results, same outputs, files with the same bytes) replaces nothing:
+    # the 2D window registers an image's results on every save, and
+    # archiving an identical copy each time would fill _archived/ with
+    # duplicates.
+
+    def _set_earlier_aside(self, earlier: Optional[Dict[str, Any]], new_dests,
+                           placed: List[Tuple[Path, Optional[Path]]]) -> None:
+        """Move the CURRENT earlier entry's listed outputs that the new
+        registration does not write over into logs/ for now (recorded in
+        *placed*, so a failed registration puts them back), so the active
+        folder holds exactly what the new entry names."""
+        if not earlier or not earlier.get("is_current", True):
+            return
+        new_dests = {Path(d) for d in new_dests}
+        for rel in (earlier.get("outputs") or {}).values():
+            src = Path(rel)
+            if not src.is_absolute():
+                src = self.registry_root / src
+            if src in new_dests or not src.is_file():
+                continue
+            kept = self._staging_path("replaced-" + src.name)
+            _move_file(src, kept)
+            placed.append((src, kept))
+
+    @staticmethod
+    def _replaces(earlier: Optional[Dict[str, Any]], entry: Dict[str, Any],
+                  placed: List[Tuple[Path, Optional[Path]]]) -> bool:
+        """True when *entry* replaces a current earlier entry with something
+        different (see the note above _set_earlier_aside)."""
+        if not earlier or not earlier.get("is_current", True):
+            return False
+        if (earlier.get("method_hash") != entry.get("method_hash")
+                or _canonical(earlier.get("results")) != _canonical(entry.get("results"))
+                or (earlier.get("outputs") or {}) != (entry.get("outputs") or {})):
+            return True
+        return any(kept is not None and not _same_bytes(dest, kept)
+                   for dest, kept in placed)
+
+    @staticmethod
+    def _archive_stamp() -> str:
+        """The _archived/<time> folder name of one replacement (the same
+        form invalidate uses)."""
+        return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    @staticmethod
+    def _replaced_pointer(earlier: Dict[str, Any], archived_to: str) -> Dict[str, Any]:
+        """What the new entry says about the one it replaced; the full record
+        is in the "replace_entry" log line."""
+        return {
+            "registered_at": earlier.get("registered_at"),
+            "method_hash": earlier.get("method_hash"),
+            "results": earlier.get("results"),
+            "archived_to": "_archived/%s" % archived_to,
+        }
+
+    def _keep_replaced(self, placed: List[Tuple[Path, Optional[Path]]], sample: str,
+                       archived_to: Optional[str]) -> None:
+        """The manifest now describes the new files: move each kept earlier
+        file to <its folder>/_archived/<archived_to>/. With no *archived_to*
+        (nothing was replaced), a kept copy holding the same bytes as the
+        file now in place is dropped -- it is a duplicate -- and one that
+        differs (a file no entry named) is archived all the same.
+
+        A kept file that cannot be archived is left where it is in logs/
+        (never deleted), and a [!] line and the audit log name it."""
+        stamp = archived_to
+        for dest, kept in placed:
+            if kept is None:
+                continue
+            if stamp is None and _same_bytes(dest, kept):
+                _unlink_quietly(kept)
+                continue
+            if stamp is None:
+                stamp = self._archive_stamp()
+            target = _free_name(dest.parent / "_archived" / stamp / dest.name)
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                _rename_only(kept, target)
+            except OSError as e:
+                problem = ("the earlier %s could not be moved to %s (%s); it is kept "
+                           "as %s" % (dest.name, target, e, kept))
+                print("  [!] %s: %s" % (sample, problem))
+                self._log_event("replace_not_archived", sample, str(dest), problem)
+
+    def _log_replaced(self, sample: str, key: str, earlier: Dict[str, Any],
+                      archived_to: str) -> None:
+        """One "replace_entry" line holding the replaced entry's record, as
+        invalidate writes "invalidate_entry"; printed instead when it cannot
+        be written, since the manifest no longer holds that record."""
+        retired = dict(earlier)
+        retired["invalidated_at"] = datetime.now().isoformat()
+        record = self._retired_record(retired, archived_to)
+        problem = self._log_event("replace_entry", sample, key, record)
+        if problem:
+            print("  [!] %s was replaced, but its record could not be written to "
+                  "logs/%s.log (%s). Its record is: %s"
+                  % (key, self.analysis_name, problem, record))
 
     def _update_region_summary(
         self,
@@ -1862,6 +2007,34 @@ def _same_file(a: Path, b: Path) -> bool:
         return os.path.samefile(str(a), str(b))
     except OSError:
         return False
+
+
+def _same_bytes(a: Path, b: Path) -> bool:
+    """True when both files exist and hold the same bytes."""
+    import filecmp
+    try:
+        return filecmp.cmp(str(a), str(b), shallow=False)
+    except OSError:
+        return False
+
+
+def _canonical(value: Any) -> str:
+    """A value as sorted JSON, so results read back from the manifest
+    compare equal to the same results about to be written."""
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def _free_name(path: Path) -> Path:
+    """*path*, or *path* with _2, _3 ... before its suffix when a file of
+    that name is already there (two replacements in the same second)."""
+    if not path.exists():
+        return path
+    n = 2
+    while True:
+        candidate = path.with_name("%s_%d%s" % (path.stem, n, path.suffix))
+        if not candidate.exists():
+            return candidate
+        n += 1
 
 
 def _unlink_quietly(path: Path) -> None:

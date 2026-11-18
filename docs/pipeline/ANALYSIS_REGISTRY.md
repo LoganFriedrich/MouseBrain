@@ -289,11 +289,55 @@ cut, ended in Task Manager) in the middle of placing its files. Then the
 sample's file may already be the new one while its entry still describes the
 earlier run; the file it replaced is in `logs/`, named
 `.<analysis>.<code>.replaced-<file name>.part`. To repair it, register that
-sample again. Once nothing is registering, any file in `logs/` whose name
-starts with `.<analysis>.` is such a leftover and may be deleted.
+sample again. Once nothing is registering, a file in `logs/` whose name
+starts with `.<analysis>.` is such a leftover: a `replaced-` one holds an
+earlier result, so move it into the `_archived/` folder beside the file it
+replaced rather than deleting it; the others may be deleted.
 
 The new results are still in the pipeline step's own output folder. Once the
 cause is fixed, run the step (or its registration) again for those samples.
+
+## Registering a sample again keeps the entry it replaces
+
+When a sample that already has a current entry is registered again with a
+different result (a re-run with other parameters, a re-export of its image,
+new ROI counts), the earlier entry is kept, the same way invalidating keeps
+it:
+
+- every file the new registration writes over, and every file the earlier
+  entry listed that the new one does not, is moved to an `_archived/<time>/`
+  folder beside where it was. Nothing is deleted.
+- `logs/<analysis>.log` gets a `replace_entry` line. Its last
+  (tab-separated) column is JSON holding what the earlier entry said:
+  `results`, `method_hash`, `method_params`, `source_files`,
+  `registered_at`, `invalidated_at` (when it was replaced) and `archived_to`.
+- the new entry in `registry.json` has a `replaced_entry` field: when the
+  earlier entry was registered, its method hash, its results and the
+  `_archived/<time>` folder its files went to.
+
+WHY: a re-run used to overwrite the entry and delete the files it replaced,
+so the earlier counts and the parameters that produced them were kept
+nowhere; the log had only a `register` line with the new hash.
+
+A registration that is identical to the current entry -- the same method
+hash, the same results and files with exactly the same contents -- replaces
+nothing: no archive folder, no `replace_entry` line. (The 2D window
+registers an image's results each time they are saved; without this, every
+save would archive another identical copy.)
+
+The per-region ROI summary (`roi_summary_<region>.csv`) is not archived when
+it is rewritten: it is built from the per-sample counts, and the earlier
+per-sample counts file is archived.
+
+If a replaced file cannot be moved to `_archived/` once the new entry has
+been written (it is open in another program), it is left in `logs/` under a
+name starting `.<analysis>.` and ending `.part`, and you see
+`[!] <sample>: the earlier <file> could not be moved to ... it is kept as
+...`; the same text is written to the log as a `replace_not_archived` line.
+Move that file into the `_archived/<time>/` folder named in the message by
+hand. If the `replace_entry` line cannot be written, the record is printed
+as `[!] <key> was replaced, but its record could not be written ...`: copy
+it into a text file beside the log, because it is then the only copy.
 
 ## Invalidating results
 
