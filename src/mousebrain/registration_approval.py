@@ -115,6 +115,15 @@ and nothing is written. Use current_registration_id() for that record.
                                      ``_archive/`` with the registration they
                                      were for
   * withdraw()                   -- take an approval back without rejecting
+
+COUNTS EXIST ONLY FOR AN APPROVED REGISTRATION
+Region counts are cells placed in the regions of one registration's atlas
+fit. Step 6 counts a brain only while approval_state() says APPROVED, and the
+brain's counts leave production -- its rows in region_counts.csv /
+elife_counts.csv and its 3D_Region_Counts entry in the analysis registry
+(withdraw_counts_from_production) -- when reject() turns the registration
+down, when withdraw() takes its approval back, when a re-crop makes it out of
+date (crop_subprocess.swap_in) and when step 3 archives it to register again.
 """
 
 import getpass
@@ -669,7 +678,38 @@ def reject(reg_folder, rejected_by: Optional[str] = None, note: str = "",
         "registration_id": fingerprint_id(current),
     }
     _write_atomic(reg / REJECTION_MARKER, json.dumps(record, indent=1))
+    # The rejection is recorded first: it is the person's decision and must
+    # stand whatever happens next. Then the brain's counts -- regions of the
+    # atlas fit just turned down -- leave the production count tables and the
+    # analysis registry (withdraw_counts_from_production says why).
+    withdraw_counts_from_production(reg, "registration rejected by %s" % record["rejected_by"])
     return record
+
+
+def withdraw_counts_from_production(reg_folder, reason: str) -> None:
+    """Take the brain's region counts out of production: its rows in
+    region_counts.csv / elife_counts.csv and its ``3D_Region_Counts`` entry
+    in the analysis registry (mousebrain.region_counts_io.withdraw_counts).
+
+    WHY: counts are cells placed in the regions of ONE registration's atlas
+    fit. When that registration is rejected, its approval is taken back, or
+    a re-crop makes it out of date, the counts describe a fit that no longer
+    stands for the brain, and step 6 counts only an approved registration.
+    Before, rejecting a registration withdrew nothing: the brain's counts
+    stayed in the tables and the registry, and an integrator imported them
+    as current. The brain gets fresh counts by being registered (if needed),
+    approved, and counted again (``6_count_regions.py --all`` picks it up).
+
+    Never raises: the event that called it (a rejection a person made, a
+    crop that is already in place) is done and must not be undone or hidden
+    by a problem here; that problem is printed with what to do."""
+    try:
+        from mousebrain.region_counts_io import withdraw_counts_or_warn
+        withdraw_counts_or_warn(_reg(reg_folder).parent.name, reason)
+    except Exception as e:  # the import itself (a broken installation)
+        print("    [!] The counts of %s could NOT be withdrawn (%s): %s. Count the brain "
+              "again (step 6) once its registration is approved."
+              % (_reg(reg_folder).parent.name, reason, e))
 
 
 def _move_marker(reg: Path, label: str, name: str = APPROVAL_MARKER) -> Optional[Path]:
@@ -696,5 +736,10 @@ def retire_for_new_registration(reg_folder) -> Optional[Path]:
 def withdraw(reg_folder, reason: str = "rejected") -> Optional[Path]:
     """Take an approval back: it goes into ``_archive/`` -- kept, not
     deleted -- and the brain is unapproved. To turn the registration DOWN use
-    reject(), which also records that it was turned down."""
-    return _move_marker(_reg(reg_folder), "withdrawn_" + reason)
+    reject(), which also records that it was turned down. The brain's counts
+    leave production too (withdraw_counts_from_production): step 6 counts
+    only an approved registration."""
+    moved = _move_marker(_reg(reg_folder), "withdrawn_" + reason)
+    if moved is not None:
+        withdraw_counts_from_production(reg_folder, "approval withdrawn (%s)" % reason)
+    return moved

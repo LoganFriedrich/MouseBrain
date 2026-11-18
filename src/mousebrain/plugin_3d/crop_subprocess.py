@@ -17,7 +17,9 @@ untouched (or, if it stops during the swap itself, a crop folder without
 metadata.json, which every reader shows as "not cropped").
 
 A re-crop makes the registration fitted to the earlier crop OUT OF DATE (see
-mousebrain.registration_approval): the brain is back at "Register".
+mousebrain.registration_approval): the brain is back at "Register",
+and its region counts leave the production count tables and the analysis
+registry at once (swap_in does it), not when the brain is next registered.
 
 EVERY tool that writes a crop uses this rule (new_partial() + swap_in()):
 this napari crop, step 2's --auto-crop, util_apply_crop_from_reference.py and
@@ -83,7 +85,44 @@ def swap_in(output_folder: Path, partial: Path) -> Path:
     for p in new:
         os.replace(str(p), str(output_folder / p.name))
     partial.rmdir()
+    _withdraw_counts_if_registration_out_of_date(output_folder.parent)
     return archive
+
+
+def _withdraw_counts_if_registration_out_of_date(brain_folder: Path) -> None:
+    """After a new crop is in place: if the brain's registration is now OUT OF
+    DATE (fitted to images made before this crop), its region counts leave
+    production (registration_approval.withdraw_counts_from_production).
+
+    WHY: the counts were made from the atlas fit to the earlier crop. Before,
+    they stayed in region_counts.csv / elife_counts.csv and the analysis
+    registry until the brain was registered again (and the registry entry
+    even after that), so an integrator imported them as current. Decided by
+    the one rule every reader uses, approval_state(), never by which crop
+    folder was written: a re-crop of a folder the registration was NOT
+    fitted to (the automatic crop of a brain registered on its manual crop)
+    leaves the registration as it was and its counts in place.
+
+    Imported here, not at the top: this module stays importable without the
+    rest of the package (see the module docstring). Never raises: the crop
+    is already in place."""
+    reg = Path(brain_folder) / "3_Registered_Atlas"
+    if not (reg / "brainreg.json").is_file():
+        return
+    try:
+        from mousebrain.registration_approval import (
+            OUT_OF_DATE, approval_state, withdraw_counts_from_production)
+        # Only OUT_OF_DATE: that is what a re-crop does to a registration. A
+        # registration that was merely waiting for approval before the crop
+        # is not changed by it, and this event is no reason to touch its
+        # brain's counts.
+        state, why = approval_state(reg)
+        if state == OUT_OF_DATE:
+            withdraw_counts_from_production(reg, "re-cropped; the registration is %s" % why)
+    except Exception as e:
+        print("    [!] Could not check whether %s's counts are still current after the "
+              "re-crop: %s. If its registration is no longer approved, count the brain "
+              "again after registering and approving it." % (Path(brain_folder).name, e))
 
 
 def apply_signal_choice(crop_meta: dict, crop_data: dict) -> None:

@@ -141,39 +141,150 @@ def _summary_copies(summary_dir: Path, brain_folder: str) -> List[Path]:
     return out
 
 
-def withdraw_counts(brain_folder: str, reason: str, summary_dir=None) -> List[str]:
-    """Take a brain's counts out of the production tables because what they
-    were made from has been replaced.
+# The analysis-registry name step 6 enters a brain's counts under
+# (6_count_regions.REGISTRY_ANALYSIS); each entry's sample is the brain
+# folder's name.
+REGISTRY_ANALYSIS = "3D_Region_Counts"
 
-    WHY: region_counts.csv and elife_counts.csv are what an integrator pulls.
-    When a brain's registration was archived (step 3 registers it again) or
-    its classification was replaced (step 5, a promotion), its row stayed in
-    them until somebody counted the brain again -- counts of a registration or
-    a classification that no longer stands for the brain, indistinguishable
-    from current ones. The status readers already showed the counts stale;
-    the tables did not.
+_DEFAULT = object()
 
-    What happens: the brain's row in each table moves to that table's archive
-    (``archived_at`` and ``withdrawn_reason`` added; archived, never deleted),
-    and step 6's per-brain copy in the summary folder is renamed
-    ``<name>.withdrawn-<time>.csv`` beside it, so it is no longer a
-    ``*_counts.csv`` an integrator imports. The brain's own
-    ``6_Region_Analysis`` files are left where they are (the status readers
-    show them stale). Counting the brain again puts a fresh row back.
+
+def _registry_manifest(registry_root) -> Optional[Path]:
+    """registry.json of the region-count analysis, or None when there is none.
+
+    The root is MouseBrain's own registry (analysis_registry.default_registry_root
+    unless given). An AnalysisRegistry is never built just to look: building
+    one creates its folders, and an empty ``exports/3D_Region_Counts`` would
+    show up as an analysis with nothing in it to whoever mirrors the registry."""
+    if registry_root is _DEFAULT:
+        from mousebrain.analysis_registry import default_registry_root
+        registry_root = default_registry_root()
+    if not registry_root:
+        return None
+    manifest = Path(registry_root) / "exports" / REGISTRY_ANALYSIS / "registry.json"
+    return manifest if manifest.is_file() else None
+
+
+def _registry_entry_current(manifest: Optional[Path], brain_folder: str) -> bool:
+    """Whether the region-count registry holds a CURRENT entry for this brain.
+    A manifest that cannot be read counts as yes: invalidate() then says what
+    is wrong with it, instead of the brain's entry being passed over."""
+    if manifest is None:
+        return False
+    import json
+    try:
+        entries = (json.loads(manifest.read_text(encoding="utf-8")) or {}).get("entries") or {}
+    except (OSError, ValueError, AttributeError):
+        return True
+    return any(e.get("sample") == brain_folder and e.get("is_current", True)
+               for e in entries.values() if isinstance(e, dict))
+
+
+def _withdraw_registry_entry(manifest: Optional[Path], brain_folder: str) -> List[str]:
+    """Invalidate the brain's current region-count registry entry (its files
+    move to ``_archived/<time>/`` in the registry, the entry is marked not
+    current). Raises when the entry could not be invalidated, so the caller
+    says so: an entry left current is mirrored by an integrator as the
+    brain's counts."""
+    if not _registry_entry_current(manifest, brain_folder):
+        return []
+    from mousebrain.analysis_registry import AnalysisRegistry
+    registry = AnalysisRegistry(analysis_name=REGISTRY_ANALYSIS,
+                                registry_root=manifest.parents[2],
+                                follows_approved_method=False)
+    registry.invalidate(sample=brain_folder, include_own_folder=True)
+    if _registry_entry_current(manifest, brain_folder):
+        raise RuntimeError("its entry in the analysis registry (%s) is still current: "
+                           "its files could not all be moved aside (see the [!] lines "
+                           "above)" % manifest)
+    return ["analysis registry entry (%s)" % REGISTRY_ANALYSIS]
+
+
+def _withdraw_tables(summary_dir: Path, brain_folder: str, reason: str, stamp) -> List[str]:
+    """Move the brain's rows out of the count tables and its summary-folder
+    copy aside. The caller holds counts_tables_lock."""
+    done = []
+    for table, archive in COUNT_TABLES:
+        path = summary_dir / table
+        if not path.exists():
+            continue
+        header, rows = _read_table(path)
+        out = [r for r in rows if _same_brain(r.get("brain"), brain_folder)]
+        if not out:
+            continue
+        for r in out:
+            r["archived_at"] = stamp.isoformat()
+            r["withdrawn_reason"] = reason
+        append_archive_rows(summary_dir / archive, out)
+        write_rows_atomic(path, header,
+                          [r for r in rows if not _same_brain(r.get("brain"), brain_folder)])
+        done.append(table)
+    for copy in _summary_copies(summary_dir, brain_folder):
+        aside = copy.with_name("%s.withdrawn-%s.csv" % (copy.stem, stamp.strftime("%Y%m%d_%H%M%S")))
+        os.replace(copy, aside)
+        done.append(copy.name)
+    return done
+
+
+def withdraw_counts(brain_folder: str, reason: str, summary_dir=None,
+                    registry_root=_DEFAULT, lock_held: bool = False) -> List[str]:
+    """Take a brain's counts out of the production tables AND out of
+    MouseBrain's analysis registry, because what they were made from no
+    longer stands for the brain.
+
+    WHY: region_counts.csv and elife_counts.csv are what an integrator pulls,
+    and the registry's ``3D_Region_Counts`` entries are what it mirrors. When
+    a brain's registration was archived (step 3 registers it again), rejected
+    by a person, or made out of date by a re-crop, or its classification was
+    replaced (step 5, a promotion), its counts stayed in all three until
+    somebody counted the brain again -- counts of a registration or a
+    classification that no longer stands for the brain, indistinguishable
+    from current ones. Withdrawing only the tables (as an earlier version
+    did) left the registry entry current, so the integrator kept mirroring
+    it.
+
+    What happens:
+      * the brain's row in each table moves to that table's archive
+        (``archived_at`` and ``withdrawn_reason`` added; archived, never
+        deleted);
+      * step 6's per-brain copy in the summary folder is renamed
+        ``<name>.withdrawn-<time>.csv`` beside it, so it is no longer a
+        ``*_counts.csv`` an integrator imports;
+      * the brain's current ``3D_Region_Counts`` registry entry is
+        invalidated: its files move to the registry's ``_archived/<time>/``
+        and the entry is marked not current (AnalysisRegistry.invalidate).
+    The brain's own ``6_Region_Analysis`` files are left where they are (the
+    status readers show them stale). Counting the brain again puts a fresh
+    row and a fresh registry entry back; ``6_count_regions.py --all`` counts
+    every brain that has an approved registration and no row in
+    region_counts.csv, so a withdrawn brain is picked up by it.
+
+    All of it happens while holding the count-tables lock
+    (counts_tables_lock), the same lock step 6 holds while it checks that
+    what it counted is still the brain's and writes its rows and registry
+    entry. So a withdrawal and a count can never interleave: either the
+    count lands first and is then withdrawn, or the withdrawal lands first
+    and the count sees the change and writes nothing. ``lock_held``: the
+    caller already holds that lock (step 6 undoing its own half-written
+    count); it is not taken again (the lock is not re-entrant).
 
     ``brain_folder`` is the brain folder's name; a table row matches when its
-    ``brain`` is that name or ``<mouse>/<that name>``. ``summary_dir`` defaults
-    to the configured 2_Data_Summary. Nothing is locked or written when the
-    brain has no counts there. Returns what was withdrawn (file names).
+    ``brain`` is that name or ``<mouse>/<that name>``. ``summary_dir``
+    defaults to the configured 2_Data_Summary; ``registry_root`` to
+    MouseBrain's registry root (None: no registry is looked at). Nothing is
+    locked or written when the brain has no counts in any of them. Returns
+    what was withdrawn. Raises when something could not be withdrawn (see
+    withdraw_counts_or_warn).
     """
     if summary_dir is None:
         from mousebrain import config
         summary_dir = config.DATA_SUMMARY_DIR
     summary_dir = Path(summary_dir)
-    if not summary_dir.is_dir():
-        return []
+    manifest = _registry_manifest(registry_root)
 
-    def present() -> bool:
+    def in_tables() -> bool:
+        if not summary_dir.is_dir():
+            return False
         for table, _archive in COUNT_TABLES:
             path = summary_dir / table
             if path.exists() and any(_same_brain(r.get("brain"), brain_folder)
@@ -181,47 +292,44 @@ def withdraw_counts(brain_folder: str, reason: str, summary_dir=None) -> List[st
                 return True
         return bool(_summary_copies(summary_dir, brain_folder))
 
-    if not present():
+    # The registry is checked whatever the tables say: a brain whose row
+    # already left the tables can still have a current registry entry.
+    if not in_tables() and not _registry_entry_current(manifest, brain_folder):
         return []
 
-    done = []
-    stamp = datetime.now()
-    with counts_tables_lock(summary_dir / COUNT_TABLES[0][0]):
-        for table, archive in COUNT_TABLES:
-            path = summary_dir / table
-            if not path.exists():
-                continue
-            header, rows = _read_table(path)
-            out = [r for r in rows if _same_brain(r.get("brain"), brain_folder)]
-            if not out:
-                continue
-            for r in out:
-                r["archived_at"] = stamp.isoformat()
-                r["withdrawn_reason"] = reason
-            append_archive_rows(summary_dir / archive, out)
-            write_rows_atomic(path, header,
-                              [r for r in rows if not _same_brain(r.get("brain"), brain_folder)])
-            done.append(table)
-        for copy in _summary_copies(summary_dir, brain_folder):
-            aside = copy.with_name("%s.withdrawn-%s.csv" % (copy.stem, stamp.strftime("%Y%m%d_%H%M%S")))
-            os.replace(copy, aside)
-            done.append(copy.name)
+    def work() -> List[str]:
+        done = []
+        if summary_dir.is_dir():
+            done += _withdraw_tables(summary_dir, brain_folder, reason, datetime.now())
+        done += _withdraw_registry_entry(manifest, brain_folder)
+        return done
+
+    if lock_held or not summary_dir.is_dir():
+        # No summary folder: nothing of the tables to guard (and the lock
+        # would have to create the folder in a lab tree to sit in it).
+        done = work()
+    else:
+        with counts_tables_lock(summary_dir / COUNT_TABLES[0][0]):
+            done = work()
     if done:
         print("    Counts of %s withdrawn from %s (%s); count the brain again to "
               "restore them." % (brain_folder, ", ".join(done), reason))
     return done
 
 
-def withdraw_counts_or_warn(brain_folder: str, reason: str, summary_dir=None) -> List[str]:
+def withdraw_counts_or_warn(brain_folder: str, reason: str, summary_dir=None,
+                            registry_root=_DEFAULT) -> List[str]:
     """withdraw_counts for a step whose own work is already done: a problem
-    (the tables locked by a run that does not finish ...) is printed with what
-    to do, never raised, so it cannot undo or hide that work."""
+    (the tables locked by a run that does not finish, a registry file that
+    would not move ...) is printed with what to do, never raised, so it
+    cannot undo or hide that work."""
     try:
-        return withdraw_counts(brain_folder, reason, summary_dir)
+        return withdraw_counts(brain_folder, reason, summary_dir, registry_root)
     except Exception as e:
-        print("    [!] The counts of %s could NOT be withdrawn from region_counts.csv / "
-              "elife_counts.csv: %s. They are out of date (%s); count the brain again "
-              "(step 6) to replace them." % (brain_folder, e, reason))
+        print("    [!] The counts of %s could NOT all be withdrawn from region_counts.csv / "
+              "elife_counts.csv / the analysis registry (%s): %s. They are out of date "
+              "(%s); count the brain again (step 6) to replace them."
+              % (brain_folder, REGISTRY_ANALYSIS, e, reason))
         return []
 
 
