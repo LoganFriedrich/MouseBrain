@@ -479,9 +479,9 @@ The file lives at `<MouseBrain_Pipeline>/2D_Slices/2_Data_Summary/calibration_ru
 **Saving it from a spreadsheet program.** Saving the file as "CSV UTF-8" puts an
 invisible mark (a byte-order mark) in front of the first column name. The tracker
 reads past that mark, so every run is still found by its `run_id`, and the next
-change the tracker writes removes it. Before this change the mark made the tracker
-add a second, empty `run_id` column and then find none of the existing runs (status
-updates, marking best, the batch's look-up of marked runs all missed them). A file
+change the tracker writes removes it. The mark therefore never makes the tracker
+add a second, empty `run_id` column or lose track of existing runs (status
+updates, marking best and the batch's look-up of marked runs all find them). A file
 left that way -- `run_id` twice in the header, the second copy empty -- is repaired
 the next time the tracker is opened: the two columns become one, each row keeping
 its id. If a row holds two DIFFERENT values under one repeated column name, the
@@ -564,7 +564,7 @@ waiting for its 1.5 seconds is recorded at once when you run another particle
 analysis, move to another image, or close napari. If its row cannot be written (the
 file is open in a spreadsheet program), the status bar says
 `[!] Re-classification saved to particles.csv but not recorded in the tracker (...)`.
-Before this change re-classifying left no row at all, so an older `particles.csv`
+A re-classification that fails to record leaves no row, so an older `particles.csv`
 may hold a classification that no row describes.
 
 A program that asks the tracker to record a result under a name that is not one of
@@ -644,8 +644,8 @@ insets), colocalization (single- and dual-channel) and particle analysis.
 - If napari is closed while the file is still held open, the kept results are lost
   with the window: their rows stay `started` and the console names them (see "A
   row stays `started`" above). Those runs have to be run again to be recorded.
-  (Before this change every such row stayed `started`, even after the spreadsheet
-  was closed.)
+  (Once the spreadsheet is closed, the window writes the kept result on its next
+  try, so such a row does not stay `started`.)
 
 **When the napari window cannot write a NEW colocalization row** (the file refuses
 the new line, most often because it is open in a spreadsheet program), the
@@ -656,8 +656,8 @@ click Colocalize again. (Detection behaves the same way: it says `Failed to star
 detection` and does not run. So does Run Particle Analysis: a message box and the
 status bar say `Particle analysis not started: the calibration tracker refused its
 row (<the reason>)`, nothing is analyzed or saved, and the button can be clicked
-again at once. Before this change the particle analysis ran anyway and saved its
-results with no row and no warning.) A run with no row could never be found,
+again at once. The particle analysis never runs anyway and saves its
+results with no row or warning.) A run with no row could never be found,
 reloaded or marked best later, so it is not run unrecorded.
 
 **When something goes wrong while the window handles a colocalization's result**
@@ -771,16 +771,16 @@ the nuclei that were just replaced, so Run Quantification turns off until you cl
 Colocalize again.
 
 WHY all of this: results are only correct when they are filed under the image they
-were made on. Before this change Browse File switched images without saving or
-clearing, so one image's particles, labels and ROIs could be saved into the next
-image's `_analysis` folder; the Sample ID changed only on Browse File, so tracker rows
-and Quantify exports made after Prev / Next or the queue went under the previous
-image's name; a failed load left the previous image's pixels on screen under the new
-name; two loads could run at once and the older one, finishing last, put its pixels
-under the newer name; and a detection started during a load drew the previous image's
-nuclei on the new one.
+were made on. Browse File saves and clears before it switches images, so one image's
+particles, labels and ROIs are never saved into the next image's `_analysis` folder;
+the Sample ID follows every image change (Browse File, Prev / Next, the queue), so
+tracker rows and Quantify exports go under the image they were made on; a failed
+load clears the previous image's pixels instead of leaving them on screen under the
+new name; only the newest load may put its pixels in the window; and a detection
+started during a load is refused instead of drawing the previous image's nuclei on
+the new one.
 
-**Results made before this change** may carry those mix-ups, and they cannot be found
+**Results made with an older version of the window** may carry those mix-ups, and they cannot be found
 automatically. If you used Prev / Next or the image queue, check the recent tracker
 rows and Quantify exports: each row's `sample_id` must be the image it was made on. An
 `_analysis` folder whose particles do not match its image (for example, particle
@@ -923,9 +923,9 @@ the batch, so no image's results are lost before export. The analysis itself car
 
 **Drawing ROIs.** The image that was open before the batch is first saved to its
 `_analysis` folder and closed: the window then has no image of its own until you
-open one after the batch. (Before this change the batch image's particles were put in
-the window under the previous image's name, and the next save wrote them into that
-image's `_analysis` folder.) For each batch image: draw ROIs, then **Count & Next**
+open one after the batch. (The batch image's particles are never put in
+the window under the previous image's name, so a later save cannot write them into
+that image's `_analysis` folder.) For each batch image: draw ROIs, then **Count & Next**
 (no ROI drawn counts as "no ROI drawn"), or **Skip**. **Previous** goes back; skipping
 an image you already counted keeps its count. While the batch waits for ROIs no
 other image can be opened and Select Batch Folder is refused.
