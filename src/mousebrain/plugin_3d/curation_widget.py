@@ -317,6 +317,43 @@ class CurationWidget(QWidget):
         self.total_label.setText(f"Total: {len(self.candidates)}")
         self.update_stats()
 
+    def forget_answer(self, index):
+        """Take back the mark on one candidate because its answer was NOT saved.
+
+        Called by Setup & Tuning when saving an answer failed (it has told the
+        person why), so the candidate is not shown as answered and is asked
+        again.
+        """
+        for answered in (self.confirmed, self.rejected, self.skipped):
+            answered.discard(index)
+        self.update_stats()
+        if self.candidates is not None:
+            self.update_current_info()
+            self.update_candidate_colors()
+
+    def release(self):
+        """Let go of the candidates (another brain was chosen in Setup & Tuning).
+
+        The candidates were points of the previous brain; answers given on
+        them must never be saved as the new brain's. Choose the new brain's
+        candidates layer and click 'Use Selected Layer' again.
+        """
+        if self.review_mode:
+            self.exit_review_mode()
+        self.candidates = None
+        self.candidates_layer = None
+        self.review_indices = None
+        self.current_index = 0
+        self.confirmed.clear()
+        self.rejected.clear()
+        self.skipped.clear()
+        self.layer_label.setText("Layer: (none -- another brain was selected)")
+        self.layer_label.setStyleSheet("color: gray; font-style: italic;")
+        self.total_label.setText("Total: 0")
+        self.progress_bar.setMaximum(1)
+        self.progress_bar.setValue(0)
+        self.update_stats()
+
     def toggle_review_mode(self):
         """Toggle review mode on/off."""
         if not self.review_mode:

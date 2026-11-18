@@ -5688,76 +5688,52 @@ class TuningWidget(QWidget):
         self.train_non_cells_count_label.setText(f"Non-cells bucket: {non_cells_count} points")
 
     def _on_candidate_confirmed(self, index: int):
-        """Handle candidate confirmation from curation widget.
-
-        The curation widget emits the index of the confirmed candidate.
-        We get the actual coordinates from the curation widget's candidates array.
-        """
-        import numpy as np
-
-        # Get the actual coordinates from the curation widget
-        if not hasattr(self, 'curation_widget') or self.curation_widget is None:
-            print(f"[MouseBrain] Candidate confirmed (index {index}) - no curation widget available")
-            return
-
-        if self.curation_widget.candidates is None:
-            print(f"[MouseBrain] Candidate confirmed (index {index}) - no candidates loaded")
-            return
-
-        if index < 0 or index >= len(self.curation_widget.candidates):
-            print(f"[MouseBrain] Candidate confirmed - index {index} out of range")
-            return
-
-        coords = np.array([self.curation_widget.candidates[index]])
-        print(f"[MouseBrain] Candidate confirmed: index {index}, coords {coords[0]}")
-
-        # Saved at once into the selected brain's answers; a changed answer
-        # moves the point out of the non-cells file (mousebrain.curation_record).
-        saved = self._save_training_label(coords, 'cells')
-        if saved is None:
-            return
-
-        # Log
-        if self.session_doc:
-            self.session_doc.log_event('curation_confirmed', {
-                'index': index,
-                'point': coords.tolist(),
-                'saved': saved,
-            })
+        """C in the curation widget: save 'cell' for that candidate."""
+        self._save_curation_answer(index, 'cells', 'curation_confirmed')
 
     def _on_candidate_rejected(self, index: int):
-        """Handle candidate rejection from curation widget.
+        """X in the curation widget: save 'not a cell' for that candidate."""
+        self._save_curation_answer(index, 'non_cells', 'curation_rejected')
 
-        The curation widget emits the index of the rejected candidate.
-        We get the actual coordinates from the curation widget's candidates array.
+    def _save_curation_answer(self, index: int, label: str, event: str):
+        """Save one curation answer at once into the selected brain's answers.
+
+        The curation widget emits the index of the answered candidate; the
+        point is taken from its candidates array. When the answer cannot be
+        saved -- the candidates belong to another brain, no brain is selected,
+        or the file cannot be written -- the person is told, and the curation
+        widget forgets the mark so the candidate is not shown as answered.
         """
         import numpy as np
 
-        # Get the actual coordinates from the curation widget
-        if not hasattr(self, 'curation_widget') or self.curation_widget is None:
-            print(f"[MouseBrain] Candidate rejected (index {index}) - no curation widget available")
+        cw = getattr(self, 'curation_widget', None)
+        if cw is None:
+            print(f"[MouseBrain] Candidate answered (index {index}) - no curation widget available")
+            return
+        if cw.candidates is None:
+            print(f"[MouseBrain] Candidate answered (index {index}) - no candidates loaded")
+            return
+        if index < 0 or index >= len(cw.candidates):
+            print(f"[MouseBrain] Candidate answered - index {index} out of range")
             return
 
-        if self.curation_widget.candidates is None:
-            print(f"[MouseBrain] Candidate rejected (index {index}) - no candidates loaded")
-            return
+        coords = np.array([cw.candidates[index]])
+        print(f"[MouseBrain] Candidate {label}: index {index}, coords {coords[0]}")
 
-        if index < 0 or index >= len(self.curation_widget.candidates):
-            print(f"[MouseBrain] Candidate rejected - index {index} out of range")
-            return
-
-        coords = np.array([self.curation_widget.candidates[index]])
-        print(f"[MouseBrain] Candidate rejected: index {index}, coords {coords[0]}")
-
-        # Saved at once into the selected brain's answers; a changed answer
-        # moves the point out of the cells file (mousebrain.curation_record).
-        saved = self._save_training_label(coords, 'non_cells')
+        saved = None
+        layer = getattr(cw, 'candidates_layer', None)
+        if layer is None or self._points_layer_is_this_brains(layer):
+            # A changed answer moves the point out of the other file
+            # (mousebrain.curation_record).
+            saved = self._save_training_label(coords, label)
         if saved is None:
+            forget = getattr(cw, 'forget_answer', None)
+            if forget is not None:
+                forget(index)
             return
 
-        # Log
         if self.session_doc:
-            self.session_doc.log_event('curation_rejected', {
+            self.session_doc.log_event(event, {
                 'index': index,
                 'point': coords.tolist(),
                 'saved': saved,
@@ -6034,11 +6010,16 @@ class TuningWidget(QWidget):
         never dropped silently.
         """
         from mousebrain.curation_record import CurationRecord, CurationRecordError
+        if self.training_data_dir is None and self.current_brain:
+            # Not set up for this brain yet (first answer, or the first one
+            # after choosing another brain): set up the selected brain's own
+            # folder now. Answers used to be dropped silently here while the
+            # label still said "Auto-save".
+            self.create_training_layers()
         if self.training_data_dir is None:
             QMessageBox.warning(self, "Answer Not Saved",
-                "This answer was NOT saved: the training layers are not set up "
-                "for the selected brain.\n\nClick 'Create Training Layers', then "
-                "answer again.")
+                "This answer was NOT saved: no brain is selected.\n\n"
+                "Select the brain whose image you are reviewing, then answer again.")
             return None
         record = CurationRecord(self.training_data_dir)
         try:
@@ -6052,6 +6033,35 @@ class TuningWidget(QWidget):
             return None
         self._show_curation_record(record)
         return result
+
+    def _release_curation_for_brain_change(self):
+        """After another brain is chosen: nothing of the last brain's curation stays.
+
+        The 'Auto-save' line and the training folder box go back to "not
+        set" (the next answer sets up the new brain's folder), the training
+        layers are emptied (they showed the last brain's answers; those stay
+        saved in its folder), and the curation widget lets go of its
+        candidates, which were the last brain's points.
+        """
+        import numpy as np
+        label = getattr(self, 'training_path_label', None)
+        if label is not None:
+            label.setText("Training data path: (not set)")
+            label.setStyleSheet("color: gray; font-style: italic;")
+        box = getattr(self, 'training_data_path', None)
+        if box is not None:
+            box.setText("")
+        for role, title in (('train_cells', 'Train: Cells'), ('train_non_cells', 'Train: Non-Cells')):
+            layer = self._get_layer_by_type(role)
+            if layer is not None:
+                layer.data = np.empty((0, 3))
+                layer.name = f"{title} (0)"
+                layer.metadata['source_brain'] = ''
+        if hasattr(self, 'train_cells_count_label'):
+            self.refresh_training_data_counts()
+        cw = getattr(self, 'curation_widget', None)
+        if cw is not None and hasattr(cw, 'release'):
+            cw.release()
 
     def _points_layer_is_this_brains(self, layer) -> bool:
         """False (and the person is told) when a points layer was made for another brain."""
@@ -8422,6 +8432,7 @@ class TuningWidget(QWidget):
             # viewer but are tagged with their brain, and runs refuse to use them.
             from mousebrain.brain_context import reset_per_brain_state
             reset_per_brain_state(self)
+            self._release_curation_for_brain_change()
             for btn_name in ('prefilter_save_btn', 'prefilter_to_training_btn', 'promote_class_btn'):
                 btn = getattr(self, btn_name, None)
                 if btn is not None:

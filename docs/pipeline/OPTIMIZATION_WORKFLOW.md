@@ -133,6 +133,17 @@ keeps the answers like this:
   brain's folder and shows its saved answers in the layers
   "Train: Cells (n)" and "Train: Non-Cells (n)". Those layers always show
   exactly what is saved for the selected brain -- never another brain's points.
+- **Every answer is saved, or you are told it was not.** If "Create Training
+  Layers" has not been clicked for the selected brain, the first C or X sets
+  up that brain's folder by itself and saves the answer there. When an answer
+  cannot be saved, a message "Answer Not Saved" says why, and the candidate
+  is not marked as answered, so it is asked again.
+- **Choosing another brain** (Setup tab) puts the "Training data path" line
+  back to "(not set)", empties the two training layers (the last brain's
+  answers stay saved in its folder) and makes the curation widget let go of
+  its candidates, which were the last brain's points. Select the new brain's
+  candidates layer and click "Use Selected Layer" again. Answers given on a
+  candidates layer made for another brain are refused with a message.
 - **One answer per point, the last one counts.** Every C or X is saved at once.
   If you change an answer (C, then X on the same candidate), the point moves
   from one file to the other; answering the same way twice saves it once. The
