@@ -5744,113 +5744,113 @@ class TuningWidget(QWidget):
                 'saved': saved,
             })
 
-    def add_confirmed_to_training(self):
-        """Add confirmed cells to training bucket.
+    def _points_chosen_for_label(self, label: str):
+        """(layer, points) of the selected points layer to save as ``label``, or None.
 
-        Takes selected points from any points layer and adds them to the
-        'train_cells' bucket layer for later export to training data.
+        The points SELECTED in the layer; with none selected, every point of
+        the layer -- but only after the person confirms it, in a question that
+        says how many points that is and how many of them now carry the other
+        answer (they would be changed). Default: No. WHY: the last answer
+        wins (mousebrain.curation_record), so a click with nothing selected
+        on, say, 'Train: Non-Cells' would otherwise turn every saved
+        rejection of the brain into a cell without a word. A layer recorded
+        as another brain's is refused (_points_layer_is_this_brains). None
+        means nothing is to be saved; the person has been told why.
+        """
+        import napari
+
+        selected_layers = list(self.viewer.layers.selection)
+        if not selected_layers:
+            QMessageBox.warning(self, "No Selection",
+                "Please select a points layer in napari first.")
+            return None
+
+        layer = selected_layers[0]
+        if not isinstance(layer, napari.layers.Points):
+            QMessageBox.warning(self, "Wrong Layer Type",
+                "Please select a Points layer.")
+            return None
+
+        picked = list(getattr(layer, 'selected_data', None) or [])
+        coords = layer.data[sorted(picked)] if picked else layer.data
+        if len(coords) == 0:
+            QMessageBox.warning(self, "No Points",
+                "Layer has no points to add.")
+            return None
+        if not self._points_layer_is_this_brains(layer):
+            return None
+        if picked:
+            return layer, coords
+
+        from mousebrain.curation_record import (
+            CurationRecord, CurationRecordError, brain_folder, point_key)
+        word = {'cells': 'cells', 'non_cells': 'NOT cells'}
+        other = 'non_cells' if label == 'cells' else 'cells'
+        changed_line = ""
+        if self.current_brain:
+            folder = (getattr(self, 'training_data_dir', None)
+                      or brain_folder(MODELS_DIR, Path(self.current_brain).name))
+            try:
+                saved_other = set(CurationRecord(folder).read()[other])
+                n_changed = sum(1 for c in coords if point_key(c) in saved_other)
+                changed_line = (f"{n_changed} of them are now saved as {word[other]}; "
+                                f"their answer would be changed to {word[label]}.\n\n")
+            except CurationRecordError:
+                changed_line = ""  # the save that follows says the file is unreadable
+        reply = QMessageBox.question(
+            self, "Save Every Point of the Layer?",
+            f"No points are selected in '{layer.name}'.\n\n"
+            f"Save ALL {len(coords)} points of this layer as {word[label]}?\n"
+            f"{changed_line}"
+            f"To save only some points, click No, select them in the layer "
+            f"(napari's select mode) and click the button again.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return None
+        return layer, coords
+
+    def add_confirmed_to_training(self):
+        """Save the selected points of a points layer as cells.
+
+        The points selected in the layer, or, after a confirmation, all of
+        its points (_points_chosen_for_label). They are saved into the
+        selected brain's answers; any of them answered 'not a cell' before
+        move to the cells file (the last answer wins).
         """
         print("[DEBUG] Button clicked: add_confirmed_to_training")
-        import napari
-        import numpy as np
-
-        selected_layers = list(self.viewer.layers.selection)
-        if not selected_layers:
-            QMessageBox.warning(self, "No Selection",
-                "Please select a points layer in napari first.")
-            return
-
-        layer = selected_layers[0]
-        if not isinstance(layer, napari.layers.Points):
-            QMessageBox.warning(self, "Wrong Layer Type",
-                "Please select a Points layer.")
-            return
-
-        # Get selected points within the layer (if any)
-        if hasattr(layer, 'selected_data') and len(layer.selected_data) > 0:
-            selected_indices = list(layer.selected_data)
-            coords_to_add = layer.data[selected_indices]
-        else:
-            # If no points selected within layer, use all points
-            coords_to_add = layer.data
-
-        if len(coords_to_add) == 0:
-            QMessageBox.warning(self, "No Points",
-                "Layer has no points to add.")
-            return
-
-        if not self._points_layer_is_this_brains(layer):
-            return
-        # A person chose these points as cells: saved into the selected
-        # brain's answers, moving any of them out of the non-cells file.
-        saved = self._save_training_label(coords_to_add, 'cells')
-        if saved is None:
-            return
-
-        # Log
-        if self.session_doc:
-            self.session_doc.log_event('training_data_added', {
-                'type': 'cells',
-                'count': len(coords_to_add),
-                'source_layer': layer.name,
-                'saved': saved,
-            })
-
-        print(f"[MouseBrain] Added {len(coords_to_add)} points to training cells bucket")
+        self._add_layer_points_to_training('cells')
 
     def add_rejected_to_training(self):
-        """Add rejected cells to training non-cells bucket.
+        """Save the selected points of a points layer as not cells.
 
-        Takes selected points from any points layer and adds them to the
-        'train_non_cells' bucket layer for later export to training data.
+        The points selected in the layer, or, after a confirmation, all of
+        its points (_points_chosen_for_label). They are saved into the
+        selected brain's answers; any of them answered 'cell' before move to
+        the non-cells file (the last answer wins).
         """
         print("[DEBUG] Button clicked: add_rejected_to_training")
-        import napari
-        import numpy as np
+        self._add_layer_points_to_training('non_cells')
 
-        selected_layers = list(self.viewer.layers.selection)
-        if not selected_layers:
-            QMessageBox.warning(self, "No Selection",
-                "Please select a points layer in napari first.")
+    def _add_layer_points_to_training(self, label: str):
+        chosen = self._points_chosen_for_label(label)
+        if chosen is None:
             return
-
-        layer = selected_layers[0]
-        if not isinstance(layer, napari.layers.Points):
-            QMessageBox.warning(self, "Wrong Layer Type",
-                "Please select a Points layer.")
-            return
-
-        # Get selected points within the layer (if any)
-        if hasattr(layer, 'selected_data') and len(layer.selected_data) > 0:
-            selected_indices = list(layer.selected_data)
-            coords_to_add = layer.data[selected_indices]
-        else:
-            # If no points selected within layer, use all points
-            coords_to_add = layer.data
-
-        if len(coords_to_add) == 0:
-            QMessageBox.warning(self, "No Points",
-                "Layer has no points to add.")
-            return
-
-        if not self._points_layer_is_this_brains(layer):
-            return
-        # A person chose these points as not cells: saved into the selected
-        # brain's answers, moving any of them out of the cells file.
-        saved = self._save_training_label(coords_to_add, 'non_cells')
+        layer, coords_to_add = chosen
+        saved = self._save_training_label(coords_to_add, label)
         if saved is None:
             return
 
-        # Log
         if self.session_doc:
             self.session_doc.log_event('training_data_added', {
-                'type': 'non_cells',
+                'type': label,
                 'count': len(coords_to_add),
                 'source_layer': layer.name,
                 'saved': saved,
             })
 
-        print(f"[MouseBrain] Added {len(coords_to_add)} points to training non-cells bucket")
+        bucket = 'cells' if label == 'cells' else 'non-cells'
+        print(f"[MouseBrain] Added {len(coords_to_add)} points to training {bucket} bucket")
 
     def visualize_training_data(self):
         """Visualize existing training data from cellfinder training folders.

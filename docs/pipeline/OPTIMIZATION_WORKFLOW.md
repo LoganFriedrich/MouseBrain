@@ -188,6 +188,13 @@ keeps the answers like this:
   from one file to the other; answering the same way twice saves it once. The
   buttons that add the points of a selected layer to the cells or non-cells
   bucket work the same way, and refuse a layer recorded as another brain's.
+  They save the points you SELECTED in that layer. With no point selected they
+  ask first: "Save ALL N points of this layer as cells?" (or NOT cells), with
+  how many of those points are now saved with the other answer and would be
+  changed. The answer is No unless you click Yes; on No nothing is saved.
+  Saying Yes with, for example, "Train: Non-Cells" chosen and "Add Confirmed
+  to Cells Bucket" clicked turns every saved rejection of the brain into a
+  cell, so read the numbers before you say Yes.
   "Send suspicious to training" (Pre-Filter tab) and "Merge XML batches" only
   add points that have no answer yet: they never change an answer you gave.
 - **Merge XML batches** takes only the selected brain's batches. Batches of
