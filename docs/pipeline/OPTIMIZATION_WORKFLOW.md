@@ -208,9 +208,10 @@ keeps the answers like this:
   Saying Yes with, for example, "Train: Non-Cells" chosen and "Add Confirmed
   to Cells Bucket" clicked turns every saved rejection of the brain into a
   cell, so read the numbers before you say Yes.
-  "Send suspicious to training" (Pre-Filter tab) and "Merge XML batches" only
-  add points that have no answer yet: they never change an answer you gave.
-- **Merge XML batches** takes only the selected brain's batches. Batches of
+  "Suspicious -> Non-Cells Training" (6. Pre-Filter tab) and merging XML
+  batches ("Scan for XML Batches", then "Merge Selected into Training Layers")
+  only add points that have no answer yet: they never change an answer you gave.
+- **Merge Selected into Training Layers** (after "Scan for XML Batches") takes only the selected brain's batches. Batches of
   other brains, and the pool's own older files (`curated_cells.xml` directly in
   `training_data/`, which do not say which brain they came from), are left out
   and named in the message. A point that is a cell in one batch and a non-cell
@@ -242,8 +243,8 @@ keeps the answers like this:
   every time training starts or a brain is exported. Cubes left directly in
   the pool's own `cells/` and `non_cells/` by older versions are still listed;
   they carry no brain in their names, so which brain each came from cannot be
-  checked. "Merge to shared pool" copies a brain's cubes into that brain's
-  folder in the pool, and "Start fresh" deletes the cubes of the pool and of
+  checked. "Merge Selected -> Shared Pool" copies a brain's cubes into that brain's
+  folder in the pool, and "Start Training Data Fresh" deletes the cubes of the pool and of
   every brain folder in it but never the answers files -- export again to cut
   them anew.
 
@@ -313,14 +314,27 @@ command line).
 ## Step 4: Compare to Published Data
 
 ```bash
-# Compare your counts to Wang et al. 2022 eLife reference
+# Compare your counts to Wang et al. 2022 eLife reference (cervical, C4, by default)
 python util_compare_to_published.py --brain YOUR_BRAIN
+
+# Compare with the lumbar (L1) reference instead
+python util_compare_to_published.py --brain YOUR_BRAIN --lumbar
 
 # Just see the reference values
 python util_compare_to_published.py --show-reference
 ```
 
+Run these from the repository's `scripts/utils` folder. By default the script
+compares with the eLife reference for CERVICAL (C4) injections (n=4); add
+`--lumbar` for the L1 reference (n=5). Other options: `--csv <counts file>`
+(compare a counts file instead of a brain), `--all` (also show regions with
+zero counts).
+
 ### Reading the comparison output
+
+Example from `python util_compare_to_published.py --brain YOUR_BRAIN --lumbar`
+(the default cervical reference prints Red Nucleus 610 and Corticospinal 6500
+in the Ref column):
 
 ```
 Region                                        Yours      Ref     Diff   %Match
@@ -366,18 +380,20 @@ ball filter. If over, try the opposite, or check classification.
 
 Every detection run is automatically logged. View your experiment history:
 
+From the repository's `scripts/utils` folder:
+
 ```bash
-# See recent runs
-python experiment_tracker.py
+# See recent runs (the last 20)
+python util_experiments.py recent 20
 
 # See runs for a specific brain
-python experiment_tracker.py --search YOUR_BRAIN
+python util_experiments.py search YOUR_BRAIN
 
 # See best-rated detection runs
-python experiment_tracker.py --best detection
+python util_experiments.py best detection
 
 # See statistics
-python experiment_tracker.py --stats
+python util_experiments.py stats
 ```
 
 ### Rating your runs
@@ -408,7 +424,8 @@ Method" in README.md for what it contains and how to change it.
 
 ## Reference: Published Baseline
 
-From Wang et al. 2022 eLife (L1-injected uninjured, n=5):
+From Wang et al. 2022 eLife (L1-injected uninjured, n=5). These are the
+`--lumbar` values; the script's default reference is cervical (C4, n=4):
 
 | Region | Average | StdDev |
 |--------|---------|--------|
