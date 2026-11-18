@@ -2919,13 +2919,6 @@ class BrainSliceWidget(QWidget):
                 self.quant_btn.setEnabled(True)
                 restored.append(f"measurements ({len(measurements)})")
 
-        # ROI counts. WHY restored: they were saved but never read back, so
-        # after reopening there were none to export or append.
-        detail = load_table("roi_detail.csv", "rois.json")
-        if detail is not None:
-            self._roi_detail_data = detail
-            restored.append("ROI counts")
-
         roi_data = load_json("rois.json")
         if roi_data is not None:
             try:
@@ -2941,6 +2934,16 @@ class BrainSliceWidget(QWidget):
                     restored.append(f"ROIs ({len(rois)})")
             except Exception as e:
                 refuse("rois.json", f"not drawn ({e})")
+
+        # ROI counts. WHY restored: they were saved but never read back, so
+        # after reopening there were none to export or append. WHY after
+        # rois.json: the counts belong to those ROIs, and load_table can
+        # refuse them only once it is known whether rois.json came back --
+        # read first, they were restored even when rois.json was unreadable.
+        detail = load_table("roi_detail.csv", "rois.json")
+        if detail is not None:
+            self._roi_detail_data = detail
+            restored.append("ROI counts")
 
         bg_data = load_json("bg_rois.json")
         if bg_data is not None:

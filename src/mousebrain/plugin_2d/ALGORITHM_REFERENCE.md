@@ -882,7 +882,11 @@ says what and why:
   saved analysis, set the Load tab to what the message names and click **Load**.
 - `[!] Restored for <file>: ... NOT restored: labels.npz unreadable (...)` -- one file
   is damaged, or its outlines are a different size from the image (the image file was
-  replaced). Everything else came back.
+  replaced). Everything else came back -- except what belongs to the damaged file:
+  particles come back only with their outlines (`labels.npz`), measurements only with
+  their nuclei (`nuclei.npz`), and ROI counts (`roi_detail.csv`) only with their ROIs
+  (`rois.json`); the message then says `roi_detail.csv belongs to rois.json, which was
+  not restored`.
 
 - `[!] Saved analysis of <file> only partly restored (...)` -- something went wrong
   while bringing it back. Nothing in the folder is removed or emptied by the next
