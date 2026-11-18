@@ -1388,7 +1388,8 @@ type.
 
   The `<step>` in an `Errors:` line is one of: `read` (reading the file from
   disk), `channels` (taking the two channels out of the image that was
-  read), `detect` (detecting nuclei), `colocalize` (measuring cells),
+  read), `pixel size` (the file records no pixel size; see "The pixel size"
+  below), `detect` (detecting nuclei), `colocalize` (measuring cells),
   `tracker` (writing the tracker) and `save` (saving the outputs). Only
   `channels`, `detect` and `colocalize` can ever be a `sample` failure.
 
@@ -1530,6 +1531,31 @@ magnification; it is a setting, and the code carries no range of its own.
 Changing `size_filter_um` in the approved method makes every earlier entry
 made with the old range show as stale; re-run those samples to bring them
 up to date.
+
+### The pixel size
+
+The diameter range is turned into pixel areas with the pixel size (um per
+pixel) the image FILE records. An image whose file records no pixel size is
+**not analyzed**: its line under `Errors:` reads `[infrastructure failure
+while pixel size] the image file does not record its pixel size ...`, no
+tracker row is written for it, and its earlier registry entry (if any) stays
+current. Export the image again with its calibration and run the batch
+again. WHY: the batch used to measure such an image at 1.0 um per pixel
+without a word, which counts objects of a size nobody chose and records those
+pixel areas as if measured. (The image reader still fills in 1.0 for display
+and marks it `voxel_size_from_file: false`; the batch refuses that too.)
+
+**What "records a pixel size" means for an ND2 file.** The library that reads
+ND2 files never says "no size": a file that was never calibrated reads as
+1.0 um per pixel, the same as a file calibrated at exactly 1.0. So the reader
+does not trust the number alone. It takes the size as the file's own only
+when the file marks its x/y axes as calibrated (the first channel's
+"calibrated" flag) and the size is a positive number; for an older-format
+(legacy) ND2 file it also requires the file's own calibration entry to be a
+positive number. A file with no channel metadata at all counts as
+uncalibrated. Anything else is refused as above. If a file you know is
+calibrated is refused, open it in the microscope software, check that its
+calibration (um per pixel) is set, save or export it again, and re-run.
 
 ### Open question: recording the measurement region
 

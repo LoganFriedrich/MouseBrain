@@ -10,6 +10,7 @@ Usage:
     red, green = extract_channels(data, red_idx=0, green_idx=1)
 """
 
+import math
 from pathlib import Path
 from typing import Tuple, Dict, Any, Optional, List, Union
 import numpy as np
@@ -71,6 +72,12 @@ def load_image(
         Tuple of (image_array, metadata_dict)
         - image_array: shape (C, Y, X) for multi-channel 2D images
         - metadata: dict with voxel_size_um, channels, shape, dtype, etc.
+          voxel_size_um is always filled (1.0 um where the file records no
+          size, so display code keeps working); ``voxel_size_from_file`` says
+          whether the x size really came from the file. WHY the flag: a
+          caller that turns micrometers into pixels (the slice batch) must
+          not measure at a 1.0 the reader made up -- see
+          batch_encr.image_pixel_size_um.
 
     Raises:
         ValueError: If file format is not supported
@@ -97,6 +104,44 @@ def load_image(
                 f"Unsupported image format: {suffix}. "
                 f"Supported formats: .nd2, .tif, .tiff"
             )
+
+
+def _nd2_xy_calibrated(f, x) -> bool:
+    """True only when the ND2 file itself records its x/y pixel size.
+
+    WHY not ``bool(voxel_size().x)``: the nd2 library never reports a missing
+    calibration as empty. Its modern reader returns the channel's
+    axesCalibration without looking at axesCalibrated, or (1, 1, 1) when the
+    file has no metadata or channels; its legacy reader returns
+    ``Calibration or 1`` and builds axesCalibration as 1.0 when Calibration
+    is missing or not positive. So an uncalibrated file reads as 1.0 um/px,
+    and a caller that turns micrometers into pixels (the slice batch) would
+    measure at a size the file never gave. The file's own answer is the
+    calibrated flag of the first channel's volume (both readers fill it: the
+    modern one from the file, the legacy one from its "Calibrated" entry),
+    and for a legacy file also its raw "Calibration" value, which must be a
+    positive number. Anything that cannot be read counts as "not from file":
+    a wrongly refused image is visible and fixable, a wrong scale is not.
+    """
+    try:
+        if not (isinstance(x, (int, float)) and not isinstance(x, bool)
+                and math.isfinite(x) and x > 0):
+            return False
+        meta = f.metadata
+        channels = getattr(meta, 'channels', None)
+        if not channels:
+            return False                       # the library's (1, 1, 1) fallback
+        calibrated = channels[0].volume.axesCalibrated
+        if not calibrated or not bool(calibrated[0]):
+            return False
+        if getattr(f, 'is_legacy', False):
+            raw = f._rdr._frame0_meta().get('Calibration')
+            if not (isinstance(raw, (int, float)) and not isinstance(raw, bool)
+                    and math.isfinite(raw) and raw > 0):
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def _load_nd2(
@@ -133,7 +178,9 @@ def _load_nd2(
             'sizes': dict(sizes),
         }
 
-        # Try to get voxel sizes from nd2 voxel_size() method
+        # Try to get voxel sizes from nd2 voxel_size() method. 1.0 is put in
+        # where the file has none, and voxel_size_from_file says so.
+        metadata['voxel_size_from_file'] = False
         try:
             voxel_size = f.voxel_size()
             if voxel_size:
@@ -143,6 +190,10 @@ def _load_nd2(
                 }
                 if voxel_size.z:
                     metadata['voxel_size_um']['z'] = voxel_size.z
+                metadata['voxel_size_from_file'] = _nd2_xy_calibrated(
+                    f, voxel_size.x)
+            else:
+                metadata['voxel_size_um'] = {'x': 1.0, 'y': 1.0}
         except Exception:
             metadata['voxel_size_um'] = {'x': 1.0, 'y': 1.0}
 
@@ -262,7 +313,9 @@ def _load_tiff(file_path: Path) -> Tuple[np.ndarray, Dict[str, Any]]:
             'shape': data.shape,
             'dtype': str(data.dtype),
             'ndim': data.ndim,
+            # 1.0 until the OME metadata gives a size (see load_image).
             'voxel_size_um': {'x': 1.0, 'y': 1.0},
+            'voxel_size_from_file': False,
         }
 
         # Try to extract OME metadata
@@ -280,6 +333,7 @@ def _load_tiff(file_path: Path) -> Tuple[np.ndarray, Dict[str, Any]]:
                     py = pixels.get('PhysicalSizeY')
                     if px:
                         metadata['voxel_size_um']['x'] = float(px)
+                        metadata['voxel_size_from_file'] = True
                     if py:
                         metadata['voxel_size_um']['y'] = float(py)
 
@@ -344,6 +398,7 @@ def _load_aicsimageio(file_path: Path) -> Tuple[np.ndarray, Dict[str, Any]]:
             'x': img.physical_pixel_sizes.X or 1.0,
             'y': img.physical_pixel_sizes.Y or 1.0,
         },
+        'voxel_size_from_file': bool(img.physical_pixel_sizes.X),
         'channels': list(img.channel_names) if img.channel_names else [
             f"Channel_{i}" for i in range(data.shape[0])
         ],

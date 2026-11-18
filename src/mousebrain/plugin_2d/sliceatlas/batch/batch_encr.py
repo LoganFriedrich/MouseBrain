@@ -21,7 +21,9 @@ any ND2 file the script names the roots it searched and exits 1.
 METHOD (fixed by the code)
   DETECTION:       threshold+LoG, nucleus diameter range from --diameter MIN MAX,
                    else the approved method's size_filter_um (no built-in range;
-                   converted to pixel area per image from its pixel size)
+                   converted to pixel area per image from the pixel size the
+                   image file records -- an image that records none is not
+                   processed, see image_pixel_size_um)
   COLOCALIZATION:  background_mean with a sigma threshold
   BACKGROUND:      gmm (with a percentile fallback)
 
@@ -863,6 +865,39 @@ def failure_is_the_samples(step: str, exc: BaseException) -> bool:
     return isinstance(exc, SAMPLE_DATA_ERRORS)
 
 
+class PixelSizeUnknown(ValueError):
+    """The image file does not record its pixel size."""
+
+
+def image_pixel_size_um(metadata: dict) -> float:
+    """The pixel size (um/px) the image FILE records, or PixelSizeUnknown.
+
+    WHY no fallback: the nucleus diameter range is turned into pixel areas
+    with this number, so it decides which objects count as nuclei. The batch
+    used to take 1.0 um/px when the file gave none, without a word, and
+    recorded the resulting pixel areas in the tracker as if measured. The
+    image readers put 1.0 in themselves when a file has no size and say so
+    with ``voxel_size_from_file: False`` (core/io.py); that is refused here
+    too. Metadata without that flag is taken at its word only when it holds
+    a positive, finite x size.
+    """
+    voxel = metadata.get('voxel_size_um')
+    x = None
+    if isinstance(voxel, dict):
+        x = voxel.get('x')
+    elif isinstance(voxel, (list, tuple)) and voxel:
+        x = voxel[0]
+    ok = (isinstance(x, (int, float)) and not isinstance(x, bool)
+          and math.isfinite(x) and x > 0)
+    if metadata.get('voxel_size_from_file') is False or not ok:
+        raise PixelSizeUnknown(
+            "the image file does not record its pixel size, so the nucleus "
+            "diameter range cannot be turned into pixels; the sample was not "
+            "analyzed. Export the image again with its calibration (pixel "
+            "size) and run the batch again.")
+    return float(x)
+
+
 def process_single(
     nd2_path: Path,
     output_dir: Path,
@@ -974,9 +1009,13 @@ def process_single(
         step = "channels"
         red, green = extract_channels(data, red_idx=RED_IDX, green_idx=GREEN_IDX)
 
-        # Physical size conversion
-        voxel = metadata.get('voxel_size_um', {})
-        pixel_um = voxel.get('x', 1.0) if isinstance(voxel, dict) else voxel[0]
+        # Physical size conversion: the pixel size the FILE records, or no
+        # analysis (image_pixel_size_um). Its own step, not one of
+        # SAMPLE_STEPS: a file without one keeps its earlier registry entry,
+        # because a reader that stopped finding the size says nothing about
+        # the sample.
+        step = "pixel size"
+        pixel_um = image_pixel_size_um(metadata)
         print(f"  Pixel size: {pixel_um:.2f} um/px")
 
         # The pixel-area range the detector derives from the diameters, so the
