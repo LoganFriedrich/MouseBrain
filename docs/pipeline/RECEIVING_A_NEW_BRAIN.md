@@ -55,6 +55,28 @@ def voxel_size(path):
                 (a("ExtMax2") - a("ExtMin2")) / n["Z"])
 ```
 
+How to use it, step by step (MouseBrain has no command that reads the voxel size of
+a file outside the brains folder, so this is the way):
+
+1. Open an Anaconda Prompt and activate the MouseBrain environment
+   (`conda activate <your MouseBrain environment>`); it already has `h5py`.
+2. Type `python` and press Enter. The prompt changes to `>>>`.
+3. Paste the block above and press Enter twice (until `>>>` comes back).
+4. Type `voxel_size(r"<full path to the .ims file>")` and press Enter. It prints
+   three numbers: the voxel size in micrometers along x, y and z.
+5. Do the same for the other file you are comparing with, then type `exit()`.
+
+If it stops with an error (`KeyError`, `OSError`), the file is not an Imaris file with the usual header
+(or the transfer is incomplete); do not put it in the brains folder.
+
+Without any of that, the file size already tells you most of it: in File Explorer, an
+overview is several times smaller than a production scan of the same kind of brain.
+
+(`util_ims_metadata_dump.py` in `scripts/utils` also prints the voxel size, but it only
+lists `.ims` files that are already inside the brains folder, and it writes a
+`<file name>_metadata.txt` beside the file, so it is no use on a file you have staged
+elsewhere.)
+
 Compare the two deliveries against each other, or against a brain you already have.
 A factor of about two in every axis means an overview; the same ballpark means a
 production scan. That is the whole question -- small variation between brains is normal
@@ -127,6 +149,15 @@ a shape the pipeline cannot see.
 
 ## Running the organizer
 
+In an Anaconda Prompt, activate the environment and go to the steps' folder first:
+
+```
+conda activate <your MouseBrain environment>
+cd <path to the MouseBrain repository>\scripts\pipeline
+```
+
+Then:
+
 ```
 python 1_organize_pipeline.py --inspect    # say what would happen, change nothing
 python 1_organize_pipeline.py              # do it
@@ -196,5 +227,6 @@ ones, is in `README.md` under "Running detection before registration".
 Everything above is true of any installation. The parts that are not -- who sends your
 brains and how, which machine and drive they land on, which imaging settings your
 detection is calibrated for, what your remote is called -- are properties of one lab.
-Keep them in your own notes or configuration, not in this repository, and point
-`CONNECTOME_ROOT` at your pipeline folder so the tools know where everything is.
+Keep them in your own notes or configuration, not in this repository, and set
+`CONNECTOME_ROOT` to the folder that CONTAINS `Tissue/MouseBrain_Pipeline` (not the
+pipeline folder itself) so the tools know where everything is.
