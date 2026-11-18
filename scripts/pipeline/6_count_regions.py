@@ -82,7 +82,10 @@ SCRIPT_VERSION = "1.0.1"
 from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, iter_brains, explain_brain_not_found
 from mousebrain.config import DATA_SUMMARY_DIR as SUMMARY_DATA_DIR
 from mousebrain.region_counts_io import (append_archive_row, counts_tables_lock,
-                                         detection_provenance, write_rows_atomic)
+                                         detection_provenance, write_rows_atomic,
+                                         withdraw_counts, _same_brain)
+from mousebrain.registration_approval import (APPROVED, approval_state,
+                                              current_registration_id)
 from mousebrain.config import (
     REGION_COUNTS_CSV, REGION_COUNTS_ARCHIVE_CSV,
     ELIFE_COUNTS_CSV, ELIFE_COUNTS_ARCHIVE_CSV,
@@ -153,29 +156,71 @@ def count_cells_in_xml(xml_path: Path) -> int:
         return 0
 
 
+def has_production_row(brain_folder: str) -> bool:
+    """Whether region_counts.csv holds a row for this brain (as
+    ``<mouse>/<brain>`` or the bare brain folder name).
+
+    WHY this, and not the brain's own 6_Region_Analysis files, is what
+    "already counted" means: when a brain's counts are withdrawn (its
+    registration rejected, re-registered or re-cropped, its classification
+    replaced -- region_counts_io.withdraw_counts) its row leaves the
+    production tables but its own 6_Region_Analysis files stay, by design.
+    Judged by those files, --all skipped every withdrawn brain and said "No
+    brains need counting" while the brain had no counts in production."""
+    if not REGION_COUNTS_CSV.exists():
+        return False
+    try:
+        with open(REGION_COUNTS_CSV, newline='', encoding='utf-8') as f:
+            return any(_same_brain(r.get('brain'), brain_folder) for r in csv.DictReader(f))
+    except OSError:
+        return False
+
+
+def registration_countable(pipeline_folder: Path) -> tuple:
+    """(True, "") when the brain's registration may be counted, else (False,
+    why). The rule is approval_state() == APPROVED, the one rule every reader
+    uses (mousebrain.registration_approval).
+
+    WHY: counts are cells placed in the regions of ONE atlas fit, and the
+    production tables and the analysis registry are what an integrator
+    pulls. Step 6 used to count any brain with a cells.xml, so a registration
+    a person had REJECTED, one that never finished (INCOMPLETE), one fitted
+    to images made again since (OUT_OF_DATE) or one nobody had looked at yet
+    (UNAPPROVED) was counted into them -- including a brain whose counts had
+    just been withdrawn for exactly that reason. Every way of starting step 6
+    (this script, the pipeline dashboard's Count, Setup & Tuning's Run Region
+    Counts, RUN_PIPELINE, batch_process, overnight_batch) goes through here."""
+    state, why = approval_state(pipeline_folder / FOLDER_REGISTRATION)
+    if state == APPROVED:
+        return True, ""
+    return False, "its registration is not approved (%s): %s" % (state, why)
+
+
 def list_available_brains(root: Path = DEFAULT_BRAINGLOBE_ROOT):
-    """List all brains that have classification output."""
+    """List all brains that have classification output.
+
+    Each brain says whether it has a row in region_counts.csv
+    (``has_counts``, has_production_row) and whether its registration may be
+    counted (``countable`` and, when not, ``not_countable_why``)."""
     root = Path(root)
     brains = []
-    
+
     # Which folders are brains is ONE rule, config.iter_brains.
     for mouse_dir, pipeline_dir in iter_brains(root, report_skipped=True):
         cells_xml = find_classified_cells(pipeline_dir)
-        analysis_folder = pipeline_dir / FOLDER_ANALYSIS
-        
-        has_classification = cells_xml is not None
-        has_counts = analysis_folder.exists() and len(list(analysis_folder.glob("*.csv"))) > 0
-        
-        if has_classification:
-            n_cells = count_cells_in_xml(cells_xml) if cells_xml else 0
-            brains.append({
-                'name': f"{mouse_dir.name}/{pipeline_dir.name}",
-                'pipeline': pipeline_dir,
-                'mouse': mouse_dir,
-                'cells_xml': cells_xml,
-                'n_cells': n_cells,
-                'has_counts': has_counts,
-            })
+        if cells_xml is None:
+            continue
+        countable, why = registration_countable(pipeline_dir)
+        brains.append({
+            'name': f"{mouse_dir.name}/{pipeline_dir.name}",
+            'pipeline': pipeline_dir,
+            'mouse': mouse_dir,
+            'cells_xml': cells_xml,
+            'n_cells': count_cells_in_xml(cells_xml),
+            'has_counts': has_production_row(pipeline_dir.name),
+            'countable': countable,
+            'not_countable_why': why,
+        })
 
     return brains
 
@@ -761,39 +806,206 @@ def run_counts_direct_lookup(cells_path, registration_path, output_csv, atlas_na
 REGISTRY_ANALYSIS = "3D_Region_Counts"
 
 
+def _tables_lock(hold: bool = True):
+    """The count-tables lock (region_counts_io.counts_tables_lock), or
+    nothing when the caller already holds it."""
+    import contextlib
+    return counts_tables_lock(REGION_COUNTS_CSV) if hold else contextlib.nullcontext()
+
+
 def register_counts(pipeline_folder: Path, output_csv: Path, total_cells: int,
                     detection_params: Dict[str, Any], prov: Optional[Dict[str, str]],
                     cells_xml: Path, reg_folder: Path) -> None:
     """Enter this brain's counts in MouseBrain's analysis registry
-    (mousebrain.analysis_registry) with what produced them. Never raises: a
-    registry problem must not undo a finished count; it is printed."""
+    (mousebrain.analysis_registry) with what produced them.
+
+    RAISES when they could not be entered (the registry's manifest set
+    aside, its lock held past the wait, a broken approved-method file ...).
+    WHY: this used to print one [!] line and carry on, so the count was
+    called finished, its tracker row 'completed', while the brain was
+    missing from the registry an integrator mirrors -- with nothing to show
+    it outside that console. A count is finished only when it is in the
+    production tables AND the registry; publish_counts undoes the half that
+    was written and the run is marked failed with the reason."""
+    from mousebrain.analysis_registry import AnalysisRegistry
+    files = {"region_counts": str(output_csv)}
+    for name in ("cell_counts_elife_grouped.csv", "comparison_report.txt"):
+        if (output_csv.parent / name).exists():
+            files[Path(name).stem] = str(output_csv.parent / name)
+    method = {k: detection_params.get(k, '') for k in (
+        'atlas', 'count_method', 'preset', 'ball_xy', 'ball_z', 'soma_diameter',
+        'threshold', 'voxel_xy', 'voxel_z')}
+    method.update({"detection_exp_id": (prov or {}).get("exp_id", ""),
+                   "classification_exp_id": (prov or {}).get("classification_exp_id", ""),
+                   "model": (prov or {}).get("model", ""),
+                   "script_version": SCRIPT_VERSION})
+    # follows_approved_method=False: the counts record the detection and
+    # classification settings they were made with; the shared approved
+    # method is the slice-analysis parameters and does not describe them,
+    # so judging them by it would report every brain as stale.
+    AnalysisRegistry(analysis_name=REGISTRY_ANALYSIS,
+                     follows_approved_method=False).register_output(
+        sample=pipeline_folder.name, category="region_counts", files=files,
+        results={"total_cells": int(total_cells or 0)},
+        method_params=method,
+        source_files={"cells_xml": str(cells_xml),
+                      "registration": str(reg_folder / "brainreg.json")})
+    print(f"    Registered in the analysis registry ({REGISTRY_ANALYSIS})")
+
+
+def counted_inputs(pipeline_folder: Path, cells_xml: Path) -> Dict[str, Any]:
+    """What a count is made from, identified before it starts: the
+    registration (its fingerprint id) and cells.xml (size and modification
+    time). publish_counts compares them again before writing anything."""
+    st = Path(cells_xml).stat()
+    return {"registration_id": current_registration_id(pipeline_folder / FOLDER_REGISTRATION),
+            "cells_xml": (st.st_size, st.st_mtime_ns)}
+
+
+def inputs_changed(pipeline_folder: Path, cells_xml: Path, before: Dict[str, Any]) -> str:
+    """Why what was counted no longer stands for the brain, or "" when it
+    still does: the registration is no longer approved, or is another one,
+    or cells.xml was replaced (or is gone) since counted_inputs()."""
+    countable, why = registration_countable(pipeline_folder)
+    if not countable:
+        return why
+    if current_registration_id(pipeline_folder / FOLDER_REGISTRATION) != before["registration_id"]:
+        return "the brain was registered again while it was being counted"
     try:
-        from mousebrain.analysis_registry import AnalysisRegistry
-        files = {"region_counts": str(output_csv)}
-        for name in ("cell_counts_elife_grouped.csv", "comparison_report.txt"):
-            if (output_csv.parent / name).exists():
-                files[Path(name).stem] = str(output_csv.parent / name)
-        method = {k: detection_params.get(k, '') for k in (
-            'atlas', 'count_method', 'preset', 'ball_xy', 'ball_z', 'soma_diameter',
-            'threshold', 'voxel_xy', 'voxel_z')}
-        method.update({"detection_exp_id": (prov or {}).get("exp_id", ""),
-                       "classification_exp_id": (prov or {}).get("classification_exp_id", ""),
-                       "model": (prov or {}).get("model", ""),
-                       "script_version": SCRIPT_VERSION})
-        # follows_approved_method=False: the counts record the detection and
-        # classification settings they were made with; the shared approved
-        # method is the slice-analysis parameters and does not describe them,
-        # so judging them by it would report every brain as stale.
-        AnalysisRegistry(analysis_name=REGISTRY_ANALYSIS,
-                         follows_approved_method=False).register_output(
-            sample=pipeline_folder.name, category="region_counts", files=files,
-            results={"total_cells": int(total_cells or 0)},
-            method_params=method,
-            source_files={"cells_xml": str(cells_xml),
-                          "registration": str(reg_folder / "brainreg.json")})
-        print(f"    Registered in the analysis registry ({REGISTRY_ANALYSIS})")
-    except Exception as e:
-        print(f"    [!] Counts NOT entered in the analysis registry: {e}")
+        st = Path(cells_xml).stat()
+    except OSError:
+        return "its classification (cells.xml) is gone"
+    if (st.st_size, st.st_mtime_ns) != before["cells_xml"]:
+        return "its classification (cells.xml) was replaced while it was being counted"
+    return ""
+
+
+def publish_counts(brain_name: str, pipeline_folder: Path, reg_folder: Path, cells_xml: Path,
+                   output_csv: Path, total_cells: int, region_counts: Dict[str, int],
+                   hemisphere_counts, detection_params: Dict[str, Any],
+                   prov: Optional[Dict[str, str]], before: Dict[str, Any]) -> str:
+    """Put a finished count into production: the per-brain copy in the
+    summary folder, region_counts.csv, elife_counts.csv and the analysis
+    registry. Returns "" when all of it was written, else why nothing of it
+    stands (the run is then marked failed with that reason).
+
+    ALL OR NOTHING, UNDER ONE LOCK. The whole of it holds the count-tables
+    lock (region_counts_io.counts_tables_lock) -- the lock every withdrawal
+    of a brain's counts also holds (a rejection, a re-crop, step 3 archiving
+    the registration, step 5 or a promotion replacing cells.xml). WHY:
+      * Step 6 counts for minutes. If cells.xml was replaced or the
+        registration rejected meanwhile, the withdrawal for that ran BEFORE
+        this count was written, and the count then put the brain back with
+        counts of what had just been replaced -- newer than the new
+        cells.xml, so nothing showed them stale. So first, under the lock,
+        what was counted is compared with what is there now
+        (inputs_changed); if it changed, nothing is written. A change that
+        comes after this check waits for the lock and then withdraws what
+        was written here.
+      * A count in the tables but not in the registry (or the reverse) is
+        two different answers about the brain to an integrator. If any
+        write fails part-way -- the registry above all (register_counts
+        says why) -- what was written is withdrawn again (into the
+        archives, never deleted) and the reason is returned.
+    """
+    # The lock sits beside region_counts.csv; step 6 writes that folder anyway.
+    REGION_COUNTS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with _tables_lock():
+        changed = inputs_changed(pipeline_folder, cells_xml, before)
+        if changed:
+            return "not written to production: %s. Count the brain again." % changed
+        try:
+            summary_csv = SUMMARY_DATA_DIR / f"{brain_name.replace('/', '_')}_counts.csv"
+            summary_csv.parent.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy(output_csv, summary_csv)
+            print(f"    Summary: {summary_csv}")
+            region_csv = update_region_counts_csv(
+                brain_name=brain_name,
+                region_counts=region_counts,
+                detection_params=detection_params,
+                hemisphere_counts=hemisphere_counts if hemisphere_counts else None,
+                hold_lock=False,
+            )
+            print(f"    Region counts: {region_csv}")
+            # Also update eLife-grouped counts (with same archiving)
+            elife_csv = update_elife_counts_csv(
+                brain_name=brain_name,
+                region_counts=region_counts,
+                detection_params=detection_params,
+                hemisphere_counts=hemisphere_counts if hemisphere_counts else None,
+                hold_lock=False,
+            )
+            if elife_csv:
+                print(f"    eLife counts: {elife_csv}")
+            # Register the outputs in MouseBrain's own analysis registry,
+            # with provenance (every analysis output is registered; an
+            # integrator pulls the registry).
+            register_counts(pipeline_folder, output_csv, total_cells,
+                            detection_params, prov, cells_xml, reg_folder)
+        except Exception as e:
+            why = "%s: %s" % (type(e).__name__, e)
+            print(f"    [FAILED] The counts could not all be written to production: {why}")
+            try:
+                withdraw_counts(pipeline_folder.name, "count not finished: " + why,
+                                summary_dir=SUMMARY_DATA_DIR, lock_held=True)
+            except Exception as e2:
+                print(f"    [!] What was written could not be withdrawn again either: {e2}. "
+                      "Count the brain again (step 6) to replace it.")
+            return ("counted, but not written to production (%s); what was written was "
+                    "withdrawn again. Count the brain again." % why)
+    return ""
+
+
+def finish_count(brain: Dict[str, Any], pipeline_folder: Path, reg_folder: Path,
+                 output_csv: Optional[Path], total_cells: int, count_method: str, atlas: str,
+                 tracker, before: Dict[str, Any]) -> tuple:
+    """After a count ran: read its per-region numbers, trace what produced
+    them, and put them into production (publish_counts).
+
+    Returns (problem, (region_counts, hemisphere_counts)); ``problem`` is ""
+    when the counts are in production, else why they are not -- the run is
+    then marked failed with it."""
+    from mousebrain.config import RegisteredImagesMissing, registered_input
+    if not output_csv or not Path(output_csv).exists():
+        return "the count wrote no per-region file", None
+    # Parse the per-cell CSV to get region counts + hemisphere data
+    region_counts, hemisphere_counts = parse_region_counts_from_csv(output_csv)
+    if not region_counts:
+        return "could not read region counts from %s" % output_csv, None
+
+    # Provenance: the settings of the detection run behind this cells.xml,
+    # traced through the tracker. Left empty (and said so) when the chain
+    # cannot be followed.
+    detection_params = {'atlas': atlas, 'count_method': count_method}
+    prov = detection_provenance(tracker._read_all(), pipeline_folder.name, brain['cells_xml'])
+    if prov:
+        detection_params.update({k: prov[k] for k in (
+            'preset', 'ball_xy', 'ball_z', 'soma_diameter', 'threshold',
+            'voxel_xy', 'voxel_z')})
+        print(f"    Detection run behind these cells: {prov['exp_id']}")
+    else:
+        print("    [!] The detection run behind this cells.xml could not be traced "
+              "in the tracker; the det_* columns stay empty.")
+    if not detection_params.get('voxel_xy'):
+        # The voxel size is a property of the images, recorded with them,
+        # whatever run found the cells.
+        try:
+            _src, _folder, meta = registered_input(pipeline_folder)
+        except RegisteredImagesMissing as e:
+            # Gone since this brain was counted: the voxel columns stay
+            # empty (said so); publish_counts then finds the registration
+            # out of date and writes nothing.
+            print(f"    [!] Voxel size not recorded: {e}")
+            meta = None
+        voxel = (meta or {}).get('voxel_size_um') or {}
+        detection_params['voxel_xy'] = voxel.get('x', '')
+        detection_params['voxel_z'] = voxel.get('z', '')
+
+    problem = publish_counts(brain['name'], pipeline_folder, reg_folder, brain['cells_xml'],
+                             Path(output_csv), total_cells, region_counts, hemisphere_counts,
+                             detection_params, prov, before)
+    return problem, (region_counts, hemisphere_counts)
 
 
 def update_region_counts_csv(
@@ -802,6 +1014,7 @@ def update_region_counts_csv(
     detection_params: Dict[str, Any],
     run_date: Optional[str] = None,
     hemisphere_counts: Optional[Dict[str, Dict[str, int]]] = None,
+    hold_lock: bool = True,
 ) -> Path:
     """
     Update the wide-format region_counts.csv with results from this run.
@@ -816,6 +1029,9 @@ def update_region_counts_csv(
         detection_params: Dict of detection parameters used
         run_date: ISO timestamp (defaults to now)
         hemisphere_counts: Optional dict of {acronym: {'left': N, 'right': N}}
+        hold_lock: take the count-tables lock for the read-change-write.
+            False only when the caller already holds it (publish_counts):
+            the lock is not re-entrant.
 
     Returns:
         Path to region_counts.csv
@@ -877,7 +1093,7 @@ def update_region_counts_csv(
     # once (two windows, or step 6 while regenerate_derived_counts rebuilds
     # the eLife table) used to drop one run's row
     # (region_counts_io.counts_tables_lock).
-    with counts_tables_lock(REGION_COUNTS_CSV):
+    with _tables_lock(hold_lock):
         # Read existing data
         existing_rows = []
         all_columns = set(row_data.keys())
@@ -943,6 +1159,7 @@ def update_elife_counts_csv(
     detection_params: Dict[str, Any],
     run_date: Optional[str] = None,
     hemisphere_counts: Optional[Dict[str, Dict[str, int]]] = None,
+    hold_lock: bool = True,
 ) -> Optional[Path]:
     """
     Update the wide-format elife_counts.csv with eLife-grouped results.
@@ -956,6 +1173,7 @@ def update_elife_counts_csv(
         detection_params: Dict of detection parameters used
         run_date: ISO timestamp (defaults to now)
         hemisphere_counts: Optional dict of {acronym: {'left': N, 'right': N}}
+        hold_lock: as for update_region_counts_csv.
 
     Returns:
         Path to elife_counts.csv or None if eLife mapping unavailable
@@ -1048,7 +1266,7 @@ def update_elife_counts_csv(
     # once (two windows, or step 6 while regenerate_derived_counts rebuilds
     # the eLife table) used to drop one run's row
     # (region_counts_io.counts_tables_lock).
-    with counts_tables_lock(REGION_COUNTS_CSV):
+    with _tables_lock(hold_lock):
         # Read existing data
         existing_rows = []
         all_columns = set(row_data.keys())
@@ -1953,8 +2171,13 @@ def interactive_select_brain(brains):
     ready = []
     already_done = []
     
+    waiting = []
+    # A brain whose registration is not approved is shown apart, with why:
+    # step 6 refuses it (registration_countable), so 'all' never includes it.
     for i, brain in enumerate(brains):
-        if brain['has_counts']:
+        if not brain.get('countable', True):
+            waiting.append((i, brain['name'], brain.get('not_countable_why', '')))
+        elif brain['has_counts']:
             already_done.append((i, brain['name'], brain['n_cells']))
         else:
             ready.append((i, brain['name'], brain['n_cells']))
@@ -1968,6 +2191,11 @@ def interactive_select_brain(brains):
         print("\n[ALREADY COUNTED]")
         for idx, name, n in already_done:
             print(f"  {idx + 1}. {name} ({n} cells)")
+
+    if waiting:
+        print("\n[REGISTRATION NOT APPROVED -- not counted]")
+        for idx, name, why in waiting:
+            print(f"  {idx + 1}. {name}: {why}")
     
     print("\n" + "-" * 60)
     print("Enter number to select, 'all' for all ready, or 'q' to quit")
@@ -2052,11 +2280,20 @@ Examples:
         }]
     
     elif args.all:
+        # "Needs counting" = an approved registration and no row in
+        # region_counts.csv (has_production_row says why the row, not the
+        # brain's own files). A brain whose registration is not approved is
+        # listed with the reason and left alone: it is waiting for a person.
         brains = list_available_brains(args.root)
-        to_process = [b for b in brains if not b['has_counts']]
+        waiting = [b for b in brains if not b['countable']]
+        to_process = [b for b in brains if b['countable'] and not b['has_counts']]
+        if waiting:
+            print("\nNot counted until their registration is approved:")
+            for b in waiting:
+                print(f"  {b['name']}: {b['not_countable_why']}")
         if not to_process:
             print("\nNo brains need counting. All done!")
-            return
+            return 0
     
     else:
         # Interactive selection
@@ -2069,13 +2306,17 @@ Examples:
         to_process = interactive_select_brain(brains)
         if not to_process:
             print("Cancelled.")
-            return
+            return 0
     
     if args.dry_run:
         print("\n=== DRY RUN ===")
         for brain in to_process:
-            print(f"  Would count: {brain['name']} ({brain['n_cells']} cells)")
-        return
+            countable, why = registration_countable(brain['pipeline'])
+            if countable:
+                print(f"  Would count: {brain['name']} ({brain['n_cells']} cells)")
+            else:
+                print(f"  Would NOT count: {brain['name']} -- {why}")
+        return 0
     
     # Initialize tracker
     tracker = ExperimentTracker()
@@ -2094,6 +2335,18 @@ Examples:
         reg_folder = pipeline_folder / FOLDER_REGISTRATION
         output_path = pipeline_folder / FOLDER_ANALYSIS
 
+        # Only an approved registration is counted (registration_countable
+        # says why). Refused here, before a tracker row is started, so a
+        # refused brain leaves no run behind; the exit code says it failed.
+        countable, why = registration_countable(pipeline_folder)
+        if not countable:
+            failed_count += 1
+            print(f"    [FAILED] Not counted: {why}")
+            print("    Look at its QC pictures and approve it (util_approve_registration.py "
+                  "--brain <brain>, the pipeline dashboard, or Setup & Tuning), registering it "
+                  "again first if it needs that; then count it.")
+            continue
+
         # The images the atlas was fitted to must still be there: cell
         # positions only mean something in them. If they are gone this brain
         # is NOT counted (no fallback to another folder, no direct lookup) and
@@ -2104,7 +2357,16 @@ Examples:
             failed_count += 1
             print(f"    [FAILED] Not counted: {e}")
             continue
-        
+
+        # What is being counted, identified now; publish_counts checks it is
+        # still the brain's before writing anything (inputs_changed).
+        try:
+            before = counted_inputs(pipeline_folder, brain['cells_xml'])
+        except OSError as e:
+            failed_count += 1
+            print(f"    [FAILED] Not counted: cells.xml cannot be read: {e}")
+            continue
+
         exp_id = tracker.log_counts(
             brain=brain['name'],
             cells_path=str(brain['cells_xml']),
@@ -2115,9 +2377,11 @@ Examples:
             status="started",
             script_version=SCRIPT_VERSION,
         )
-        
+
         # If this stops part-way (an error, Ctrl-C, a crash inside the tool),
         # the tracker row is set to failed instead of staying 'started' forever.
+        problem = ""
+        published = None
         try:
             with tracker.finish_or_fail(exp_id):
                 success, duration, total_cells, output_csv, count_method = run_brainglobe_counts(
@@ -2127,15 +2391,25 @@ Examples:
                     atlas=args.atlas,
                     allow_direct_lookup=args.allow_direct_lookup,
                 )
+                if success:
+                    problem, published = finish_count(
+                        brain, pipeline_folder, reg_folder, output_csv, total_cells,
+                        count_method, args.atlas, tracker, before)
                 # The count's result goes on its tracker row INSIDE the block:
                 # a row the block leaves without a result is marked failed.
+                # 'completed' only when the counts are in the production
+                # tables AND the analysis registry; otherwise 'failed' with
+                # the reason in the row's notes, where a person looking at
+                # the run sees it (not only in this console).
                 tracker.update_status(
                     exp_id,
-                    status="completed" if success else "failed",
+                    status="completed" if success and not problem else None,
                     duration_seconds=round(duration, 1),
                     count_total_cells=total_cells,
                     count_output_csv=str(output_csv) if output_csv else None,
                 )
+                if not success or problem:
+                    tracker.fail_unfinished([exp_id], problem or "the count did not run")
         except RegisteredImagesMissing as e:
             # The images went between the check above and the count: this
             # brain is not counted (its tracker row says failed); go on.
@@ -2143,101 +2417,37 @@ Examples:
             print(f"    [FAILED] Not counted: {e}")
             continue
 
-        if success:
+        if success and not problem:
             success_count += 1
             print(f"\n    [OK] Completed - {total_cells} cells counted")
             if output_csv:
                 print(f"    Output: {output_csv}")
+            region_counts, hemisphere_counts = published
 
-            # Copy to summary directory
-            if output_csv and output_csv.exists():
-                summary_csv = SUMMARY_DATA_DIR / f"{brain['name'].replace('/', '_')}_counts.csv"
-                summary_csv.parent.mkdir(parents=True, exist_ok=True)
-                import shutil
-                shutil.copy(output_csv, summary_csv)
-                print(f"    Summary: {summary_csv}")
+            # Generate comparison report (vs cervical reference + other brains)
+            report_path = generate_comparison_report(
+                brain_name=brain['name'],
+                region_counts=region_counts,
+                output_dir=output_path,
+                hemisphere_counts=hemisphere_counts if hemisphere_counts else None,
+            )
+            if report_path:
+                print(f"    Comparison report: {report_path}")
 
-                # Update wide-format region_counts.csv (production tracking)
-                # Parse the per-cell CSV to get region counts + hemisphere data
-                region_counts, hemisphere_counts = parse_region_counts_from_csv(output_csv)
-                if region_counts:
-                    # Provenance: the settings of the detection run behind
-                    # this cells.xml, traced through the tracker. Left empty
-                    # (and said so) when the chain cannot be followed.
-                    detection_params = {'atlas': args.atlas, 'count_method': count_method}
-                    prov = detection_provenance(
-                        tracker._read_all(), pipeline_folder.name, brain['cells_xml'])
-                    if prov:
-                        detection_params.update({k: prov[k] for k in (
-                            'preset', 'ball_xy', 'ball_z', 'soma_diameter', 'threshold',
-                            'voxel_xy', 'voxel_z')})
-                        print(f"    Detection run behind these cells: {prov['exp_id']}")
-                    else:
-                        print("    [!] The detection run behind this cells.xml could not be traced "
-                              "in the tracker; the det_* columns stay empty.")
-                    if not detection_params.get('voxel_xy'):
-                        # The voxel size is a property of the images, recorded
-                        # with them, whatever run found the cells.
-                        try:
-                            _src, _folder, meta = registered_input(pipeline_folder)
-                        except RegisteredImagesMissing as e:
-                            # Gone since this brain was counted: the voxel
-                            # columns stay empty (said so); the batch goes on.
-                            print(f"    [!] Voxel size not recorded: {e}")
-                            meta = None
-                        voxel = (meta or {}).get('voxel_size_um') or {}
-                        detection_params['voxel_xy'] = voxel.get('x', '')
-                        detection_params['voxel_z'] = voxel.get('z', '')
-                    region_csv = update_region_counts_csv(
-                        brain_name=brain['name'],
-                        region_counts=region_counts,
-                        detection_params=detection_params,
-                        hemisphere_counts=hemisphere_counts if hemisphere_counts else None,
-                    )
-                    print(f"    Region counts: {region_csv}")
+            # Generate/update cross-brain graphs and statistics
+            graphs_dir = generate_cross_brain_graphs()
+            if graphs_dir:
+                print(f"    Cross-brain graphs: {graphs_dir}")
 
-                    # Also update eLife-grouped counts (with same archiving)
-                    elife_csv = update_elife_counts_csv(
-                        brain_name=brain['name'],
-                        region_counts=region_counts,
-                        detection_params=detection_params,
-                        hemisphere_counts=hemisphere_counts if hemisphere_counts else None,
-                    )
-                    if elife_csv:
-                        print(f"    eLife counts: {elife_csv}")
-
-                    # Register the outputs in MouseBrain's own analysis
-                    # registry, with provenance (every analysis output is
-                    # registered; an integrator pulls the registry).
-                    register_counts(pipeline_folder, output_csv, total_cells,
-                                    detection_params, prov, brain['cells_xml'], reg_folder)
-
-                    # Generate comparison report (vs cervical reference + other brains)
-                    report_path = generate_comparison_report(
-                        brain_name=brain['name'],
-                        region_counts=region_counts,
-                        output_dir=output_path,
-                        hemisphere_counts=hemisphere_counts if hemisphere_counts else None,
-                    )
-                    if report_path:
-                        print(f"    Comparison report: {report_path}")
-
-                    # Generate/update cross-brain graphs and statistics
-                    graphs_dir = generate_cross_brain_graphs()
-                    if graphs_dir:
-                        print(f"    Cross-brain graphs: {graphs_dir}")
-
-                    # No database push here. This tool stands alone: the region
-                    # counts are complete once the CSVs above are written. An
-                    # integrator pulls them from those CSVs on its own schedule
-                    # (e.g. "mousedb import-brains"); this code knows nothing
-                    # about it and must never import it.
-                else:
-                    print(f"    Warning: Could not parse region counts from {output_csv}")
+            # No database push here. This tool stands alone: the region
+            # counts are complete once the CSVs above are written. An
+            # integrator pulls them from those CSVs on its own schedule
+            # (e.g. "mousedb import-brains"); this code knows nothing
+            # about it and must never import it.
         else:
             failed_count += 1
-            print(f"\n    [FAILED]")
-    
+            print(f"\n    [FAILED]" + (f" {problem}" if problem else ""))
+
     print(f"\n{'='*60}")
     print(f"Complete: {success_count} succeeded, {failed_count} failed")
     print(f"{'='*60}")
@@ -2267,6 +2477,13 @@ Examples:
         print("OR use napari: Plugins > BrainTools > 3D: 2. Setup & Tuning > Results tab")
         print("=" * 60)
 
+    # Non-zero when any brain asked for was not counted (refused, or its
+    # count failed). WHY: every caller -- the pipeline dashboard, Setup &
+    # Tuning's Run Region Counts, RUN_PIPELINE, batch_process, overnight_batch
+    # -- judges step 6 by its exit code, and a count that failed used to end
+    # with 0, so they reported it as done.
+    return 1 if failed_count else 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

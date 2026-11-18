@@ -702,6 +702,48 @@ python 6_count_regions.py --brain 001_CNT_01_01_1p625x_z4
 python 6_count_regions.py --all
 ```
 
+**Only an approved registration is counted.** Step 6 counts a brain only
+while its registration is approved -- a person looked at its QC pictures and
+approved THIS registration (the same rule every status reader uses; see
+"Registration QC" and `util_approve_registration.py --brain <brain> --status`).
+A brain whose registration was rejected, did not finish, is out of date
+(re-cropped or re-extracted after it was registered, or its images are gone),
+or is still waiting for approval is **not counted**:
+
+- `--brain <brain>` (and the pipeline dashboard's Count, Setup & Tuning's
+  **Run Region Counts**, RUN_PIPELINE, batch_process and overnight_batch, which
+  all run it) prints `[FAILED] Not counted: its registration is not approved
+  (<state>): <why>`, starts no tracker run, and ends with exit code 1, so the
+  window or batch that started it reports a failure.
+- `--all` lists such brains under `Not counted until their registration is
+  approved:` with the reason for each, and counts the others. A brain waiting
+  for approval is not a failure: `--all` still ends with exit code 0 if every
+  brain it did count was counted.
+- The interactive menu shows them under `[REGISTRATION NOT APPROVED -- not
+  counted]`.
+
+What to do: look at the brain's QC pictures and approve it (pipeline
+dashboard, Setup & Tuning, or `python util_approve_registration.py --brain
+<brain>`), registering it again first if it needs that; then count it.
+Why: step 6 used to count any brain with a `cells.xml`, so a rejected,
+unfinished, out-of-date or never-reviewed registration went into the
+production tables and the analysis registry -- even right after its counts
+had been withdrawn for exactly that reason.
+
+**What `--all` counts.** Every brain with an approved registration, a
+`5_Classified_Cells/cells.xml` and NO row in `2_Data_Summary/region_counts.csv`.
+A brain whose counts were withdrawn (below) has no row there, so `--all`
+counts it again, even though its own `6_Region_Analysis` files are still
+there. Why: `--all` used to judge "already counted" by those files, which a
+withdrawal leaves in place on purpose, so it skipped every withdrawn brain and
+said `No brains need counting. All done!`. `--dry-run` shows what would and
+would not be counted, and why.
+
+**Exit code.** Step 6 ends with 1 when any brain it was asked to count was not
+counted (refused, or its count failed), else 0. Before, a count that failed
+still ended with 0, and the windows and batches that run step 6 reported it
+as done.
+
 **How the cells are placed in regions, and no quiet second method.** Step 6
 places each cell in an atlas region with BrainGlobe's own transform through the
 registration. If that cannot run (brainglobe-utils is not installed, a file of
@@ -738,24 +780,58 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   step 6 finds an archive like that, it renames it to
   `region_counts_archive.malformed-<date>_<time>.csv`, keeps it untouched, prints
   a warning and starts a new archive.)
-- **Out-of-date counts leave these tables at once.** A brain's counts are
-  regions of one registration, counted from one classification. When either is
-  replaced, the brain's row is taken out of `region_counts.csv` and
+- **Out-of-date counts leave production at once -- the tables AND the
+  analysis registry.** A brain's counts are regions of one approved
+  registration, counted from one classification. When either stops standing
+  for the brain, the brain's row is taken out of `region_counts.csv` and
   `elife_counts.csv` straight away and moved to their archives, with
   `archived_at` and a `withdrawn_reason` column saying why; step 6's per-brain
   copy in `2_Data_Summary` (`<mouse>_<brain>_counts.csv`) is renamed
   `<mouse>_<brain>_counts.withdrawn-<date>_<time>.csv` beside it, so an
-  integrator no longer imports it. This happens when step 3 moves a
-  registration into `_archive` (registering the brain again), when step 5
-  finishes a new classification, and when a Setup & Tuning run is promoted to
-  production. Each prints `Counts of <brain> withdrawn from ...`. The brain's
-  own `6_Region_Analysis` files stay where they are, and RUN_PIPELINE and the
-  dashboard show the brain at "Count" again: run step 6 for it and its row comes
-  back. Why: the rows used to stay until someone counted the brain again, and
-  nothing in the tables told them apart from current counts. A rejected
-  registration or a re-crop makes the counts stale in the status readers but
-  does not yet take the row out of the tables; count such a brain again after
-  registering it again.
+  integrator no longer imports it; and the brain's entry in the analysis
+  registry (`Registry/exports/3D_Region_Counts/`) is invalidated -- its files
+  move to that folder's `_archived/<date>_<time>/` and the entry is marked not
+  current, so an integrator mirroring the registry stops showing it. This
+  happens when:
+  - a person **rejects** the registration (any window, or
+    `util_approve_registration.py`), or an approval is taken back;
+  - a **re-crop** makes the registration out of date (any crop tool: the
+    napari crop, step 2's auto-crop, the reference-crop script). A re-crop of
+    a crop folder the registration was NOT fitted to changes nothing;
+  - step 3 moves a registration into `_archive` (registering the brain again);
+  - step 5 finishes a new classification, or a Setup & Tuning run is
+    promoted to production.
+
+  Each prints `Counts of <brain> withdrawn from ...`. Nothing is deleted. The
+  brain's own `6_Region_Analysis` files stay where they are, and RUN_PIPELINE
+  and the dashboard show the brain at "Count" again: once its registration is
+  approved, `6_count_regions.py --all` (or `--brain <brain>`) counts it and
+  puts a fresh row and a fresh registry entry back. Why: the rows used to stay
+  until someone counted the brain again -- and the registry entry stayed
+  current even then, for rejections and re-crops always -- and nothing told
+  them apart from current counts. If a withdrawal cannot be done (the tables
+  locked by a run that does not finish, a registry file that will not move),
+  the step that triggered it is not undone; it prints `[!] The counts of
+  <brain> could NOT all be withdrawn ...`: count the brain again once its
+  registration is approved, which replaces them.
+- **A count goes into production whole, or not at all.** Step 6 writes the
+  per-brain copy, both tables and the registry entry while holding the
+  count-tables lock (below), the same lock every withdrawal holds. Before
+  writing, it checks that what it counted is still the brain's: the
+  registration is still approved and is the same registration, and
+  `cells.xml` is the same file it read. If one of them changed while the
+  brain was being counted (step 5 or a promotion replaced `cells.xml`, the
+  registration was rejected), nothing is written and the run is marked failed
+  with `not written to production: ... Count the brain again.` in its tracker
+  notes. If any part of the writing fails -- above all the registry entry (its
+  manifest set aside, its lock held too long) -- what was written is withdrawn
+  again into the archives, the run is marked failed with the reason in its
+  tracker notes, and step 6 ends with exit code 1; `--all` counts the brain
+  again next time. Why: a count that started before `cells.xml` was replaced
+  used to be written after the withdrawal, and its files were newer than the
+  new `cells.xml`, so it looked current; and a count that could not be
+  entered in the registry was called finished, with the problem only in the
+  console.
 - **One run at a time changes these tables.** Step 6, the rebuild
   `python regenerate_derived_counts.py` (which remakes `elife_counts.csv` and
   `hemisphere_laterality_analysis.csv` from `region_counts.csv`), and the
@@ -792,8 +868,9 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
 - An entry in MouseBrain's analysis registry, `Registry/exports/3D_Region_Counts/`
   (`mousebrain.analysis_registry`): the counts CSV, the total, the detection
   settings, the detection and classification run ids, the model, and the source
-  `cells.xml` and registration. A registry problem is printed and does not undo
-  the count. These entries are not judged by the slice-analysis approved
+  `cells.xml` and registration. A count that cannot be entered here is not
+  finished: its rows are withdrawn again and the run is marked failed (see "A
+  count goes into production whole" above). These entries are not judged by the slice-analysis approved
   method, so `mousebrain-registry` does not list them as stale unless your
   `approved_method.json` names `3D_Region_Counts` -- once the manifest records
   that declaration. A manifest written by an earlier version gets it on the
@@ -1038,7 +1115,11 @@ folder now. What that means for you:
   Any approval goes into `_archive/` (kept, not deleted). From then on every
   reader shows `[!] Registered to atlas -- rejected by <who> at <when> --
   change what made it bad, then register it again ...` and the brain is at
-  "Register"; region counts made on it are shown as STALE. No Approve button
+  "Register". The brain's region counts leave production at the same moment:
+  its rows move out of `region_counts.csv` / `elife_counts.csv` into their
+  archives and its `3D_Region_Counts` registry entry is invalidated (see
+  "Out-of-date counts leave production at once" under Script 6), and step 6
+  will not count it again until a registration is approved. No Approve button
   accepts a rejected registration.
 - **Nothing unattended registers a rejected brain again.** Step 3 `--batch`
   (without `--reprocess`), `overnight_batch.py` (also with `--force`) and

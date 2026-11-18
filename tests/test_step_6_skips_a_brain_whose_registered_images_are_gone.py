@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from mousebrain.config import record_registered_space
+from mousebrain.registration_approval import FINGERPRINT_FILES, approve
 
 STEP6 = Path(__file__).resolve().parents[1] / "scripts" / "pipeline" / "6_count_regions.py"
 
@@ -38,6 +39,11 @@ def _brain(root, name, images_there=True):
     reg.mkdir(parents=True)
     (reg / "brainreg.json").write_text("{}")
     record_registered_space(reg, "cropped", crop)
+    # Step 6 counts only a finished registration a person approved.
+    for n in FINGERPRINT_FILES:
+        (reg / n).write_bytes(b"x")
+    if images_there:
+        approve(reg, approved_by="tester")
     (b / "5_Classified_Cells").mkdir()
     (b / "5_Classified_Cells" / "cells.xml").write_text("<Marker></Marker>")
     return b
@@ -52,6 +58,9 @@ class _Tracker:
         yield
 
     def update_status(self, *a, **k):
+        pass
+
+    def fail_unfinished(self, *a, **k):
         pass
 
     def _read_all(self):
@@ -102,11 +111,26 @@ def test_a_counted_brain_has_its_result_on_its_tracker_row(step6, tmp_path, monk
     _brain(root, "903_PROJ_09_03_2p5x_z5")
     csv_path = tmp_path / "tracker" / "calibration_runs.csv"
     monkeypatch.setattr(step6, "ExperimentTracker", lambda: ExperimentTracker(csv_path))
-    monkeypatch.setattr(step6, "run_brainglobe_counts",
-                        lambda *a, **k: (succeeded, 1.5, 7 if succeeded else 0, None,
-                                         "brainglobe_transform" if succeeded else ""))
+    # 'completed' means the counts reached production, so the production
+    # files and the registry go to this test's own folder.
+    for name in ("REGION_COUNTS_CSV", "REGION_COUNTS_ARCHIVE_CSV",
+                 "ELIFE_COUNTS_CSV", "ELIFE_COUNTS_ARCHIVE_CSV"):
+        monkeypatch.setattr(step6, name, tmp_path / "summary" / (name.lower() + ".csv"))
+    monkeypatch.setattr(step6, "SUMMARY_DATA_DIR", tmp_path / "summary")
+    monkeypatch.setenv("MOUSEBRAIN_REGISTRY_ROOT", str(tmp_path / "Registry"))
+    monkeypatch.setattr(step6, "generate_comparison_report", lambda **k: None)
+    monkeypatch.setattr(step6, "generate_cross_brain_graphs", lambda *a, **k: None)
+
+    def counts(cells_path, registration_path, output_path, *a, **k):
+        if not succeeded:
+            return False, 1.5, 0, None, ""
+        out = Path(output_path) / "cell_counts_by_region.csv"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("region_acronym,cell_count\nAAA,7\n", encoding="utf-8")
+        return True, 1.5, 7, out, "brainglobe_transform"
+    monkeypatch.setattr(step6, "run_brainglobe_counts", counts)
     monkeypatch.setattr(sys, "argv", ["6", "--all", "--root", str(root)])
-    step6.main()
+    assert step6.main() == (0 if succeeded else 1)
     rows = [r for r in ExperimentTracker(csv_path)._read_all()
             if r.get("exp_type") == "counts"]
     assert len(rows) == 1

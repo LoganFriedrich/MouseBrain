@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from mousebrain.config import record_registered_space
+from mousebrain.registration_approval import FINGERPRINT_FILES, approve
 
 STEP6 = Path(__file__).resolve().parents[1] / "scripts" / "pipeline" / "6_count_regions.py"
 
@@ -67,6 +68,9 @@ class _Tracker:
     def update_status(self, *a, **k):
         pass
 
+    def fail_unfinished(self, *a, **k):
+        pass
+
     def _read_all(self):
         return []
 
@@ -81,6 +85,10 @@ def _brain(root, name):
     reg.mkdir(parents=True)
     (reg / "brainreg.json").write_text("{}")
     record_registered_space(reg, "cropped", crop)
+    # Step 6 counts only a finished registration a person approved.
+    for n in FINGERPRINT_FILES:
+        (reg / n).write_bytes(b"x")
+    approve(reg, approved_by="tester")
     (b / "5_Classified_Cells").mkdir()
     (b / "5_Classified_Cells" / "cells.xml").write_text("<Marker></Marker>")
     return b
