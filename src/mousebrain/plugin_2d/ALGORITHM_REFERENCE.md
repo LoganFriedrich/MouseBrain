@@ -632,8 +632,12 @@ colocalization does not start: a message box and the status bar say
 `Colocalization not started: the calibration tracker refused its row (<the reason>)`,
 and the Colocalize button can be clicked again at once. Close the spreadsheet and
 click Colocalize again. (Detection behaves the same way: it says `Failed to start
-detection` and does not run.) A run with no row could never be found, reloaded or
-marked best later, so it is not run unrecorded.
+detection` and does not run. So does Run Particle Analysis: a message box and the
+status bar say `Particle analysis not started: the calibration tracker refused its
+row (<the reason>)`, nothing is analyzed or saved, and the button can be clicked
+again at once. Before this change the particle analysis ran anyway and saved its
+results with no row and no warning.) A run with no row could never be found,
+reloaded or marked best later, so it is not run unrecorded.
 
 **When something goes wrong while the window handles a colocalization's result**
 (single- or dual-channel: a value missing from the result, a layer that cannot be

@@ -4522,8 +4522,13 @@ class BrainSliceWidget(QWidget):
                 )
                 self.last_run_id = pa_run_id
                 self.session_run_ids.append(pa_run_id)
-            except Exception:
-                pa_run_id = None
+            except Exception as e:
+                # Refused, like detection and colocalization (see
+                # _coloc_could_not_start). WHY: the error used to be
+                # swallowed, and the analysis ran and saved its results with
+                # no tracker row and no word to the person.
+                self._pa_could_not_start(e)
+                return
 
         try:
             from ..core.particle_analysis import ParticleAnalyzer
@@ -7103,6 +7108,23 @@ class BrainSliceWidget(QWidget):
         self.coloc_btn.setEnabled(True)
         QMessageBox.warning(
             self, "Colocalization not started",
+            f"The calibration tracker could not record this run:\n{error}\n\n"
+            f"If calibration_runs.csv is open in another program, close it and click again.")
+
+    def _pa_could_not_start(self, error) -> None:
+        """The tracker refused the new particle analysis's row (most often:
+        calibration_runs.csv open in a spreadsheet program). The analysis is
+        not run, the Run button comes back and the person is told why -- the
+        same as a colocalization (_coloc_could_not_start). WHY not run it
+        unlogged: its results would be saved with no row that says what made
+        them, and it could not be found, reloaded or marked best later."""
+        print(f"[BrainSlice] [!] Particle analysis not started: the tracker refused its row: {error}")
+        self.status_label.setText(
+            f"[!] Particle analysis not started: the calibration tracker refused its row "
+            f"({error}) -- is calibration_runs.csv open elsewhere? Close it and click again.")
+        self.pa_run_btn.setEnabled(True)
+        QMessageBox.warning(
+            self, "Particle analysis not started",
             f"The calibration tracker could not record this run:\n{error}\n\n"
             f"If calibration_runs.csv is open in another program, close it and click again.")
 
