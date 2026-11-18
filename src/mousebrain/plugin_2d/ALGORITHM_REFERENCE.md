@@ -743,9 +743,9 @@ Every time, in this order:
    <image on screen> are NOT saved (see the red line below)`, and you can export
    them, or close the file in the other program and click **Save State**, then open
    the next image again. **Yes** opens the next image and the unsaved results are
-   lost; the red line then says so. (Before this change the results were cleared
-   the moment the save failed and the message was overwritten at once by `Loading
-   image...`, so there was no chance to export them.)
+   lost; the red line then says so. WHY: results are never cleared when the save
+   fails, and the message is not overwritten by `Loading image...`, so there is
+   always a chance to export them first.
 2. **The Sample ID box is set to the new file's name** (the folder's name for a stack).
    Every tracker row and every Quantify export is filed under this name. A reload of
    the same image keeps a Sample ID you typed by hand.
@@ -775,8 +775,7 @@ which, and nothing changes:
   Analysis is working through its folder (see "The particle tab's batch").
 - `<file>: not opened -- particle analysis is still running on the image on screen.
   ...` -- a click made while a particle analysis was saving its result to the
-  tracker. (Before this change that click opened the next image in the middle of
-  the analysis.)
+  tracker. WHY: the next image is never opened in the middle of an analysis.
 - `<file>: not opened -- the results of <image on screen> are NOT saved (see the red
   line below).` -- you answered No to `Leave this image anyway?` (step 1).
 
@@ -797,9 +796,10 @@ appears when:
 the image has loaded (a click already on its way says `Save State: nothing saved --
 <file> is still loading`). The image you left was saved when you left it (step 1).
 WHY: until the new image has loaded, the window still names the one it left, whose
-results are already cleared. A save then used to take the empty window for that
-image's state and removed its saved particles, outlines, nuclei and measurements and
-emptied its ROIs, while the status bar said `State saved`.
+results are already cleared. A save then would take the empty window for that
+image's state, remove its saved particles, outlines, nuclei and measurements and
+empty its ROIs while the status bar said `State saved`; so no save runs, and the
+window does not own the left image's folder once it has been left.
 
 **If an image cannot be opened** (a damaged or unreadable file), a message says so and
 the window is left with **no image open**: the picture is cleared and the analysis
@@ -809,8 +809,8 @@ the wrong name. Click **Load** to try the same file again, or open another image
 **A new detection forgets the previous colocalization** -- with or without insets.
 Its measurements belonged to the nuclei that were just replaced, so Run Quantification
 turns off until you click Colocalize again, and the old `measurements.csv` is not
-saved beside the new nuclei. (Before this change a detection with insets kept the old
-measurements: Run Quantification counted them as if they described the new nuclei.)
+saved beside the new nuclei. WHY: otherwise Run Quantification would count them as if
+they described the new nuclei.
 
 WHY all of this: results are only correct when they are filed under the image they
 were made on. Browse File saves and clears before it switches images, so one image's
@@ -899,11 +899,14 @@ because it was made on the image loaded another way, or `settings.json` is
 unreadable), **no new result is saved for that image at all** -- not even one the
 folder does not hold yet (for example the first detection's `nuclei.npz`). WHY:
 `settings.json` says how the image was loaded when its results were made. New nuclei
-or measurements used to be written beside the OLD `settings.json`; opened again, the
-image was loaded the old way and the new results were restored onto pixels they were
-not made on (nothing showed it when the image kept its shape: a channel or
-z-projection change, a 180 degree turn, a 90 degree turn of a square image). Results
-saved like that before this change can be found only by their file times: a result
+or measurements written beside the OLD `settings.json` would, when the image is opened
+again, be restored onto pixels they were not made on (nothing shows it when the image
+keeps its shape: a channel or z-projection change, a 180 degree turn, a 90 degree
+turn of a square image). If `settings.json` is unreadable, the message says the
+results can be exported (Export CSV), and that a person has to repair that file or
+move it aside before the image can be saved again; reloading the image another way
+does not help then. Results saved beside settings that do not describe them (by an
+earlier version) can be found only by their file times: a result
 file in an `_analysis` folder last written more than a minute after the `saved_at`
 time in its `settings.json` was very likely written beside settings that do not
 describe it, and should be made again. (A folder that was copied can carry
@@ -921,10 +924,11 @@ it. Leaving a stack that has results is not stopped, but the red line under the 
 bar then says `[!] The results on the stack <folder> were NOT saved when it was left`
 and stays while the next image loads. Export what you need BEFORE opening another image,
 or open the image on its own. Where a stack's results should be kept is not decided yet.
-If results are on screen with no image and no stack open at all, there is nothing to
-save them under: leaving them is not stopped either, and the red line then says
-`[!] The results on screen were NOT saved when it was left: no image is open to save
-them under.` with the reason.
+If a save reports a problem while no image and no stack is open, leaving is not
+stopped either, and the red line then says `[!] The results on screen were NOT saved
+when it was left: no image is open to save them under.` with the reason. (Results
+on screen with no image at all are skipped by the save without a message; export
+them before leaving.)
 
 **Append to Folder CSV** (particles: `<folder name>_particles.csv`; ROIs:
 `<folder name>_roi_results.csv`, both beside the images) adds this image's rows to one
