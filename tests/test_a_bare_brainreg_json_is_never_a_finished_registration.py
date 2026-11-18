@@ -169,6 +169,15 @@ def test_run_region_counts_refuses_a_registration_that_only_started(tmp_path, mo
 def test_run_region_counts_refuses_a_registration_nobody_approved(tmp_path, monkeypatch):
     b, reg = _brain(tmp_path, "706_PROJ_07_06_2p5x_z5")
     _finished(reg)
+    assert ra.approval_state(reg)[0] == ra.UNAPPROVED
+    started, warnings = _count_button(monkeypatch, b)
+    assert started == [], "step 6 was started on a registration nobody approved"
+    assert warnings
+
+
+def test_run_region_counts_refuses_a_rejected_registration(tmp_path, monkeypatch):
+    b, reg = _brain(tmp_path, "708_PROJ_07_08_2p5x_z5")
+    _finished(reg)
     ra.reject(reg, rejected_by="tester")
     started, _w = _count_button(monkeypatch, b)
     assert started == []
