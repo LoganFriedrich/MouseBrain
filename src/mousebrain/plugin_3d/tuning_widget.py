@@ -5747,7 +5747,9 @@ class TuningWidget(QWidget):
                 # (mousebrain.curation_record).
                 saved = self._save_training_label(coords, label)
         if saved is None:
-            forget = getattr(cw, 'forget_answer', None)
+            # A failed skip takes back only the skip: an answer the candidate
+            # already has is saved and stays shown.
+            forget = getattr(cw, 'forget_skip' if label == 'skipped' else 'forget_answer', None)
             if forget is not None:
                 forget(index)
             return

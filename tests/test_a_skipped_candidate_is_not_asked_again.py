@@ -97,3 +97,38 @@ def test_another_brains_skips_are_not_restored(tmp_path, monkeypatch):
     other = candidates(w, P, BRAIN_B)          # same coordinates, other brain
     cw = _restart(w, other)
     assert cw.skipped == set()
+
+
+def test_a_skip_that_cannot_be_saved_keeps_the_answer_shown(tmp_path, monkeypatch):
+    w, layer, cw = _review(tmp_path, monkeypatch)
+    _press(cw, 0, "C")
+    damaged = w.training_data_dir / "skipped_candidates.xml"
+    damaged.write_text("<CellCounter_Marker_File><Marker_Data>", encoding="utf-8")
+    _press(cw, 0, "S")
+    assert cw.confirmed == {0}                 # the saved answer still shows
+    assert 0 not in cw.skipped                 # the unsaved skip is taken back
+    assert any("Skip Not Saved" == title for _, title, _ in w.msgs.seen)
+    assert damaged.read_text(encoding="utf-8") == "<CellCounter_Marker_File><Marker_Data>"
+
+
+def test_the_curate_tab_saves_a_skip_when_s_is_pressed(monkeypatch):
+    """The panel itself connects the curation widget's skip to its save."""
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from unittest.mock import MagicMock
+    import mousebrain.plugin_3d.tuning_widget as tw
+
+    def refuse(*a, **k):
+        raise RuntimeError("no tracker in this test")
+    monkeypatch.setattr(tw, "ExperimentTracker", refuse)
+    monkeypatch.setattr(tw, "TRACKER_AVAILABLE", True)
+    w = tw.TuningWidget(MagicMock())
+    try:
+        calls = []
+        w._save_curation_answer = lambda index, label, event: calls.append((index, label))
+        signal = getattr(w.curation_widget, "candidate_skipped", None)
+        assert signal is not None, "the curation widget has no skip signal"
+        signal.emit(3)
+        assert calls == [(3, "skipped")]
+    finally:
+        w.deleteLater()
+        _APP.processEvents()

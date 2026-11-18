@@ -192,7 +192,7 @@ keeps the answers like this:
   already answered keeps the answer. To answer a skipped candidate later, go
   to it with the arrow keys and press C or X: the answer is saved and the skip
   ends. If a skip cannot be saved, a message "Skip Not Saved" says why and the
-  candidate is asked again. Answers saved by older versions in the pool's own
+  candidate is asked again (an answer it already had stays saved and shown). Answers saved by older versions in the pool's own
   files (`curated_cells.xml` / `curated_non_cells.xml` directly in
   `training_data/`, without a brain) are NOT counted as answered when a review
   resumes, because they do not say which brain they belong to.

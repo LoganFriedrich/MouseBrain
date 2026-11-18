@@ -362,6 +362,19 @@ class CurationWidget(QWidget):
             self.update_current_info()
             self.update_candidate_colors()
 
+    def forget_skip(self, index):
+        """Take back only the SKIP mark on one candidate because the skip was NOT saved.
+
+        Unlike forget_answer it leaves an answer alone: pressing S on a
+        candidate already answered keeps that (saved) answer, so a failed
+        skip must not make it look unanswered.
+        """
+        self.skipped.discard(index)
+        self.update_stats()
+        if self.candidates is not None:
+            self.update_current_info()
+            self.update_candidate_colors()
+
     def release(self):
         """Let go of the candidates (another brain was chosen in Setup & Tuning).
 
