@@ -3113,9 +3113,10 @@ class BrainSliceWidget(QWidget):
             self, "Results not saved",
             f"{problem}\n\nLeave this image anyway? Its results that were "
             f"not saved will be lost.\n\nNo (the default) keeps them on "
-            f"screen: export them, or fix the problem (for example close the "
-            f"file in the program that has it open) and click Save State, "
-            f"then open the next image again.",
+            f"screen: export them, or fix the problem and click Save State "
+            f"(a file open in another program: close it there; an earlier "
+            f"analysis that is never overwritten: reload the image the way "
+            f"its message names), then open the next image again.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         return answer == QMessageBox.Yes
 
@@ -3154,8 +3155,9 @@ class BrainSliceWidget(QWidget):
             if not self._ask_leave_unsaved(problem):
                 self._show_not_saved(
                     f"{problem} -- {name} is still open with its results: "
-                    f"export them, or fix that and click Save State, then "
-                    f"open the next image again.", about=self.current_file)
+                    f"export them, or fix that and click Save State (see the "
+                    f"question just answered for how), then open the next "
+                    f"image again.", about=self.current_file)
                 return False
             self._show_not_saved(
                 f"[!] Results of {name} were NOT saved; they were discarded "
@@ -3542,14 +3544,17 @@ class BrainSliceWidget(QWidget):
         if self._refuse_if_busy_for_load(fpath.name):
             return False
 
+        # The same way in as Browse File: the previous image's results are
+        # saved and cleared first (see _open_image).
+        if not self._open_image(fpath):
+            # Not opened (the image on screen keeps results that could not
+            # be saved): the queue's position still names the image shown.
+            return False
         self._queue_nav_label.setText(
             f"{self._queue_idx + 1}/{total}: {fpath.name}")
         self._queue_prev_btn.setEnabled(self._queue_idx > 0)
         self._queue_next_btn.setEnabled(self._queue_idx < total - 1)
-
-        # The same way in as Browse File: the previous image's results are
-        # saved and cleared first (see _open_image).
-        return self._open_image(fpath)
+        return True
 
     def _queue_prev(self):
         """Load previous image in queue."""
@@ -3843,8 +3848,10 @@ class BrainSliceWidget(QWidget):
             self.status_label.setText(
                 f"Batch analysis not started: the results of "
                 f"{self.current_file.name} are NOT saved (see the red line "
-                f"below). Export them, or fix that and click Save State, then "
-                f"run the batch again.")
+                f"below). Export them, or fix that and click Save State (a file "
+                f"open in another program: close it there; an earlier analysis "
+                f"that is never overwritten: reload the image the way its "
+                f"message names), then run the batch again.")
             return
 
         files = list(self._batch_files)
@@ -7371,8 +7378,10 @@ class BrainSliceWidget(QWidget):
         write one run's result into the other's tracker row, and an analysis
         started while detection is going would work on the nuclei that
         detection is about to replace. Particle analysis runs on the window's
-        own thread, so nothing else can start while IT runs; it is refused
-        while a detection, colocalization or quantification is going."""
+        own thread; it is refused while a detection, colocalization or
+        quantification is going, and it counts as running itself
+        (PARTICLE_ANALYSIS_RUNNING) because its tracker write lets the window
+        answer clicks."""
         busy = self._analysis_in_progress()
         if not busy:
             return False

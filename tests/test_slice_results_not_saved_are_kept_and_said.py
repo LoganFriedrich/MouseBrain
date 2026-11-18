@@ -141,3 +141,20 @@ def test_a_batch_is_not_started_while_the_image_on_screen_cannot_be_saved(tmp_pa
     assert ran == [], "the batch ran though the image on screen could not be saved"
     assert w.current_file == a and len(w._pa_results) == 2
     assert "NOT" in _red_line(w)
+
+
+def test_the_queue_stays_on_the_image_that_was_not_left(tmp_path, monkeypatch):
+    a, b = image_files(tmp_path / "imgs", ["SAMPLE_A.tif", "SAMPLE_B.tif"])
+    w = make_loading_widget(tmp_path, monkeypatch)
+    w._queue_files, w._queue_idx = [a, b], 0
+    w._queue_load_current()
+    finish_load(w)
+    _particles(w)
+    _locked(monkeypatch)
+    _answer(w, leave=False)
+
+    w._queue_next()
+
+    assert w.current_file == a and w._loading_file is None
+    assert w._queue_idx == 0
+    assert "SAMPLE_A" in w._queue_nav_label.text()
