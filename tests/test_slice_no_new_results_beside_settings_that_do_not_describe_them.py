@@ -96,3 +96,31 @@ def test_the_saved_analysis_still_comes_back_as_it_was_made(tmp_path, monkeypatc
     assert w.nuclei_labels is None, "nuclei of the turned image restored"
     saved = json.loads((folder / "settings.json").read_text())
     assert saved["loaded_with"]["rotation"] == "None"
+
+
+def test_an_unreadable_settings_file_gets_advice_that_fits(tmp_path, monkeypatch):
+    """Reloading another way cannot help when settings.json cannot be read:
+    the message says the results can be exported and a person has to repair
+    or move the file."""
+    a, b = image_files(tmp_path / "imgs", ["SAMPLE_A.tif", "SAMPLE_B.tif"])
+    w = _widget(tmp_path, monkeypatch)
+    w._load_settings_now = lambda: dict(SAVED_WITH)
+    w._open_image(a, peek=False)
+    finish_load(w)
+    w._pa_results = pd.DataFrame({"label": [1], "area": [10]})
+    w._pa_labels = np.ones((8, 8), dtype=np.int32)
+    w._open_image(b, peek=False)        # leaving A saves it
+    finish_load(w)
+    folder = a.parent / "SAMPLE_A_analysis"
+    (folder / "settings.json").write_text("{ not json")
+
+    w._open_image(a, peek=False)
+    finish_load(w)
+    w.nuclei_labels = np.full((8, 8), 7, dtype=np.int32)
+    problem = w._save_analysis_state()
+
+    assert problem and "nuclei.npz" in problem
+    assert "cannot be read" in problem and "Export" in problem
+    assert "repair" in problem and "move it aside" in problem
+    assert "earlier analysis that could not be restored" not in problem
+    assert not (folder / "nuclei.npz").exists()

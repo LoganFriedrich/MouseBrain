@@ -422,6 +422,10 @@ class BrainSliceWidget(QWidget):
         # last restore ran for, and the saved files it did not bring back.
         self._state_restored_for: Optional[Path] = None
         self._restore_blocked: set = set()
+        # True when the kept settings.json could not be read at all (as
+        # opposed to describing a different way of loading the image): the
+        # advice to reload the image another way does not fit that case.
+        self._settings_unreadable: bool = False
         # The image the "Results not saved" box was last shown for: it is
         # shown once per image, then the red line under the status bar
         # carries the message (see _save_analysis_state).
@@ -2588,13 +2592,23 @@ class BrainSliceWidget(QWidget):
             return msg
 
         if not_saved:
-            msg = (f"[!] {', '.join(not_saved)} of {self.current_file.name} NOT "
-                   f"saved: {analysis_dir.name} holds an earlier analysis that "
-                   f"could not be restored (see the message shown when the image "
-                   f"was opened). It is never overwritten, and no new result is "
-                   f"saved beside it, because its settings.json does not "
-                   f"describe the new results. Export these results now if you "
-                   f"need them.")
+            if getattr(self, "_settings_unreadable", False):
+                # WHY a different text: reloading the image another way does
+                # not help when settings.json cannot be read at all.
+                msg = (f"[!] {', '.join(not_saved)} of {self.current_file.name} "
+                       f"NOT saved: the settings.json in {analysis_dir.name} "
+                       f"cannot be read, so nothing can be saved beside it. "
+                       f"Export these results now (Export CSV). A person has "
+                       f"to repair that settings.json or move it aside before "
+                       f"this image can be saved again.")
+            else:
+                msg = (f"[!] {', '.join(not_saved)} of {self.current_file.name} NOT "
+                       f"saved: {analysis_dir.name} holds an earlier analysis that "
+                       f"could not be restored (see the message shown when the image "
+                       f"was opened). It is never overwritten, and no new result is "
+                       f"saved beside it, because its settings.json does not "
+                       f"describe the new results. Export these results now if you "
+                       f"need them.")
             self.status_label.setText(msg)
             print(f"[BrainSlice] {msg}")
             self._show_not_saved(msg, about=self.current_file)
@@ -2715,6 +2729,7 @@ class BrainSliceWidget(QWidget):
         # an error part-way would leave the files after it unread but not
         # named as blocked, and the next save would delete or empty them.
         self._restore_blocked = set()
+        self._settings_unreadable = False
         self._state_restored_for = None
         try:
             restored = self._restore_analysis_files()
@@ -2762,6 +2777,7 @@ class BrainSliceWidget(QWidget):
                     settings = json.load(f)
             except Exception as e:
                 refuse("settings.json", f"unreadable ({e})")
+                self._settings_unreadable = True
 
         mismatch = self._saved_load_mismatch(settings)
         if mismatch:
@@ -3109,14 +3125,19 @@ class BrainSliceWidget(QWidget):
     def _ask_leave_unsaved(self, problem: str) -> bool:
         """Ask whether to leave an image whose results could not be saved.
         True: leave it, and lose them. The default answer is No."""
+        if getattr(self, "_settings_unreadable", False):
+            fix = ("an unreadable settings.json: a person has to repair it or "
+                   "move it aside; the results can be exported meanwhile")
+        else:
+            fix = ("a file open in another program: close it there; an "
+                   "earlier analysis that is never overwritten: reload the "
+                   "image the way its message names")
         answer = QMessageBox.question(
             self, "Results not saved",
             f"{problem}\n\nLeave this image anyway? Its results that were "
             f"not saved will be lost.\n\nNo (the default) keeps them on "
             f"screen: export them, or fix the problem and click Save State "
-            f"(a file open in another program: close it there; an earlier "
-            f"analysis that is never overwritten: reload the image the way "
-            f"its message names), then open the next image again.",
+            f"({fix}), then open the next image again.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         return answer == QMessageBox.Yes
 
@@ -3143,6 +3164,11 @@ class BrainSliceWidget(QWidget):
         is not stopped, and the red line under the status bar says what
         was not kept."""
         problem = self._save_analysis_state(warn=False)
+        # current_file is None only with a folder stack open (its results are
+        # never saved) or when a save reports a problem with no image named.
+        # Real results on screen with no image and no stack are skipped by
+        # the save itself ('Save skipped: no current file') and are not
+        # reported here.
         if problem and self.current_file is None:
             if getattr(self, "is_folder_load", False):
                 folder = getattr(self, "current_folder", None)
@@ -3182,6 +3208,7 @@ class BrainSliceWidget(QWidget):
         # of that image's folder again.
         self._state_restored_for = None
         self._restore_blocked = set()
+        self._settings_unreadable = False
         self._not_saved_warned_for = None
         return True
 
