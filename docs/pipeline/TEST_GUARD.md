@@ -116,6 +116,21 @@ loaded), the run still ends as failed, with a `TEST GUARD:` note at the end.
 - A **separate program** a test starts (a subprocess) is not watched. Tests
   that start one must give it a throwaway folder themselves.
 - A path given relative to an open folder handle (rare, low-level code).
+- A write made **through a directory junction or symbolic link**. The guard
+  compares how the path is written; it does not follow links inside it. So
+  `open("<a junction pointing into a real folder>/x", "w")` is not refused.
+  The tests never make such links; do not add one that points into real data.
+
+## When the guard is off, and one thing that can trip it
+
+- If none of the sources above yields a real folder (and no list is
+  supplied), the guard is **off** for that run, because there is nothing to
+  protect. Supply a list to be sure it is on.
+- If the package is imported from a copy that sits inside a real folder other
+  than the repository, Python's attempt to write its `.pyc` cache there is
+  refused and counted as a hit, so the test fails. Set `PYTHONPYCACHEPREFIX`
+  to a throwaway folder (the isolation block for test runs does) and it does
+  not happen.
 
 ## pytest's cache never goes into the repository
 
