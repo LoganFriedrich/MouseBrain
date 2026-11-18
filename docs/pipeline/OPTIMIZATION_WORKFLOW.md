@@ -164,6 +164,12 @@ keeps the answers like this:
   `training_data/`, which do not say which brain they came from), are left out
   and named in the message. A point that is a cell in one batch and a non-cell
   in another is not merged.
+- **Answers saved by older versions** (in the brain's own
+  `1_Brains/.../<brain>/training_data/` folder, or timestamped
+  `curated_*_<date>_<time>.xml` batches) are not read automatically. To bring
+  them in: select the brain, "Scan for XML Batches", tick that brain's batches,
+  "Merge Selected into Training Layers". Points saved as both cell and
+  non-cell in the old files are not merged; answer them again.
 - **Files are never half-written.** Both answers files are written to a
   temporary file and swapped in. If a saved answers file cannot be read, the
   window says so ("Answer Not Saved" / "Saved Answers Unreadable") and changes
