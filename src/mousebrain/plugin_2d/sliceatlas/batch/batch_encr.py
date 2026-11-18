@@ -898,6 +898,29 @@ def image_pixel_size_um(metadata: dict) -> float:
     return float(x)
 
 
+# Detector result key -> tracker column, for the counts that explain how the
+# final count was reached (the same columns the napari widget fills).
+_FILTER_COUNT_COLUMNS = {
+    'raw_count': 'det_raw_count',
+    'removed_by_size': 'det_removed_by_size',
+    'removed_by_border': 'det_removed_by_border',
+    'removed_by_morphology': 'det_removed_by_morphology',
+    'removed_by_confidence': 'det_removed_by_confidence',
+}
+
+
+def detection_filter_counts(details: dict) -> dict:
+    """The detector's before/after-filter counts, as tracker columns.
+
+    WHY recorded: a row holding only the final count cannot show how it was
+    reached (how many candidates the threshold and LoG passes found, how many
+    the size and shape filters removed). A count the detector does not report
+    is left out, so its column stays blank rather than reading 0.
+    """
+    return {column: details[key] for key, column in _FILTER_COUNT_COLUMNS.items()
+            if details.get(key) is not None}
+
+
 def process_single(
     nd2_path: Path,
     output_dir: Path,
@@ -1036,6 +1059,22 @@ def process_single(
                 min_area=min_area_px,
                 max_area=max_area_px,
                 input_path=str(nd2_path),
+                # The detector and every setting it runs with, in the
+                # columns made for them (det_backend, det_preprocessing).
+                # WHY: they used to be kept only as free text in the notes,
+                # which nothing reads back; a row must say on its own what
+                # produced its count.
+                backend="threshold+log",
+                parameters={
+                    "min_diameter_um": min_diameter_um,
+                    "max_diameter_um": max_diameter_um,
+                    "pixel_um": pixel_um,
+                    "pixel_size_from": "image metadata",
+                    "min_area_px": min_area_px,
+                    "max_area_px": max_area_px,
+                    "threshold_fraction": threshold_fraction,
+                    "log_threshold": log_threshold,
+                },
                 notes=(f"diameter {min_diameter_um}-{max_diameter_um} um; "
                        f"pixel {pixel_um} um; threshold_fraction={threshold_fraction}; "
                        f"log_threshold={log_threshold}"),
@@ -1063,7 +1102,9 @@ def process_single(
         # Update tracker with detection results
         step = "tracker"
         if tracker and det_run_id:
-            tracker.update_status(det_run_id, status="completed", det_nuclei_found=n_nuclei)
+            tracker.update_status(det_run_id, status="completed",
+                                  det_nuclei_found=n_nuclei,
+                                  **detection_filter_counts(details))
 
         if n_nuclei == 0:
             result['status'] = 'no_nuclei'

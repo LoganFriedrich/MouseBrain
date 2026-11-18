@@ -1320,9 +1320,16 @@ type.
 ### What it records
 
 - **Tracker** (`calibration_runs.csv`): per file, a detection row with the
-  pixel-area range the detector applied to that image and, in its notes, the
-  diameter range and detector settings; and a colocalization row with the
-  sigma threshold actually used.
+  pixel-area range the detector applied to that image (`det_min_area`,
+  `det_max_area`); the detector in `det_backend` (`threshold+log`); every
+  setting it ran with in `det_preprocessing`, as JSON (`min_diameter_um`,
+  `max_diameter_um`, `pixel_um`, `pixel_size_from`, `min_area_px`,
+  `max_area_px`, `threshold_fraction`, `log_threshold`); how the count was
+  reached in `det_raw_count` (candidates before filtering) and
+  `det_removed_by_size` / `det_removed_by_morphology` (a count the detector
+  does not report, such as `det_removed_by_confidence`, stays blank); the
+  same settings again as text in the notes; and a colocalization row with
+  the sigma threshold actually used.
 - **Registry** (`<project>_Detection`): per sample, the counts and the method
   parameters **this run used** (not simply the approved method): exactly the
   eleven names listed under "Making numbers the approved method", nothing
