@@ -4,16 +4,31 @@ Unified package for whole-brain (3D cleared) and slice (2D) tissue analysis tool
 
 ## Installation
 
-```powershell
-# 1. Open PowerShell and activate the environment
-conda activate MouseBrain    # or the full path of the environment if it was created with --prefix
+You need a conda environment with Python 3.9 or newer. Open an Anaconda Prompt
+(or PowerShell where conda works) and type, one line at a time:
 
-# 2. Go to this folder and run the installer
+```powershell
+# 1. Activate your MouseBrain environment
+conda activate <your MouseBrain environment>   # its name, or its full path if it was created with --prefix
+
+# 2. Go to this folder and install the package with all its parts (3D and 2D)
 cd <path to this repository>
-.\install.ps1
+pip install -e ".[all]"
+
+# 3. Install the PyTorch build for this machine. This package does not choose
+#    one for you (step 2 may pull in a default, CPU-only build through cellpose).
+#    Go to https://pytorch.org, choose your system (with or without an NVIDIA
+#    graphics card) and run the pip command it gives you, in this same window.
+
+# 4. Check that everything is in place
+mousebrain --check
 ```
 
-That's it. The script installs everything correctly.
+`mousebrain --check` lists each part and says whether it was found; anything
+missing is named there. To install only one half, use `".[3d]"` or `".[2d]"`
+instead of `".[all]"`. Do not run `install.ps1`: it is out of date and stops
+with an error (it expects an environment of another name and installs things
+this package no longer uses).
 
 ## Usage
 
@@ -21,22 +36,34 @@ That's it. The script installs everything correctly.
 mousebrain              # Launch napari with all plugins
 mousebrain --check      # Verify everything is working
 mousebrain --paths      # Show configured paths
+mousebrain --version    # Show the installed version
+mousebrain --crop <brain>   # Open the manual crop tool on one brain
+brainslice              # Open napari with only the 2D BrainSlice window
+mousebrain coloc <file or folder> [--sigma 1.5 --method zscore --edge-exclusion 50 --min-diameter 8]
+                        # Quick colocalization on ND2/TIFF files; results are NOT
+                        # registered (use brainslice-coloc --save for that)
 ```
 
 Then in napari: **Plugins → BrainTools → 3D: 2. Setup & Tuning**
 
 ## What's Included
 
-- **BrainTools** - napari plugin (Plugins → BrainTools) for the 3D cell detection workflow and 2D slice analysis
+- **BrainTools** - napari plugin (Plugins → BrainTools) for the 3D cell detection workflow and 2D slice analysis.
+  Its windows, as named in the Plugins -> BrainTools menu: **3D: 1. Pipeline Dashboard**,
+  **3D: 2. Setup & Tuning**, **3D: 3. Manual Crop**, **3D: 4. Experiments**,
+  **3D: 5. Curation**, **3D: 6. Cell Viewer** and **2D: 1. BrainSlice**.
 - **BrainGlobe** - Atlas registration (brainreg)
 - **Cellfinder** - Cell detection and classification
 - **Experiment Tracker** - Track all calibration runs
 
 ## Where outputs go
 
-Every analysis output (detection measurements, ROI counts, figures) is recorded
-by the analysis registry together with the parameters, source files and time
-that produced it. The registry lives inside the pipeline data folder:
+The 2D tools' outputs (detection measurements, ROI counts, figures), the 3D
+region counts (step 6, analysis `3D_Region_Counts`) and the orientation-check
+pictures are recorded by the analysis registry together with the parameters,
+source files and time that produced them. 3D detection (step 4) and
+classification (step 5) register nothing yet; their record is the calibration
+tracker (`calibration_runs.csv`). The registry lives inside the pipeline data folder:
 
 ```
 <pipeline root>/Registry/
@@ -142,10 +169,11 @@ pictures never land beside a different file's images.
 
 ## Troubleshooting
 
-If something breaks, re-run the installer:
+If something breaks, reinstall: in the activated environment, from this folder,
 ```powershell
-.\install.ps1
+pip install -e ".[all]"
 ```
+then run `mousebrain --check`.
 
 Or check what's wrong:
 ```powershell
