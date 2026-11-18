@@ -52,6 +52,9 @@ class CurationWidget(QWidget):
         self.rejected = set()
         self.skipped = set()
         self.review_mode = False
+        # Set by Setup & Tuning: (layer, candidates) -> (indices saved as
+        # cells, indices saved as non-cells), or None. Lets a review resume.
+        self.saved_answers = None
 
         # Settings
         self.z_context = 5  # slices above/below
@@ -310,7 +313,25 @@ class CurationWidget(QWidget):
         self.rejected.clear()
         self.skipped.clear()
 
-        self.layer_label.setText(f"Layer: {selected.name} ({len(self.candidates)} candidates)")
+        # Carry on where the review stopped: candidates that already have a
+        # SAVED answer (Setup & Tuning keeps them per brain, see
+        # mousebrain.curation_record) count as confirmed / rejected again, so
+        # choosing the layer again or restarting napari never asks them again.
+        # Skipped candidates are not saved anywhere and are asked again.
+        restored = None
+        if self.saved_answers is not None:
+            restored = self.saved_answers(selected, self.candidates)
+        if restored:
+            self.confirmed.update(restored[0])
+            self.rejected.update(restored[1])
+            answered = self.confirmed | self.rejected
+            self.current_index = next(
+                (i for i in range(len(self.candidates)) if i not in answered), 0)
+
+        n_answered = len(self.confirmed) + len(self.rejected)
+        self.layer_label.setText(
+            f"Layer: {selected.name} ({len(self.candidates)} candidates"
+            + (f", {n_answered} already answered)" if n_answered else ")"))
         self.layer_label.setStyleSheet("color: #2196F3; font-weight: bold;")
 
         self.progress_bar.setMaximum(len(self.candidates))

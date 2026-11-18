@@ -4692,6 +4692,8 @@ class TuningWidget(QWidget):
             # Connect signals for training bucket updates
             self.curation_widget.candidate_confirmed.connect(self._on_candidate_confirmed)
             self.curation_widget.candidate_rejected.connect(self._on_candidate_rejected)
+            # A review resumes from the saved answers (curation_record)
+            self._wire_curation_widget()
         except Exception as e:
             error_label = QLabel(f"Could not load curation widget: {e}")
             error_label.setStyleSheet("color: red;")
@@ -5963,6 +5965,37 @@ class TuningWidget(QWidget):
         self.training_data_path.setText(str(self.training_data_dir))
 
         self._show_curation_record(record)
+        self._wire_curation_widget()
+
+    def _wire_curation_widget(self):
+        """Let the curation widget find the saved answers when a layer is chosen."""
+        cw = getattr(self, 'curation_widget', None)
+        if cw is not None and hasattr(cw, 'saved_answers'):
+            cw.saved_answers = self._saved_answers_for_layer
+
+    def _saved_answers_for_layer(self, layer, candidates):
+        """(indices saved as cells, indices saved as non-cells) among a layer's candidates.
+
+        Read from the SELECTED brain's answers files, so a review resumes
+        after the layer is chosen again or napari restarts. Nothing is
+        restored for a layer made for another brain (its points mean nothing
+        on this brain) or when no brain is selected. Reading never creates
+        a folder.
+        """
+        from mousebrain.curation_record import (
+            CurationRecord, CurationRecordError, brain_folder)
+        if not self.current_brain:
+            return None
+        meta = getattr(layer, 'metadata', None) or {}
+        src = meta.get('source_brain')
+        if src and src != str(self.current_brain):
+            return None
+        folder = self.training_data_dir or brain_folder(MODELS_DIR, Path(self.current_brain).name)
+        try:
+            return CurationRecord(folder).answers_for(candidates)
+        except CurationRecordError as e:
+            QMessageBox.warning(self, "Saved Answers Unreadable", str(e))
+            return None
 
     def _show_curation_record(self, record=None) -> bool:
         """Make the two training layers show the selected brain's saved answers.

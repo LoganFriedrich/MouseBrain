@@ -144,6 +144,14 @@ keeps the answers like this:
   its candidates, which were the last brain's points. Select the new brain's
   candidates layer and click "Use Selected Layer" again. Answers given on a
   candidates layer made for another brain are refused with a message.
+- **A review carries on where it stopped.** When you choose a candidates
+  layer ("Use Selected Layer"), every candidate that already has a saved answer
+  for the selected brain counts as answered again (green = cell, red = not a
+  cell), the layer line says how many ("..., 12 already answered"), and review
+  starts at the first candidate without an answer. This holds after choosing
+  the same layer again and after restarting napari. Candidates you skipped
+  (S / Space) are not saved anywhere, so they are asked again. Nothing is
+  restored for a candidates layer made for another brain.
 - **One answer per point, the last one counts.** Every C or X is saved at once.
   If you change an answer (C, then X on the same candidate), the point moves
   from one file to the other; answering the same way twice saves it once. The
