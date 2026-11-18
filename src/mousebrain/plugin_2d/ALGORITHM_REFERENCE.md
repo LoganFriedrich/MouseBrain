@@ -921,6 +921,10 @@ it. Leaving a stack that has results is not stopped, but the red line under the 
 bar then says `[!] The results on the stack <folder> were NOT saved when it was left`
 and stays while the next image loads. Export what you need BEFORE opening another image,
 or open the image on its own. Where a stack's results should be kept is not decided yet.
+If results are on screen with no image and no stack open at all, there is nothing to
+save them under: leaving them is not stopped either, and the red line then says
+`[!] The results on screen were NOT saved when it was left: no image is open to save
+them under.` with the reason.
 
 **Append to Folder CSV** (particles: `<folder name>_particles.csv`; ROIs:
 `<folder name>_roi_results.csv`, both beside the images) adds this image's rows to one
