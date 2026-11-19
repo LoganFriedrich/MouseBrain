@@ -840,6 +840,7 @@ def register_counts(pipeline_folder: Path, output_csv: Path, total_cells: int,
     method.update({"detection_exp_id": (prov or {}).get("exp_id", ""),
                    "classification_exp_id": (prov or {}).get("classification_exp_id", ""),
                    "model": (prov or {}).get("model", ""),
+                   "classification_method": (prov or {}).get("classification_method", ""),
                    "script_version": SCRIPT_VERSION})
     # follows_approved_method=False: the counts record the detection and
     # classification settings they were made with; the shared approved

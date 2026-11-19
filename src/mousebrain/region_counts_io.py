@@ -451,7 +451,8 @@ def detection_provenance(tracker_rows: List[dict], brain_folder: str, cells_xml,
     and that started before the classification.
 
     Returns {'exp_id', 'preset', 'ball_xy', 'ball_z', 'soma_diameter',
-    'threshold', 'voxel_xy', 'voxel_z', 'classification_exp_id', 'model'}.
+    'threshold', 'voxel_xy', 'voxel_z', 'classification_exp_id', 'model',
+    'classification_method'}.
     """
     cells_xml = Path(cells_xml)
     by_id = {r.get("exp_id"): r for r in tracker_rows}
@@ -521,4 +522,9 @@ def detection_provenance(tracker_rows: List[dict], brain_folder: str, cells_xml,
         "voxel_z": detection.get("voxel_z", ""),
         "classification_exp_id": (classification or {}).get("exp_id", ""),
         "model": (classification or {}).get("class_model_path", ""),
+        # 'selective' or 'full': which kind of classification made cells.xml
+        # (both are production methods since 2026-11-19; a count must say).
+        "classification_method": {"selective_classification": "selective",
+                                  "classification": "full"}.get(
+                                      (classification or {}).get("exp_type", ""), ""),
     }
