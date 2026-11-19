@@ -15,6 +15,7 @@ import pytest
 
 from mousebrain.config import record_registered_space
 from mousebrain.tracker import ExperimentTracker
+from settled_method_helpers import fake_prefilter, settle
 
 STEP5 = Path(__file__).resolve().parents[1] / "scripts" / "pipeline" / "5_classify_cells.py"
 NAME = "821_PROJ_08_21_2p5x_z5"
@@ -29,6 +30,12 @@ def step5(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "ExperimentTracker", lambda: ExperimentTracker(csv_path))
     monkeypatch.setattr(builtins, "input", lambda *a: (_ for _ in ()).throw(EOFError()))
     mod.tracker_csv = csv_path
+    # Step 5 runs only the settled method (a Paradigm Best run) and always
+    # pre-filters; here a full classification with a stand-in pre-filter.
+    model = tmp_path / "model.h5"
+    model.write_text("m")
+    settle(csv_path, NAME, model)
+    fake_prefilter(monkeypatch)
     return mod
 
 
@@ -56,14 +63,14 @@ def _run(step5, monkeypatch, root, model, write=None, ok=True):
             (Path(output_path) / "rejected.xml").write_text("rej-" + write)
         return ok, 1.0, (1 if ok else 0), 0
     monkeypatch.setattr(step5, "run_cellfinder_classify", fake_classify)
-    monkeypatch.setattr(sys, "argv", ["5", "--brain", NAME, "--root", str(root),
-                                      "--model", str(model), "--no-prefilter"])
+    monkeypatch.setattr(sys, "argv", ["5", "--brain", NAME, "--root", str(root)])
     step5.main()
 
 
 def _rows(step5):
+    # The Paradigm Best row settle() made is not one of step 5's runs.
     return [r for r in ExperimentTracker(step5.tracker_csv)._read_all()
-            if r.get("exp_type") == "classification"]
+            if r.get("exp_type") == "classification" and r.get("paradigm_best") != "True"]
 
 
 def test_the_previous_production_classification_is_archived(step5, tmp_path, monkeypatch):
@@ -126,8 +133,7 @@ def test_the_previous_classification_stays_in_place_while_the_run_works(
         (Path(output_path) / "cells.xml").write_text("second")
         return True, 1.0, 1, 0
     monkeypatch.setattr(step5, "run_cellfinder_classify", fake_classify)
-    monkeypatch.setattr(sys, "argv", ["5", "--brain", NAME, "--root", str(root),
-                                      "--model", str(model), "--no-prefilter"])
+    monkeypatch.setattr(sys, "argv", ["5", "--brain", NAME, "--root", str(root)])
     step5.main()
     assert seen["prod_cells"] == "first" and seen["prod_record"]
     assert seen["writes_to"] != prod

@@ -177,6 +177,12 @@ CSV_COLUMNS = [
     "det_max_cluster",   # max_cluster_size
 ]
 
+# Run types that are a classification METHOD. One imaging setup has at most
+# one Paradigm Best among them (mark_paradigm_best), and step 5 runs that one
+# (get_paradigm_classification): 'selective_classification' trusts candidates
+# in deep regions and classifies the rest; 'classification' classifies all.
+CLASSIFICATION_TYPES = ("classification", "selective_classification")
+
 # The eight settings that make up a detection method: tracker column -> the
 # cellfinder argument it feeds. get_paradigm_detection_settings() returns them
 # under the short names on the left of each pair.
@@ -810,8 +816,16 @@ class ExperimentTracker:
         notes: Optional[str] = None,
         status: str = "started",
         script_version: str = "1.0.0",
+        cube_size: Optional[int] = None,
+        batch_size: Optional[int] = None,
     ) -> str:
-        """Log a selective classification run. Hierarchy fields auto-populated from brain name."""
+        """Log a selective classification run. Hierarchy fields auto-populated from brain name.
+
+        cube_size / batch_size: recorded so the row is the WHOLE method. A row
+        without them cannot be a settled method (get_paradigm_classification
+        lists them as missing), which is what happened to the runs made before
+        2026-11-19: they recorded the model and the tracing type only.
+        """
         exp_id = self._generate_exp_id("selective_classification", brain)
 
         row = {
@@ -823,6 +837,8 @@ class ExperimentTracker:
             "class_model_path": model_path,
             "class_cells_found": final_cells,
             "class_rejected": classified_rejected,
+            "class_cube_size": cube_size if cube_size is not None else "",
+            "class_batch_size": batch_size if batch_size is not None else "",
             "prefilter_total": total_candidates,
             "prefilter_interior": trust_count,
             "prefilter_suspicious": classify_count,
@@ -831,7 +847,10 @@ class ExperimentTracker:
             "output_path": output_path,
             "model_path": model_path,
             "parent_experiment": parent_experiment,
-            "notes": notes or f"trust={trust_count} classify={classify_count} approved={classified_cells} final={final_cells}",
+            # The counts are known only at the end, and this is called at the
+            # start: the old default wrote "trust=0 classify=0 ..." into every
+            # row, which read as a result. The caller writes them when it ends.
+            "notes": notes or "",
             "script_version": script_version,
             "hostname": self._get_hostname(),
         }
@@ -1021,6 +1040,10 @@ class ExperimentTracker:
             'det_cells_found', 'class_cells_found', 'class_rejected',
             'train_loss', 'train_accuracy', 'count_total_cells',
             'count_output_csv', 'output_path',
+            # What a selective classification found, known only at its end
+            # (log_selective_classification is called before it starts).
+            'prefilter_total', 'prefilter_interior', 'prefilter_suspicious',
+            'notes',
             # Comparison fields (for auto-compare after training)
             'diff_vs_best', 'diff_gained', 'diff_lost', 'comparison_ref'
         ]
@@ -1290,7 +1313,8 @@ class ExperimentTracker:
     # IMAGING PARADIGM METHODS
     # =========================================================================
 
-    def mark_paradigm_best(self, exp_id: str) -> bool:
+    def mark_paradigm_best(self, exp_id: str, fill_empty: Optional[Dict[str, Any]] = None,
+                           note: Optional[str] = None) -> bool:
         """
         Mark an experiment as best for its imaging paradigm.
 
@@ -1300,6 +1324,16 @@ class ExperimentTracker:
 
         Args:
             exp_id: The experiment ID to mark as paradigm best
+            fill_empty: {column: value} written into the run's row in the SAME
+                locked rewrite, but only into columns that are empty. A column
+                that already holds a different value is never overwritten: the
+                mark is refused and nothing is written. WHY: a run made before
+                a column existed (a classification's cube and batch size) can
+                only become a settled method once the row says the whole
+                method; the values a person fills in must never replace what
+                the run itself recorded.
+            note: text added to the run's notes (why it was marked, and where
+                any filled-in value comes from).
 
         Returns:
             True if successful
@@ -1308,6 +1342,16 @@ class ExperimentTracker:
         # THIS BRAIN's other best (the run also becomes the brain's best, and a
         # brain must never have two), and set this one. Other brains' bests are
         # theirs and are left alone.
+        #
+        # A classification and a selective classification are one family here
+        # (CLASSIFICATION_TYPES): both are "the classification method", so an
+        # imaging setup has one Paradigm Best across the two, never one of each.
+        fill_empty = dict(fill_empty or {})
+
+        def family(row):
+            t = row.get('exp_type')
+            return CLASSIFICATION_TYPES if t in CLASSIFICATION_TYPES else (t,)
+
         def mutate(rows):
             target = next((r for r in rows if r.get('exp_id') == exp_id), None)
             if target is None:
@@ -1315,14 +1359,23 @@ class ExperimentTracker:
             paradigm = target.get('imaging_paradigm') or ''
             if not paradigm:
                 return "no_paradigm"
+            for col, value in fill_empty.items():
+                have = (target.get(col) or '').strip()
+                if have and have != str(value):
+                    return "conflict:%s holds %s, not %s" % (col, have, value)
+            kinds = family(target)
             bare = _bare_brain_name(target.get('brain'))  # either name form, as in mark_as_best
             for row in rows:
-                if row is target or row.get('exp_type') != target.get('exp_type'):
+                if row is target or row.get('exp_type') not in kinds:
                     continue
                 if row.get('imaging_paradigm') == paradigm and row.get('paradigm_best') == 'True':
                     row['paradigm_best'] = ''
                 if same_brain_name(row.get('brain'), bare) and row.get('marked_best') == 'True':
                     row['marked_best'] = ''
+            for col, value in fill_empty.items():
+                target[col] = str(value)
+            if note:
+                target['notes'] = "; ".join(filter(None, [target.get('notes', ''), note]))
             target['paradigm_best'] = 'True'
             target['marked_best'] = 'True'
             target['rating'] = '5'
@@ -1330,6 +1383,10 @@ class ExperimentTracker:
         outcome = self._rewrite(mutate)
         if outcome == "no_paradigm":
             print(f"[Tracker] Cannot mark paradigm best: no imaging_paradigm for {exp_id}")
+        elif outcome == "missing":
+            print(f"[Tracker] Cannot mark paradigm best: no run {exp_id}")
+        elif str(outcome).startswith("conflict:"):
+            print(f"[Tracker] Cannot mark paradigm best: {outcome[9:]} -- nothing was written")
         return outcome == "ok"
 
     def get_best_for_paradigm(
@@ -1435,11 +1492,70 @@ class ExperimentTracker:
         })
         return settings
 
+    def get_paradigm_classification(self, imaging_paradigm: str) -> Optional[Dict[str, Any]]:
+        """
+        The settled classification method for an imaging paradigm: the
+        classification or selective classification run a person marked
+        Paradigm Best for it. Step 5 runs exactly this and nothing else.
+
+        Returns None when no such run is marked. Otherwise a dict:
+            method        'selective' (selective_classification row) or 'full'
+            model_path    the model file the run used (class_model_path)
+            cube_size, batch_size   ints, or None when the row lacks them
+            tracing_type  selective only (prefilter_tracing_type)
+            source_exp_id, source_brain, created_at
+            missing       names of anything the row does not record. A caller
+                          must NOT classify while it is non-empty: it would be
+                          finishing the method with numbers the run never used.
+
+        WHY strict and pinned to one row: the model used to be "the newest
+        model file in the models folder" whenever nothing was marked, and two
+        models on the same brain gave counts that differ several-fold. The
+        settled method is the one run a person confirmed, with its own model
+        file and settings -- never whichever file is newest.
+        """
+        rows = [r for r in self._read_all() if not (r.get('archived_at') or '').strip()]
+        best = next((r for r in rows
+                     if r.get('imaging_paradigm') == imaging_paradigm
+                     and r.get('exp_type') in CLASSIFICATION_TYPES
+                     and r.get('paradigm_best') == 'True'), None)
+        if best is None:
+            return None
+        selective = best.get('exp_type') == 'selective_classification'
+        missing = []
+
+        def as_int(col, name):
+            raw = (best.get(col) or '').strip()
+            if not raw:
+                missing.append(name)
+                return None
+            return int(float(raw))
+        model = (best.get('class_model_path') or best.get('model_path') or '').strip()
+        if not model or model == 'default':
+            missing.append('model_path')
+        method = {
+            'method': 'selective' if selective else 'full',
+            'model_path': model or None,
+            'cube_size': as_int('class_cube_size', 'cube_size'),
+            'batch_size': as_int('class_batch_size', 'batch_size'),
+            'tracing_type': None,
+            'source_exp_id': best.get('exp_id'),
+            'source_brain': best.get('brain'),
+            'created_at': best.get('created_at'),
+        }
+        if selective:
+            method['tracing_type'] = (best.get('prefilter_tracing_type') or '').strip() or None
+            if not method['tracing_type']:
+                missing.append('tracing_type')
+        method['missing'] = missing
+        return method
+
     def get_paradigm_model(self, imaging_paradigm: str) -> Optional[str]:
         """
         Get the best model path for an imaging paradigm.
 
-        Returns the model_path from the paradigm-best classification run.
+        Returns the model_path from the paradigm-best classification run
+        (a plain or a selective classification: get_paradigm_classification).
 
         Args:
             imaging_paradigm: e.g., "1p625x_z4"
@@ -1449,11 +1565,8 @@ class ExperimentTracker:
         """
         # strict, as for detection: a run marked Best for one brain is never
         # the model for every brain of the setup.
-        best = self.get_best_for_paradigm(imaging_paradigm, exp_type="classification",
-                                          strict=True)
-        if not best:
-            return None
-        return best.get('class_model_path') or best.get('model_path')
+        method = self.get_paradigm_classification(imaging_paradigm)
+        return (method or {}).get('model_path') or None
 
     def update_rating(self, exp_id: str, rating: int, notes: Optional[str] = None) -> bool:
         """

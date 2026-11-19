@@ -18,6 +18,7 @@ import mousebrain.config as config
 from mousebrain.classification_runs import promote_to_production
 from mousebrain.config import record_registered_space
 from mousebrain.tracker import ExperimentTracker
+from settled_method_helpers import fake_prefilter, settle
 
 ROOT = Path(__file__).resolve().parents[1]
 PIPELINE = ROOT / "scripts" / "pipeline"
@@ -123,8 +124,9 @@ def test_a_step_5_classification_withdraws_the_counts(tmp_path, summary, monkeyp
     monkeypatch.setattr(step5, "run_cellfinder_classify", fake_classify)
     model = tmp_path / "model.h5"
     model.write_text("m")
-    monkeypatch.setattr(sys, "argv", ["5", "--brain", NAME, "--root", str(tmp_path / "1_Brains"),
-                                      "--model", str(model), "--no-prefilter"])
+    settle(tmp_path / "tracker" / "calibration_runs.csv", NAME, model)
+    fake_prefilter(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["5", "--brain", NAME, "--root", str(tmp_path / "1_Brains")])
     step5.main()
     _assert_withdrawn(summary)
 
@@ -137,7 +139,8 @@ def test_a_failed_step_5_run_leaves_the_counts(tmp_path, summary, monkeypatch):
     monkeypatch.setattr(step5, "run_cellfinder_classify", lambda *a, **k: (False, 1.0, 0, 0))
     model = tmp_path / "model.h5"
     model.write_text("m")
-    monkeypatch.setattr(sys, "argv", ["5", "--brain", NAME, "--root", str(tmp_path / "1_Brains"),
-                                      "--model", str(model), "--no-prefilter"])
+    settle(tmp_path / "tracker" / "calibration_runs.csv", NAME, model)
+    fake_prefilter(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["5", "--brain", NAME, "--root", str(tmp_path / "1_Brains")])
     step5.main()
     assert [r["brain"] for r in _read(summary / "region_counts.csv")] == [KEY, OTHER_KEY]

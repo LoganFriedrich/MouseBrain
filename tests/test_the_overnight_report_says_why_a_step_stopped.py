@@ -28,7 +28,6 @@ def test_the_overnight_report_says_why_step_6_refused(tmp_path, monkeypatch):
     def run(cmd, **kw):
         return subprocess.CompletedProcess(cmd, 1, stdout=said, stderr="")
     monkeypatch.setattr(ob.subprocess, "run", run)
-    monkeypatch.setattr(ob, "find_paradigm_model", lambda paradigm: None)
 
     ok, msg = ob.run_counting("brain_x", tmp_path)
     assert not ok

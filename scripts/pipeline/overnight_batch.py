@@ -74,7 +74,7 @@ log = logging.getLogger(__name__)
 sys.path.insert(0, str(Path(__file__).parent))
 
 from mousebrain.config import (
-    BRAINS_ROOT, DATA_SUMMARY_DIR, MODELS_DIR, find_script,
+    BRAINS_ROOT, DATA_SUMMARY_DIR, find_script,
     CALIBRATION_RUNS_CSV, REGION_COUNTS_CSV, parse_brain_name
 )
 
@@ -310,102 +310,29 @@ def run_detection(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
         return False, f"Detection error: {e}"
 
 
-def find_paradigm_model(imaging_paradigm: str) -> Optional[Path]:
-    """
-    Find the best model for an imaging paradigm.
-
-    Priority order:
-    1. Paradigm-specific model directory (e.g., "1p625x_z4_v1_*")
-    2. Tracker's paradigm-best model
-    3. Fallback to newest model
-
-    Args:
-        imaging_paradigm: e.g., "1p625x_z4"
-
-    Returns:
-        Path to model file, or None
-    """
-    if not MODELS_DIR.exists():
-        return None
-
-    # 1. Look for paradigm-specific model directory
-    #    Pattern: {paradigm}_v{version}_{timestamp}
-    paradigm_dirs = []
-    for model_dir in MODELS_DIR.iterdir():
-        if model_dir.is_dir() and imaging_paradigm in model_dir.name:
-            paradigm_dirs.append(model_dir)
-
-    if paradigm_dirs:
-        # Sort by name (newest timestamp last) and pick the newest
-        paradigm_dirs.sort(key=lambda x: x.name)
-        best_dir = paradigm_dirs[-1]
-        log.info(f"Found paradigm-specific model directory: {best_dir.name}")
-
-        # Find model.keras in this directory
-        model_file = best_dir / "model.keras"
-        if model_file.exists():
-            return model_file
-        # Try any .keras file
-        keras_files = list(best_dir.glob("*.keras"))
-        if keras_files:
-            return next((f for f in keras_files if f.name == "model.keras"), keras_files[0])
-
-    # 2. Try tracker's paradigm model lookup
-    try:
-        from mousebrain.tracker import ExperimentTracker
-        tracker = ExperimentTracker()
-        paradigm_model = tracker.get_paradigm_model(imaging_paradigm)
-        if paradigm_model:
-            model_path = Path(paradigm_model)
-            if model_path.exists():
-                log.info(f"Using tracker's paradigm model: {model_path}")
-                return model_path
-    except Exception as e:
-        log.warning(f"Could not query tracker for paradigm model: {e}")
-
-    # 3. Fallback to newest model directory with .keras files
-    log.warning(f"No paradigm-specific model found for {imaging_paradigm}, using newest model")
-    for model_dir in sorted(MODELS_DIR.iterdir(), reverse=True):
-        if model_dir.is_dir():
-            keras_files = list(model_dir.glob("*.keras"))
-            if keras_files:
-                return next((f for f in keras_files if f.name == "model.keras"), keras_files[0])
-            h5_files = list(model_dir.glob("*.h5"))
-            if h5_files:
-                return h5_files[0]
-
-    return None
-
-
 def run_classification(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
-    """Run cell classification using paradigm-specific trained model."""
-    log.info(f"[{brain_name}] Running classification...")
+    """Run step 5, which classifies with the settled method of the brain's
+    imaging setup (the classification run marked Paradigm Best).
+
+    No --model is passed. WHY: this used to pick a model itself -- the newest
+    folder whose name held the imaging setup, else the newest model of all --
+    and hand it to step 5, so the overnight classification could use a model
+    nobody had settled on. Step 5 now looks the method up and stops, saying
+    why, when there is none; that message reaches the overnight report."""
+    log.info(f"[{brain_name}] Running classification (settled method)...")
 
     script = find_script("5_classify_cells.py")
-
-    # Extract imaging paradigm from brain name
-    brain_info = parse_brain_name(brain_name)
-    imaging_paradigm = brain_info.get('imaging_params', '')  # e.g., "1p625x_z4"
-    log.info(f"[{brain_name}] Imaging paradigm: {imaging_paradigm}")
-
-    # Find the best model for this paradigm
-    model_path = find_paradigm_model(imaging_paradigm)
-
-    if model_path:
-        log.info(f"[{brain_name}] Using model: {model_path}")
-    else:
-        log.warning(f"[{brain_name}] No model found!")
-
     cmd = [sys.executable, str(script), "--brain", brain_name]
-    if model_path:
-        cmd.extend(["--model", str(model_path)])
 
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=3600,  # 1 hour timeout
+            # 3 hours: a selective classification maps every candidate to the
+            # atlas before classifying (25-45 minutes per brain so far); the
+            # old 1-hour limit was set for a plain classification.
+            timeout=3 * 3600,
             cwd=str(script.parent)
         )
 
@@ -416,7 +343,7 @@ def run_classification(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
             return False, f"Classification failed: {_failure_text(result)}"
 
     except subprocess.TimeoutExpired:
-        return False, "Classification timed out after 1 hour"
+        return False, "Classification timed out after 3 hours"
     except Exception as e:
         return False, f"Classification error: {e}"
 

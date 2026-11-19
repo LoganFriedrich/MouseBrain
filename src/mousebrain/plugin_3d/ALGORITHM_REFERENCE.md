@@ -231,28 +231,45 @@ For each candidate cell at position (z, y, x):
 | Model format | `.keras` (preferred) or `.h5` (weights only) |
 | Inference batch size | 32 |
 
-### Model Selection
+### Model Selection (the settled method, since 2026-11-19)
 
-Models are stored in a shared models directory. The selection priority is:
+Step 5 takes no model choice. It classifies with the classification run marked
+**Paradigm Best** for the brain's imaging setup (`ExperimentTracker.get_paradigm_classification`):
+that run's model file, cube size, batch size, and whether it was a **selective** or a
+**full** classification (and, selective, its tracing type). With none marked, a part not
+recorded, or the model file missing, step 5 stops and classifies nothing. It never takes
+"the newest model" (it used to, when nothing was marked), and `--model` with any other file
+is refused. Mark the method with `scripts/utils/util_mark_paradigm_classifier.py`
+(docs/pipeline/README.md, "The settled classification method").
 
-1. **Explicit** — user specifies `--model path/to/model.keras`
-2. **Paradigm-best** — tracker retrieves the best model for the brain's imaging paradigm
-3. **Default** — most recent model in the models directory (sorted by folder name/timestamp)
+### Selective classification
 
-### Paradigm-Best Model
+The selective method classifies only the candidates the network is needed for:
 
-Like detection settings, the best-performing classification model can be stored per imaging paradigm. When processing a new brain with paradigm `1p625x_z4`, the system checks if a proven model exists for that paradigm and uses it automatically.
+1. The pre-filtered candidates are mapped to atlas regions with BrainGlobe's own transform.
+2. Candidates in the deep descending-projection functional groups (`region_mapping.get_elife_group`
+   for the run's tracing type) are **trusted** and skip the network.
+3. All others -- unmapped (region 0), out of bounds, fiber tracts, olfactory, superficial cortex,
+   cerebellar cortex and other unlikely regions -- go through the network as above.
+4. `cells.xml` = trusted + network-approved; `rejected.xml` = network-rejected;
+   `selective_report.json` holds every count; `trust_cells.xml` and `classify_input.xml` are the
+   two groups.
+
+Why: classifying every candidate removed real labelled cells deep in the brain along with the
+surface artifacts, and its counts moved a lot between model checkpoints; artifacts concentrate
+near surfaces and fluid spaces, so only those candidates are checked. If the network cannot run,
+step 5 stops instead of keeping only the trusted cells.
 
 ### Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `cube_height` | 50 px | Cube size in Y |
+| `cube_height` | 50 px | Cube size in Y (the settled run's cube size) |
 | `cube_width` | 50 px | Cube size in X |
 | `cube_depth` | 20 px | Cube size in Z |
 | `network_voxel_sizes` | (5.0, 1.0, 1.0) µm | Standard voxel sizes for network input (Z, Y, X) |
 | `network_depth` | `"50"` | ResNet depth (ResNet50) |
-| `batch_size` | 32 | Inference batch size |
+| `batch_size` | 32 | Inference batch size (the settled run's own value is used) |
 | `n_free_cpus` | 2 | CPUs to leave free |
 
 ### Known Limitations

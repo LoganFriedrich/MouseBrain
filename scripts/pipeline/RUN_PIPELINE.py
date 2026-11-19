@@ -110,29 +110,6 @@ def run_script(script_name, args=None):
     input("Press Enter to continue...")
 
 
-def _choose_prefilter(brain):
-    """Step 5's extra arguments for a brain: [] for its own pre-filter, or
-    ['--candidates', <file>] for a saved pre-filter the person picks; None
-    when they quit.
-
-    WHY: a pre-filter run here (the "Pre-filter candidates" step) or tuned in
-    Setup & Tuning is saved as 4_Cell_Candidates/prefiltered_<time>/, and step
-    5 used to ignore it -- it always pre-filtered the raw candidates again with
-    its default settings. When saved pre-filters exist the person chooses;
-    step 5 then checks the choice (mousebrain.prefilter.check_candidates_choice).
-    """
-    from mousebrain.prefilter import saved_prefilters
-    saved = saved_prefilters(brain['path'])
-    if not saved:
-        return []
-    options = ["Step 5's own pre-filter (default settings) on the brain's candidates"]
-    options += ["Saved pre-filter %s" % xml.parent.name for xml in saved]
-    choice = ask("Which candidates should be classified?", options)
-    if choice is None:
-        return None
-    return [] if choice == 0 else ['--candidates', str(saved[choice - 1])]
-
-
 def show_brain_status(brain):
     """Show status of a specific brain and offer actions."""
     clear()
@@ -354,9 +331,13 @@ def show_brain_status(brain):
         run_script('util_atlas_prefilter.py', ['--brain', brain_name])
 
     elif status['step'] == 'classify':
-        extra = _choose_prefilter(brain)
-        if extra is not None:
-            run_script('5_classify_cells.py', ['--brain', brain_name] + extra)
+        # No choice to make: step 5 classifies with the settled method of this
+        # imaging setup (the classification run marked Paradigm Best) and its
+        # own pre-filter. A pre-filter saved or tuned by hand is tuning, and
+        # step 5 refuses it (it used to be offered here).
+        print("\nClassification checks each candidate cell, using the settled")
+        print("classification method for this kind of imaging.")
+        run_script('5_classify_cells.py', ['--brain', brain_name])
 
     elif status['step'] == 'count':
         run_script('6_count_regions.py', ['--brain', brain_name])

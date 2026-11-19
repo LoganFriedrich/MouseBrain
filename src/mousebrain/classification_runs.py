@@ -46,6 +46,23 @@ The run that wrote the files has its tracker ``output_path`` set to the new
 ``cells.xml``, and the run that wrote the previous files (named by their
 record) has its ``output_path`` moved to their place in the archive -- as step
 4 does with candidates (mousebrain.candidates_io).
+
+SELECTIVE CLASSIFICATION IS A PRODUCTION METHOD (2026-11-19)
+Step 5 runs the method of the run marked Paradigm Best for the brain's imaging
+setup (tracker.get_paradigm_classification). When that is a selective
+classification, its merged result is installed as ``cells.xml`` and the
+classifier's rejects as ``rejected.xml``, exactly like a full classification,
+so step 6 and every status reader need nothing new. Its audit files are
+installed beside them (SELECTIVE_FILES: the report with every count, the
+trusted candidates, the candidates sent to the classifier) and are archived
+with them when a later run replaces them. The names a selective run wrote
+before it was a production method (``cells_selective.xml``,
+``selective_rejected.xml``, written straight into 5_Classified_Cells beside
+the production files) are archived too, so after one step 5 run the folder
+holds one classification and its own audit files, never a second, older
+result next to it. The record (``promoted_from.json``) carries the whole
+method that made the files (``method``): which Paradigm Best run, the model
+file with its size and time, every setting, the pre-filter and its settings.
 """
 
 import getpass
@@ -60,7 +77,13 @@ PRODUCTION_FOLDER = "5_Classified_Cells"
 # The record of which run the production files came from. The name is kept
 # from when only a promotion wrote it; step 5 writes the same record.
 PRODUCTION_RECORD = "promoted_from.json"
-PRODUCTION_FILES = ("cells.xml", "rejected.xml", PRODUCTION_RECORD)
+# Audit files a selective classification installs beside cells.xml.
+SELECTIVE_FILES = ("selective_report.json", "trust_cells.xml", "classify_input.xml")
+# Names a selective run wrote straight into 5_Classified_Cells before step 5
+# made it a production method; archived with the production files.
+LEGACY_SELECTIVE_FILES = ("cells_selective.xml", "selective_rejected.xml")
+PRODUCTION_FILES = (("cells.xml", "rejected.xml", PRODUCTION_RECORD)
+                    + SELECTIVE_FILES + LEGACY_SELECTIVE_FILES)
 PROMOTED_TAG = "promoted_to_production"
 
 
@@ -161,7 +184,8 @@ def sweep_stopped_runs(brain_folder) -> List[Path]:
                         for p in sorted(in_progress.iterdir()) if p.is_dir()) if d is not None]
 
 
-def install_staged(staged, brain_folder, exp_id: Optional[str], source, how: str = "step 5"
+def install_staged(staged, brain_folder, exp_id: Optional[str], source, how: str = "step 5",
+                   method: Optional[dict] = None
                    ) -> Tuple[Optional[Path], Optional[str], dict]:
     """Make a finished run's staged files the brain's production classification.
 
@@ -177,11 +201,12 @@ def install_staged(staged, brain_folder, exp_id: Optional[str], source, how: str
         raise FileNotFoundError("no cells.xml in %s -- nothing to install" % staged)
     archived, prev_id = archive_production(brain_folder)
     moved = []
-    for name in ("cells.xml", "rejected.xml"):
+    for name in ("cells.xml", "rejected.xml") + SELECTIVE_FILES:
         if (staged / name).is_file():
             shutil.move(str(staged / name), str(prod / name))
             moved.append(name)
-    record = write_production_record(brain_folder, exp_id, source, moved, archived, how=how)
+    record = write_production_record(brain_folder, exp_id, source, moved, archived, how=how,
+                                     method=method)
     # Anything else the run left in its staging folder is kept in the archive.
     if any(staged.iterdir()):
         discard_staged(staged, brain_folder, "run_extras")
@@ -195,8 +220,10 @@ def install_staged(staged, brain_folder, exp_id: Optional[str], source, how: str
 
 
 def write_production_record(brain_folder, exp_id: Optional[str], source, files: List[str],
-                            archived: Optional[Path], how: str) -> dict:
-    """Write ``promoted_from.json``: which run the production files came from."""
+                            archived: Optional[Path], how: str,
+                            method: Optional[dict] = None) -> dict:
+    """Write ``promoted_from.json``: which run the production files came from,
+    and (``method``, from step 5) the whole method that made them."""
     prod = Path(brain_folder) / PRODUCTION_FOLDER
     try:
         who = getpass.getuser()
@@ -209,6 +236,8 @@ def write_production_record(brain_folder, exp_id: Optional[str], source, files: 
               "previous_production_archived_to": (
                   [str(archived / f.name) for f in sorted(Path(archived).iterdir())]
                   if archived is not None and Path(archived).is_dir() else [])}
+    if method is not None:
+        record["method"] = method
     (prod / PRODUCTION_RECORD).write_text(json.dumps(record, indent=1), encoding="utf-8")
     return record
 
@@ -236,6 +265,39 @@ def follow_files_into_archive(tracker, prev_id: Optional[str], archived: Optiona
             tracker.update_status(prev_id, output_path=str(archived))
     except Exception as e:
         print("[!] the previous run's tracker row could not be pointed at the archive: %s" % e)
+
+
+def follow_selective_rows(tracker, brain_folder, archived: Optional[Path]) -> List[str]:
+    """Point the rows of selective classifications that wrote their files
+    straight into 5_Classified_Cells (before step 5 made selective a
+    production method) at the archive those files just moved to.
+
+    Only when this archive holds such files (LEGACY_SELECTIVE_FILES), and only
+    rows of this brain that name the production folder itself. Several such
+    rows may name it (each overwrote the one before); all are pointed at the
+    archive, which holds the files of the last of them. Returns the exp_ids
+    changed; never raises (the files are already where they belong)."""
+    if tracker is None or archived is None:
+        return []
+    if not any((Path(archived) / n).exists() for n in LEGACY_SELECTIVE_FILES):
+        return []
+
+    def norm(p):
+        return os.path.normcase(os.path.normpath(str(p)))
+    prod = norm(Path(brain_folder) / PRODUCTION_FOLDER)
+    name = Path(brain_folder).name
+    changed = []
+    try:
+        for row in tracker._read_all():
+            brain = row.get("brain") or ""
+            if (row.get("exp_type") == "selective_classification"
+                    and (brain == name or brain.endswith("/" + name))
+                    and norm(row.get("output_path") or "") == prod):
+                tracker.update_status(row["exp_id"], output_path=str(archived))
+                changed.append(row["exp_id"])
+    except Exception as e:
+        print("[!] earlier selective runs' tracker rows could not be pointed at the archive: %s" % e)
+    return changed
 
 
 def promote_to_production(run_folder, brain_folder, exp_id: Optional[str] = None,

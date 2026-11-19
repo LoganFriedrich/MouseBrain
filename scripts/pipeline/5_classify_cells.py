@@ -4,16 +4,26 @@
 
 Script 5 in the BrainGlobe pipeline: Cell classification.
 
-Runs a trained network on detected cell candidates to filter out
-false positives, and automatically logs to experiment tracker.
+Writes a brain's PRODUCTION classification (5_Classified_Cells/cells.xml,
+which step 6 counts) with the settled method of its imaging setup: the
+classification run a person marked Paradigm Best (tracker
+get_paradigm_classification) -- its model file, cube and batch size, and, for
+a selective classification, its tracing type. With no Paradigm Best it stops;
+it never falls back to "the newest model". Every run is logged to the tracker
+and recorded beside its files (promoted_from.json).
+
+Method "selective" (the usual one): pre-filter the candidates, map each to
+its atlas region, TRUST candidates in deep regions, run the classifier only on
+the rest, and install trusted + classifier-approved as cells.xml.
+Method "full": pre-filter, then run the classifier on every candidate.
 
 Run this AFTER Script 4 (4_detect_cells.py).
 
 ================================================================================
 HOW TO USE
 ================================================================================
-    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --model path/to/model.h5
-    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4  # Uses default model
+    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4
+    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --dry-run   # show the method
     python 5_classify_cells.py  # Interactive mode
 
 ================================================================================
@@ -26,6 +36,7 @@ REQUIREMENTS
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -60,12 +71,11 @@ except ImportError as e:
 SCRIPT_VERSION = "1.0.0"
 
 from mousebrain.config import BRAINS_ROOT as DEFAULT_BRAINGLOBE_ROOT, iter_brains, explain_brain_not_found
-from mousebrain.config import MODELS_DIR as DEFAULT_MODELS_DIR
 from mousebrain.config import parse_brain_name
 from mousebrain.config import registered_candidate_folders, registered_input
 from mousebrain.classification_runs import (discard_staged, follow_files_into_archive,
-                                            install_staged, staging_folder,
-                                            sweep_stopped_runs)
+                                            follow_selective_rows, install_staged,
+                                            staging_folder, sweep_stopped_runs)
 
 FOLDER_CROPPED = "2_Cropped_For_Registration"
 FOLDER_DETECTION = "4_Cell_Candidates"
@@ -74,6 +84,29 @@ FOLDER_CLASSIFICATION = "5_Classified_Cells"
 DEFAULT_CUBE_SIZE = 50
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_N_FREE_CPUS = 2
+
+# Fixed parts of the classifier input, the same for every model this tool
+# trains (cellfinder's standard cube depth and its ResNet-50 network).
+CUBE_DEPTH = 20
+NETWORK_DEPTH = "50"
+
+# The settled pre-filter: these exact settings, written out rather than taken
+# from prefilter_candidates' defaults, so changing a default there can never
+# change production quietly. They are the settings the settled selective
+# classification was made with (the pre-filter's defaults since 2026-03-03).
+PREFILTER_SETTINGS = {
+    "method": "atlas_erosion",
+    "surface_depth_um": 100.0,
+    "withdrawal_depth_um": 100.0,
+    "include_ventricle_walls": True,
+    "include_fiber_tracts": True,
+    "filter_depth_um": 100.0,
+    "dark_percentile": 5.0,
+    "extreme_oob_um": 500.0,
+    "atlas_name": "allen_mouse_10um",
+    "tracing_type": "descending",
+}
+PREFILTERED_NAME = "interior_candidates.xml"
 
 
 # =============================================================================
@@ -126,68 +159,6 @@ def find_detection_output(pipeline_folder: Path):
     """
     from mousebrain.pipeline_status import find_candidates
     return find_candidates(pipeline_folder)
-
-
-def _best_model_in_dir(model_dir):
-    """Find the best model file in a training output directory.
-
-    Priority: best_model.keras > best_model.h5 > lowest-loss .keras > lowest-loss .h5
-    """
-    # Check for explicitly saved best model
-    for ext in ('.keras', '.h5'):
-        best = model_dir / f"best_model{ext}"
-        if best.exists():
-            return best
-
-    # Fall back to lowest-loss checkpoint
-    for pattern in ('*.keras', '*.h5'):
-        checkpoints = list(model_dir.glob(f"model-epoch.*{pattern.replace('*', '')}"))
-        if checkpoints:
-            # Parse loss from filename: model-epoch.19-loss-0.0898.h5
-            def parse_loss(p):
-                try:
-                    return float(p.stem.split('loss-')[1])
-                except (IndexError, ValueError):
-                    return float('inf')
-            checkpoints.sort(key=parse_loss)
-            return checkpoints[0]
-
-    # Last resort: any model file
-    for pattern in ('*.keras', '*.h5'):
-        files = list(model_dir.glob(pattern))
-        if files:
-            return files[0]
-
-    return None
-
-
-def find_default_model():
-    """Find the best model from the most recent training run.
-
-    Sorts training directories by timestamp in name (most recent first),
-    then picks the best model file from that directory.
-    """
-    if not DEFAULT_MODELS_DIR.exists():
-        return None
-
-    # Collect directories that contain at least one model file
-    candidates = []
-    for model_dir in DEFAULT_MODELS_DIR.iterdir():
-        if not model_dir.is_dir():
-            continue
-        best = _best_model_in_dir(model_dir)
-        if best:
-            candidates.append((model_dir, best))
-
-    if candidates:
-        # Sort by best model file's modification time (most recent first)
-        candidates.sort(key=lambda x: x[1].stat().st_mtime, reverse=True)
-        chosen_dir, chosen_model = candidates[0]
-        print(f"  Default model dir: {chosen_dir.name}")
-        print(f"  Default model:     {chosen_model.name}")
-        return chosen_model
-
-    return None
 
 
 def count_cells_in_xml(xml_path: Path) -> int:
@@ -301,7 +272,7 @@ def run_cellfinder_classify(
         # Run classification using cellfinder's main function
         from cellfinder.core.classify.classify import main as classify_main
 
-        cube_depth = 20  # Standard depth for cellfinder
+        cube_depth = CUBE_DEPTH
 
         print(f"[{timestamp()}] Running classification network...")
 
@@ -331,7 +302,7 @@ def run_cellfinder_classify(
             cube_depth=cube_depth,
             trained_model=trained_model_arg,
             model_weights=model_weights_arg,
-            network_depth="50",  # ResNet50
+            network_depth=NETWORK_DEPTH,  # ResNet50
         )
 
         duration = time.time() - start_time
@@ -410,56 +381,222 @@ def interactive_select_brain(brains):
             print("Enter a number or 'q'")
 
 
+def settled_method_or_stop(tracker, imaging_paradigm: str, args) -> dict:
+    """The classification method step 5 runs, or stop (exit 1) saying why.
+
+    The method is the run a person marked Paradigm Best for the brain's
+    imaging setup (tracker.get_paradigm_classification): its model file, cube
+    and batch size, and -- for a selective classification -- its tracing type.
+    Nothing else is ever used.
+
+    WHY: step 5 writes THE classification of a brain, which step 6 counts.
+    Without a Paradigm Best it used to take "the newest model file" in the
+    models folder, and options could swap in any model, skip the pre-filter or
+    classify a tuned pre-filter -- all straight into production. Two models on
+    the same brain gave counts several-fold apart, so a count could not be
+    traced to a method anyone had settled on. Trying something else is tuning:
+    Setup & Tuning writes such runs to optimization_runs/<brain>/, never here.
+    """
+    def stop(*lines):
+        for line in lines:
+            print(line)
+        print("Nothing was classified, and the production classification was not touched.")
+        sys.exit(1)
+
+    if not imaging_paradigm:
+        stop("ERROR: the imaging setup (magnification + z-step) cannot be read from the "
+             "brain's name, so its settled classification method cannot be looked up.",
+             "Brain names end in <mag>x_z<step>, e.g. 1p625x_z4.")
+    method = tracker.get_paradigm_classification(imaging_paradigm)
+    if method is None:
+        stop(f"ERROR: no classification run is marked Paradigm Best for imaging setup "
+             f"'{imaging_paradigm}'.",
+             "Step 5 runs only the settled method: the classification (or selective",
+             "classification) run a person marked Paradigm Best for this imaging setup.",
+             "To settle one: python scripts/utils/util_mark_paradigm_classifier.py --run <exp_id>",
+             "(see docs/pipeline/README.md, 'The settled classification method').")
+    if method['missing']:
+        stop(f"ERROR: the Paradigm Best classification run {method['source_exp_id']} does not "
+             f"record: {', '.join(method['missing'])}.",
+             "A method is not finished with values the run never used. Record them on the",
+             "run with util_mark_paradigm_classifier.py (--cube-size / --batch-size), or mark",
+             "a run that records them.")
+    model = Path(method['model_path'])
+    if not model.is_file():
+        stop(f"ERROR: the settled model file is missing: {model}",
+             f"(from Paradigm Best run {method['source_exp_id']}). It is never replaced by",
+             "another model file. Put the file back, or settle another run.")
+    refused = []
+    if args.model is not None:
+        try:
+            same = Path(args.model).is_file() and os.path.samefile(str(args.model), str(model))
+        except OSError:
+            same = False
+        if not same:
+            refused.append(f"--model {args.model} (the settled model is {model})")
+    if args.no_prefilter:
+        refused.append("--no-prefilter (the settled method pre-filters)")
+    if args.candidates:
+        refused.append("--candidates (a saved or tuned pre-filter is not the settled pre-filter)")
+    if args.tracing_type and args.tracing_type != (method['tracing_type'] or args.tracing_type):
+        refused.append(f"--tracing-type {args.tracing_type} (settled: {method['tracing_type']})")
+    if args.cube_size is not None and args.cube_size != method['cube_size']:
+        refused.append(f"--cube-size {args.cube_size} (settled: {method['cube_size']})")
+    if args.batch_size is not None and args.batch_size != method['batch_size']:
+        refused.append(f"--batch-size {args.batch_size} (settled: {method['batch_size']})")
+    if refused:
+        stop("ERROR: step 5 writes the production classification with the settled method "
+             "only. Refused:",
+             *["    " + r for r in refused],
+             "To try another model or setting, use Setup & Tuning (it writes to",
+             "optimization_runs/<brain>/). To change the method, mark another run Paradigm Best.")
+    print(f"\n[Settled method] imaging setup '{imaging_paradigm}': "
+          f"{method['method']} classification, Paradigm Best {method['source_exp_id']}")
+    print(f"  Model: {model}")
+    print(f"  Cube size {method['cube_size']}, batch size {method['batch_size']}"
+          + (f", tracing type {method['tracing_type']}" if method['tracing_type'] else ""))
+    return method
+
+
+def run_prefilter_or_stop(tracker, brain_name, pipeline_folder, candidates, registration_path):
+    """Pre-filter the brain's candidates with PREFILTER_SETTINGS into
+    4_Cell_Candidates/prefiltered/interior_candidates.xml, or stop (exit 1).
+
+    The previous interior_candidates.xml (and anything describing it) is moved
+    to prefiltered/_archive/<time>/ first: it is the input an earlier
+    classification recorded, and was overwritten with no copy before.
+    Returns what the record beside the production files says about it."""
+    print(f"\n[{timestamp()}] Running atlas pre-filter...")
+    try:
+        from mousebrain.prefilter import prefilter_candidates, _coords_to_xml
+        if not registration_path.exists():
+            raise RuntimeError("no registration folder (%s)" % registration_path)
+        result = prefilter_candidates(candidates_xml=candidates,
+                                      registration_path=registration_path,
+                                      **PREFILTER_SETTINGS)
+        total = result['stats']['total']
+        interior = result['stats']['interior']
+        suspicious = result['stats']['suspicious']
+        print(f"    Total candidates: {total}")
+        print(f"    Interior (keep): {interior}")
+        print(f"    Suspicious (removed): {suspicious}")
+        if total > 0:
+            print(f"    Pre-filter removed {suspicious/total*100:.1f}% of candidates")
+        for cat, cnt in sorted(result.get('category_counts', {}).items(), key=lambda x: -x[1]):
+            print(f"      {cat}: {cnt:,}")
+
+        prefiltered_dir = pipeline_folder / FOLDER_DETECTION / "prefiltered"
+        prefiltered_dir.mkdir(parents=True, exist_ok=True)
+        from mousebrain.candidates_io import archive_previous
+        previous, _ = archive_previous(prefiltered_dir, PREFILTERED_NAME)
+        if previous:
+            print(f"    Previous pre-filter output kept in {previous.parent}")
+        prefiltered_xml = prefiltered_dir / PREFILTERED_NAME
+        _coords_to_xml(result['interior_coords'], prefiltered_xml)
+        print(f"    Using {interior} pre-filtered candidates for classification")
+        pf_id = tracker.log_prefilter(
+            brain=brain_name, total=total, interior=interior, suspicious=suspicious,
+            tracing_type=PREFILTER_SETTINGS.get('tracing_type', 'descending'),
+            # What was filtered: step 6 follows this back to the detection
+            # run to record its settings with the counts.
+            input_path=str(candidates), output_path=str(prefiltered_xml),
+            status="completed")
+        return {"exp_id": pf_id, "settings": dict(PREFILTER_SETTINGS),
+                "input": str(candidates), "output": str(prefiltered_xml),
+                "total": total, "interior": interior, "removed": suspicious}
+    except Exception as e:
+        print(f"\nERROR: The pre-filter failed: {e}")
+        try:
+            tracker.log_prefilter(
+                brain=brain_name, tracing_type=PREFILTER_SETTINGS.get('tracing_type', 'descending'),
+                input_path=str(candidates), status="failed",
+                notes=f"step 5 stopped: {e}"[:500])
+        except Exception as log_error:
+            print(f"    [!] The failure could not be recorded in the tracker: {log_error}")
+        print("Step 5 stopped. Nothing was classified, and the production")
+        print("classification was not touched. Fix the cause above and run step 5 again.")
+        sys.exit(1)
+
+
+def run_selective(**kwargs):
+    """mousebrain.selective_classifier.run_selective_classification (imported
+    when used: it needs the atlas tools)."""
+    from mousebrain.selective_classifier import run_selective_classification
+    return run_selective_classification(**kwargs)
+
+
+def _file_fingerprint(path: Path) -> dict:
+    """Size and modification time of a file, so the record says WHICH file of
+    that name was used (a model file replaced under the same name shows)."""
+    try:
+        st = Path(path).stat()
+        return {"bytes": st.st_size,
+                "modified": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")}
+    except OSError:
+        return {}
+
+
+def _candidates_record(candidates: Path) -> dict:
+    """The record step 4 wrote beside the candidates (which detection run made
+    them, with its settings), or {} when there is none."""
+    try:
+        from mousebrain.candidates_io import provenance_path
+        return json.loads(provenance_path(candidates).read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return {}
+
+
 # =============================================================================
 # MAIN
 # =============================================================================
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Run cellfinder classification with auto-logging',
+        description='Write the production classification with the settled method',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python 5_classify_cells.py                               # Interactive
-    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --model model.h5
-    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4  # Uses default model
-    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --no-prefilter  # Skip pre-filter (not recommended)
-    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --routine       # Auto pre-filter + paradigm model
-    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --candidates <brain>/4_Cell_Candidates/prefiltered_<time>/interior_candidates.xml
-                                                             # Classify a saved (tuned) pre-filter
+    python 5_classify_cells.py                                        # Interactive
+    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4          # The settled method
+    python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --dry-run  # Show it, change nothing
+
+The method (model file, cube and batch size, selective or full, tracing type)
+is the classification run marked Paradigm Best for the brain's imaging setup.
+--model, --cube-size, --batch-size and --tracing-type are accepted only when
+they equal it; --no-prefilter and --candidates are refused. Trying anything
+else is done in Setup & Tuning, which never writes 5_Classified_Cells.
         """
     )
-    
+
     parser.add_argument('--brain', '-b', help='Brain/pipeline to process')
-    parser.add_argument('--model', '-m', type=Path, help='Path to trained model')
+    parser.add_argument('--model', '-m', type=Path,
+                        help='Accepted only if it is the settled model file (a check)')
     parser.add_argument('--detection', '-d', help='Detection experiment ID to link to')
-    
-    # Parameters
-    parser.add_argument('--cube-size', type=int, default=DEFAULT_CUBE_SIZE)
-    parser.add_argument('--batch-size', type=int, default=DEFAULT_BATCH_SIZE)
-    parser.add_argument('--n-free-cpus', type=int, default=DEFAULT_N_FREE_CPUS)
-    
+
+    # Parameters: the settled method's own; given here only as a check.
+    parser.add_argument('--cube-size', type=int, default=None)
+    parser.add_argument('--batch-size', type=int, default=None)
+    parser.add_argument('--n-free-cpus', type=int, default=DEFAULT_N_FREE_CPUS,
+                        help='CPUs left free while classifying (speed only, not the method)')
+
     parser.add_argument('--notes', help='Notes to add to log')
-    parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Show the brain, candidates and settled method; change nothing')
     parser.add_argument('--root', type=Path, default=DEFAULT_BRAINGLOBE_ROOT)
     parser.add_argument('--routine', action='store_true',
-                        help='Routine processing mode: auto-use paradigm-best model if available')
+                        help='Kept for old command lines; the settled method is always used')
     parser.add_argument('--no-prefilter', action='store_true',
-                        help='Skip atlas pre-filter (not recommended - includes surface artifacts)')
+                        help='Refused: the settled method pre-filters')
     parser.add_argument('--candidates', type=Path,
-                        help='Classify this file instead: a saved pre-filter of the brain\'s '
-                             'candidates (4_Cell_Candidates/prefiltered_<time>/'
-                             'interior_candidates.xml), which is not pre-filtered again')
+                        help='Refused: a saved or tuned pre-filter is not the settled method')
     parser.add_argument('--selective', action='store_true',
-                        help='Region-selective classification: trust cells in eLife regions, classify only uncertain regions')
-    parser.add_argument('--tracing-type', default='descending',
+                        help='Kept for old command lines; selective or full comes from the '
+                             'Paradigm Best run')
+    parser.add_argument('--tracing-type', default=None,
                         choices=['descending', 'ascending', 'unknown'],
-                        help='Tracing type for selective classification (default: descending)')
+                        help='Accepted only if it is the settled tracing type (a check)')
 
     args = parser.parse_args()
-
-    # Prefilter is ON by default; --no-prefilter opts out
-    args.prefilter = not args.no_prefilter
 
     print("=" * 60)
     print("BrainGlobe Cell Classification")
@@ -496,91 +633,31 @@ Examples:
         brain_name = brain_info['name']
         candidates = brain_info['candidates']
 
-    # Check for paradigm-best model
     tracker = ExperimentTracker()
 
-    # A saved pre-filter chosen by the person (--candidates): checked to be a
-    # pre-filter of THIS brain's current candidates (mousebrain.prefilter.
-    # check_candidates_choice says why), and then classified as it is --
-    # step 5's own pre-filter would filter it again with the default settings
-    # and undo the tuning.
-    already_prefiltered = False
-    if args.candidates:
-        from mousebrain.prefilter import check_candidates_choice
-        try:
-            candidates, already_prefiltered = check_candidates_choice(
-                pipeline_folder, args.candidates, tracker._read_all())
-        except ValueError as e:
-            print(f"ERROR: --candidates cannot be classified: {e}")
-            print("Nothing was classified.")
-            sys.exit(1)
-        print(f"Candidates chosen: {candidates}")
-        if already_prefiltered:
-            print("    (a saved pre-filter: step 5's own pre-filter is not run on it)")
+    # =========================================================================
+    # THE SETTLED METHOD: the run marked Paradigm Best, or nothing
+    # =========================================================================
     parsed = parse_brain_name(pipeline_folder.name)
     imaging_paradigm = parsed.get('imaging_params', '')
-    paradigm_model = None
-
-    if imaging_paradigm:
-        paradigm_model = tracker.get_paradigm_model(imaging_paradigm)
-        if paradigm_model:
-            paradigm_model_path = Path(paradigm_model)
-            if paradigm_model_path.exists():
-                print(f"\n[Paradigm Best Model Found] For '{imaging_paradigm}':")
-                print(f"  Model: {paradigm_model_path.name}")
-            else:
-                print(f"\n[Warning] Paradigm model path not found: {paradigm_model}")
-                paradigm_model = None
-
-    # Find model (priority: explicit > paradigm-best > default)
-    if args.model:
-        model_path = args.model
-        if not model_path.exists():
-            print(f"ERROR: Model not found: {model_path}")
-            sys.exit(1)
-        print(f"Using specified model: {model_path}")
-    elif args.routine and paradigm_model:
-        # Routine mode: auto-use paradigm-best model
-        print("\n[Routine Mode] Using paradigm-best model.")
-        model_path = Path(paradigm_model)
-    elif paradigm_model and not args.brain:
-        # Interactive mode with paradigm model available
-        print(f"\nUse paradigm-best model? (y/n)")
-        use_paradigm = input("Selection [y]: ").strip().lower()
-        if use_paradigm in ('', 'y', 'yes'):
-            model_path = Path(paradigm_model)
-            print(f"Using paradigm-best model: {model_path}")
-        else:
-            model_path = find_default_model()
-            if not model_path:
-                print("ERROR: No default model found! Specify with --model")
-                sys.exit(1)
-            print(f"Using default model: {model_path}")
-    elif paradigm_model:
-        # Non-interactive with paradigm model available
-        print("\n[Auto] Using paradigm-best model (use --model to override)")
-        model_path = Path(paradigm_model)
-    else:
-        model_path = find_default_model()
-        if not model_path:
-            print("ERROR: No model specified and no default model found!")
-            print("Train a model or specify with --model")
-            sys.exit(1)
-        print(f"Using default model: {model_path}")
+    method = settled_method_or_stop(tracker, imaging_paradigm, args)
+    model_path = Path(method['model_path'])
+    cube_size = method['cube_size']
+    batch_size = method['batch_size']
 
     # Load metadata -- from the images the atlas was fitted to, which are the
     # images detection's coordinates refer to (not always the crop: a brain
     # delivered already cut is registered on its full extraction).
     _source, crop_folder, _meta = registered_input(pipeline_folder)
     metadata_path = crop_folder / "metadata.json"
-    
+
     if metadata_path.exists():
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
     else:
         print(f"Warning: No metadata found at {metadata_path}")
         metadata = {}
-    
+
     # Get paths and voxel sizes
     channels = metadata.get('channels', {})
     signal_ch = channels.get('signal_channel', 0)
@@ -596,168 +673,80 @@ Examples:
     )
 
     output_path = pipeline_folder / FOLDER_CLASSIFICATION
-
-    # The pre-filter (on unless --no-prefilter). It either runs or step 5
-    # stops: a pre-filter that failed used to print a warning and classify the
-    # UNFILTERED candidates -- surface glow and all -- into the production
-    # classification, with nothing on the run saying so. Classifying
-    # unfiltered candidates is allowed only when the person asks for it with
-    # --no-prefilter.
-    if args.prefilter and not already_prefiltered:
-        print(f"\n[{timestamp()}] Running atlas pre-filter...")
-        try:
-            from mousebrain.prefilter import prefilter_candidates
-
-            registration_path = pipeline_folder / "3_Registered_Atlas"
-            if not registration_path.exists():
-                raise RuntimeError("no registration folder (%s)" % registration_path)
-            else:
-                result = prefilter_candidates(
-                    candidates_xml=candidates,
-                    registration_path=registration_path,
-                )
-
-                total = result['stats']['total']
-                interior = result['stats']['interior']
-                suspicious = result['stats']['suspicious']
-
-                print(f"    Total candidates: {total}")
-                print(f"    Interior (keep): {interior}")
-                print(f"    Suspicious (removed): {suspicious}")
-                if total > 0:
-                    print(f"    Pre-filter removed {suspicious/total*100:.1f}% of candidates")
-
-                # Show category breakdown
-                for cat, cnt in sorted(result.get('category_counts', {}).items(), key=lambda x: -x[1]):
-                    print(f"      {cat}: {cnt:,}")
-
-                # Save interior candidates as the new input for classification
-                prefiltered_dir = pipeline_folder / FOLDER_DETECTION / "prefiltered"
-                prefiltered_dir.mkdir(parents=True, exist_ok=True)
-                prefiltered_xml = prefiltered_dir / "interior_candidates.xml"
-
-                # Use helper function to save XML
-                from mousebrain.prefilter import _coords_to_xml
-                _coords_to_xml(result['interior_coords'], prefiltered_xml)
-
-                # Use prefiltered candidates for classification
-                prefilter_source = candidates
-                candidates = prefiltered_xml
-                print(f"    Using {interior} pre-filtered candidates for classification")
-
-                # Log pre-filter to tracker
-                tracker.log_prefilter(
-                    brain=brain_name,
-                    total=total,
-                    interior=interior,
-                    suspicious=suspicious,
-                    tracing_type='descending',
-                    # What was filtered: step 6 follows this back to the
-                    # detection run to record its settings with the counts.
-                    input_path=str(prefilter_source),
-                    output_path=str(prefiltered_xml),
-                    status="completed",
-                )
-        except Exception as e:
-            print(f"\nERROR: The pre-filter failed: {e}")
-            try:
-                tracker.log_prefilter(
-                    brain=brain_name, tracing_type='descending',
-                    input_path=str(candidates), status="failed",
-                    notes=f"step 5 stopped: {e}"[:500])
-            except Exception as log_error:
-                print(f"    [!] The failure could not be recorded in the tracker: {log_error}")
-            print("Step 5 stopped. Nothing was classified, and the production")
-            print("classification was not touched. Fix the cause above, or run step 5")
-            print("again with --no-prefilter to classify the unfiltered candidates on purpose.")
-            sys.exit(1)
+    registration_path = pipeline_folder / "3_Registered_Atlas"
 
     if args.dry_run:
-        print("\n=== DRY RUN ===")
+        print("\n=== DRY RUN (nothing is pre-filtered, classified or written) ===")
         print(f"Brain: {brain_name}")
         print(f"Candidates: {candidates}")
+        print(f"Method: {method['method']} (Paradigm Best {method['source_exp_id']})")
         print(f"Model: {model_path}")
+        print(f"Cube size: {cube_size}  Batch size: {batch_size}")
+        if method['method'] == 'selective':
+            print(f"Tracing type: {method['tracing_type']}")
+        print(f"Pre-filter: {PREFILTER_SETTINGS}")
         print(f"Output: {output_path}")
-        print(f"Selective: {args.selective}")
+        return
+
+    # The pre-filter, with its own settings (PREFILTER_SETTINGS). It either
+    # runs or step 5 stops: a pre-filter that failed used to print a warning
+    # and classify the UNFILTERED candidates -- surface glow and all -- into
+    # the production classification, with nothing on the run saying so.
+    prefilter_record = run_prefilter_or_stop(tracker, brain_name, pipeline_folder,
+                                             candidates, registration_path)
+    prefilter_source = candidates
+    candidates = Path(prefilter_record['output'])
+
+    # The record written beside the production files (promoted_from.json,
+    # "method"): everything that made them, so a count can be traced to its
+    # model file and settings without the tracker.
+    method_record = {
+        "method": method['method'],
+        "paradigm_best_exp_id": method['source_exp_id'],
+        "paradigm_best_brain": method['source_brain'],
+        "imaging_paradigm": imaging_paradigm,
+        "model_path": str(model_path),
+        "model_file": _file_fingerprint(model_path),
+        "cube_size": cube_size,
+        "batch_size": batch_size,
+        "cube_depth": CUBE_DEPTH,
+        "network_depth": NETWORK_DEPTH,
+        "tracing_type": method['tracing_type'],
+        "prefilter": prefilter_record,
+        "candidates": str(prefilter_source),
+        "candidates_record": _candidates_record(prefilter_source),
+        "script": "5_classify_cells.py %s" % SCRIPT_VERSION,
+    }
+
+    if method['method'] == 'selective':
+        run_selective_production(
+            tracker, args, brain_name, pipeline_folder, candidates, model_path, method,
+            registration_path, signal_path, background_path, voxel_sizes,
+            method_record)
         return
 
     # =========================================================================
-    # SELECTIVE CLASSIFICATION MODE
+    # FULL CLASSIFICATION (the Paradigm Best is a plain classification run)
     # =========================================================================
-    if args.selective:
-        from mousebrain.selective_classifier import run_selective_classification
-
-        registration_path = pipeline_folder / "3_Registered_Atlas"
-        if not registration_path.exists():
-            print("ERROR: No registration folder found -- required for selective classification")
-            sys.exit(1)
-
-        # Log to tracker
-        sel_exp_id = tracker.log_selective_classification(
-            brain=brain_name,
-            model_path=str(model_path),
-            tracing_type=args.tracing_type,
-            candidates_path=str(candidates),
-            output_path=str(output_path),
-            status="started",
-            script_version=SCRIPT_VERSION,
-        )
-
-        print(f"\nSelective Classification Run: {sel_exp_id}")
-
-        # If this stops part-way (an error, Ctrl-C, a crash inside the tool),
-        # the tracker row is set to failed instead of staying 'started' forever.
-        with tracker.finish_or_fail(sel_exp_id):
-            result = run_selective_classification(
-                brain_path=pipeline_folder,
-                candidates_xml=candidates,
-                model_path=model_path,
-                registration_path=registration_path,
-                tracing_type=args.tracing_type,
-                signal_path=signal_path,
-                background_path=background_path,
-                voxel_sizes=voxel_sizes,
-                cube_size=args.cube_size,
-                batch_size=args.batch_size,
-                n_free_cpus=args.n_free_cpus,
-            )
-
-            # Update tracker
-            tracker.update_status(
-                sel_exp_id,
-                status="completed" if result.final_cells > 0 else "failed",
-                duration_seconds=round(result.duration_seconds, 1),
-                class_cells_found=result.final_cells,
-                class_rejected=result.classified_rejected,
-            )
-
-        print(f"\nExperiment ID: {sel_exp_id}")
-        return
-
-    # =========================================================================
-    # STANDARD CLASSIFICATION MODE (unchanged)
-    # =========================================================================
-
-    # Log classification run (tracker already initialized for paradigm check)
     exp_id = tracker.log_classification(
         brain=brain_name,
         model_path=str(model_path),
         candidates_path=str(candidates),
-        cube_size=args.cube_size,
-        batch_size=args.batch_size,
+        cube_size=cube_size,
+        batch_size=batch_size,
         n_free_cpus=args.n_free_cpus,
         output_path=str(output_path),
         parent_experiment=args.detection,
-        notes=args.notes,
+        notes=args.notes or ("settled method: Paradigm Best %s" % method['source_exp_id']),
         status="started",
         script_version=SCRIPT_VERSION,
     )
-    
+
     print(f"\n{'='*60}")
     print(f"Classification Run: {exp_id}")
     print(f"Brain: {brain_name}")
     print(f"{'='*60}")
-    
+
     # If this stops part-way (an error, Ctrl-C, a crash inside the tool),
     # the tracker row is set to failed instead of staying 'started' forever.
     with tracker.finish_or_fail(exp_id):
@@ -779,8 +768,8 @@ Examples:
                 output_path=staged,
                 model_path=model_path,
                 voxel_sizes=voxel_sizes,
-                cube_size=args.cube_size,
-                batch_size=args.batch_size,
+                cube_size=cube_size,
+                batch_size=batch_size,
                 n_free_cpus=args.n_free_cpus,
                 background_path=background_path,
             )
@@ -788,21 +777,8 @@ Examples:
             discard_staged(staged, pipeline_folder, "failed")
             raise
         if success and (staged / "cells.xml").exists():
-            archived, prev_id, _ = install_staged(
-                staged, pipeline_folder, exp_id,
-                source="5_classify_cells.py %s" % SCRIPT_VERSION, how="step 5")
-            if archived:
-                print(f"    Previous production classification archived to {archived}")
-            print(f"    Production classification: {output_path / 'cells.xml'}")
-            # This run's row names the file it wrote; the previous writer's
-            # row follows its files into the archive.
-            tracker.update_status(exp_id, output_path=str(output_path / "cells.xml"))
-            follow_files_into_archive(tracker, prev_id, archived, pipeline_folder)
-            # Counts made from the classification just replaced leave the
-            # production count tables (region_counts_io.withdraw_counts).
-            from mousebrain.region_counts_io import withdraw_counts_or_warn
-            withdraw_counts_or_warn(pipeline_folder.name,
-                                    "classification replaced by step 5 run %s" % exp_id)
+            method_record["counts"] = {"cells": cells_found, "rejected": rejected}
+            _install(tracker, pipeline_folder, staged, exp_id, method_record)
         else:
             success = False
             kept = discard_staged(staged, pipeline_folder, "failed")
@@ -818,7 +794,7 @@ Examples:
             class_cells_found=cells_found,
             class_rejected=rejected,
         )
-    
+
     print(f"\n{'='*60}")
     if success:
         print(f"COMPLETED in {duration/60:.1f} minutes")
@@ -831,26 +807,158 @@ Examples:
         print(f"FAILED after {duration/60:.1f} minutes")
     print(f"Experiment ID: {exp_id}")
     print(f"{'='*60}")
-    
-    if success:
-        try:
-            rating = input("\nRate this run (1-5, or Enter to skip): ").strip()
-            if rating and rating.isdigit() and 1 <= int(rating) <= 5:
-                note = input("Add a note (or Enter to skip): ").strip()
-                tracker.rate_experiment(exp_id, int(rating), note if note else None)
-        except (EOFError, KeyboardInterrupt):
-            pass
 
-        # Next step guidance
-        print("\n" + "=" * 60)
-        print("WHAT TO DO NEXT")
-        print("=" * 60)
-        print("\n1. Run region counting:")
-        print(f"   python 6_count_regions.py --brain {brain_name.split('/')[-1]}")
-        print("\n" + "-" * 60)
-        print("OR just run: python RUN_PIPELINE.py")
-        print("   (it will guide you through everything)")
-        print("=" * 60)
+    if success:
+        _rate_and_next(tracker, exp_id, brain_name)
+
+
+def run_selective_production(tracker, args, brain_name, pipeline_folder, candidates,
+                             model_path, method, registration_path, signal_path,
+                             background_path, voxel_sizes, method_record):
+    """Selective classification as the production classification.
+
+    Written into the staging folder (as a full classification is), installed
+    as cells.xml + rejected.xml + its audit files only when it finished with a
+    result; the previous production files go to _archive/<time>/. The
+    classifier is run with on_classifier_error="raise": a classifier that could
+    not run must stop the run, not leave a result of trusted cells only."""
+    output_path = pipeline_folder / FOLDER_CLASSIFICATION
+    if not registration_path.exists():
+        print("ERROR: No registration folder found -- required for selective classification")
+        print("Nothing was classified.")
+        sys.exit(1)
+
+    sel_exp_id = tracker.log_selective_classification(
+        brain=brain_name,
+        model_path=str(model_path),
+        tracing_type=method['tracing_type'],
+        candidates_path=str(candidates),
+        output_path=str(output_path),
+        parent_experiment=args.detection,
+        notes=args.notes or ("settled method: Paradigm Best %s" % method['source_exp_id']),
+        status="started",
+        script_version=SCRIPT_VERSION,
+        cube_size=method['cube_size'],
+        batch_size=method['batch_size'],
+    )
+    print(f"\nSelective Classification Run: {sel_exp_id}")
+
+    success = False
+    result = None
+    with tracker.finish_or_fail(sel_exp_id):
+        for left in sweep_stopped_runs(pipeline_folder):
+            print(f"    An earlier run that was stopped left files; kept in {left}")
+        staged = staging_folder(pipeline_folder)
+        try:
+            result = run_selective(
+                brain_path=pipeline_folder,
+                candidates_xml=candidates,
+                model_path=model_path,
+                registration_path=registration_path,
+                tracing_type=method['tracing_type'],
+                signal_path=signal_path,
+                background_path=background_path,
+                voxel_sizes=voxel_sizes,
+                cube_size=method['cube_size'],
+                batch_size=method['batch_size'],
+                n_free_cpus=args.n_free_cpus,
+                output_dir=staged,
+                on_classifier_error="raise",
+            )
+        except BaseException:
+            discard_staged(staged, pipeline_folder, "failed")
+            raise
+        # The selective run names its files for what they are; production
+        # names them as every reader expects (step 6 counts cells.xml).
+        for src, dst in (("cells_selective.xml", "cells.xml"),
+                         ("selective_rejected.xml", "rejected.xml")):
+            if (staged / src).is_file():
+                (staged / src).replace(staged / dst)
+        success = bool(result is not None and result.final_cells > 0
+                       and (staged / "cells.xml").is_file())
+        if success:
+            method_record["counts"] = {
+                "candidates": result.total_candidates,
+                "trusted": result.trust_count,
+                "sent_to_classifier": result.classify_count,
+                "classifier_approved": result.classified_cells,
+                "classifier_rejected": result.classified_rejected,
+                "cells": result.final_cells,
+            }
+            _install(tracker, pipeline_folder, staged, sel_exp_id, method_record)
+        else:
+            kept = discard_staged(staged, pipeline_folder, "failed")
+            print("    The selective classification found no cells; the production "
+                  "classification is unchanged" + (f" (what it wrote is in {kept})" if kept else ""))
+
+        r = result
+        tracker.update_status(
+            sel_exp_id,
+            status="completed" if success else "failed",
+            duration_seconds=round(r.duration_seconds, 1) if r else None,
+            class_cells_found=r.final_cells if r else None,
+            class_rejected=r.classified_rejected if r else None,
+            prefilter_total=r.total_candidates if r else None,
+            prefilter_interior=r.trust_count if r else None,
+            prefilter_suspicious=r.classify_count if r else None,
+            notes="; ".join(filter(None, [
+                args.notes or ("settled method: Paradigm Best %s" % method['source_exp_id']),
+                ("trust=%d classify=%d approved=%d final=%d"
+                 % (r.trust_count, r.classify_count, r.classified_cells, r.final_cells))
+                if r else ""])),
+        )
+
+    print(f"\nExperiment ID: {sel_exp_id}")
+    if success:
+        _rate_and_next(tracker, sel_exp_id, brain_name)
+    else:
+        sys.exit(1)
+
+
+def _install(tracker, pipeline_folder, staged, exp_id, method_record):
+    """Make a finished run's staged files the production classification, keep
+    the previous ones in _archive/<time>/, point the tracker rows at where the
+    files are now, and take the counts made from the replaced classification
+    out of the production count tables."""
+    output_path = pipeline_folder / FOLDER_CLASSIFICATION
+    archived, prev_id, _ = install_staged(
+        staged, pipeline_folder, exp_id,
+        source="5_classify_cells.py %s" % SCRIPT_VERSION, how="step 5",
+        method=method_record)
+    if archived:
+        print(f"    Previous production classification archived to {archived}")
+    print(f"    Production classification: {output_path / 'cells.xml'}")
+    # This run's row names the file it wrote; the previous writer's row
+    # follows its files into the archive.
+    tracker.update_status(exp_id, output_path=str(output_path / "cells.xml"))
+    follow_files_into_archive(tracker, prev_id, archived, pipeline_folder)
+    follow_selective_rows(tracker, pipeline_folder, archived)
+    # Counts made from the classification just replaced leave the
+    # production count tables (region_counts_io.withdraw_counts).
+    from mousebrain.region_counts_io import withdraw_counts_or_warn
+    withdraw_counts_or_warn(pipeline_folder.name,
+                            "classification replaced by step 5 run %s" % exp_id)
+
+
+def _rate_and_next(tracker, exp_id, brain_name):
+    try:
+        rating = input("\nRate this run (1-5, or Enter to skip): ").strip()
+        if rating and rating.isdigit() and 1 <= int(rating) <= 5:
+            note = input("Add a note (or Enter to skip): ").strip()
+            tracker.rate_experiment(exp_id, int(rating), note if note else None)
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+    # Next step guidance
+    print("\n" + "=" * 60)
+    print("WHAT TO DO NEXT")
+    print("=" * 60)
+    print("\n1. Run region counting:")
+    print(f"   python 6_count_regions.py --brain {brain_name.split('/')[-1]}")
+    print("\n" + "-" * 60)
+    print("OR just run: python RUN_PIPELINE.py")
+    print("   (it will guide you through everything)")
+    print("=" * 60)
 
 
 if __name__ == '__main__':

@@ -679,49 +679,99 @@ in the archive. A run that fails leaves the previous file where it was.
 # Interactive mode
 python 5_classify_cells.py
 
-# With specific model
-python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --model path/to/model.h5
+# One brain, with the settled method of its imaging setup
+python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4
+
+# Show which method, model and candidates it would use; change nothing
+python 5_classify_cells.py --brain 001_CNT_01_01_1p625x_z4 --dry-run
 ```
 
-**The pre-filter (on unless `--no-prefilter`).** Before classifying, step 5
-removes candidates within 100 um of the brain's edge (surface glow, damage,
-uncleared tissue -- labelled neurons are not at the tissue edge) and candidates
-far outside the atlas. What is left is written to
-`4_Cell_Candidates/prefiltered/interior_candidates.xml` and is what gets
-classified. Candidates that land inside the brain outline but in no atlas region
-are kept.
+Step 5 writes the brain's **production classification**
+(`5_Classified_Cells/cells.xml`, the file step 6 counts) and it does so only
+with **the settled classification method** of the brain's imaging setup -- see
+"The settled classification method" below. There is no model to choose: with no
+settled method it stops (`ERROR: no classification run is marked Paradigm Best
+for imaging setup '...'`), classifies nothing and leaves the production files as
+they were. It never takes "the newest model file" any more.
+
+**What a run does, in order (selective method):**
+
+1. Looks up the settled method (model file, cube size, batch size, tracing
+   type) and stops if any part is missing or the model file is not there.
+2. Pre-filters the brain's candidates with the settled pre-filter (below).
+3. Maps every pre-filtered candidate to its atlas region. Candidates in the
+   deep descending-projection groups are **trusted** (not classified);
+   everything else -- unmapped, fiber tracts, surface-adjacent and other
+   uncertain regions -- goes through the classifier.
+4. Writes into `5_Classified_Cells/_in_progress/<time>/` while it works; the
+   production files stay in place until it has finished.
+5. When it finished with at least one cell: the previous production files
+   (`cells.xml`, `rejected.xml`, the record, and any selective files, including
+   the old side files `cells_selective.xml` / `selective_rejected.xml` from
+   before 2026-11-19) move to `5_Classified_Cells/_archive/<time>/`, and the new
+   ones move in: `cells.xml` (trusted + classifier-approved), `rejected.xml`
+   (what the classifier rejected), `selective_report.json` (every count),
+   `trust_cells.xml`, `classify_input.xml`, and `promoted_from.json`.
+6. Writes a `selective_classification` row in the tracker with the model, cube
+   and batch size, tracing type and every count, its `output_path` pointing at
+   the new `cells.xml`; takes the brain's old counts out of the production count
+   tables (they were made from the classification just replaced).
+
+If the classifier cannot run, the run stops (it does not quietly keep only the
+trusted cells). A run that finds no cells, fails, or is stopped leaves the
+production files untouched; what it wrote is kept in `_archive/<time>_failed/`
+or `_archive/<time>_stopped/`. Step 5 exits with code 1 in those cases.
+
+When the settled method is a plain (full) classification instead, steps 3-4 are
+"classify every pre-filtered candidate" and the rest is the same.
+
+**`promoted_from.json` says everything that made the files**: the run that wrote
+them, and under `method`: the Paradigm Best run the method came from, the model
+file with its size and modification time, cube and batch size, cube depth and
+network depth, tracing type, the pre-filter's settings, counts and output, the
+candidates file and the record step 4 wrote beside it (which detection run made
+them), and the counts. Step 6 reads it to trace counts to their method.
+
+**Options that are refused.** `--no-prefilter`, `--candidates` (a pre-filter
+saved or tuned by hand), and `--model` / `--cube-size` / `--batch-size` /
+`--tracing-type` with a value other than the settled one. Each prints
+`Refused: ...` and nothing is classified. Giving the settled values again is
+accepted (a check). Trying another model or setting is tuning: do it in Setup &
+Tuning, which writes to `2_Data_Summary/optimization_runs/<brain>/` and never to
+`5_Classified_Cells`. `--selective` and `--routine` are still accepted so old
+command lines work; they change nothing.
+
+**The pre-filter (always on).** Before classifying, step 5 removes candidates
+within 100 um of the brain's edge (surface glow, damage, uncleared tissue --
+labelled neurons are not at the tissue edge) and candidates far outside the
+atlas. Its settings are written out in step 5 (`PREFILTER_SETTINGS`: method
+`atlas_erosion`, surface and withdrawal depth 100 um, ventricle walls and fiber
+tracts included, filter depth 100 um, dark percentile 5, extreme out-of-bounds
+500 um, atlas `allen_mouse_10um`, tracing type descending), so a changed default
+in the pre-filter module can never change production quietly. What is left is
+written to `4_Cell_Candidates/prefiltered/interior_candidates.xml` and is what
+gets classified; the file that was there before moves to
+`prefiltered/_archive/<time>/` first (it used to be overwritten with no copy).
+Candidates that land inside the brain outline but in no atlas region are kept
+(and go to the classifier).
 
 **If the pre-filter fails, step 5 stops.** It prints `ERROR: The pre-filter
 failed: <why>`, records a failed pre-filter run in the tracker, classifies
-nothing and leaves the production classification as it was. Fix the cause, or
-run step 5 with `--no-prefilter` if you mean to classify the unfiltered
-candidates. Why: step 5 used to print a warning and classify the unfiltered
-candidates -- surface glow included -- into the production classification, and
-nothing on the run said so.
+nothing and leaves the production classification as it was. Fix the cause and
+run step 5 again. Why: step 5 used to print a warning and classify the
+unfiltered candidates -- surface glow included -- into the production
+classification, and nothing on the run said so.
 
-**Classifying a pre-filter you tuned and saved.** The pre-filter run from
-RUN_PIPELINE's "Pre-filter candidates" step, from `python -m mousebrain.prefilter`,
-or tuned in Setup & Tuning (6. Pre-Filter tab, **Save Filtered Lists**) is saved as
-`4_Cell_Candidates/prefiltered_<date>_<time>/interior_candidates.xml`. To classify
-one of those instead of step 5's own default pre-filter:
-
-```bash
-python 5_classify_cells.py --brain <brain_id> --candidates <brain folder>/4_Cell_Candidates/prefiltered_<date>_<time>/interior_candidates.xml
-```
-
-RUN_PIPELINE asks for you: when a brain has saved pre-filters, its "Classify
-cells" step asks "Which candidates should be classified?" -- step 5's own
-pre-filter, or one of the saved ones by folder name. (The pipeline dashboard and
-the batches always use step 5's own pre-filter.) A saved pre-filter is
-classified as it is, never pre-filtered again. Step 5 refuses it -- and
-classifies nothing -- when it is not a pre-filter of the brain's current
-candidates: a pre-filter of another file (an archived or trial detection run),
-one made before the candidates were detected again (`... were made again after
-this pre-filter`), one that does not say which candidates it filtered, or step
-5's own `prefiltered/` folder. Pre-filter the candidates again and save, then
-classify that. Why: step 5 used to ignore saved pre-filters entirely, so a tuned
-pre-filter was never used, although the pre-filter itself told people to pass it
-with `--candidates`.
+**Saved pre-filters are for tuning.** A pre-filter run from RUN_PIPELINE's
+"Pre-filter candidates" step, from `python -m mousebrain.prefilter`, or tuned in
+Setup & Tuning (6. Pre-Filter tab, **Save Filtered Lists**) is saved as
+`4_Cell_Candidates/prefiltered_<date>_<time>/interior_candidates.xml`. Since
+2026-11-19 step 5 does not classify those into production (`--candidates` is
+refused) and RUN_PIPELINE no longer asks which candidates to classify: the
+settled method includes its own pre-filter, and a tuned one is a different
+method. To make a tuned pre-filter part of the method, it has to become the
+settled method's pre-filter (a code change to `PREFILTER_SETTINGS`, decided on
+purpose).
 
 To decide where a candidate is, the pre-filter uses BrainGlobe's own transform
 from the detection images into the registration -- the same transform step 6
@@ -1444,10 +1494,66 @@ became the detection method of every brain imaged that way, and step 4 logged it
 as the settled method. Now step 4 stops with the message above until someone
 marks a Paradigm Best. The same rule applies to the classification model step 5
 takes from the tracker: only a classification run marked Paradigm Best for the
-imaging setup counts. Until a classification run is marked Paradigm Best (an
-open decision), step 5 does not stop: it falls back to the newest model file,
-exactly as before. (Setup & Tuning still shows a brain's Best; it just never
-runs it for other brains.)
+imaging setup counts, and with none step 5 stops (see "The settled
+classification method" below; until 2026-11-19 it fell back to the newest model
+file). (Setup & Tuning still shows a brain's Best; it just never runs it for
+other brains.)
+
+### The settled classification method
+
+*Update 2026-11-19 (settled classifier): step 5 production = the Paradigm Best classification only.*
+
+Step 5 classifies every brain with the **classification run marked Paradigm
+Best** for its imaging setup -- one run, with its own model file and settings,
+never "the newest model". A classification run and a selective classification
+run are one kind here: an imaging setup has at most one Paradigm Best among
+them, and marking one clears the other.
+
+**What the method is** (read from that run's tracker row by
+`ExperimentTracker.get_paradigm_classification`):
+
+| Part | Tracker column | Note |
+|------|----------------|------|
+| selective or full | `exp_type` | `selective_classification` or `classification` |
+| model file | `class_model_path` | must exist; never replaced by another file |
+| cube size | `class_cube_size` | |
+| batch size | `class_batch_size` | |
+| tracing type (selective) | `prefilter_tracing_type` | which regions are trusted |
+
+The pre-filter's settings are part of the method too; they are fixed in step 5
+(`PREFILTER_SETTINGS`, see Script 5). If any part is not recorded, step 5 stops
+and names it.
+
+**How to settle it** (a person's decision, once per imaging setup):
+
+```bash
+# 1. Look: what the run records, what is settled now, what would change. Writes nothing.
+python scripts/utils/util_mark_paradigm_classifier.py --run <exp_id> --dry-run
+
+# 2. Mark it. Runs made before the tracker recorded cube and batch size need
+#    them given (they are written only into empty columns, with the reason in
+#    the run's notes; a value the run recorded is never replaced):
+python scripts/utils/util_mark_paradigm_classifier.py --run <exp_id> \
+    --cube-size <n> --batch-size <n> --why "<who confirmed it, when, and why>"
+```
+
+It refuses a run that is not a completed classification, is archived, has no
+imaging setup, or whose model file is not there, and prints `[FAIL]` with the
+reason; nothing is written then. The mark is one locked rewrite of the tracker
+(the same write path every tracker change uses). *Mark as Paradigm Best* in
+Setup & Tuning does the same for a run listed there, but cannot fill in missing
+columns.
+
+**Changing it later** = marking another run. Brains classified before keep
+their files until step 5 is run on them again; their `promoted_from.json` says
+which method made them.
+
+**Why.** Two models on the same brain gave counts several-fold apart, and
+"newest model" meant a training run nobody had judged could become production
+by being saved. A selective classification (trust deep regions, classify only
+the uncertain ones) was found to keep real interior cells that classifying
+every candidate throws out; it could only write files beside production, which
+step 6 never counted. Now it is a production method like any other.
 
 **Changing one setting for a trial.** Give it to step 4 on the command line,
 e.g. `--threshold 9`. The run is logged as `custom`, never as the settled method.

@@ -2,9 +2,9 @@
 """
 batch_classify_all.py
 
-Run cellfinder classification (with pre-filter) on all brains that have
-detections in 4_Cell_Candidates/. Uses the default model (most recent
-best_model.h5).
+Run step 5 on each brain listed below. Step 5 classifies with the settled
+method of the brain's imaging setup (the classification run marked Paradigm
+Best: its model file and settings) and stops a brain when there is none.
 
 Usage:
     python batch_classify_all.py              # Classify all brains
@@ -35,7 +35,7 @@ def main():
     print("=" * 60)
     print("Batch Classification -- All Brains")
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Model:   (default -- most recent best_model.h5)")
+    print(f"Method:  the Paradigm Best classification of each imaging setup")
     print(f"Brains:  {len(BRAINS)}")
     print("=" * 60)
 

@@ -469,6 +469,8 @@ def run_selective_classification(
     signal_path: Optional[Path] = None,
     background_path: Optional[Path] = None,
     voxel_sizes: Optional[tuple] = None,
+    output_dir: Optional[Path] = None,
+    on_classifier_error: str = "reject",
 ) -> SelectiveResult:
     """
     Full selective classification pipeline.
@@ -492,6 +494,16 @@ def run_selective_classification(
         signal_path: Path to signal channel folder (auto-detected if None)
         background_path: Path to background channel folder (auto-detected if None)
         voxel_sizes: (z, y, x) voxel sizes in microns (auto-detected if None)
+        output_dir: where the files are written. Default: the brain's
+            5_Classified_Cells. Step 5 passes its staging folder
+            (5_Classified_Cells/_in_progress/<time>/) so the production files
+            stay in place until a finished run replaces them
+            (mousebrain.classification_runs says why).
+        on_classifier_error: "reject" (default) treats every candidate sent to
+            the classifier as rejected when the classifier cannot run, and
+            carries on; "raise" stops with the error. Step 5 uses "raise": a
+            production classification whose classifier never ran would hold
+            only the trusted cells and look like a result.
 
     Returns:
         SelectiveResult with all counts and paths
@@ -501,7 +513,9 @@ def run_selective_classification(
     # Parse tracing type
     tt = TracingType(tracing_type)
 
-    output_dir = brain_path / "5_Classified_Cells"
+    if on_classifier_error not in ("reject", "raise"):
+        raise ValueError("on_classifier_error must be 'reject' or 'raise'")
+    output_dir = Path(output_dir) if output_dir is not None else brain_path / "5_Classified_Cells"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'=' * 60}")
@@ -660,6 +674,8 @@ def run_selective_classification(
 
         except ImportError as e:
             print(f"  ERROR: cellfinder not available: {e}")
+            if on_classifier_error == "raise":
+                raise
             print(f"  Treating all CLASSIFY cells as rejected (conservative)")
             classified_rejected_count = len(classify_cells)
 
@@ -667,6 +683,8 @@ def run_selective_classification(
             import traceback
             print(f"  ERROR during classification: {e}")
             traceback.print_exc()
+            if on_classifier_error == "raise":
+                raise
             print(f"  Treating all CLASSIFY cells as rejected (conservative)")
             classified_rejected_count = len(classify_cells)
     else:

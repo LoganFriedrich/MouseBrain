@@ -69,7 +69,11 @@ python 4_detect_cells.py --brain YOUR_BRAIN --ball-xy N --ball-z N --soma-diamet
 python 5_classify_cells.py --brain YOUR_BRAIN
 ```
 
-This uses the trained network to filter detection candidates into real cells vs artifacts.
+This filters detection candidates into real cells vs artifacts with the
+**settled classification method** of the brain's imaging setup: the
+classification run marked Paradigm Best (its model file and settings; usually a
+selective classification). With none settled it stops; there is no model to
+choose here (pipeline README, "The settled classification method").
 Step 5 writes the brain's **production** classification,
 `5_Classified_Cells/cells.xml` -- the file step 6 counts.
 

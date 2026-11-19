@@ -1,11 +1,11 @@
-"""Step 5 classifies pre-filtered candidates or nothing, and can classify a
-saved (tuned) pre-filter.
+"""Step 5 classifies pre-filtered candidates or nothing, and only with its
+own (settled) pre-filter.
 
 When its own pre-filter failed, step 5 printed a warning and classified the
-UNFILTERED candidates into the production classification. And a pre-filter
-tuned by hand and saved was never used: step 5 had no way to be given it
-(the pre-filter even told people to use a --candidates option step 5 did not
-have). Identifiers are invented.
+UNFILTERED candidates into the production classification. Since 2026-11-19
+step 5 writes production with the settled method only, so a pre-filter saved
+or tuned by hand (--candidates) is refused there, and RUN_PIPELINE no longer
+offers one. Identifiers are invented.
 """
 import builtins
 import importlib.util
@@ -20,6 +20,7 @@ import pytest
 import mousebrain.prefilter as prefilter
 from mousebrain.config import record_registered_space
 from mousebrain.tracker import ExperimentTracker
+from settled_method_helpers import settle
 
 ROOT = Path(__file__).resolve().parents[1]
 STEP5 = ROOT / "scripts" / "pipeline" / "5_classify_cells.py"
@@ -65,8 +66,8 @@ def _saved_prefilter(b, source=None, age=0):
 @pytest.fixture
 def step5(tmp_path, monkeypatch):
     mod = _load("classify_step_prefilter", STEP5)
-    monkeypatch.setattr(mod, "ExperimentTracker",
-                        lambda: ExperimentTracker(tmp_path / "tracker" / "calibration_runs.csv"))
+    csv_path = tmp_path / "tracker" / "calibration_runs.csv"
+    monkeypatch.setattr(mod, "ExperimentTracker", lambda: ExperimentTracker(csv_path))
     monkeypatch.setattr(builtins, "input", lambda *a: (_ for _ in ()).throw(EOFError()))
     mod.classified = []
 
@@ -79,12 +80,12 @@ def step5(tmp_path, monkeypatch):
     model = tmp_path / "model.h5"
     model.write_text("m")
     mod.model = model
+    settle(csv_path, NAME, model)
     return mod
 
 
 def _argv(monkeypatch, step5, root, *extra):
-    monkeypatch.setattr(sys, "argv", ["5", "--brain", NAME, "--root", str(root),
-                                      "--model", str(step5.model)] + list(extra))
+    monkeypatch.setattr(sys, "argv", ["5", "--brain", NAME, "--root", str(root)] + list(extra))
 
 
 def test_a_failed_prefilter_stops_step_5(step5, tmp_path, monkeypatch):
@@ -102,7 +103,9 @@ def test_a_failed_prefilter_stops_step_5(step5, tmp_path, monkeypatch):
     assert not (b / "5_Classified_Cells" / "cells.xml").exists()
 
 
-def test_a_saved_prefilter_is_classified_as_it_is(step5, tmp_path, monkeypatch):
+def test_a_saved_prefilter_is_refused(step5, tmp_path, monkeypatch, capsys):
+    """A saved or tuned pre-filter is not the settled method: production is
+    never made from it, and nothing is pre-filtered or classified."""
     root = tmp_path / "1_Brains"
     b = _brain(root)
     time.sleep(0.01)
@@ -110,46 +113,26 @@ def test_a_saved_prefilter_is_classified_as_it_is(step5, tmp_path, monkeypatch):
     ran = []
     monkeypatch.setattr(prefilter, "prefilter_candidates", lambda **k: ran.append(1))
     _argv(monkeypatch, step5, root, "--candidates", str(saved))
-    step5.main()
-    assert step5.classified == [saved]
-    assert ran == []  # not filtered again with the default settings
-
-
-def test_a_prefilter_of_candidates_made_again_since_is_refused(step5, tmp_path, monkeypatch, capsys):
-    root = tmp_path / "1_Brains"
-    b = _brain(root)
-    saved = _saved_prefilter(b, age=3600)  # filtered an hour before the candidates were made
-    _argv(monkeypatch, step5, root, "--candidates", str(saved))
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as e:
         step5.main()
-    assert step5.classified == []
-    assert "made again" in capsys.readouterr().out
+    assert e.value.code not in (0, None)
+    assert step5.classified == [] and ran == []
+    assert not (b / "5_Classified_Cells" / "cells.xml").exists()
+    assert "--candidates" in capsys.readouterr().out
 
 
-def test_a_prefilter_of_another_file_is_refused(step5, tmp_path, monkeypatch, capsys):
-    root = tmp_path / "1_Brains"
-    b = _brain(root)
-    saved = _saved_prefilter(b, source=str(b / "4_Cell_Candidates" / "_archive" / "x"
-                                           / "detected_cells.xml"))
-    _argv(monkeypatch, step5, root, "--candidates", str(saved))
-    with pytest.raises(SystemExit):
-        step5.main()
-    assert step5.classified == []
-    assert "not of the brain's candidates" in capsys.readouterr().out
-
-
-def test_run_pipeline_offers_the_saved_prefilter(tmp_path, monkeypatch):
+def test_run_pipeline_runs_step_5_without_offering_a_saved_prefilter(tmp_path, monkeypatch):
     rp = _load("run_pipeline_prefilter", ROOT / "scripts" / "pipeline" / "RUN_PIPELINE.py")
     b = _brain(tmp_path / "1_Brains")
-    saved = _saved_prefilter(b)
+    _saved_prefilter(b)
     from mousebrain.pipeline_status import brain_status
     status = dict(brain_status(b), step="classify", step_name="Classify cells", step_num=7)
     monkeypatch.setattr(rp, "get_brain_status", lambda p: status)
-    answers = [0, 1]  # "Run this step", then the saved pre-filter
+    answers = [0]  # "Run this step"; there is no second question
     monkeypatch.setattr(rp, "ask", lambda *a, **k: answers.pop(0))
     monkeypatch.setattr(rp, "clear", lambda: None)
     ran = []
     monkeypatch.setattr(rp, "run_script", lambda name, args=None: ran.append((name, args)))
     rp.show_brain_status({"name": NAME, "full_name": "mouse_" + NAME + "/" + NAME, "path": b,
                           "mouse": "mouse_" + NAME})
-    assert ran == [("5_classify_cells.py", ["--brain", NAME, "--candidates", str(saved)])]
+    assert ran == [("5_classify_cells.py", ["--brain", NAME])]
