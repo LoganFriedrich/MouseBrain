@@ -115,6 +115,18 @@ and leave the brain with no classification). What a promotion does:
    the run but before the promotion looked newer than the classification and
    were never shown as stale.
 3. The run's tracker row is tagged `promoted_to_production`.
+   **Update 2026-11-19 (promotion records its method):** a promotion is never
+   refused for using a different method -- that is your choice -- but it is
+   recorded. Before you confirm, the dialog says whether the run is the
+   **Paradigm Best** classification method (the one step 5 uses) and, if not,
+   what differs (method, model file, cube size, batch size, tracing type).
+   `promoted_from.json` gets a `method` section with the run's method, model,
+   settings, the candidates it classified, the Paradigm Best run it was
+   compared with, `is_paradigm_best_method` (true / false / null = could not
+   tell) and the differences. A run that is not the Paradigm Best method is
+   also tagged `production_not_paradigm_best`, and its notes say so -- so a
+   production classification that did not come from the settled method can be
+   found in the tracker by that tag.
 4. Region counts made before the promotion are now older than the
    classification, so RUN_PIPELINE and the pipeline dashboard show them as stale
    and offer counting again. Run step 6 to update them.

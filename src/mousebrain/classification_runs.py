@@ -85,6 +85,87 @@ LEGACY_SELECTIVE_FILES = ("cells_selective.xml", "selective_rejected.xml")
 PRODUCTION_FILES = (("cells.xml", "rejected.xml", PRODUCTION_RECORD)
                     + SELECTIVE_FILES + LEGACY_SELECTIVE_FILES)
 PROMOTED_TAG = "promoted_to_production"
+# Added beside PROMOTED_TAG when the promoted run is not the settled method.
+NOT_PARADIGM_BEST_TAG = "production_not_paradigm_best"
+
+
+def _norm_path(p) -> str:
+    return os.path.normcase(os.path.normpath(str(p))) if p else ""
+
+
+def compare_with_paradigm_best(tracker, exp_id: Optional[str], brain_name: str) -> dict:
+    """Which classification method a run used, and whether it is the settled
+    (Paradigm Best) method of the brain's imaging setup.
+
+    Returns {"method": "selective"|"full"|"", "model_path", "cube_size",
+    "batch_size", "tracing_type", "candidates" (the run's input),
+    "paradigm_best_exp_id" (or ""), "is_paradigm_best_method": True / False /
+    None (None = cannot tell: no tracker or no run id), "differences": [...]}.
+
+    WHY: a person may promote any classification run to production -- that
+    is their explicit choice and is never refused. But step 5 writes
+    production only with the Paradigm Best method, so a production that came
+    from anything else must be visible as such: in the record beside
+    cells.xml and on the run's tracker row. The comparison covers the kind
+    (selective / full), the model file, cube size, batch size and, selective,
+    tracing type. The candidates the run classified are recorded, not judged:
+    a run made in Setup & Tuning chooses its own candidates.
+    """
+    out = {"method": "", "model_path": "", "cube_size": "", "batch_size": "",
+           "tracing_type": "", "candidates": "", "paradigm_best_exp_id": "",
+           "is_paradigm_best_method": None, "differences": []}
+    if tracker is None or not exp_id:
+        out["differences"].append("no tracker run to compare")
+        return out
+    try:
+        row = tracker.get_experiment(exp_id) or {}
+    except Exception as e:
+        out["differences"].append("tracker could not be read: %s" % e)
+        return out
+    if not row:
+        out["differences"].append("run %s is not in the tracker" % exp_id)
+        return out
+    kind = {"selective_classification": "selective",
+            "classification": "full"}.get(row.get("exp_type", ""), row.get("exp_type", ""))
+    out.update({"method": kind,
+                "model_path": row.get("class_model_path") or row.get("model_path") or "",
+                "cube_size": row.get("class_cube_size") or "",
+                "batch_size": row.get("class_batch_size") or "",
+                "tracing_type": (row.get("prefilter_tracing_type") or "")
+                if kind == "selective" else "",
+                "candidates": row.get("input_path") or ""})
+    from mousebrain.config import parse_brain_name
+    setup = (parse_brain_name(Path(brain_name).name) or {}).get("imaging_params", "")
+    try:
+        best = tracker.get_paradigm_classification(setup) if setup else None
+    except Exception as e:
+        out["differences"].append("Paradigm Best could not be read: %s" % e)
+        return out
+    if best is None:
+        out["is_paradigm_best_method"] = False
+        out["differences"].append("no classification is marked Paradigm Best for '%s'" % setup)
+        return out
+    out["paradigm_best_exp_id"] = best.get("source_exp_id") or ""
+    diffs = []
+    if kind != best.get("method"):
+        diffs.append("method %s, settled %s" % (kind or "?", best.get("method")))
+    if _norm_path(out["model_path"]) != _norm_path(best.get("model_path")):
+        diffs.append("model %s, settled %s" % (out["model_path"] or "?", best.get("model_path")))
+
+    def num(v):
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return None
+    for name in ("cube_size", "batch_size"):
+        if num(out[name]) != best.get(name):
+            diffs.append("%s %s, settled %s" % (name, out[name] or "?", best.get(name)))
+    if best.get("method") == "selective" and out["tracing_type"] != (best.get("tracing_type") or ""):
+        diffs.append("tracing type %s, settled %s" % (out["tracing_type"] or "?",
+                                                      best.get("tracing_type")))
+    out["differences"] = diffs
+    out["is_paradigm_best_method"] = not diffs
+    return out
 
 
 def gui_run_folder(data_summary_dir, brain_name: str, when: Optional[datetime] = None) -> Path:
@@ -308,7 +389,10 @@ def promote_to_production(run_folder, brain_folder, exp_id: Optional[str] = None
     ``5_Classified_Cells/_archive/<time>/`` -- kept, never deleted -- then the
     run's cells.xml (and rejected.xml) are copied in, with
     ``promoted_from.json`` saying which run they came from. The run's tracker
-    row gets the tag ``promoted_to_production``. Region counts made before
+    row gets the tag ``promoted_to_production`` -- and
+    ``production_not_paradigm_best`` when the run is not the settled method --
+    and a line in its notes saying which; ``promoted_from.json`` gets
+    ``method`` (compare_with_paradigm_best). Region counts made before
     this are then older than cells.xml, so the status readers show them stale,
     and the brain's row is withdrawn from the production count tables
     (region_counts_io.withdraw_counts; ``summary_dir`` defaults to the
@@ -331,6 +415,11 @@ def promote_to_production(run_folder, brain_folder, exp_id: Optional[str] = None
                          % run_folder)
     prod.mkdir(parents=True, exist_ok=True)
 
+    # Which method made the promoted files, and whether it is the settled
+    # one: recorded, never used to refuse (compare_with_paradigm_best says why).
+    method = compare_with_paradigm_best(tracker, exp_id, Path(brain_folder).name)
+    method["how"] = "promoted by a person"
+
     archived, prev_id = archive_production(brain_folder)
 
     copied = []
@@ -343,7 +432,7 @@ def promote_to_production(run_folder, brain_folder, exp_id: Optional[str] = None
             shutil.copyfile(str(run_folder / name), str(prod / name))
             copied.append(name)
     record = write_production_record(brain_folder, exp_id, run_folder, copied, archived,
-                                     how="promoted")
+                                     how="promoted", method=method)
 
     # The counts were made from the classification just replaced.
     from mousebrain.region_counts_io import withdraw_counts_or_warn
@@ -355,7 +444,17 @@ def promote_to_production(run_folder, brain_folder, exp_id: Optional[str] = None
         follow_files_into_archive(tracker, prev_id, archived, brain_folder)
     if tracker is not None and exp_id:
         try:
-            tracker.add_tags(exp_id, [PROMOTED_TAG])
+            tags = [PROMOTED_TAG]
+            if method["is_paradigm_best_method"] is False:
+                tags.append(NOT_PARADIGM_BEST_TAG)
+            tracker.add_tags(exp_id, tags)
+            row = tracker.get_experiment(exp_id) or {}
+            said = ("promoted to production %s; %s" % (
+                datetime.now().isoformat(timespec="seconds"),
+                "the Paradigm Best method" if method["is_paradigm_best_method"]
+                else "NOT the Paradigm Best method (%s)" % "; ".join(method["differences"])))
+            tracker.update_status(exp_id, notes="; ".join(filter(None, [row.get("notes", ""),
+                                                                       said])))
         except Exception as e:
             print("[!] promoted, but the tracker row could not be tagged: %s" % e)
     return record

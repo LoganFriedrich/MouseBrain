@@ -1544,6 +1544,11 @@ reason; nothing is written then. The mark is one locked rewrite of the tracker
 Setup & Tuning does the same for a run listed there, but cannot fill in missing
 columns.
 
+**A promotion from Setup & Tuning** may still put any run into production (a
+person's explicit choice); it is recorded in `promoted_from.json` (`method`,
+`is_paradigm_best_method`) and, when it is not the settled method, by the tag
+`production_not_paradigm_best` on the run (docs/pipeline/OPTIMIZATION_WORKFLOW.md).
+
 **Changing it later** = marking another run. Brains classified before keep
 their files until step 5 is run on them again; their `promoted_from.json` says
 which method made them.

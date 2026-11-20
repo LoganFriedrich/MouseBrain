@@ -8180,10 +8180,23 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "Not promoted",
                                 f"No cells.xml in the run's folder:\n{run_folder}")
             return False
+        # Say plainly when the run is not the settled (Paradigm Best) method;
+        # promoting it is still the person's choice, and it is recorded.
+        from mousebrain.classification_runs import compare_with_paradigm_best
+        cmp_ = compare_with_paradigm_best(self.tracker, exp_id, self.current_brain.name)
+        if cmp_["is_paradigm_best_method"] is True:
+            settled_line = "This run uses the Paradigm Best method.\n\n"
+        elif cmp_["is_paradigm_best_method"] is False:
+            settled_line = ("NOTE: this run is NOT the Paradigm Best method:\n  "
+                            + "\n  ".join(cmp_["differences"])
+                            + "\nThat will be recorded with the production files.\n\n")
+        else:
+            settled_line = ""
         reply = QMessageBox.question(
             self, "Promote to production",
             f"Make this run the production classification of {self.current_brain.name}?\n\n"
             f"Run: {exp_id or '(no tracker id)'}\n{run_folder}\n\n"
+            f"{settled_line}"
             f"Region counting counts only the production classification.\n"
             f"The current files in 5_Classified_Cells are moved to\n"
             f"5_Classified_Cells/_archive/ first. Region counts made before this\n"
