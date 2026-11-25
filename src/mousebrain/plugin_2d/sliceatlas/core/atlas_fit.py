@@ -1,10 +1,10 @@
 """
 atlas_fit.py - Save and log the 2D atlas fit that region counts were made with.
 
-WHY: the Align tab held the atlas position, orientation and transform only in
-memory. Once napari closed, nothing said which fit a set of region counts came
-from, so the counts could not be checked, reproduced or compared with a later
-fit. Run Quantification now records the fit in two places:
+WHY: the Align tab holds the atlas position, orientation and transform only in
+memory. Once napari closes, nothing would say which fit a set of region counts
+came from, so the counts could not be checked, reproduced or compared with a
+later fit. Run Quantification records the fit in two places:
 
 - a JSON file ``<sample>_atlas_fit.json`` beside the sample's exported counts
   (only when the counts are exported -- with export off there is no results
@@ -49,7 +49,7 @@ worker that can fail after it has started:
      earlier fit file is put back exactly as it was -- it still describes the
      counts in the folder (or the in-progress record is removed, when there
      was no earlier file).
-   - Failure, count files changed: the folder now holds counts the failed run
+   - Failure, count files changed: the folder holds counts the failed run
      partly rewrote, so no fit can be vouched for. The fit file is replaced by
      a record saying so (``counts_status: incomplete``), or removed if even
      that cannot be written. (The export itself is all-or-nothing -- see

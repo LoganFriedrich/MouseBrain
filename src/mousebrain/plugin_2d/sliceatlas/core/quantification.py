@@ -224,11 +224,11 @@ class RegionQuantifier:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # All-or-nothing. WHY: the three files used to be overwritten one
-        # after another, so a failure on the second (for example the regions
-        # CSV open in a spreadsheet program) left a NEW cells.csv beside the
-        # OLD regions.csv and summary -- a folder mixing two runs, beside an
-        # atlas fit file that described only one of them. Now every file is
+        # All-or-nothing. WHY: overwriting the three files one after another
+        # would let a failure on the second (for example the regions CSV open
+        # in a spreadsheet program) leave a NEW cells.csv beside the OLD
+        # regions.csv and summary -- a folder mixing two runs, beside an
+        # atlas fit file that described only one of them. So every file is
         # first written to a temporary name; the old files are then moved
         # aside (a file locked by another program fails HERE, and everything
         # moved so far is put back, so the folder is exactly as before); only
