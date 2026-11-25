@@ -96,9 +96,9 @@ the 2D slice batch refuses to run until each of its settings is written into
 the file or typed on its command line (see
 `src/mousebrain/plugin_2d/ALGORITHM_REFERENCE.md`, section 6). WHY: which
 nuclei count and how a cell is called positive are your lab's decisions for
-its tissue and microscope. Earlier versions fell back to a parameter set built
-into the tool, judged every result against it and printed it as "the approved
-method" although nobody had approved it.
+its tissue and microscope, so the tool has no built-in parameter set to judge
+results against: one would be reported as "the approved method" although nobody
+had approved it.
 
 Either file is plain JSON written in a text editor; a UTF-8 byte-order mark
 (added by some editors and by Windows PowerShell) is accepted.
@@ -122,8 +122,8 @@ still counts every entry as stale depends on that database reading
 `approved_method_hash: null` as "no approved method"; check that yours does
 before relying on its stale count for the 3D analyses.
 
-**A 3D manifest made before this version** has no declaration yet, so it is
-still judged by the slice parameters and shows its entries as stale. It picks
+**A 3D manifest written by an older version** has no declaration, so it is
+judged by the slice parameters and shows its entries as stale. It picks
 the declaration up on its next registration (the next region count or
 orientation check of any brain). `--refresh-approved` alone does NOT change
 it. To record the declaration now, without waiting:
@@ -269,10 +269,10 @@ machine whose account may not create files in `logs/` at all waits the same
 five minutes and stops with a message saying "permission denied": give that
 account write access to the registry folder.
 
-**Update every machine that registers results at the same time.** Versions
-before this one took no lock at all, so a machine still running an older
-version, registering at the same moment as an updated one, is not held back
-by the lock and can still erase the other's new entry.
+**Every machine that registers results must run a version that takes the
+lock.** An older version takes no lock, so a machine running it, registering
+at the same moment as a newer one, is not held back and can still erase the
+other's new entry. Update all such machines together.
 
 ## When a registration is refused
 
@@ -317,9 +317,9 @@ it:
   earlier entry was registered, its method hash, its results and the
   `_archived/<time>` folder its files went to.
 
-WHY: a re-run used to overwrite the entry and delete the files it replaced,
-so the earlier counts and the parameters that produced them were kept
-nowhere; the log had only a `register` line with the new hash.
+WHY: overwriting the entry and deleting the files it replaced would keep the
+earlier counts and the parameters that produced them nowhere; the log would
+have only a `register` line with the new hash.
 
 A registration that is identical to the current entry -- the same method
 hash, the same results and files with exactly the same contents -- replaces
@@ -455,7 +455,8 @@ run the invalidation again after moving them back).
 ## When the manifest cannot be read
 
 If `registry.json` is damaged (not valid JSON, or not a manifest), nothing
-reads it as empty -- that used to erase the record of every earlier result.
+reads it as empty, because registering into an empty manifest would erase the
+record of every earlier result.
 Instead:
 
 - `mousebrain-registry` prints `[FAIL]` with the reason and changes nothing --
