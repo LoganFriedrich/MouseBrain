@@ -138,9 +138,9 @@ Each image's ROIs are saved beside it as `<image name>.rois.json`.
 If no registry is configured (see [ANALYSIS_REGISTRY.md](ANALYSIS_REGISTRY.md)),
 the CSVs go to `<dataset folder>/roi_counts/` instead (same layout: per-sample
 CSVs under `<animal>/<region>/`, the summary at the top) and nothing is
-registered; the command says so and prints the folder. Older versions wrote
-them to `<dataset folder>/batch_results/`; that folder is searched for
-detection results, so the counts no longer go there.
+registered; the command says so and prints the folder. The counts never go to
+`<dataset folder>/batch_results/`, because that folder is searched for
+detection results.
 
 ## How the counts stay tied to the measurements they were counted against
 
@@ -166,7 +166,7 @@ gets an `invalidate_entry` line holding the counts) when:
 - the re-run failed on the sample and its detection entry was retired.
 
 A re-run that produces exactly the same measurements file leaves the counts
-current. Counts registered before this tie existed (entries under the
+current. Counts registered by an older version (entries under the
 sample's own name, with no `measurements_sha256`) cannot say what they were
 counted against: they are retired only when the detection is known to have
 changed (its new measurements differ from the ones it had registered
