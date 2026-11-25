@@ -5,7 +5,7 @@ Loads each ND2 file, runs threshold/Otsu nuclei detection on the nuclear
 channel, measures signal colocalization in the other channel, saves CSV
 results + QC overlay images, and records the run in the tracker.
 
-Usage:
+Usage (activate the MouseBrain environment first, then run in a terminal):
     python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project ENCR
     python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project ENCR --threshold 1.5 --dilation 50
     python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project ENCR --output <folder>
