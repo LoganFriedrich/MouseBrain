@@ -231,17 +231,16 @@ unusable one first (the TIFFs are never touched).
 `ch0: converting 150/600...`), pressing Convert to Zarr says "Conversion
 Running" and starts nothing, and a Load does not start a second automatic
 conversion. One conversion does both channels of the folder, ch0 then ch1.
-(Before, a second conversion could start on the same channel and delete the
-first one's planes under it, leaving a copy with planes missing marked
-complete.) A `.partial-...` folder left by a conversion that was cut short is
+(A second conversion on the same channel could delete the first one's planes
+under it, leaving a copy with planes missing marked complete.) A `.partial-...` folder left by a conversion that was cut short is
 deleted by the next conversion of that channel that finishes, once nothing has
 been written into it for a day; it is an unfinished copy, the TIFFs are never
 touched. You never need to delete these folders by hand.
 
-Caches made before this rule have no completion record, so each is rebuilt once,
-in the background, the next time its brain is loaded. Before the rule, an
-interrupted or failed conversion left a cache that loaded as a partly blank
-brain, and a new crop left the old crop's cache in use.
+A cache with no completion record is rebuilt once, in the background, the next
+time its brain is loaded: without the record, an interrupted or failed
+conversion would leave a cache that loads as a partly blank brain, and a new
+crop would leave the old crop's cache in use.
 
 ### Switching brains in Setup & Tuning
 
@@ -253,16 +252,16 @@ production...) are disabled until you make a new one for this brain. (Any earlie
 classification run of the brain can still be promoted from the run list or the
 Results tab; see OPTIMIZATION_WORKFLOW.md, "Trying a model in napari".)
 
-**While a run is going the brain list is greyed out.** Run Test Detection (the
+**While a run is going the brain list is grayed out.** Run Test Detection (the
 button reads **Run Detection** until the first run of the session) and
 Run Classification -- and Run Region Counting on the Results tab -- hold the
 list until their run returns, and each run keeps
 its own record (brain, tracker run, folder, first plane tested) from start to
 finish, so the result is saved and the tracker row completed for the brain
-the run was started on. (Before, selecting another brain mid-run reset what
-the finish relied on: the detected cells were not saved, the run stayed
-"started", or the other brain's production cells were offered as the
-classification's result.)
+the run was started on. (Without that record, selecting another brain mid-run
+would reset what the finish relies on: the detected cells would not be saved,
+the run would stay "started", or the other brain's production cells would be
+offered as the classification's result.)
 
 **A load that finishes after you picked another brain** shows the brain it
 loaded, and says so on the status line: `Loaded: <brain loaded> -- but <brain
@@ -296,8 +295,8 @@ read: the keys that are present must agree, none present means ch0. When you
 select a brain, the **Swap signal/background channels** checkbox is set from
 that rule (unchecked = ch0 is the signal); detection read from disk follows the
 checkbox, so change it only if you have looked and the other channel shows the
-cells. (Before, the checkbox started checked for every brain and kept the last
-brain's setting, while Load and classification each used a rule of their own.)
+cells. (Load and classification use the same rule, so the checkbox never
+carries over the previous brain's setting.)
 
 If a brain's metadata **contradicts itself** (for example `channels_swapped`
 true but `channels.signal_channel` 0), nothing decides for you: the status line
@@ -314,7 +313,7 @@ extraction metadata; leave it unless the other channel shows the cells.
 Leaving it changes nothing in the crop's channel record. Choosing the other
 channel writes it into the crop's `metadata.json` as `channels.signal_channel`
 (and swaps `background_channel` with it), which steps 3-5 and Setup & Tuning
-read. (Before, the answer was dropped by the process that does the crop.) If
+read. If
 the extraction metadata contradicts itself, neither channel is chosen and Apply
 Crop says "Choose The Signal Channel" until you pick one. If the metadata names
 a channel the window does not show (ch2 ...), neither is chosen and, left so,
@@ -327,14 +326,13 @@ slice that starts at some plane. Its saved file (`detected_cells.xml` in the
 run's folder under `optimization_runs/<brain>/test_<time>/`) holds every cell's
 plane counted from the first plane of the WHOLE stack, the same as what is
 drawn right after the run, and a file `whole_stack_z.json` beside it says so.
-Runs saved before this was corrected have no such file: their positions are
+Older runs have no such file: their positions are
 counted from the first plane tested, and the widget moves them down by the
 run's first plane when it loads them (the tracker's `det_z_start`; for rows
 logged before that column existed, the `Z<first>-<last>` the widget wrote at
 the start of the run's notes), so Load
 Selected, Load Best and the run list show them at the right depth. The file
-itself is not changed by loading. (Before, every reload put those cells too
-shallow by that many planes.)
+itself is not changed by loading.
 
 **Save (settings to metadata.json)** writes only into the folder the brain's
 metadata was loaded from (the hand crop, else the crop, else the extraction). It
