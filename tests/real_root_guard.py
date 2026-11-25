@@ -6,12 +6,12 @@ WHY THIS EXISTS
 ---------------
 Tests build their own folders under pytest's tmp_path and point the tool at
 them. A test that forgets one setting acts on live lab data instead, and
-nothing says so: the run passes, and a junk file sits in a real folder (this
-has happened in a sister tool's suite -- junk review files written by tests
-into a live review store). Telling people to unset variables before a run is
-not enough either: a run once unset only the UPPER-case names while the
-machine carried a mixed-case one, so the "isolated" run still pointed at the
-live pipeline. The guard therefore does not trust the run's environment: it
+nothing says so: the run passes, and a junk file sits in a real folder (for
+example junk review files written by tests into a live review store).
+Telling people to unset variables before a run is not enough either: a run
+that unsets only the UPPER-case names while the machine carries a mixed-case
+one still points at the live pipeline. The guard therefore does not trust the
+run's environment: it
 finds the real folders itself and REFUSES writes there.
 
 WHAT IT REFUSES
