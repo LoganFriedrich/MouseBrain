@@ -1,15 +1,21 @@
 """
 run_coloc.py - CLI for quick detection + colocalization on a single ND2/TIFF file.
 
-Runs the full pipeline and pops up a matplotlib figure with results.
-Much faster iteration than launching napari every time.
+Runs the full pipeline, writes a results figure (PNG) next to the image
+(<image name>.coloc_result.png) and opens it in the system image viewer
+(Windows only). Faster to iterate with than launching napari.
 
-Usage:
-    python -m brainslice.cli.run_coloc path/to/image.nd2
-    python -m brainslice.cli.run_coloc path/to/image.nd2 --red-ch 1 --green-ch 0
-    python -m brainslice.cli.run_coloc path/to/image.nd2 --method percentile --percentile 97
-    python -m brainslice.cli.run_coloc path/to/image.nd2 --no-hysteresis --min-area 50
-    python -m brainslice.cli.run_coloc path/to/image.nd2 --save output_dir/
+Usage (activate the MouseBrain environment first, then run in a terminal):
+    brainslice-coloc path/to/image.nd2
+    brainslice-coloc path/to/image.nd2 --red-ch 1 --green-ch 0
+    brainslice-coloc path/to/image.nd2 --method percentile --percentile 97
+    brainslice-coloc path/to/image.nd2 --no-hysteresis --min-area 50
+    brainslice-coloc path/to/image.nd2 --save output_dir/
+
+--save also writes the classified cells (CSV), the nuclei label image (TIFF),
+a summary and the figure into the given folder. If the image path does not exist the command prints
+"File not found" and exits with status 1; `brainslice-coloc --help` lists
+every option.
 """
 
 import argparse
