@@ -2254,8 +2254,8 @@ class TuningWidget(QWidget):
             QMessageBox.warning(self, "No Selection", "Please select a run to compare.")
             return
 
-        # TODO: Implement proper comparison visualization
-        # For now, just load the selected run - user can visually compare layers
+        # Loads the selected run so its layers can be compared by eye; there is
+        # no side-by-side comparison view.
         self._load_historical_run(exp_id)
         QMessageBox.information(
             self,

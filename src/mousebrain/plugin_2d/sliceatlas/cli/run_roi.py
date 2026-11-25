@@ -635,7 +635,7 @@ def _detection_search_dirs(base_folder, project=None, detection_dir=None):
        the registry;
     4. <dataset folder>/batch_results/, where older batches wrote.
 
-    WHY 2-3 come from the same definitions the batch uses: the counter used to
+    WHY 2-3 come from the same definitions the batch uses: the counter must not
     look under '<folder name>_Detection' while the batch registered under one
     fixed name, and its fallback folder was not where the batch writes; it
     found results only while the project and the folder happened to share
