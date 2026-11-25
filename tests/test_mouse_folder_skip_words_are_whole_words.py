@@ -2,11 +2,11 @@
 
 The skip words (script, backup, archive, summary, old) keep whole-mouse backup
 and archive copies out of every brain list. The four long words are matched
-anywhere in the name, as every step always matched them. Matched as letters
-anywhere in the name, "old" would also drop a mouse folder named for a project such as "GOLD"
-or "HOLD" from every step, list and lookup, with no message. And a brain kept
-in a passed-over folder was missing from lists, or "not found" by name, with no
-reason given.
+anywhere in the name. "old" is matched as a whole word only: matched as
+letters anywhere in the name it would also drop a mouse folder named for a
+project such as "GOLD" or "HOLD" from every step, list and lookup, with no
+message. And a brain kept in a passed-over folder must be reported with the
+reason, not missing from lists or "not found" by name.
 """
 import importlib.util
 import sys

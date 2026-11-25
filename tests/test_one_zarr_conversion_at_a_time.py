@@ -1,10 +1,11 @@
 """Two Zarr conversions never build the same cache over each other.
 
-All builds of a channel shared one ``ch0.zarr.partial`` folder and each
-started by deleting it; the widget kept the folder and channel being converted
-in its own fields and let a second conversion (another Load, or Convert during
-the automatic one) start and overwrite them. A build could then rename a folder
-with planes missing under it and record it as complete.
+All builds of a channel share one ``ch0.zarr.partial`` folder and each starts by
+deleting it, and the widget keeps the folder and channel being converted in
+its own fields. A second conversion (another Load, or Convert during the
+automatic one) must therefore be refused: it would overwrite them, and a build
+could then rename a folder with planes missing under it and record it as
+complete.
 """
 import os
 import time

@@ -1,13 +1,13 @@
 """The 2D batch stops when it cannot open the tracker to look for a marked run.
 
-Defect covered: when the tracker could not be opened (its file held open by
-another program, say), the batch printed one warning, carried on as if no
-run were marked best, and ran at the approved method's sigma -- silently
-replacing the sigma a person had chosen by marking a run, while its banner
-said "no run of this project is marked best".
+When the tracker cannot be opened (its file held open by another program,
+say), the batch must not print one warning and carry on as if no run were
+marked best: it would run at the approved method's sigma, silently replacing
+the sigma a person had chosen by marking a run, while its banner said "no run
+of this project is marked best".
 
-Now it stops, as it does for disagreeing marked runs, unless the person
-types both numbers a marked run could supply or runs with --ignore-tracker.
+So it stops, as it does for disagreeing marked runs, unless the person types
+both numbers a marked run could supply or runs with --ignore-tracker.
 """
 
 import json

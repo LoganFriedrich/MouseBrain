@@ -4,7 +4,7 @@ The napari widget's "Save ROIs" writes polygons but no image size. Counting
 needs the size, so such a file is not countable -- but its polygons are a
 person's drawing and read fine. The editor must open with them loaded, so one
 Save & Next (changing nothing) re-saves them with the size. Treating the file
-as unreadable opened the editor empty and asked for a redraw.
+as unreadable would open the editor empty and ask for a redraw.
 """
 
 import json

@@ -1,15 +1,12 @@
 """Which colocalization rows count as recording a sigma threshold, by version.
 
-Defects covered:
 - a row logged before rows recorded their sigma (script_version 1.0.0, when
   the widget logged its fold-change box as the threshold of a background_mean
-  run) supplied the batch's sigma threshold when marked best (shown by
-  test_a_marked_row_from_before_sigma_was_recorded_supplies_nothing, which
-  fails on the code before this change by assertion);
-- guard of the version marker introduced with that fix: the check must
-  compare versions as numbers, so a LATER version (1.2.0, 1.10.0) still counts
-  -- an exact-text comparison would refuse every newer run already marked
-  best and draw recorded sigmas as fold-change thresholds again.
+  run) must not supply the batch's sigma threshold when marked best (shown by
+  test_a_marked_row_from_before_sigma_was_recorded_supplies_nothing);
+- the version marker must be compared as numbers, so a LATER version (1.2.0,
+  1.10.0) still counts -- an exact-text comparison would refuse every newer
+  run already marked best and draw recorded sigmas as fold-change thresholds.
 
 Imports of the batch and schema are inside the tests so the file collects on
 code that has neither.

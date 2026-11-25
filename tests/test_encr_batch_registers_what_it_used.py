@@ -1,8 +1,8 @@
 """Registry entries of the 2D batch record the parameters the run used.
 
-Defect covered: every entry recorded the approved method whatever the run
-used, so a run with a typed --threshold hashed like an approved run and the
-staleness check could never find it.
+Every entry records the parameters the run actually used, not the approved
+method regardless: otherwise a run with a typed --threshold would hash like an
+approved run and the staleness check could never find it.
 """
 
 import json

@@ -1,9 +1,9 @@
 """A re-run that finds no nuclei replaces the sample's earlier registry entry.
 
-Defect covered: only samples that completed with nuclei were registered. A
-sample whose re-run found none kept its earlier entry -- with the earlier
-count, still marked current -- so the registry reported a result the newest
-run contradicts.
+Samples that completed with no nuclei are registered too. A sample whose
+re-run found none must not keep its earlier entry -- with the earlier count,
+still marked current -- because the registry would then report a result the
+newest run contradicts.
 """
 
 import json

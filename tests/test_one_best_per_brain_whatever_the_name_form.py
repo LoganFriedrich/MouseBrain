@@ -1,10 +1,11 @@
 """A brain has one Best, whichever way its runs name it.
 
 The napari widget logs a run's brain as "<brain>", the pipeline scripts as
-"<mouse>/<brain>". Marking a run Best (or Paradigm Best) cleared the brain's
-previous Best only when the two names were the very same string, so a Best
-logged in the other form stayed: the brain had two Bests, and "Load best"
-(get_best_for_brain) returned the first in file order -- the older run.
+"<mouse>/<brain>". Marking a run Best (or Paradigm Best) clears the brain's
+previous Best whichever form either run uses. If it cleared only when the two
+names were the very same string, a Best logged in the other form would stay:
+the brain would have two Bests, and "Load best" (get_best_for_brain) would
+return the first in file order -- the older run.
 """
 import csv
 

@@ -1,12 +1,13 @@
 """Retiring a sample's entry archives EVERY file in its own registry folder.
 
-Defect covered: when the batch retired an entry (a re-run that found no
-nuclei, or a re-run that failed on the sample), only the files the entry
-listed among its outputs were moved to _archived/. A sample folder can hold
-more files of that earlier run than the entry lists (extra overlays,
-histograms copied by an earlier version of the batch). They stayed in the
-active folder, beside the new 0-nuclei entry or beside no current entry at
-all, and anything mirroring the folder showed them as current results.
+When the batch retires an entry (a re-run that found no nuclei, or a re-run
+that failed on the sample), all files of the sample's folder move to
+_archived/, not only the files the entry lists among its outputs. A sample
+folder can hold more files of an earlier run than the entry lists (extra
+overlays, histograms copied by an earlier version of the batch). Left in the
+active folder, they would sit beside the new 0-nuclei entry or beside no
+current entry at all, and anything mirroring the folder would show them as
+current results.
 All or nothing still holds: if one of those files will not move, nothing
 stays moved and the entry stays current.
 """

@@ -3,8 +3,8 @@
 Its rows are coronal slices, front to back -- brainreg writes the brain in the
 atlas's orientation, and every BrainGlobe atlas runs front to back along its
 first axis. The rows are spread over the stretch the atlas covers: a brain kept
-with more brainstem than the atlas has used to get its last row drawn past the
-atlas's end, where an empty atlas beside real tissue reads as a failed
+with more brainstem than the atlas has would otherwise get its last row drawn
+past the atlas's end, where an empty atlas beside real tissue reads as a failed
 registration.
 """
 import numpy as np
@@ -39,11 +39,11 @@ def test_without_an_atlas_the_rows_span_the_image():
 
 def test_the_atlas_column_tells_regions_apart():
     """Region IDs run into the hundreds of millions; drawn raw, nearly all of them
-    shared one dark colour and the atlas column looked empty."""
+    would share one dark color and the atlas column would look empty."""
     atlas = np.array([[0, 315, 315],
                       [698, 614454277, 0]], np.uint32)
     coloured = qc.colour_regions(atlas)
     assert coloured.mask.tolist() == [[True, False, False], [False, False, True]]
     shown = coloured.compressed().tolist()
-    assert len(set(shown)) == 3                      # three regions, three colours
-    assert coloured[0, 1] == coloured[0, 2]          # one region, one colour
+    assert len(set(shown)) == 3                      # three regions, three colors
+    assert coloured[0, 1] == coloured[0, 2]          # one region, one color

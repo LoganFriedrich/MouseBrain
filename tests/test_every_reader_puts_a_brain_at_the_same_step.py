@@ -1,10 +1,10 @@
 """Every status reader puts a brain at the step the pipeline will actually take up.
 
-RUN_PIPELINE showed every brain past detection at "Pre-filter" -- including
-brains already classified and counted -- because it looked for a pre-filter
-report at the top of 4_Cell_Candidates, where nothing writes one. And a brain
-whose candidates sit in from_<registered folder> (where step 5 found and
-classified them) was shown at "Detect" by every reader.
+A reader must not look for a pre-filter report at the top of
+4_Cell_Candidates, where nothing writes one: RUN_PIPELINE would show every
+brain past detection at "Pre-filter", including brains already classified and
+counted. And a brain whose candidates sit in from_<registered folder> (where
+step 5 finds and classifies them) must not be shown at "Detect" by any reader.
 """
 import importlib.util
 import json

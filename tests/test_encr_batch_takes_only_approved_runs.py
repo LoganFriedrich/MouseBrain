@@ -1,11 +1,10 @@
 """The 2D batch takes parameters only from a run a person marked best, and only
 when that run used the batch's own method and recorded the sigma it used.
 
-Defects covered:
-- an unmarked tracker still changed the batch's parameters: the newest
-  completed run (usually the previous batch's own row) was used as if approved;
-- the newest colocalization row of ANY method became the batch's sigma
-  threshold, so a fold-change value could be used as a sigma.
+- an unmarked tracker must not change the batch's parameters: the newest
+  completed run (usually the previous batch's own row) is not approved;
+- the newest colocalization row of ANY method must not become the batch's
+  sigma threshold, or a fold-change value could be used as a sigma.
 """
 
 import pytest
@@ -15,7 +14,7 @@ from mousebrain.plugin_2d.sliceatlas.batch import batch_encr as be
 from mousebrain.plugin_2d.sliceatlas.tracker import SliceTracker
 try:
     from mousebrain.plugin_2d.sliceatlas.tracker.schema import COLOC_SIGMA_RECORDED_VERSION
-except ImportError:   # lets the same tests show the old behavior on older code
+except ImportError:   # schema without the constant: fall back to the version that first recorded sigma
     COLOC_SIGMA_RECORDED_VERSION = "1.1.0"
 
 SAMPLE_A = "PRJ01_01_S1_RA"

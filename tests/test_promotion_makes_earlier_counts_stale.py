@@ -1,8 +1,9 @@
 """Counts made before a promotion are shown stale after it.
 
-Promotion copied the run's files with their own (older) modification time, so
-counts made after that run but before the promotion looked newer than the
-promoted cells.xml and were never shown stale. Identifiers are invented.
+Promotion must not copy the run's files with their own (older) modification
+time: counts made after that run but before the promotion would then look
+newer than the promoted cells.xml and never be shown stale. Identifiers are
+invented.
 """
 import os
 import time

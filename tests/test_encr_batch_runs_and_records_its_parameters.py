@@ -1,12 +1,12 @@
 """The 2D batch runs with the parameters it states, and states the ones it runs.
 
-Defects covered:
-- a value typed on the command line that equalled the built-in default
-  (e.g. --threshold 0) was replaced by a tracker value;
-- the detector ran on its own default diameter range while the banner printed
-  pixel areas that were never passed and the docstring said another range;
-- the tracker's detection row recorded the tracker's own default areas
-  (50/5000 px), never the areas the detector applied.
+Rules:
+- a value typed on the command line that equals the built-in default
+  (e.g. --threshold 0) is not replaced by a tracker value;
+- the detector runs on the diameter range the banner and docstring state, and
+  the banner prints the pixel areas that are actually passed;
+- the tracker's detection row records the areas the detector applied, not the
+  tracker's own default areas (50/5000 px).
 """
 
 import sys
@@ -24,7 +24,7 @@ from mousebrain.plugin_2d.sliceatlas.tracker import SliceTracker
 
 try:
     from mousebrain.plugin_2d.sliceatlas.tracker.schema import COLOC_SIGMA_RECORDED_VERSION
-except ImportError:   # lets the same tests show the old behavior on older code
+except ImportError:   # schema without the constant: fall back to the version that first recorded sigma
     COLOC_SIGMA_RECORDED_VERSION = "1.1.0"
 
 PROJECT = "PRJ"

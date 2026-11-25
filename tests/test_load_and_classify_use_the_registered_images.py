@@ -1,11 +1,11 @@
 """Load shows the images the atlas was fitted to, and classification refuses
 layers loaded from any other folder.
 
-Load took the manual crop, else the crop, else the extraction -- by which
-folder existed -- while detection-from-disk and classification read the
-registered folder. Classification cut its cubes from whatever layer was
-loaded, at positions in the registered images, and such a run can be
-promoted to production.
+Load must not pick the manual crop, else the crop, else the extraction by
+which folder exists: detection-from-disk and classification read the
+registered folder. Classification cuts its cubes from whatever layer is
+loaded, at positions in the registered images, and such a run can be promoted
+to production.
 """
 import numpy as np
 import pytest

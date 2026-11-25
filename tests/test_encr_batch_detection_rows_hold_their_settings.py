@@ -1,11 +1,10 @@
 """A 2D batch detection row records what produced its count, in its columns.
 
-Defect covered: the batch's detection rows left det_backend and
-det_preprocessing blank and kept the settings only as free text in the
-notes, and left the before-filter count and the per-filter removals blank
-although the detector reports them. A row could not say on its own which
-detector, diameter range, pixel size and thresholds gave its count, nor how
-the count was reached.
+The batch's detection rows fill det_backend and det_preprocessing and the
+before-filter count and per-filter removals the detector reports, not only
+free text in the notes. A row must say on its own which detector, diameter
+range, pixel size and thresholds gave its count, and how the count was
+reached.
 """
 
 import json

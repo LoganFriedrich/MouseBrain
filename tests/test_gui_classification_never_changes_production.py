@@ -1,8 +1,8 @@
 """A napari classification run never changes the brain's production classification.
 
 5_Classified_Cells/cells.xml is what step 6 counts. The Setup & Tuning widget
-used to write every tuning run straight into it, replacing step 5's output with
-no copy kept. Runs now go to their own folder; production changes only when a
+writes every tuning run to its own folder, never straight into it (that would
+replace step 5's output with no copy kept); production changes only when a
 person promotes a run, and the files it replaces are archived.
 """
 import json

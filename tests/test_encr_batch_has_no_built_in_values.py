@@ -1,13 +1,13 @@
 """The 2D batch and the registry hold no built-in lab values.
 
-Defect covered: with no approved-method file configured, the registry fell
-back to a parameter set compiled into the tool (nucleus diameter range,
-threshold fraction, LoG threshold, sigma, dilations) and the slice batch ran
-with it -- printing every value as "[approved method]" and registering its
-entries as current against that built-in set. A setting nobody chose was
-used and recorded as approved.
+With no approved-method file configured, the registry must not fall back to a
+parameter set compiled into the tool (nucleus diameter range, threshold
+fraction, LoG threshold, sigma, dilations) and the slice batch must not run
+with it: that would print every value as "[approved method]" and register its
+entries as current against that built-in set, so a setting nobody chose would
+be used and recorded as approved.
 
-Now: no approved-method file means nothing is approved. The batch stops
+So: no approved-method file means nothing is approved. The batch stops
 before any sample and names every setting it needs and how to give it; a
 value is labeled "[approved method]" only when it came from the
 approved-method file; and the registry judges nothing against a built-in

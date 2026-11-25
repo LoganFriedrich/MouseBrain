@@ -3,11 +3,11 @@
 An .ims file does not store the image width as a number. It stores it as an
 array of single characters: 2924 is [b'2', b'9', b'2', b'4']. Reading element
 [0] of that gets the first DIGIT, succeeds, and raises nothing -- so a brain
-2924 voxels wide was recorded in its own metadata.json as 2 voxels wide, and a
-brain 8179 voxels tall as 8.
+2924 voxels wide would be recorded in its own metadata.json as 2 voxels wide,
+and a brain 8179 voxels tall as 8.
 
-That is wrong provenance for every brain ever extracted, and it is not inert:
-the crop-optimising utility reads dimensions.y as the brain's real height.
+That is wrong provenance for every brain extracted, and it is not inert:
+the crop-optimizing utility reads dimensions.y as the brain's real height.
 """
 import importlib.util
 import sys

@@ -1,16 +1,14 @@
 """The 2D batch never measures an image at a pixel size the file does not give.
 
-Defect covered: an image whose metadata held no pixel size was processed at
-1.0 um/px without a word. The nucleus diameter range is turned into pixel
-areas with that number, so the batch counted objects of a size nobody chose
-and recorded those areas in the tracker as if measured. The ND2 reader also
-put 1.0 in itself when the file had no size, so the batch could not tell.
-
-Now the reader says whether the size came from the file
-(voxel_size_from_file), and the batch refuses such an image: the sample
-fails with the reason, the detector is not run, no tracker row is written,
-and -- because a reader that stopped finding the size says nothing about the
-sample -- its earlier registry entry is kept.
+An image whose metadata holds no pixel size must not be processed at 1.0
+um/px without a word. The nucleus diameter range is turned into pixel areas
+with that number, so the batch would count objects of a size nobody chose and
+record those areas in the tracker as if measured. The reader therefore says
+whether the size came from the file (voxel_size_from_file) instead of putting
+1.0 in itself, and the batch refuses such an image: the sample fails with the
+reason, the detector is not run, no tracker row is written, and -- because a
+reader that stopped finding the size says nothing about the sample -- its
+earlier registry entry is kept.
 """
 
 from types import SimpleNamespace

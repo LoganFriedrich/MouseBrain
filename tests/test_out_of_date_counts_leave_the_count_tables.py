@@ -1,10 +1,10 @@
 """A brain's counts leave the production count tables as soon as what they
 were made from is replaced.
 
-When step 3 archived a brain's registration, or its classification was
-replaced (step 5, a promotion), its row stayed in region_counts.csv and
-elife_counts.csv -- the files an integrator pulls -- until someone counted the
-brain again. Identifiers are invented.
+When step 3 archives a brain's registration, or its classification is
+replaced (step 5, a promotion), its row leaves region_counts.csv and
+elife_counts.csv -- the files an integrator pulls. Otherwise it would stay
+until someone counted the brain again. Identifiers are invented.
 """
 import builtins
 import csv

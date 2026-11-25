@@ -1,8 +1,8 @@
 """Saving an ROI file never leaves a half-written file in its place.
 
-save_rois_json used to write over the file in place: a failure mid-write
-left a truncated, unreadable file, and the ROIs saved before -- the only
-copy of a person's drawing -- were gone.
+save_rois_json must not write over the file in place: a failure mid-write
+would leave a truncated, unreadable file, and the ROIs saved before -- the
+only copy of a person's drawing -- would be gone.
 """
 
 import json

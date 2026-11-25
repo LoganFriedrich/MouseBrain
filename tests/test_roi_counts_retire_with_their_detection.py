@@ -1,12 +1,12 @@
 """ROI counts are retired when the detection they were counted against changes.
 
-Defect covered: the ROI counter ties a sample's counts to the measurements
-it counted (their SHA-256) only at counting time. When the detection batch
-then registered NEW measurements for the sample, found no nuclei in it, or
-retired its detection entry after a failure, the sample's ROI counts -- and
-its row in the region summary -- stayed current until someone counted
-again. Now the batch retires them at that moment, unless the new
-measurements are byte-for-byte the ones counted.
+The ROI counter ties a sample's counts to the measurements it counted (their
+SHA-256) only at counting time. When the detection batch then registers NEW
+measurements for the sample, finds no nuclei in it, or retires its detection
+entry after a failure, the sample's ROI counts -- and its row in the region
+summary -- would stay current until someone counted again. So the batch
+retires them at that moment, unless the new measurements are byte-for-byte the
+ones counted.
 """
 import csv
 import hashlib

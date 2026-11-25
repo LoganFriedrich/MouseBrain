@@ -1,13 +1,13 @@
 """A completed sample whose result could not be registered is listed in the
 end-of-batch summary, and so is a registry that could not be opened at all.
 
-Defect covered: when registering a completed sample raised (the registry
-file held open by another program, the share dropping out), the only trace
-was one "Registry warning" line among that sample's own output. The summary
-still counted the sample under "Completed", so a person reading it took the
-result for registered while the registry still held the earlier run's count
--- or nothing. The same held when the registry could not be opened: every
-sample was processed and none was registered, with one early warning line.
+When registering a completed sample raises (the registry file held open by
+another program, the share dropping out), one "Registry warning" line among
+that sample's own output is not enough. If the summary still counted the sample
+under "Completed", a person reading it would take the result for registered
+while the registry still held the earlier run's count -- or nothing. The same
+holds when the registry cannot be opened: every sample is processed and none
+registered.
 """
 
 import sys

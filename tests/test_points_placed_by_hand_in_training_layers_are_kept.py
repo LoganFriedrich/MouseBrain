@@ -1,12 +1,13 @@
 """Points a person puts into the training layers by hand are answers too.
 
-What went wrong: 'Train: Cells' / 'Train: Non-Cells' became a view of the
-saved answers -- replaced after every C / X -- and "Create Training Dataset"
-cut cubes from the saved answers only. A point a person placed in one of
-those layers with napari's add-points mode was in no file: it vanished at the
-next answer and was never cut, without a word. The Visualize button's layers
-(cubes found on disk) had the same role as the answer layers, so they were
-taken as answer layers and overwritten.
+'Train: Cells' / 'Train: Non-Cells' are a view of the saved answers --
+replaced after every C / X -- and "Create Training Dataset" cuts cubes from
+the saved answers. A point a person places in one of those layers with
+napari's add-points mode must therefore be saved as an answer; otherwise it
+would be in no file, vanish at the next answer and never be cut, without a
+word. The Visualize button's layers (cubes found on disk) have a different
+role from the answer layers and must not be taken as answer layers and
+overwritten.
 """
 from pathlib import Path
 

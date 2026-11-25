@@ -1,9 +1,9 @@
 """Exporting region counts replaces all three count files or none of them.
 
-Before, <sample>_cells.csv, _regions.csv and _summary.txt were overwritten
-one after another, so a failure on the second (for example the regions CSV
-open in a spreadsheet program) left a new cells.csv beside the old regions
-and summary: a folder mixing two runs.
+<sample>_cells.csv, _regions.csv and _summary.txt must not be overwritten one
+after another: a failure on the second (for example the regions CSV open in a
+spreadsheet program) would leave a new cells.csv beside the old regions and
+summary: a folder mixing two runs.
 """
 import os
 

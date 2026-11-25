@@ -1,8 +1,9 @@
 """An unreadable ROI file is listed as unreadable, never as done.
 
-It used to count as "already has ROIs": --skip-done never opened it, and the
-counting step then skipped the sample, so the sample silently had no counts.
-A file that is JSON but lacks what counting needs crashed the whole count.
+It must not count as "already has ROIs": --skip-done would never open it, and
+the counting step would then skip the sample, so the sample would silently
+have no counts. A file that is JSON but lacks what counting needs is reported
+too, not allowed to crash the whole count.
 """
 
 import json

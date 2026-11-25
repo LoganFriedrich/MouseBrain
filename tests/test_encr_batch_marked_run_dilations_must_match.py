@@ -1,10 +1,10 @@
 """A marked-best run's sigma is used only at the dilations it was chosen at.
 
-Defect covered: the batch took a marked run's sigma threshold but always ran
-with the soma and background-exclusion dilations of the approved method (or
-the command line). A run marked at soma dilation 3 handed its sigma to a batch
-measuring at 6, and the banner credited the sigma to the marked run without a
-word about the difference.
+The batch must not take a marked run's sigma threshold and run with other soma
+and background-exclusion dilations (those of the approved method or the
+command line). A run marked at soma dilation 3 would hand its sigma to a batch
+measuring at 6, and the banner would credit the sigma to the marked run
+without a word about the difference.
 """
 
 import sys
@@ -19,7 +19,7 @@ from mousebrain.plugin_2d.sliceatlas.tracker import SliceTracker
 
 try:
     from mousebrain.plugin_2d.sliceatlas.tracker.schema import COLOC_SIGMA_RECORDED_VERSION
-except ImportError:   # lets the same tests show the old behavior on older code
+except ImportError:   # schema without the constant: fall back to the version that first recorded sigma
     COLOC_SIGMA_RECORDED_VERSION = "1.1.0"
 
 PROJECT = "PRJ"

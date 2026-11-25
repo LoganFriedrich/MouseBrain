@@ -18,8 +18,8 @@ def _age(path, seconds):
 
 def test_an_old_empty_lock_is_taken_over(tmp_path):
     # A process that crashed between creating the lock and writing its holder
-    # line leaves an EMPTY lock file. It used to be skipped by the takeover,
-    # so every later writer waited the full wait time and failed.
+    # line leaves an EMPTY lock file. The takeover must not skip it, or every
+    # later writer would wait the full wait time and fail.
     target = tmp_path / "registry.json"
     lock = tmp_path / "registry.json.lock"
     lock.write_bytes(b"")
@@ -133,8 +133,8 @@ def _run_with_limit(fn, limit):
 
 def test_a_folder_this_account_cannot_create_files_in_times_out(tmp_path, monkeypatch):
     # The create fails with PermissionError and there is no lock file (a share
-    # or ACL that refuses new files). This used to retry at once forever, a
-    # busy loop that never reached the wait limit.
+    # or ACL that refuses new files). It must not retry at once forever, a
+    # busy loop that never reaches the wait limit.
     def refuse(*a, **k):
         raise PermissionError(13, "Access is denied")
 
@@ -280,10 +280,10 @@ class _OsWithARace:
 def test_a_fresh_lock_taken_during_a_takeover_is_never_moved_or_removed(tmp_path, monkeypatch):
     # Waiters A and B both judge the crashed holder's lock abandoned. A is
     # quicker: it removes the old lock and takes a fresh one of its own just
-    # as B is about to act. B used to move A's fresh lock aside, notice, and
-    # put it back -- and while it was aside a third writer C could create the
-    # lock, so the put-back failed: A and C were both writing (a lost row),
-    # and A's lock was stranded under another name.
+    # as B is about to act. B must not move A's fresh lock aside, notice, and
+    # put it back: while it was aside a third writer C could create the
+    # lock, so the put-back would fail, A and C would both be writing (a lost
+    # row), and A's lock would be stranded under another name.
     lock = tmp_path / "registry.json.lock"
     crashed = "crashed-host pid 1 token a\n"
     fresh = "host-of-A pid 2 token b\n"

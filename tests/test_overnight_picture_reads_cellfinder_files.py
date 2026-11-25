@@ -1,7 +1,8 @@
 """The overnight sample pictures read the cells in a cellfinder .xml.
 
-The reader looked for a line holding MarkerX, MarkerY and MarkerZ together;
-cellfinder writes each on its own line, so every picture said 0 cells.
+cellfinder writes MarkerX, MarkerY and MarkerZ each on its own line, so the
+reader must not look for a line holding all three together: every picture
+would say 0 cells.
 """
 import importlib.util
 import logging

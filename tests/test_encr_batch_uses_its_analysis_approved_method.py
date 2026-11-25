@@ -1,11 +1,11 @@
 """The 2D batch fills and judges its parameters by the approved method the
 registry holds for ITS analysis.
 
-Defect covered: the batch always read the general approved method. A
-registry that gives each analysis its own approved method judges the batch's
-entries by that one, so the batch filled its unset options from, and
-compared its banner with, a method the registry does not judge it by --
-announcing "approved" numbers the registry then reported stale.
+A registry that gives each analysis its own approved method judges the batch's
+entries by that one. If the batch read the general approved method instead, it
+would fill its unset options from, and compare its banner with, a method the
+registry does not judge it by -- announcing "approved" numbers the registry
+then reports stale.
 """
 
 import sys

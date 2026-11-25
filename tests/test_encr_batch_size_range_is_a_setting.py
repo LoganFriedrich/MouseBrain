@@ -1,11 +1,10 @@
 """The 2D batch's nucleus diameter range is a setting, not a value in the code.
 
-Defect covered: the batch detected at a diameter range fixed in its code and
-ignored the approved method's size_filter_um, so with an approved method
-naming another range every entry was registered stale and a lab could not
-make the batch run at its approved range. Now the range comes from
---diameter MIN MAX, else the approved method; with neither the batch stops
-before any sample and says how to set it.
+A range fixed in the batch's code would ignore the approved method's
+size_filter_um: with an approved method naming another range every entry would
+be registered stale and a lab could not make the batch run at its approved
+range. So the range comes from --diameter MIN MAX, else the approved method;
+with neither the batch stops before any sample and says how to set it.
 """
 
 import json

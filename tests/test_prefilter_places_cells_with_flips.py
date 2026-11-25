@@ -2,7 +2,7 @@
 
 brainreg turns the brain into the atlas's orientation, so an axis whose letter
 differs from the atlas's ('i' vs 's', 'p' vs 'a') is reversed as well as
-reordered. The prefilter used to reorder only, and looked candidates up
+reordered. A prefilter that only reordered would look candidates up
 millimetres away (up-down on 'iar' brains, front-back too on 'ipr').
 """
 from types import SimpleNamespace

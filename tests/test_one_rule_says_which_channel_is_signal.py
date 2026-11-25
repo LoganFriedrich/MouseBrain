@@ -1,10 +1,11 @@
 """Which channel holds the cells is decided by one rule
 (brain_context.channel_roles) for Load, detection and classification.
 
-Load took ch1 if any of three metadata keys said so (and missed the
-"ch1" text the old crop tool wrote); detection read from disk followed a
-checkbox that started checked for every brain and was never reset for the
-next brain; classification read only channels.signal_channel.
+Separate rules would disagree: Load taking ch1 if any of three metadata keys
+said so (and missing the "ch1" text an older crop tool wrote), detection read
+from disk following a checkbox that starts checked for every brain and is
+never reset for the next brain, classification reading only
+channels.signal_channel.
 """
 import json
 

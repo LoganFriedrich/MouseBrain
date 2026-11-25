@@ -1,15 +1,15 @@
 """Every pipeline step agrees on which folders are brains.
 
-Each step used to carry its own idea of which mouse folders to skip: extraction
-and registration skipped script/backup/archive, detection, classification,
-counting and RUN_PIPELINE also skipped summary, the organizer also skipped old,
-and the lookups by name skipped nothing -- not even an underscore folder. So a
-brain kept in a folder one step skipped was processed by another, and the steps
-disagreed about which brains exist.
+All steps share one rule for which mouse folders to skip. Per-step lists would
+disagree (script/backup/archive in extraction and registration, also summary
+in detection, classification, counting and RUN_PIPELINE, also old in the
+organizer, and nothing in the lookups by name -- not even an underscore
+folder), so a brain kept in a folder one step skipped would be processed by
+another.
 
-The overnight batch went further: it took only brains with images in the
-automatic crop folder, so a brain cropped by hand, or registered on its full
-extraction, never ran overnight and nothing said so.
+The overnight batch must not take only brains with images in the automatic
+crop folder: a brain cropped by hand, or registered on its full extraction,
+would never run overnight and nothing would say so.
 """
 import importlib.util
 import json
@@ -57,7 +57,7 @@ def _brain(folder: Path) -> Path:
 def root(tmp_path):
     root = tmp_path / "1_Brains"
     _brain(root / "mouse_a" / BRAIN)
-    # Folders that some step used to treat as mice:
+    # Folders no step may treat as mice:
     _brain(root / "_incoming" / "102_PROJ_01_03_2p5x_z5")       # underscore
     _brain(root / "Data_Summary_copy" / "103_PROJ_01_04_2p5x_z5")  # 'summary'
     _brain(root / "old_deliveries" / "104_PROJ_01_05_2p5x_z5")   # 'old'

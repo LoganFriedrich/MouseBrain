@@ -1,11 +1,12 @@
 """The overnight sample picture and step 4's brain list read "the candidates"
 by the one rule (pipeline_status.find_candidates), like step 5.
 
-The overnight picture took the first .xml the folder listing gave at the top
-of 4_Cell_Candidates, and step 4's brain list called a brain "detected" when
-any .xml sat there. A brain registered on its full extraction keeps the run
-step 5 classifies in 4_Cell_Candidates/from_1_Extracted_Full: the picture drew
-no cells and the list said "not detected", while step 5 classified that run.
+Taking the first .xml the folder listing gives at the top of
+4_Cell_Candidates, or calling a brain "detected" when any .xml sits there,
+would fail for a brain registered on its full extraction: it keeps the run
+step 5 classifies in 4_Cell_Candidates/from_1_Extracted_Full, so the picture
+would draw no cells and the list would say "not detected" while step 5
+classified that run.
 """
 import importlib.util
 import json
