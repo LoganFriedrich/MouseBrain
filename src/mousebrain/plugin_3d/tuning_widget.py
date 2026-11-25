@@ -76,7 +76,7 @@ class BrainLoaderWorker(QThread):
 
             # Zarr first (instant loading) -- but only a cache that is
             # COMPLETE and current (mousebrain.zarr_cache): an interrupted or
-            # empty one used to load as a partly blank brain. Both channels
+            # empty one would load as a partly blank brain. Both channels
             # must be usable; otherwise both come from the TIFFs.
             from mousebrain.zarr_cache import cache_state, zarr_path_for
             zarr_signal = zarr_path_for(self.signal_path)
@@ -720,14 +720,13 @@ class TuningWidget(QWidget):
         self._last_class_exp_id = None
 
         # Initialize tracker if available. Opening it can be refused: the
-        # tracker will not create a new calibration_runs.csv when its folder
-        # (2_Data_Summary) is not visible -- a share reconnecting, a new
-        # install -- because a fresh empty tracker would quietly orphan the
-        # real one. That refusal used to escape from here and the whole Setup
-        # & Tuning panel failed to open. Now the panel opens without a
-        # tracker and says so in red at the top (_tracker_warning_text) and
-        # in the console; nothing is logged until it is reopened with the
-        # folder visible.
+        # tracker will not create a new calibration_runs.csv when its data
+        # summary folder is not visible (a share reconnecting, a fresh
+        # install), because a fresh empty tracker would quietly orphan the
+        # real one. The refusal is caught here so the Setup & Tuning panel
+        # still opens, without a tracker: it says so in red at the top
+        # (_tracker_warning_text) and in the console, and nothing is logged
+        # until the panel is reopened with the folder visible.
         self.tracker = None
         self._tracker_error = None
         if TRACKER_AVAILABLE:
@@ -864,8 +863,8 @@ class TuningWidget(QWidget):
         load_options_layout = QVBoxLayout()
         load_options_group.setLayout(load_options_layout)
 
-        # Note: Registration boundaries are now handled in "Registration QC & Approval" mode
-        # No longer loaded in cell detection mode
+        # Registration boundaries are handled in "Registration QC & Approval"
+        # mode and are not loaded in cell detection mode.
 
         # Detection loading options
         det_label = QLabel("<b>Detection:</b>")
@@ -990,21 +989,21 @@ class TuningWidget(QWidget):
         # Tab 5: Detection Comparison
         self.tabs.addTab(self.create_detection_compare_tab(), "5. Det Compare")
 
-        # Tab 6: Atlas Pre-Filter (NEW)
+        # Tab 6: Atlas Pre-Filter
         self.tabs.addTab(self.create_prefilter_tab(), "6. Pre-Filter")
 
-        # Tab 7: Classification (was 6)
+        # Tab 7: Classification
         self.tabs.addTab(self.create_classification_tab(), "7. Classify")
 
-        # Tab 8: Classification Comparison (was 7)
+        # Tab 8: Classification Comparison
         self.tabs.addTab(self.create_classification_compare_tab(), "8. Class Compare")
 
-        # Tab 9: Curation & Training (was 8)
+        # Tab 9: Curation & Training
         self.tabs.addTab(self.create_curation_tab(), "9. Curate/Train")
 
-        # Tab 10: Results (was 9). Its index is kept, like the Registration
+        # Tab 10: Results. Its index is kept, like the Registration
         # tab's, so opening it refreshes it (_on_tab_changed); a hard-coded
-        # number went stale when tabs were added and refreshed the wrong tab.
+        # number goes stale when tabs are added and refreshes the wrong tab.
         self._results_tab_index = self.tabs.addTab(self.create_results_tab(), "10. Results")
 
         # Auto-refresh when switching tabs
@@ -1477,10 +1476,9 @@ class TuningWidget(QWidget):
         layout.addWidget(info)
 
         # The settled method: the run marked Paradigm Best for this brain's
-        # imaging setup, all eight settings, read from the tracker. This replaces
-        # four generic presets that were placeholders from before detection was
-        # tuned on real brains, and a "proven" button whose numbers were typed
-        # into the code -- the method now lives in the tracker, in one place.
+        # imaging setup, all eight settings, read from the tracker. The method
+        # lives in the tracker, in one place, not in generic presets or in
+        # numbers typed into the code.
         preset_group = QGroupBox("Start from")
         preset_layout = QVBoxLayout()
         preset_group.setLayout(preset_layout)
@@ -1850,7 +1848,7 @@ class TuningWidget(QWidget):
             elif scope == 'full':
                 scope_text = "FULL"
             else:
-                # Legacy runs without scope tracking
+                # Runs without scope tracking
                 scope_text = ""
 
             if scope_text:
@@ -2154,7 +2152,7 @@ class TuningWidget(QWidget):
                 # Fall back to any XML file
                 xml_files = list(output_path.glob("*.xml"))
                 if not xml_files:
-                    # This run was logged but XML was never saved (common for old/failed runs)
+                    # This run was logged but XML was never saved (common for failed runs)
                     print(f"[MouseBrain] No XML files in: {output_path}")
                     print(f"[MouseBrain] This run may have been logged but detection results were not saved.")
                     QMessageBox.warning(
@@ -2617,7 +2615,7 @@ class TuningWidget(QWidget):
         # If not loaded in viewer, load from disk (priority: manual_crop > auto_crop)
         if signal_layer is None or background_layer is None:
             # The images the atlas was fitted to (config.registered_input);
-            # brains registered before that was recorded: manual crop, then crop
+            # brains with no recorded registered input fall back to manual crop, then crop
             from mousebrain.config import RegisteredImagesMissing, registered_input
             try:
                 _source, data_folder, _meta = registered_input(
@@ -2785,7 +2783,7 @@ class TuningWidget(QWidget):
         # The run's own record travels with the worker (see
         # _on_detection_finished): the brain, its tracker row, its folder and
         # the first plane it tested. The widget's own fields are reset when
-        # another brain is selected, and the finish handler used to read them.
+        # another brain is selected, so the finish handler must not read them.
         run = {
             'brain': self.current_brain,
             'exp_id': self.last_run_id if self.tracker else None,
@@ -2860,12 +2858,12 @@ class TuningWidget(QWidget):
             # Positions are stored counted from the first plane of the WHOLE
             # stack. A run of part of the stack detects on a slice that starts
             # at plane z_offset, so cellfinder counts Z from there; the offset
-            # used to be added only to the layer shown, and the file kept the
-            # slice's own Z, so every reload of the run (and anything reading
-            # its file) put its cells z_offset planes too shallow. A marker in
-            # the run folder (mousebrain.detection_runs) says the file holds
-            # whole-stack positions; runs saved before it have none, and their
-            # positions are shifted when they are loaded.
+            # is added to the saved positions too, not only to the layer
+            # shown, otherwise every reload of the run (and anything reading
+            # its file) would put its cells z_offset planes too shallow. A
+            # marker in the run folder (mousebrain.detection_runs) says the
+            # file holds whole-stack positions; runs saved without one have
+            # slice-relative positions, which are shifted when loaded.
             if detected_cells and z_offset:
                 for c in detected_cells:
                     c.z = c.z + z_offset
@@ -2885,10 +2883,9 @@ class TuningWidget(QWidget):
                 except Exception as e:
                     print(f"[MouseBrain] Warning: Could not save cells to XML: {e}")
 
-            # Update tracker. The run's output_path becomes the FILE it wrote:
-            # it was left as the run folder, and "Load best detection" reads
-            # output_path as a candidates file, so a widget run marked Best
-            # loaded nothing.
+            # Update tracker. The run's output_path becomes the FILE it wrote,
+            # because "Load best detection" reads output_path as a candidates
+            # file; a run folder there would load nothing.
             if self.tracker and run_id:
                 # expect_status: closing the panel may already have marked
                 # this run failed; a late result never overwrites that (see
@@ -2912,7 +2909,7 @@ class TuningWidget(QWidget):
             if run_id and run_id not in self.session_run_ids:
                 self.session_run_ids.append(run_id)
 
-            # Refresh the calibration runs table to show new run
+            # Refresh the calibration runs table to show the run
             self._refresh_context_runs()
             self._refresh_prefilter_runs()
 
@@ -2958,7 +2955,7 @@ class TuningWidget(QWidget):
                 # Create layer name with session indicator
                 layer_name = f"● Run {datetime.now().strftime('%H:%M:%S')} ({len(coords)} cells)"
 
-                # Use consistent color scheme for new detection results
+                # Use consistent color scheme for fresh detection results
                 style = self.CELL_COLORS['new']
                 border_width = style.get('border_width', 0.1)
                 layer = self.viewer.add_points(
@@ -2977,7 +2974,7 @@ class TuningWidget(QWidget):
                 # Store exp_id in layer metadata for tracking, with the brain
                 # and the role ('det_recent': the run just made), so the
                 # curation buttons find it by that record and not by the "●"
-                # in its name (brain_context, rule 4). Tagged only when the run
+                # in its name. Tagged only when the run
                 # was logged for the brain selected now.
                 if run_id:
                     layer.metadata['exp_id'] = run_id
@@ -3172,7 +3169,7 @@ class TuningWidget(QWidget):
         return np.array(coords) if coords else None
 
     # ==========================================================================
-    # NEW COMPARISON TABS
+    # COMPARISON TABS
     # ==========================================================================
 
     def create_detection_compare_tab(self):
@@ -3464,8 +3461,8 @@ class TuningWidget(QWidget):
 
         # The way back to "no run chosen" without loading another brain: the
         # pre-filter then takes the brain's candidates file and records no
-        # parent run. Without it, a refused run stayed chosen until a
-        # different brain was loaded (refreshing the same brain keeps it).
+        # parent run. Without it, a refused run stays chosen until a
+        # different brain is loaded (refreshing the same brain keeps it).
         clear_chosen_btn = QPushButton("Clear Chosen Run")
         clear_chosen_btn.setToolTip(
             "Forget the run chosen with Load Best / Load Selected.\n"
@@ -3885,10 +3882,8 @@ class TuningWidget(QWidget):
         #   a Setup & Tuning test run, a run whose file was replaced or cannot
         #   be found -- stop and say so: filtering under that run's name would
         #   record a false provenance, and a test run's own file is not in the
-        #   atlas's space (see _prefilter_file_of_run). (This lookup used to
-        #   call tracker.search(exp_id=...), which search() does not accept;
-        #   the error was swallowed, so the selected run was recorded as the
-        #   parent of whatever file was filtered.)
+        #   atlas's space (see _prefilter_file_of_run). The lookup is by
+        #   tracker.get_experiment, not search(), which does not take exp_id.
         # - No run selected: that file, with no parent claimed.
         if self._prefilter_source_exp_id:
             run = None
@@ -4192,9 +4187,7 @@ class TuningWidget(QWidget):
             return
 
         try:
-            # One run by its id. (This used to call tracker.search(exp_id=...),
-            # which search() does not accept, so every press ended in
-            # "Could not load previous result" and nothing was loaded.)
+            # One run by its id (get_experiment; search() does not take exp_id).
             run = self.tracker.get_experiment(exp_id)
             if not run:
                 QMessageBox.warning(self, "Not Found", f"Run {exp_id} not found in tracker.")
@@ -4658,7 +4651,7 @@ class TuningWidget(QWidget):
         refresh_status_btn.clicked.connect(self.refresh_training_data_counts)
         action_row.addWidget(refresh_status_btn)
 
-        # Export button - now called "Create Training Dataset"
+        # Export button
         export_btn = QPushButton("Create Training Dataset")
         export_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
         export_btn.setToolTip(
@@ -7728,7 +7721,7 @@ class TuningWidget(QWidget):
 
         # Get signal channel path (priority: manual_crop > auto_crop)
         # The images the atlas was fitted to (config.registered_input);
-        # brains registered before that was recorded: manual crop, then crop
+        # brains with no recorded registered input fall back to manual crop, then crop
         from mousebrain.config import RegisteredImagesMissing, registered_input
         try:
             _source, data_folder, _meta = registered_input(
@@ -8409,7 +8402,7 @@ class TuningWidget(QWidget):
 
             # Find signal and background channel images (priority: manual_crop > auto_crop)
             # The images the atlas was fitted to (config.registered_input);
-            # brains registered before that was recorded: manual crop, then crop
+            # brains with no recorded registered input fall back to manual crop, then crop
             from mousebrain.config import RegisteredImagesMissing, registered_input
             try:
                 _source, data_folder, _meta = registered_input(
