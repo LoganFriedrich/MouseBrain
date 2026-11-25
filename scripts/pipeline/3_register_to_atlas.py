@@ -261,8 +261,8 @@ from mousebrain.registration_approval import (APPROVAL_MARKER, FINGERPRINT_FILES
                                               running_registration)
 
 # Files that indicate a complete registration: ALL of brainreg's outputs.
-# brainreg.json alone used to be the test, but brainreg writes it before it
-# registers, so a failed or killed run counted as registered -- skipped by
+# brainreg.json alone is not the test: brainreg writes it before it
+# registers, so a failed or killed run would count as registered -- skipped by
 # --batch, approvable, and called a failure by the overnight batch every night
 # (it checks boundaries.tiff). One list, registration_approval's, for every
 # reader.
@@ -392,8 +392,8 @@ def archive_existing_registration(pipeline_folder, label=""):
         return False
     
     # Get contents to archive (excluding _archive folder itself). The approval
-    # marker goes WITH the registration it approved: it used to be skipped with
-    # the other dot-files, so it stayed beside the NEW registration and made
+    # marker goes WITH the registration it approved: it is not skipped with
+    # the other dot-files, or it would stay beside the NEW registration and make
     # that one look approved before anyone had looked at it. A rejection goes
     # with the registration it rejected, for the same reason.
     contents = [f for f in reg_folder.iterdir()

@@ -129,8 +129,8 @@ def find_brains_to_process() -> Tuple[List[Tuple[Path, str]], List[Tuple[str, st
     the same choice step 3 makes.
 
     WHY NOT "HAS AN AUTOMATIC CROP" ANY MORE
-    The batch used to take only brains with images in
-    2_Cropped_For_Registration. A brain cropped by hand, or registered on its
+    The batch does not take only brains with images in
+    2_Cropped_For_Registration: a brain cropped by hand, or registered on its
     full extraction because it arrived already cut, was left out without a
     word: it never reached detection, classification or counting overnight,
     and nothing said so.
@@ -226,7 +226,7 @@ def run_registration(brain_name: str, pipeline_dir: Path,
 
     ``reprocess``: register it again even though it is registered (--force).
     Step 3 is then given --reprocess; without it step 3 skips a registered
-    brain with "already registered" and exit 0, which this used to log as
+    brain with "already registered" and exit 0, which must not be logged as
     "Registration complete" before redoing every later step on the old
     registration. A reprocess counts as done only when the registration in the
     folder afterwards is a DIFFERENT one."""
@@ -257,10 +257,9 @@ def run_registration(brain_name: str, pipeline_dir: Path,
 
         # Verify registration actually produced ALL its output files -- the
         # same test step 3 and every status reader use
-        # (registration_approval.registration_complete). This batch used to
-        # check boundaries.tiff while step 3 checked only brainreg.json, so a
-        # failed registration was "done" to step 3 and "failed" here, on every
-        # retry of every night.
+        # (registration_approval.registration_complete). The batch and step 3 must
+        # use the same test: otherwise a failed registration is "done" to one
+        # and "failed" to the other, on every retry of every night.
         missing = missing_registration_files(reg_folder)
         if missing:
             return False, f"Registration failed: not created: {', '.join(missing)}"
@@ -269,8 +268,8 @@ def run_registration(brain_name: str, pipeline_dir: Path,
             return False, ("Registration was not redone: the registration in the folder "
                            "is still the one that was there before")
 
-        # NOT approved here. This used to write the approval marker itself,
-        # so registrations nobody had looked at went on to detection and
+        # NOT approved here. Writing the approval marker here
+        # would send registrations nobody had looked at on to detection and
         # region counts. A person approves (mousebrain.registration_approval);
         # process_brain stops at "awaiting approval" until then.
         log.info(f"[{brain_name}] Registration complete -- waiting for a person to approve it")
@@ -314,9 +313,9 @@ def run_classification(brain_name: str, pipeline_dir: Path) -> Tuple[bool, str]:
     """Run step 5, which classifies with the settled method of the brain's
     imaging setup (the classification run marked Paradigm Best).
 
-    No --model is passed. WHY: this used to pick a model itself -- the newest
-    folder whose name held the imaging setup, else the newest model of all --
-    and hand it to step 5, so the overnight classification could use a model
+    No --model is passed. WHY: picking a model here (the newest
+    folder whose name holds the imaging setup, else the newest model of all)
+    and handing it to step 5 would let the overnight classification use a model
     nobody had settled on. Step 5 now looks the method up and stops, saying
     why, when there is none; that message reaches the overnight report."""
     log.info(f"[{brain_name}] Running classification (settled method)...")
@@ -700,10 +699,10 @@ def generate_cell_detection_images(pipeline_dir: Path, output_dir: Path) -> List
             return []
 
         # Load cells from "the candidates": the file step 5 classifies
-        # (pipeline_status.find_candidates). This used to take the first .xml
-        # the folder listing gave at the top of 4_Cell_Candidates, which is not
-        # the run step 5 uses when that run is kept in from_<registered
-        # folder>, so the picture showed no cells, or another run's cells.
+        # (pipeline_status.find_candidates). The first .xml
+        # in the folder listing at the top of 4_Cell_Candidates is not the run
+        # step 5 uses when that run is kept in from_<registered folder>, so
+        # taking it would show no cells, or another run's cells.
         cells = []
         det_xml = find_candidates(pipeline_dir)
         if det_xml is not None:
@@ -802,10 +801,9 @@ def generate_regional_heatmap(pipeline_dir: Path, output_dir: Path) -> Optional[
 def parse_cells_from_xml(xml_path: Path) -> List[Dict]:
     """Cell positions (x, y, z in image planes) from a cellfinder .xml.
 
-    Read as XML, one <Marker> element per cell. This used to scan the text for
-    a LINE holding MarkerX, MarkerY and MarkerZ together, but cellfinder writes
-    each of them on its own line, so no cell was ever found and the overnight
-    pictures always showed none. A file that cannot be read gives no cells
+    Read as XML, one <Marker> element per cell. Scanning the text for
+    a LINE holding MarkerX, MarkerY and MarkerZ together finds nothing, because
+    cellfinder writes each of them on its own line. A file that cannot be read gives no cells
     (the picture is still made, and says 0 cells).
     """
     import xml.etree.ElementTree as ET

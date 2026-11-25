@@ -207,8 +207,8 @@ def qc_check_crop(brain_path: Path) -> Tuple[str, str]:
     Returns (status, message)
     """
     # A crop is a ch0 folder of TIFFs plus metadata.json, by hand
-    # (_Manual) or automatic -- what every crop writer produces. This used to
-    # look for downsampled.zarr / downsampled.tiff, which no crop writer makes.
+    # (_Manual) or automatic -- what every crop writer produces. No crop writer
+    # makes downsampled.zarr / downsampled.tiff, so they are not looked for.
     crop_dir = None
     for name in ("2_Cropped_For_Registration_Manual", "2_Cropped_For_Registration"):
         d = brain_path / name
@@ -252,7 +252,7 @@ def qc_check_registration(brain_path: Path) -> Tuple[str, str]:
     # A registration is there only when ALL of brainreg's outputs are
     # (registration_approval.registration_complete, the test every reader
     # uses). brainreg writes brainreg.json before it registers, so that file
-    # alone is no proof; a missing boundaries.tiff used to pass as "review".
+    # alone is no proof; a missing boundaries.tiff must not pass as "review".
     from mousebrain.registration_approval import missing_registration_files
     missing = missing_registration_files(reg_dir)
     if missing:
@@ -430,8 +430,8 @@ def setup_brain_from_ims(ims_path: Path) -> Tuple[Optional[Path], str]:
 def mark_step_started(brain_name: str, brain_path: Path, step: str) -> None:
     """Save, BEFORE a step runs, that this brain is PENDING at that step.
 
-    WHY: the status file used to be written only when a brain finished, failed
-    or stopped for review. A batch killed mid-step (closed window, reboot,
+    WHY: a status file written only when a brain finished, failed
+    or stopped for review would leave a batch killed mid-step (closed window, reboot,
     task ended) left its brain with no row -- or with a row from an earlier
     run -- and --resume, which looks for PENDING rows, could never find it.
     """
@@ -452,7 +452,7 @@ def step_already_done(brain_path: Path, step: str, redo_from: str = '') -> bool:
     """Whether a step can be skipped on a resumed brain: its output exists and
     is not stale.
 
-    WHY: every resumed attempt used to run every step from extraction on.
+    WHY: a resumed attempt must not run every step from extraction on.
     Steps 2 and 3 skip a finished brain themselves, but detection does not:
     resuming a brain stopped at counting re-ran hours of detection (archiving
     the finished candidates) and classification. The answer comes from
@@ -640,8 +640,8 @@ def process_brain(brain_path: Path, brain_name: str, skip_finished: bool = False
     print(f"    QC: {qc_msg}")
 
     # A registration that did not produce its files stops HERE, as a
-    # registration failure. This case used to fall through to detection,
-    # which then stopped on the missing approval, so the row said the brain
+    # registration failure. This case must not fall through to detection,
+    # which would stop on the missing approval, so the row would say the brain
     # failed at 'detect' -- three steps from the cause. (Step 3 ending
     # without an error does not settle it: it also ends cleanly when it finds
     # nothing to register for the brain, e.g. a brainreg.json is there but the
@@ -654,8 +654,8 @@ def process_brain(brain_path: Path, brain_name: str, skip_finished: bool = False
 
     # Registration needs a person's approval. A batch never approves: the
     # approval exists so that a person has looked at the registration before
-    # hours of detection run on it. (--auto-approve used to try, with an
-    # argument the approval script does not accept, so it never worked.)
+    # hours of detection run on it. (--auto-approve cannot approve: the approval script
+    # takes no such argument.)
     if qc_status == QCStatus.REVIEW:
         results['status'] = QCStatus.REVIEW
         results['needs_registration_approval'] = True

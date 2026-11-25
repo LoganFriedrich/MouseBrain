@@ -837,10 +837,9 @@ def existing_extraction_problem(full_folder, num_channels, size_z):
 
     WHY THIS CHECK EXISTS
     A re-run of this step reuses planes already on disk instead of reading the
-    .ims again (the fast path). It used to reuse them whenever a channel
-    folder held ANY Z*.tif, and took the plane count from the files it found.
-    An extraction stopped part-way (the window closed, the drive dropped)
-    therefore came back as a "complete" brain with a short stack: metadata.json
+    .ims again (the fast path). Reusing them whenever a channel folder holds
+    ANY Z*.tif, with the plane count taken from the files found, would let an
+    extraction stopped part-way (the window closed, the drive dropped) come back as a "complete" brain with a short stack: metadata.json
     was written with the short depth and every later step -- crop,
     registration, detection, counts -- worked on a brain missing its back
     planes, with nothing to say so.
@@ -1156,8 +1155,8 @@ def extract_and_analyze(ims_path, pipeline_folder, skip_crop=False):
         # The new crop is built in 2_Cropped_For_Registration.partial and
         # swapped in only once every plane and its metadata.json are written
         # (crop_subprocess.swap_in; the previous crop goes into
-        # 2_Cropped_For_Registration/_archive/<time>/). WHY: this used to
-        # write over the crop already there, plane by plane. A run stopped
+        # 2_Cropped_For_Registration/_archive/<time>/). WHY: writing
+        # over the crop already there, plane by plane, would let a run stopped
         # part-way left old and new planes mixed (of different heights when
         # the crop line moved) under the old metadata; the registration was
         # then out of date and the batches registered the mixed folder

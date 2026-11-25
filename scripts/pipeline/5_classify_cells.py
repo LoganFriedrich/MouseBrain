@@ -93,7 +93,7 @@ NETWORK_DEPTH = "50"
 # The settled pre-filter: these exact settings, written out rather than taken
 # from prefilter_candidates' defaults, so changing a default there can never
 # change production quietly. They are the settings the settled selective
-# classification was made with (the pre-filter's defaults since 2026-03-03).
+# classification was made with (the pre-filter's defaults when the settled method was made).
 PREFILTER_SETTINGS = {
     "method": "atlas_erosion",
     "surface_depth_um": 100.0,
@@ -390,9 +390,9 @@ def settled_method_or_stop(tracker, imaging_paradigm: str, args) -> dict:
     Nothing else is ever used.
 
     WHY: step 5 writes THE classification of a brain, which step 6 counts.
-    Without a Paradigm Best it used to take "the newest model file" in the
-    models folder, and options could swap in any model, skip the pre-filter or
-    classify a tuned pre-filter -- all straight into production. Two models on
+    Taking "the newest model file" in the models folder, or letting options swap
+    in any model, skip the pre-filter or classify a tuned pre-filter, would put
+    all of those straight into production. Two models on
     the same brain gave counts several-fold apart, so a count could not be
     traced to a method anyone had settled on. Trying something else is tuning:
     Setup & Tuning writes such runs to optimization_runs/<brain>/, never here.
@@ -689,9 +689,9 @@ else is done in Setup & Tuning, which never writes 5_Classified_Cells.
         return
 
     # The pre-filter, with its own settings (PREFILTER_SETTINGS). It either
-    # runs or step 5 stops: a pre-filter that failed used to print a warning
+    # runs or step 5 stops: a pre-filter that failed must not print a warning
     # and classify the UNFILTERED candidates -- surface glow and all -- into
-    # the production classification, with nothing on the run saying so.
+    # the production classification with nothing on the run saying so.
     prefilter_record = run_prefilter_or_stop(tracker, brain_name, pipeline_folder,
                                              candidates, registration_path)
     prefilter_source = candidates

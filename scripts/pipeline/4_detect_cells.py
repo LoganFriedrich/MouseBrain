@@ -77,11 +77,10 @@ THE SETTLED METHOD
 
     If this brain's imaging setup has NO Paradigm Best run, the script stops
     and says so. There is deliberately no built-in fallback: the generic
-    starting values that used to be here were never tuned on real brains, and
-    quietly using them produced counts that looked plausible and were not.
-    It also stops if the Paradigm Best run does not record all eight (runs
-    logged before 2026-10-29 recorded only the first four): half a method is
-    not the method. Either tune and mark a run for the new imaging setup, or
+    starting values were never tuned on real brains, and quietly using
+    them would produce counts that look plausible and are not.
+    It also stops if the Paradigm Best run does not record all eight (older
+    runs recorded only the first four): half a method is not the method. Either tune and mark a run for the new imaging setup, or
     give all eight settings on the command line.
 
     Any setting given on the command line replaces that one setting; the run
@@ -316,8 +315,8 @@ def find_pipeline(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT,
         (pipeline_folder, mouse_folder, source_name, input_folder, metadata)
         or five Nones if the brain or its images could not be found.
 
-    This no longer refuses a brain that has not been registered. It used to, and
-    that was the wrong gate in the wrong place: detection does not read the
+    This does not refuse a brain that has not been registered: that would be the
+    wrong gate in the wrong place, because detection does not read the
     registration at all, so a missing atlas is a reason not to COUNT REGIONS, not
     a reason not to detect. The approval gate that does belong -- do not spend
     hours detecting on images whose registration a person has not checked -- is

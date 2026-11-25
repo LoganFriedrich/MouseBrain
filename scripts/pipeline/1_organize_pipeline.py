@@ -465,8 +465,8 @@ def get_mouse_folder_for_ims(ims_path, parsed=None):
 
     WHY THE NAME IS PARSED INSTEAD OF ASSUMED FROM THE LOCATION
     ----------------------------------------------------------
-    This used to end with "otherwise assume it is directly in the mouse folder" and
-    return the parent. For a newly delivered file dropped into the brains root -- the
+    It does not end with "otherwise assume it is directly in the mouse folder"
+    (returning the parent). For a newly delivered file dropped into the brains root -- the
     normal way a brain arrives -- the parent IS the brains root, so the mouse folder
     was skipped entirely and the brain was built flat as
     <brains root>/008_CNT_04_01_1p625x_z4/. That shape is worse than wrong: this
@@ -614,8 +614,8 @@ def migrate_old_folders(mouse_folder, pipeline_name, dry_run=False):
             if pipeline.exists():
                 # Merge contents. NOTHING is deleted that was not moved.
                 #
-                # WHY: this used to move what had no counterpart and then
-                # remove the old folder whatever was left in it. The new
+                # WHY: moving only what has no counterpart and then
+                # removing the old folder whatever was left in it would lose data. The new
                 # pipeline folder's numbered subfolders are created (empty)
                 # before this runs, so the old folder's 0_Raw_IMS -- the
                 # brain's raw file -- always "had a counterpart", was never
