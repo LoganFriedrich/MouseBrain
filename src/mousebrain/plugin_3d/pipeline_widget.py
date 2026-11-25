@@ -58,10 +58,10 @@ def _shown_registration(dashboard):
     (the status display, or the QC picture and question of Run Next Step), or
     None when it has shown none.
 
-    WHY: Approve, Overrule and Reject used to act on whatever registration
-    was in the folder at the click. A batch that registered the brain again
-    after the person had looked got its new, unseen registration approved (or
-    rejected) under that person's name. The answer is now passed to
+    WHY: Approve, Overrule and Reject must not act on whatever registration
+    is in the folder at the click: a batch that registered the brain again
+    after the person had looked would get its new, unseen registration
+    approved (or rejected) under that person's name. The answer is passed to
     approve()/reject() with this id, which refuse a registration that changed
     since (registration_approval.RegistrationChanged)."""
     return getattr(dashboard, '_shown_registration_id', None)
@@ -96,8 +96,8 @@ def _registration_changed(dashboard, e):
 # The only detection option the dashboard offers. Its numbers are not here: they
 # are read from the tracker, from the run marked "Paradigm Best" for the brain's
 # imaging setup -- the same lookup step 4 does, so the dashboard shows exactly
-# what step 4 will use. The generic presets that used to fill this dropdown were
-# placeholders from before detection was tuned on real brains.
+# what step 4 will use. There are no generic presets: they were never tuned on
+# real brains.
 SETTLED_METHOD = "Settled method (from tracker)"
 
 
@@ -799,9 +799,9 @@ class PipelineDashboard(QWidget):
         # WHY: started bare, step 2 runs its interactive form -- it asks
         # "Extract N pipeline(s)?" and waits for Enter -- but this runner
         # captures the output and gives the script no way to be answered, so
-        # the question was invisible, Run stayed disabled, and when it did go
-        # on it extracted EVERY brain waiting for extraction. Step 3 got
-        # --batch only, which registers every brain still waiting. Both now
+        # the question would be invisible, Run would stay disabled, and the
+        # script would extract EVERY brain waiting for extraction. Step 3 with
+        # --batch alone registers every brain still waiting. With --brain both
         # act on the brain selected here and nothing else.
         if status['step'] == 'extract':
             self.run_script('2_extract_and_analyze.py', ['--batch', '--brain', brain_name])
@@ -848,10 +848,10 @@ class PipelineDashboard(QWidget):
             # Show QC first
             self.view_qc_image()
             # Three explicit answers, and closing the question (Esc, the
-            # window's close button) is "Not yet". A Yes/No question used to
-            # take a close as No, which RECORDED A REJECTION under the
+            # window's close button) is "Not yet". A Yes/No question would
+            # take a close as No, which would RECORD A REJECTION under the
             # person's name for someone who had only closed the dialog to look
-            # at the QC picture -- and the brain went back to "Register".
+            # at the QC picture -- and the brain would go back to "Register".
             choice = self._choose(
                 'Approve Registration',
                 'Does the registration look good?\n\n'
@@ -957,9 +957,9 @@ class PipelineDashboard(QWidget):
     def _approve_current_registration(self):
         """Write the approval of the registration the person was shown.
 
-        The person has just said yes in a dialog. Both approve paths used to
-        run the approval script with a --yes it does not accept, so the script
-        stopped with a usage error and nothing was approved. The approval
+        The person has just said yes in a dialog, so the approval is
+        written directly, not through the approval script (which asks its own
+        question on a terminal). The approval
         names this registration (mousebrain.registration_approval), so a later
         re-registration is not covered by it -- and it is refused when the
         folder now holds another registration than the one shown
@@ -1030,9 +1030,9 @@ class PipelineDashboard(QWidget):
         """The person has just pressed Reject on "does it look good?".
 
         Recorded (mousebrain.registration_approval.reject): every reader then
-        shows the brain back at "Register". The No used to only set this
-        message, so the next refresh offered the same registration for
-        approval again, to anyone. Like Approve it is refused when the brain
+        shows the brain back at "Register". Recording it (not just showing a
+        message) keeps the next refresh from offering the same registration
+        for approval again, to anyone. Like Approve it is refused when the brain
         was registered again since the person looked (_shown_registration).
         """
         from mousebrain.registration_approval import RegistrationChanged, reject
@@ -1095,7 +1095,7 @@ class PipelineDashboard(QWidget):
                     mag = float(mag_str)
                     metadata.setdefault('magnification', mag)
                     # Calculate voxel size: camera_pixel / magnification
-                    camera_pixel = 6.5  # Andor Neo/Zyla default
+                    camera_pixel = 6.5  # microns; same value as CAMERA_PIXEL_SIZE in step 2
                     voxel_xy = camera_pixel / mag
                     metadata.setdefault('voxel_xy', voxel_xy)
                 except:
@@ -1115,13 +1115,12 @@ class PipelineDashboard(QWidget):
         """Open brainreg's own widget with this brain's voxel sizes.
 
         WHY NO OUTPUT FOLDER AND NO ORIENTATION ARE FILLED IN
-        This used to set the output folder to the brain's
-        3_Registered_Atlas and the orientation to a fixed "psl". A
-        registration run there bypassed everything step 3 does: the previous
-        registration and its approval were not archived, registered_from.json
-        was not written (so later steps read whatever images an earlier run
-        recorded), and the tracker had no row -- and the fixed orientation was
-        not the brain's own. The native widget is for trying settings; the
+        A registration run by this widget inside the brain's 3_Registered_Atlas
+        would bypass everything step 3 does: the previous registration and its
+        approval would not be archived, registered_from.json would not be
+        written (so later steps would read whatever images an earlier run
+        recorded), and the tracker would get no row; and a fixed orientation
+        would not be the brain's own. The native widget is for trying settings; the
         brain's pipeline registration is made only by step 3 (Run Next Step).
         So the person chooses where the widget writes, and its orientation.
         """
