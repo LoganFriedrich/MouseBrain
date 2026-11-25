@@ -549,6 +549,7 @@ util_approve_registration.py   → Approve registration after QC review
 | `util_manual_crop.py` | Napari plugin for manual crop adjustment |
 | `util_registration_qc.py` | Generate detailed QC images comparing brain to atlas |
 | `util_approve_registration.py` | Review & approve registration before cell detection |
+| `util_estimate_voxel_size.py` | Estimate a brain's voxel size from its width in a middle slice (for a brain whose metadata lacks it) |
 
 ## Batch processing (`batch_process.py`)
 
