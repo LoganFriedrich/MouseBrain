@@ -4,7 +4,7 @@ tracker.py (mousebrain package)
 
 Calibration run tracking system for the BrainGlobe pipeline.
 
-This module is now part of the mousebrain package and tracks CALIBRATION runs
+This module tracks CALIBRATION runs
 (tuning/optimization) - detection parameter tests, model training, classification
 tests, etc. These are iterative experiments to find optimal settings.
 
@@ -151,7 +151,7 @@ CSV_COLUMNS = [
     # QC and documentation
     "qc_image_path",  # Path to auto-generated QC image
 
-    # Comparison and archival tracking (added for tuning widget workflow)
+    # Comparison and archival tracking (used by the tuning widget)
     "marked_best",      # True if user marked this as best for its brain
     "archived_by",      # exp_id that replaced/superseded this experiment
     "archived_at",      # ISO timestamp when archived
@@ -164,13 +164,12 @@ CSV_COLUMNS = [
     "imaging_paradigm",  # Extracted from brain name, e.g., "1p625x_z4"
     "paradigm_best",     # True if this is the best run for its paradigm (not just brain)
 
-    # The rest of the detection settings (added 2026-10-29). A detection method
-    # is eight settings, not the four above: before these columns existed, a
-    # Paradigm Best run carried only half its method, and step 4 filled the rest
-    # with cellfinder's defaults -- a different method (re-detecting part of a
-    # settled run that way found only about a third of its cells at the same
-    # positions; with these four restored, all of them). They sit at the END so a
-    # file written before them gains them without any existing column moving.
+    # The rest of the detection settings. A detection method is eight settings,
+    # not the four above: a Paradigm Best run that carried only half its method
+    # would have step 4 fill the rest with cellfinder's defaults -- a different
+    # method that re-detects only part of the settled run's cells. They sit at
+    # the END so a file written before them gains them without any existing
+    # column moving.
     "det_ball_overlap",  # ball_overlap_fraction
     "det_soma_spread",   # soma_spread_factor
     "det_log_sigma",     # log_sigma_size
@@ -203,13 +202,13 @@ DETECTION_METHOD_COLUMNS = {
 # WHY A LOCK, A TEMPORARY FILE, AND THE FILE'S OWN COLUMN ORDER
 # The tracker is one CSV on the shared drive, written by the pipeline scripts,
 # the napari widget and the training script -- on several machines at once.
-# Every status change rewrites the whole file. Before this, that rewrite:
-#   * wrote in place, so a crash part-way left a truncated tracker;
-#   * had no lock, so two machines updating at once lost one update;
+# Every status change rewrites the whole file. A rewrite that:
+#   * wrote in place would leave a truncated tracker after a crash part-way;
+#   * had no lock would lose one of two updates made by two machines at once;
 #   * wrote only the columns THIS code version knows, in this version's order,
-#     so the first status change made by an older copy deleted every newer
+#     would let the first status change by an older copy delete every newer
 #     column from every row.
-# Now each write holds an exclusive lock file beside the CSV, writes a
+# So each write holds an exclusive lock file beside the CSV, writes a
 # temporary file in the file's own column order (keeping columns this version
 # does not know), and swaps it in with os.replace.
 #
@@ -282,7 +281,7 @@ class ExperimentTracker:
 
         This guards against an unconfigured run creating a fresh empty tracker
         in the working directory (see mousebrain.config._get_root_path). The path
-        sentinel is now harmless on its own; this is the second line of defence,
+        sentinel is harmless on its own; this is the second line of defence,
         because the tracker is the file that must never be silently forked.
         """
         if not self.csv_path.exists():
@@ -329,17 +328,17 @@ class ExperimentTracker:
         """Hold the tracker's write lock for the duration of the block.
 
         The lock is mousebrain.file_lock, the same lock the analysis registry
-        and the 2D slice tracker use. WHY not a copy of its own: the tracker
-        used to keep an older copy of that algorithm, which (1) never
-        refreshed a live lock, so a rewrite that took longer than
-        LOCK_STALE_SECONDS on a slow share was judged abandoned and taken over
-        -- two writers at once, and the second rewrite silently dropped the
-        first one's rows; (2) took a lock over by moving it aside and putting
-        it back when it turned out to be fresh, which leaves the lock's name
-        free for a moment so a third writer can take it; and (3) released the
-        lock with one delete, which Windows refuses while another process has
-        the lock file open for a moment to read who holds it -- the lock then
-        stayed behind and every writer waited it out. file_lock refreshes a
+        and the 2D slice tracker use. WHY not a copy of its own: a private copy
+        of the algorithm tends to (1) not refresh a live lock, so a rewrite
+        that takes longer than LOCK_STALE_SECONDS on a slow share is judged
+        abandoned and taken over -- two writers at once, and the second rewrite
+        silently drops the first one's rows; (2) take a lock over by moving it
+        aside and putting it back when it turns out to be fresh, which leaves
+        the lock's name free for a moment so a third writer can take it; and
+        (3) release the lock with one delete, which Windows refuses while
+        another process has the lock file open for a moment to read who holds
+        it -- the lock then stays behind and every writer waits it out.
+        file_lock refreshes a
         live lock in the background, takes over an abandoned one only while
         holding a one-at-a-time breaker, and retries the release. The limits
         are read here, at call time, so a test or a caller can change them."""
@@ -413,8 +412,8 @@ class ExperimentTracker:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         # Short hash for uniqueness. It includes a random part: two runs logged
         # by one process within the same second (prefilter + classification in
-        # step 5, say) used to get the SAME id, and every later update to
-        # either then changed only the first.
+        # step 5, say) would get the SAME id, and every later update to
+        # either would then change only the first.
         hash_input = f"{exp_type}_{brain}_{timestamp}_{os.getpid()}_{uuid.uuid4().hex}"
         short_hash = hashlib.md5(hash_input.encode()).hexdigest()[:6]
         return f"{exp_type[:3]}_{timestamp}_{short_hash}"
@@ -503,7 +502,7 @@ class ExperimentTracker:
         """Wrap a run's work: if the block ends while the run is still
         'started' -- an exception, Ctrl-C, sys.exit, or a path that forgot to
         record a result -- the run is set to 'failed' with the reason in its
-        notes. Rows stuck at 'started' forever used to be indistinguishable
+        notes. Otherwise rows stuck at 'started' forever are indistinguishable
         from runs still going. (A process killed outright -- task end, power
         loss -- runs no code at all and still leaves 'started'.)"""
         try:
@@ -823,8 +822,7 @@ class ExperimentTracker:
 
         cube_size / batch_size: recorded so the row is the WHOLE method. A row
         without them cannot be a settled method (get_paradigm_classification
-        lists them as missing), which is what happened to the runs made before
-        2026-11-19: they recorded the model and the tracing type only.
+        lists them as missing).
         """
         exp_id = self._generate_exp_id("selective_classification", brain)
 
@@ -1014,8 +1012,8 @@ class ExperimentTracker:
             WHY: the Setup & Tuning panel marks a run it started 'failed'
             when the panel is closed while the run is still going (see
             fail_unfinished). The run's thread can still finish afterwards;
-            its result used to turn that row into 'completed' while its notes
-            said it had been cut off -- a row contradicting itself. A run's
+            applying its result would turn that row into 'completed' while its
+            notes say it had been cut off -- a row contradicting itself. A run's
             end is recorded once: a late result is kept in the notes (so the
             cells it found and the file it wrote can still be found) but never
             overwrites the end already recorded.
@@ -1150,12 +1148,12 @@ class ExperimentTracker:
             means one brain.
         limit: at most this many rows; None (the default) returns every match.
 
-        WHY whole-name and no default limit: this used to match part of the
-        name and return only the 50 newest rows. A brain's run list therefore
-        also showed runs of every brain whose name merely contained this one,
-        and once 50 newer rows existed a brain's older runs -- its marked
-        Best among them -- silently dropped out of the list and out of every
-        "does this detection have a classification" lookup. A caller that
+        WHY whole-name and no default limit: matching part of the name would
+        list runs of every brain whose name merely contains this one, and a
+        limit of the 50 newest rows would, once 50 newer rows exist, silently
+        drop a brain's older runs -- its marked Best among them -- out of the
+        list and out of every "does this detection have a classification"
+        lookup. A caller that
         wants a page asks for one with limit.
         """
         rows = self._read_all()
@@ -1260,10 +1258,10 @@ class ExperimentTracker:
         Returns:
             True if successful
         """
-        # Clear and set in ONE locked rewrite. They used to be separate
-        # whole-file rewrites, so a crash or another machine's write in between
-        # could leave the brain with no best, or two (and readers take the
-        # first in file order -- the older one).
+        # Clear and set in ONE locked rewrite. Separate whole-file rewrites
+        # would let a crash or another machine's write in between leave the
+        # brain with no best, or two (and readers take the first in file
+        # order -- the older one).
         def mutate(rows):
             target = next((r for r in rows if r.get('exp_id') == exp_id), None)
             if target is None:
@@ -1303,9 +1301,9 @@ class ExperimentTracker:
             'archived_by': archived_by or '',
             'archived_at': datetime.now().isoformat(),
             'marked_best': '',  # Clear best status
-            # And its Paradigm Best: an archived (superseded) run used to stay
+            # And its Paradigm Best: an archived (superseded) run must not stay
             # the settled detection method for every brain of its imaging
-            # setup, because only the brain-level mark was cleared.
+            # setup, so the setup-level mark is cleared with the brain-level one.
             'paradigm_best': '',
         })
 
@@ -1405,7 +1403,7 @@ class ExperimentTracker:
                 False (for display only) falls back to the newest run marked
                 Best for any one brain of the setup.
 
-        WHY strict exists: the fallback used to feed the settled method.
+        WHY strict exists: the fallback must not feed the settled method.
         With no Paradigm Best -- never marked, or archived by mistake -- one
         brain's Best quietly became the detection method for every brain of
         its imaging setup, and step 4 logged it as 'paradigm_best'. Anything
@@ -1471,9 +1469,8 @@ class ExperimentTracker:
         if not best:
             return None
 
-        # No defaults for absent values. These used to read `or 6`, `or 15`
-        # ... -- the generic numbers -- so a row missing a setting quietly
-        # became a different method. An absent value is reported in 'missing'.
+        # No defaults for absent values: a generic number (`or 6`, `or 15`, ...)
+        # would let a row missing a setting quietly become a different method. An absent value is reported in 'missing'.
         # Numbers go through float() first because the CSV may hold "8.0".
         settings = {'missing': []}
         for name, column in DETECTION_METHOD_COLUMNS.items():
@@ -1508,9 +1505,9 @@ class ExperimentTracker:
                           must NOT classify while it is non-empty: it would be
                           finishing the method with numbers the run never used.
 
-        WHY strict and pinned to one row: the model used to be "the newest
-        model file in the models folder" whenever nothing was marked, and two
-        models on the same brain gave counts that differ several-fold. The
+        WHY strict and pinned to one row: taking "the newest model file in the
+        models folder" whenever nothing is marked is wrong, because two
+        models on the same brain give counts that differ several-fold. The
         settled method is the one run a person confirmed, with its own model
         file and settings -- never whichever file is newest.
         """
