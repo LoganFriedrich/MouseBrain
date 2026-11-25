@@ -73,7 +73,7 @@ is not activated.
 **How long steps may take.** The code states no expected run times, only
 limits after which the batch runners give up: `batch_process.py` stops any one
 step after 2 hours; `overnight_batch.py` stops registration after 2 hours,
-detection after 4 hours, classification after 1 hour and counting after 30
+detection after 4 hours, classification after 3 hours and counting after 30
 minutes, and tries each step up to 3 times. A script run by hand, from
 RUN_PIPELINE or from the dashboard has no time limit.
 
