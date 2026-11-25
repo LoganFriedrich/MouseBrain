@@ -724,9 +724,9 @@ class SliceAnnotatorWidget(QWidget):
         self._update_channels_ui()
 
         # Point the export folder at what was just loaded.
-        # WHY: it used to be filled in only while empty, so after the first
-        # file every later file exported into the FIRST file's folder, beside
-        # images it does not belong with. It now follows each load, unless the
+        # WHY: filling it in only while empty would make every later file
+        # export into the FIRST file's folder, beside images it does not
+        # belong with. It follows each load, unless the
         # person has typed or browsed a folder themselves -- that choice is
         # kept until they clear the box.
         if not self._output_folder_chosen:
