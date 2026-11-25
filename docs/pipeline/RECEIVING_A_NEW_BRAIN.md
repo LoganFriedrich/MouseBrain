@@ -176,8 +176,7 @@ It prints one line per brain:
 **Then run `--inspect` again and confirm your brain is listed as ready.** This is the
 check that matters. A brain that appears in neither the ready list nor the needs-work
 list is not organized -- it is in a shape the scanner cannot see, and it will sit there
-untouched through every later step. (This was a real failure: a large brain was placed
-flat, disappeared from the listing, and nothing reported a problem.)
+untouched through every later step, and nothing reports a problem.
 
 **Old-layout folders.** Older layouts named a brain's folder by its imaging setup
 only (`2p5x_z5` instead of `101_PROJ_01_02_2p5x_z5`) and used older names for the
@@ -188,8 +187,8 @@ that name), and the old folder is removed only once it is empty. If something co
 not be merged because the current folder already has its own copy, the old folder is
 kept and the organizer prints `[!] Kept old short-name <folder>/: ...` with the names
 left in it. Compare those by hand, move what you want to keep, and delete the old
-folder yourself. (Before this, the merge deleted the old folder whatever was left in
-it, which could take the brain's raw `.ims` with it.)
+folder yourself. The organizer never deletes a folder that still holds
+something, because the raw `.ims` could be in it.
 
 Folders whose names start with `_` are never searched, so a superseded delivery kept
 in one (for example `_superseded_<date>`) is never moved into a brain. See
