@@ -4987,7 +4987,7 @@ class TuningWidget(QWidget):
         return widget
 
     # ==========================================================================
-    # STUB METHODS FOR NEW FUNCTIONALITY (to be implemented in later phases)
+    # CURATION AND COMPARISON ACTIONS
     # ==========================================================================
 
     def mark_current_as_best(self):
@@ -6101,8 +6101,8 @@ class TuningWidget(QWidget):
         if self.training_data_dir is None and self.current_brain:
             # Not set up for this brain yet (first answer, or the first one
             # after choosing another brain): set up the selected brain's own
-            # folder now. Answers used to be dropped silently here while the
-            # label still said "Auto-save".
+            # folder now, so the answer is saved and the label's "Auto-save"
+            # is true.
             self.create_training_layers()
         if self.training_data_dir is None:
             QMessageBox.warning(self, "Answer Not Saved",
@@ -6853,7 +6853,7 @@ class TuningWidget(QWidget):
         # Only the selected brain's batches: a coordinate means something
         # only on the image it was answered on, and the export cuts cubes
         # from the selected brain's image. Batches of other brains, and the
-        # pool's old files that do not say which brain they are from, are
+        # pool's files that do not say which brain they are from, are
         # left out and named.
         this_brain = Path(self.current_brain).name
         all_cells = []
@@ -7315,9 +7315,9 @@ class TuningWidget(QWidget):
         """
         print("[DEBUG] Button clicked: start_training")
 
-        # One training from this window at a time. A second start used to
-        # replace the handle of the first (so its end was never seen) and add
-        # a second completion timer; two trainings also compete for the same
+        # One training from this window at a time. A second start would
+        # replace the handle of the first (so its end would never be seen) and
+        # add a second completion timer; two trainings also compete for the same
         # processors and graphics card.
         running = getattr(self, '_training_process', None)
         if running is not None and running.poll() is None:
@@ -7331,7 +7331,7 @@ class TuningWidget(QWidget):
 
         script = _REPO_ROOT / "scripts" / "utils" / "util_train_model.py"
         if not script.exists():
-            # Fallback to SCRIPTS_DIR (legacy location)
+            # Fallback to SCRIPTS_DIR
             script = SCRIPTS_DIR / "util_train_model.py"
         if not script.exists():
             QMessageBox.warning(self, "Error",
@@ -7428,9 +7428,9 @@ class TuningWidget(QWidget):
 
         # The widget names the folder the training writes into, so it knows
         # where to look for the training's finished record (DONE.json, see
-        # util_train_model.DONE_RECORD). Completion used to be guessed from
-        # the number of model files in the whole models folder, which any
-        # other model file changed.
+        # util_train_model.DONE_RECORD). Completion is not inferred from the
+        # number of model files in the whole models folder, which any other
+        # model file changes.
         from datetime import datetime as _datetime
         output_dir = MODELS_DIR / f"model_{_datetime.now().strftime('%Y%m%d_%H%M%S')}"
         cmd.extend(["--output", str(output_dir)])
@@ -7750,9 +7750,9 @@ class TuningWidget(QWidget):
             voxel_sizes = (4, 4, 4)
 
         # Output path: this run's own folder, NEVER the brain's production
-        # 5_Classified_Cells (which step 6 counts). A tuning run used to
-        # overwrite production there; promoting a run is now a separate,
-        # explicit action (mousebrain.classification_runs).
+        # 5_Classified_Cells (which step 6 counts), so a tuning run never
+        # overwrites production; promoting a run is a separate, explicit
+        # action (mousebrain.classification_runs).
         from mousebrain.classification_runs import gui_run_folder
         output_path = gui_run_folder(DATA_SUMMARY_DIR, self.current_brain.name)
         output_path.mkdir(parents=True, exist_ok=True)
@@ -7890,9 +7890,9 @@ class TuningWidget(QWidget):
         self.classify_btn.setText("Run Classification")
 
         # Started by auto-classify after training? The run says so itself
-        # (run_classification(auto=True)). A widget-wide flag used to say it,
-        # and an automatic attempt that stopped before starting left the flag
-        # set, so the next run by hand was loaded without asking.
+        # (run_classification(auto=True)), not a widget-wide flag: an automatic
+        # attempt that stopped before starting would leave such a flag set, and
+        # the next run by hand would be loaded without asking.
         auto_triggered = bool(run.get('auto'))
 
         if success:
@@ -8790,9 +8790,8 @@ class TuningWidget(QWidget):
             fingerprint_id, registration_fingerprint)
         reg = self.current_brain / "3_Registered_Atlas"
         # Which registration this label describes. Approve signs only that
-        # one (approve(expected_id=...)): the label used to go stale until the
-        # brain changed, and Approve signed whatever was in the folder at the
-        # click -- also a registration a script finished after the person looked.
+        # one (approve(expected_id=...)), so Approve never signs a
+        # registration a script finished after the person looked.
         self._shown_registration_id = fingerprint_id(registration_fingerprint(reg))
         state, text = approval_state(reg)
         if state == APPROVED:
@@ -9499,10 +9498,9 @@ class TuningWidget(QWidget):
                     completed.sort(key=lambda x: x.get('created_at', ''), reverse=True)
 
                     if best:
-                        # The run MARKED best for this brain. This used to load
-                        # the newest run and call it "(best attempt)" -- and the
-                        # next Mark as Best then archived that run as if it had
-                        # been the best.
+                        # The run MARKED best for this brain, not the newest run: otherwise
+                        # the next Mark as Best would archive the newest run as if it had been
+                        # the best.
                         target_run = self.tracker.get_best_for_brain(brain_name, 'detection')
                         if not target_run:
                             print(f"  No detection run is marked best for {brain_name}")
@@ -9899,7 +9897,7 @@ class TuningWidget(QWidget):
         },
 
         # ----------------------------------------------------------------------
-        # LEGACY ALIASES (for backward compatibility)
+        # SHORT-NAME STYLES
         # Using 'o' (circle outline) symbol so user can see cells inside
         # Colors: Cyan (#00FFFF), Orange (#FFA500), Yellow (#FFFF00), White (#FFFFFF)
         # Avoids green/magenta which match fluorescence channels
@@ -9955,8 +9953,8 @@ class TuningWidget(QWidget):
                 'class_diff_gained': ['GAINED:', 'Diff: Gained'],
                 'class_diff_lost': ['LOST:', 'Diff: Lost'],
                 # The answer layers are 'Train: Cells (n)' / 'Train:
-                # Non-Cells (n)'. 'Training Cells' was the Visualize layers'
-                # name; those must never be taken as answer layers.
+                # Non-Cells (n)'. Layers with other names (such as 'Training Cells')
+                # must never be taken as answer layers.
                 'train_cells': ['Train: Cells'],
                 'train_non_cells': ['Train: Non-Cells'],
                 'train_view_cells': ['Cubes on disk: Cells'],
@@ -10260,12 +10258,12 @@ class TuningWidget(QWidget):
             'n_free_cpus': self.n_free_cpus.value(),
         }
 
-        # Only into the folder the metadata was loaded from. This used to write
-        # into EVERY existing image folder: it overwrote the extraction's own
-        # record with the crop's, and created 2_Cropped_For_Registration/
-        # metadata.json -- the "cropped" marker -- in a brain that had not been
-        # cropped. A brain with no metadata.json gets none from here: it is
-        # written by extraction or cropping.
+        # Only into the folder the metadata was loaded from: writing into every
+        # image folder would overwrite the extraction's own record with the
+        # crop's, and would create 2_Cropped_For_Registration/metadata.json (the
+        # "cropped" marker) in a brain that has not been cropped. A brain with no
+        # metadata.json gets none from here: it is written by extraction or
+        # cropping.
         from mousebrain.brain_context import metadata_save_target
         target = metadata_save_target(getattr(self, '_metadata_source', None))
         if target is None or target.parent != self.current_brain:
@@ -10439,9 +10437,9 @@ class TuningWidget(QWidget):
             return
 
         # The approval names the registration that is in the folder now, so
-        # registering again needs a new approval. It used to be an empty file
-        # that could be written before any registration existed -- the
-        # registration made later then inherited it.
+        # registering again needs a new approval. The approval is not an empty
+        # marker file: one could be written before any registration existed, and
+        # the registration made later would inherit it.
         #
         # And it names the registration the person was SHOWN (the status
         # label or the QC view, _shown_registration_id): when the folder now
@@ -10491,9 +10489,9 @@ class TuningWidget(QWidget):
 
         # The rejection is RECORDED (.registration_rejected, naming this
         # registration): every reader shows the brain back at "Register" and
-        # no Approve button accepts it. It used to only move an existing
-        # approval away, so the next reader showed the registration as merely
-        # waiting for approval. Any approval is kept in _archive.
+        # no Approve button accepts it. Moving an approval away alone would
+        # leave the registration showing as merely waiting for approval. Any
+        # approval is kept in _archive.
         #
         # Like Approve, it is about the registration the person was SHOWN
         # (_shown_registration_id): a registration a script finished after
@@ -11690,11 +11688,11 @@ class TuningWidget(QWidget):
             n_cells = '?'
 
         # Counting needs a registration a person APPROVED -- the one rule
-        # every reader uses (mousebrain.registration_approval). This used to
-        # check for brainreg.json only, which brainreg writes before it fits
-        # anything: a registration that failed, was stopped, is still running,
-        # was rejected, or no longer fits its re-cropped images was counted,
-        # and its counts (cells placed in the wrong regions) went into the
+        # every reader uses (mousebrain.registration_approval). brainreg.json
+        # alone is not enough: brainreg writes it before it fits anything, so a
+        # registration that failed, was stopped, is still running, was rejected,
+        # or no longer fits its re-cropped images would be counted, and its
+        # counts (cells placed in the wrong regions) would go into the
         # production files.
         from mousebrain.registration_approval import APPROVED, approval_state
         reg_folder = self.current_brain / "3_Registered_Atlas"
