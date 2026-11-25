@@ -1,12 +1,13 @@
 """The calibration tracker's lock is the shared file lock: kept fresh, let go reliably.
 
-The tracker used to keep its own older copy of the lock. A live lock was never
-refreshed, so a rewrite of calibration_runs.csv that took longer than the
-stale limit (a slow share) was judged abandoned: a second writer took it over,
-both rewrote the file, and the slower rewrite dropped the other's update. And
-the release was a single delete, which Windows refuses while another process
-has the lock file open for a moment (a waiter reading who holds it), so the
-lock stayed behind and every later writer waited it out.
+The tracker uses the shared lock of mousebrain.file_lock, not its own copy. A
+live lock must be refreshed: otherwise a rewrite of calibration_runs.csv that
+takes longer than the stale limit (a slow share) would be judged abandoned, a
+second writer would take it over, both would rewrite the file, and the slower
+rewrite would drop the other's update. And the release must survive Windows
+refusing a delete while another process has the lock file open for a moment (a
+waiter reading who holds it), or the lock would stay behind and every later
+writer would wait it out.
 """
 import csv
 import threading

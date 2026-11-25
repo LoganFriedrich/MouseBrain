@@ -1,11 +1,9 @@
 """Setup & Tuning defines each of its methods once.
 
 Python keeps only the LAST definition of a name in a class body, silently.
-Two methods called ``_load_detection_results`` were defined: the first (load
-the newest test_ folder's candidates) could never run, and anyone reading or
-fixing it was changing dead code while the second one did the work. A second
-definition of any name is a mistake of the same kind, so every name is
-checked.
+With two methods of one name (for example two ``_load_detection_results``),
+the first could never run, and anyone reading or fixing it would be changing
+dead code while the second one did the work. So every name is checked.
 """
 import ast
 import collections

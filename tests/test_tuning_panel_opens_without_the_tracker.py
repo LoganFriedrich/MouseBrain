@@ -2,9 +2,9 @@
 
 The calibration tracker refuses to create a new calibration_runs.csv when its
 folder is not visible (a share reconnecting, a new install), so a fresh empty
-tracker never orphans the real one. That refusal escaped from the panel's
-constructor and the whole Setup & Tuning panel failed to open. Now the panel
-opens without a tracker and shows in red why runs are not being logged.
+tracker never orphans the real one. That refusal must not escape from the
+panel's constructor, or the whole Setup & Tuning panel fails to open. The
+panel opens without a tracker and shows in red why runs are not being logged.
 """
 import pytest
 

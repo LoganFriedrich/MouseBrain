@@ -1,8 +1,8 @@
 """Run Quantification saves and logs the atlas fit the region counts are made with.
 
-Before this, the Align tab held the atlas position, orientation and transform
-only in memory and the tracker's registration logger had no caller: once the
-window closed, nothing said which fit a set of region counts came from.
+The Align tab holds the atlas position, orientation and transform in memory,
+so once the window closes only the saved record says which fit a set of
+region counts came from.
 
 The record must never contradict the counts it sits beside:
 - before the counts can change, any earlier fit file is replaced by an
@@ -24,8 +24,8 @@ The record must never contradict the counts it sits beside:
 These tests drive the real BrainSliceWidget._run_quantification and
 _on_quant_finished and the real AlignmentWidget.get_current_registration on
 stand-in objects (no window), with a stand-in for the background worker.
-Every name the fix added is looked up with a fallback, so on code without
-the fix these tests fail on the behaviour they check, not in their setup.
+Every name the code under test adds is looked up with a fallback, so on code
+without it these tests fail on the behavior they check, not in their setup.
 """
 import csv
 import json

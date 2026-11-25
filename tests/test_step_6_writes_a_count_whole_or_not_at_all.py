@@ -1,14 +1,13 @@
 """Step 6 puts a count into production whole -- tables and analysis registry
 -- and only while what it counted is still the brain's.
 
-What went wrong:
   * a count whose cells.xml was replaced (step 5, a promotion) or whose
-    registration was rejected while it ran was written AFTER the withdrawal
-    those events make, so the brain was back in production with counts of
-    what had just been replaced, and their files looked current;
-  * a count that could not be entered in the analysis registry was called
-    finished: rows in the tables, nothing in the registry, the tracker row
-    'completed', and the problem only in the console.
+    registration was rejected while it ran must not be written AFTER the
+    withdrawal those events make: the brain would be back in production with
+    counts of what had just been replaced, and their files would look current;
+  * a count that could not be entered in the analysis registry is not finished:
+    otherwise there would be rows in the tables, nothing in the registry, the
+    tracker row 'completed', and the problem only in the console.
 Identifiers are invented.
 """
 import sys

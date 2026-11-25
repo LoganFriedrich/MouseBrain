@@ -1,11 +1,12 @@
 """The calibration tracker is rewritten safely, and runs never stay 'started'.
 
 The tracker is one CSV on a shared drive, written by several machines. Every
-status change rewrites the whole file, and that rewrite used to (1) keep only
-the columns the running code knew -- so an older copy deleted every newer column
-from every row on its first status change -- (2) write in place, so a crash
-truncated it, and (3) take no lock, so concurrent updates were lost. And a step
-that stopped part-way left its row at 'started' forever.
+status change rewrites the whole file, so the rewrite must (1) keep the columns
+the running code does not know (an older copy would otherwise delete every
+newer column from every row on its first status change), (2) not write in
+place (a crash would truncate it), and (3) take a lock (or concurrent updates
+are lost). And a step that stopped part-way must not leave its row at
+'started' forever.
 """
 import csv
 import os

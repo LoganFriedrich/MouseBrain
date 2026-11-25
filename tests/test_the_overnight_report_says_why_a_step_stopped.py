@@ -2,8 +2,9 @@
 
 Step 6 prints why it refused a brain (its registration is not approved) or
 could not publish a count as the LAST lines of its normal output, with
-nothing on its error output. The overnight batch kept only the start of the
-error output, so its report for such a failure was blank.
+nothing on its error output. The overnight batch therefore keeps the end of
+the output as well as the start of the error output: otherwise its report for
+such a failure would be blank.
 
 Identifiers are invented.
 """

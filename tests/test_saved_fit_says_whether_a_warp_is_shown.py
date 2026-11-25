@@ -103,7 +103,7 @@ def _aligner(red):
         show_boundaries_check=SimpleNamespace(isChecked=lambda: False),
     )
     # Bind every real method these tests use that this version of the widget
-    # has; a method it lacks then shows up as wrong behaviour, not a setup error.
+    # has; a method it lacks then shows up as wrong behavior, not a setup error.
     for name in ("get_current_registration", "_current_image_key", "_key_is_current",
                  "_elastix_source_is_current", "_elastix_warp_on_screen",
                  "_get_current_image", "_run_elastix_registration",
@@ -217,7 +217,7 @@ def test_a_finished_run_does_not_keep_the_image_it_ran_on():
 
 def test_loading_another_image_after_a_warp_frees_the_previous_image():
     # Loading an image does not redraw the Align tab's overlay, so whatever
-    # the tab holds to recognise the warped image must not keep that image
+    # the tab holds to recognize the warped image must not keep that image
     # (possibly a whole stack) alive once another one replaces it.
     import gc
     import weakref

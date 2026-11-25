@@ -1,9 +1,9 @@
 """Step 6 never switches to the less accurate counting method on its own, and
 the counts say which method placed the cells.
 
-When the BrainGlobe transform could not run, step 6 quietly counted with a
-direct lookup in the registered atlas image instead, and the counts it wrote
-looked like any others. Identifiers are invented.
+When the BrainGlobe transform cannot run, step 6 must not quietly count with a
+direct lookup in the registered atlas image instead: the counts it wrote would
+look like any others. Identifiers are invented.
 """
 import contextlib
 import csv
