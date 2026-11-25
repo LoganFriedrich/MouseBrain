@@ -138,12 +138,11 @@ __all__ = [
 
 # There is NO built-in approved method. WHY: which nuclei count, how bright a
 # nucleus must be and how a cell is called positive are decisions of the lab
-# that uses the tool (its tissue, stain and microscope), not of the code. The
-# tool used to fall back to a parameter set of its own whenever no
-# approved-method file existed, so a machine with no file judged every entry
-# against numbers nobody had approved, and the slice batch ran with them
-# while calling them "the approved method". Now, with no file, nothing is
-# approved: get_approved_method() returns None, every analysis has "no
+# that uses the tool (its tissue, stain and microscope), not of the code. A
+# built-in fallback parameter set would make a machine with no approved-method
+# file judge every entry against numbers nobody approved, and run the slice
+# batch with them while calling them "the approved method". So, with no file,
+# nothing is approved: get_approved_method() returns None, every analysis has "no
 # approved method" (approved_method_hash null, nothing counted stale) and the
 # slice batch refuses to run until its values are configured or typed.
 
@@ -642,9 +641,9 @@ class AnalysisRegistry:
         # exports/ and logs/ are needed by every registry (manifest + audit
         # log). figures/<analysis>/ is NOT created here: it is made on the
         # first figure write in register_output. WHY: analyses that never
-        # produce figures (plain detection runs) used to leave empty
+        # produce figures (plain detection runs) would leave empty
         # figures/<analysis>/ trees behind, and whoever pulls this folder
-        # then sees phantom analyses with nothing in them.
+        # would see phantom analyses with nothing in them.
         self.exports_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -864,10 +863,10 @@ class AnalysisRegistry:
         Every write also refreshes the approved-method header
         (approved_method, approved_method_hash, approved_method_recorded_at).
         WHY: an integrator counts "stale vs approved" by comparing each
-        entry's method_hash with the header's approved_method_hash. The
-        header used to be written only when the manifest was first created,
-        so after a lab changed its approved method every later count was
-        still judged by the old one and showed nothing stale. A broken
+        entry's method_hash with the header's approved_method_hash. A header
+        written only when the manifest is first created would keep the old
+        method after a lab changes its approved method, so every later count
+        would be judged by it and show nothing stale. A broken
         approved-method file therefore stops the write with its error rather
         than recording a header nobody chose.
 
@@ -1053,11 +1052,11 @@ class AnalysisRegistry:
 
         # WHY everything happens under the lock, and in this order:
         # the files are placed only once the manifest has been read and the
-        # approved method resolved -- the steps that can refuse. The files
-        # used to be copied first, so a refusal (for example the lock not
-        # coming free, a damaged manifest, a broken approved-method file) left the NEW
+        # approved method resolved -- the steps that can refuse. Copying the
+        # files first would let a refusal (for example the lock not coming
+        # free, a damaged manifest, a broken approved-method file) leave the NEW
         # run's files in the registry while the manifest entry still
-        # described the OLD run, and an integrator mirrored them as one.
+        # describes the OLD run, and an integrator would mirror them as one.
         # A file being replaced is kept in logs/ until the manifest
         # write has succeeded, and put back if it fails (see _place).
         with self._locked() as lock:
@@ -1338,13 +1337,12 @@ class AnalysisRegistry:
     # -----------------------------------------------------------------
     # Replacing a current entry keeps it, as invalidate does
     # -----------------------------------------------------------------
-    # WHY: registering a sample again used to overwrite its entry in
-    # registry.json and DELETE the files it replaced, so a re-run (with other
-    # parameters, say) left the earlier counts, parameters and files
-    # nowhere -- the audit log got only a "register" line with the new
+    # WHY: overwriting a sample's entry in registry.json and DELETING the files
+    # it replaces would leave a re-run's earlier counts, parameters and files
+    # nowhere -- the audit log would get only a "register" line with the new
     # hash. Retiring an entry through invalidate keeps both (files in
     # _archived/<time>/ beside them, the entry's record in an
-    # "invalidate_entry" log line); replacing one now does the same:
+    # "invalidate_entry" log line); replacing one does the same:
     #   * every file the new registration writes over, and every listed
     #     file of the earlier entry the new one does not list, is moved to
     #     _archived/<time>/ beside where it was (never deleted);
@@ -1361,7 +1359,7 @@ class AnalysisRegistry:
     def _set_earlier_aside(self, earlier: Optional[Dict[str, Any]], new_dests,
                            placed: List[Tuple[Path, Optional[Path]]]) -> None:
         """Move the CURRENT earlier entry's listed outputs that the new
-        registration does not write over into logs/ for now (recorded in
+        registration does not write over into logs/ temporarily (recorded in
         *placed*, so a failed registration puts them back), so the active
         folder holds exactly what the new entry names."""
         if not earlier or not earlier.get("is_current", True):
@@ -1706,8 +1704,8 @@ class AnalysisRegistry:
         their _archived/ subfolder, as (folder, file) pairs.
 
         WHY this exists: such a folder can hold files of the same run that
-        the entry does not list among its outputs (an earlier version of a
-        producer copied more figures than it registered). They stay there
+        the entry does not list among its outputs (a producer that
+        copied more figures than it registered). They stay there
         when only the listed outputs are archived, and something that
         mirrors the folder then shows an earlier run's figures beside a
         newer entry, or beside no current entry at all.
@@ -1946,9 +1944,9 @@ class AnalysisRegistry:
         the failure cannot be shown to be the sample's (the 2D batch: no
         other sample of the run got past the failing step, so it may be the
         software's). The result is then still the current one although the
-        newest attempt on the sample failed -- and that used to be said only
-        in a console line, so whoever pulls the registry saw an unqualified
-        current result. The mark is on the entry itself; the next successful
+        newest attempt on the sample failed -- saying so only in a console line
+        would leave whoever pulls the registry with an unqualified current
+        result. The mark is on the entry itself; the next successful
         registration of the sample writes a new entry without it. The CLI
         lists every marked entry.
         """
