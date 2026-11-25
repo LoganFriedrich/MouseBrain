@@ -175,13 +175,10 @@ class ZarrConverterWorker(QThread):
     """Convert one brain folder's channel TIFF stacks to Zarr for fast loading.
 
     The worker carries its own folder and converts every channel of it in
-    turn (ch0, then ch1). The widget used to keep the folder and the channel
-    being converted in its own fields and start a new worker for ch1 from the
-    finish handler; a second conversion started meanwhile (another Load, or
-    Convert pressed during the automatic conversion) overwrote those fields,
-    and two builds ran on the same channel. Now one worker owns one folder and
-    the widget refuses to start another while it runs
-    (TuningWidget._zarr_busy).
+    turn (ch0, then ch1). One worker owns one folder, and the widget refuses
+    to start another while it runs (TuningWidget._zarr_busy): a second
+    conversion (another Load, or Convert pressed during the automatic
+    conversion) would build the same channel twice.
     """
     progress = Signal(str, int)  # message, percent
     finished = Signal(bool, str)  # success, message
@@ -419,11 +416,11 @@ class ClassificationWorker(QThread):
 class RegionCountWorker(QThread):
     """Runs step 6 (6_count_regions.py) for one brain, off the napari thread.
 
-    WHY: the Results tab's "Run Region Counting" ran step 6 with
-    subprocess.run(..., timeout=300) on napari's own thread. napari froze for
-    the whole count, and a whole brain takes far longer than five minutes, so
-    the count was killed part-way -- with no cleanup, leaving its tracker row
-    at 'started'. Here the script runs to its end with no time limit, and
+    WHY: the Results tab's "Run Region Counting" runs step 6 off napari's own
+    thread: on it, napari froze for the whole count, and a whole brain takes
+    far longer than five minutes, so a subprocess.run timeout of 300 would
+    kill the count part-way, with no cleanup, leaving its tracker row at
+    'started'. Here the script runs to its end with no time limit, and
     each line it prints is passed on as ``progress`` for the status line.
 
     stdout and stderr are one stream (two pipes read one after the other can
@@ -500,7 +497,6 @@ def _candidates_file_of_run(run):
       step 4) that names another run means a later run replaced it;
     - a folder inside ``4_Cell_Candidates`` with no such record is the place
       step 4 writes run after run, so the file in it may be a newer run's.
-      (Old step-4 runs and runs that never finished recorded that folder.)
 
     WHY: the pre-filter is recorded with the chosen run as its parent, so
     filtering a newer run's file would record a false provenance. A folder
@@ -560,8 +556,8 @@ def _prefilter_file_of_run(run, brain_path):
     A test run keeps its cells in a folder of its own, outside the brain. A
     test of part of the stack (``det_scope`` "partial") covers only some
     planes, so a pre-filter of it would record interior and removed counts
-    for the whole brain from a few planes; and such runs saved before run
-    files held whole-stack positions (mousebrain.detection_runs) count Z from
+    for the whole brain from a few planes; and such runs saved without the
+    whole-stack marker (mousebrain.detection_runs) count Z from
     the first plane tested, which against the atlas puts every cell in the
     wrong plane. A whole-stack test run is refused too: nothing records that
     the images it read are the ones the atlas was fitted to.
@@ -613,10 +609,11 @@ def _marked_best(run) -> bool:
 
     The tracker writes the text 'True' for a Best and leaves the cell empty
     otherwise, and every tracker reader compares with 'True'. The run list,
-    its 'Best only' filter, its sort and the layer colors used to test the
-    value for truth instead, so a row holding any other text -- 'False'
-    written by hand or by another program -- showed as Best here while the
-    tracker (and Load best) did not count it."""
+    its 'Best only' filter, its sort and the layer colors compare with
+    'True' too, rather than testing the value for truth: a row holding any
+    other text -- 'False' written by hand or by another program -- would
+    otherwise show as Best here while the tracker (and Load best) did not
+    count it."""
     return (run or {}).get('marked_best') == 'True'
 
 
@@ -625,7 +622,7 @@ def fail_runs_left_open(widget, why: str = "napari was closed before the run fin
 
     The widget logs a detection or classification run as 'started' when the
     button is pressed and sets it to completed/failed when the work returns.
-    Closing napari (or this panel) part-way through used to leave the row at
+    Closing napari (or this panel) part-way through would leave the row at
     'started' forever, where nobody could tell it from a run still going. The
     widget keeps the ids it started in ``_runs_in_progress``; this marks each
     one that the tracker still holds at 'started' as failed, with the reason
@@ -654,7 +651,7 @@ def _signal_channel_of(data_folder, legacy="load"):
     brain_context.channel_roles is the one rule. When the metadata
     contradicts itself (e.g. channels_swapped true while
     channels.signal_channel is 0) no rule here decides which is right:
-    each caller keeps what it did before this rule existed -- Load shows
+    each caller keeps its own reading -- Load shows
     ch1 as the signal if any key says ch1, classification and the
     pipeline steps follow channels.signal_channel -- and the conflict is
     printed and returned so the caller can show it."""
@@ -1159,7 +1156,7 @@ class TuningWidget(QWidget):
         return widget
 
     def create_voxel_tab(self):
-        """Tab for voxel size calibration (LEGACY - now part of Setup tab)."""
+        """Tab for voxel size calibration (part of the Setup tab)."""
         widget = QWidget()
         layout = QVBoxLayout()
         widget.setLayout(layout)
@@ -1880,7 +1877,7 @@ class TuningWidget(QWidget):
         return None
 
     def _load_run_from_table(self, item):
-        """Legacy method - redirects to list handler."""
+        """Redirects to the list handler."""
         self._load_run_from_list(item)
 
     def _load_selected_run(self):
@@ -2287,14 +2284,13 @@ class TuningWidget(QWidget):
         telling the person why) when nothing was marked.
 
         Every "mark best" button comes here: the run list's Mark as Best, the
-        curation tab's Mark as Best and Promote Recent. They used to differ:
-        the run list only moved the mark, the curation tab also ARCHIVED the
-        previous Best in the tracker -- and archiving a run ends its Paradigm
+        curation tab's Mark as Best and Promote Recent. Only
+        tracker.mark_as_best is called: it takes the mark off the brain's
+        previous Best in the same locked rewrite, and leaves Paradigm Best and
+        the archive alone. Archiving the previous Best would end its Paradigm
         Best too (tracker.archive_experiment), so changing which run of ONE
-        brain is best silently withdrew the settled method of every brain
-        imaged the same way. Now only tracker.mark_as_best is called: it
-        takes the mark off the brain's previous Best in the same locked
-        rewrite, and leaves Paradigm Best and the archive alone.
+        brain is best would silently withdraw the settled method of every brain
+        imaged the same way.
 
         A run of another brain is refused: the curation buttons act on the
         selected brain only.
@@ -2811,10 +2807,10 @@ class TuningWidget(QWidget):
         """Keep the brain list from changing while a run is going.
 
         Selecting another brain resets the widget's per-brain fields
-        (brain_context); a run's finish handler must not depend on them, and
-        the runs now carry their own record, but a run's results are still
-        shown in the viewer for the brain they belong to -- so the list is held
-        until the run returns."""
+        (brain_context). A run carries its own record, so its finish handler
+        does not depend on them, but a run's results are shown in the viewer
+        for the brain they belong to -- so the list is held until the run
+        returns."""
         combo = getattr(self, 'brain_combo', None)
         if combo is not None:
             combo.setEnabled(False)
@@ -2833,12 +2829,12 @@ class TuningWidget(QWidget):
             combo.setEnabled(True)
 
     def _on_detection_finished(self, success, message, cell_count, detected_cells, run=None):
-        """Handle detection completion - now receives cells directly from Python API.
+        """Handle detection completion; receives the cells directly from the Python API.
 
         ``run`` is the record the run started with (brain, tracker id, run
         folder, first plane tested). Everything here uses it, never the
         widget's fields: those belong to whichever brain is selected now and
-        are reset when the selection changes, which used to lose the run (no
+        are reset when the selection changes, which would lose the run (no
         XML saved, the tracker row left 'started')."""
         if run is None:  # a caller that did not pass one: the widget's fields
             run = {'brain': self.current_brain, 'exp_id': self.last_run_id,
@@ -4995,10 +4991,9 @@ class TuningWidget(QWidget):
 
         Refused, before anything changes, when the layer is not a tracked run
         (no run id: a hand-made or file-loaded layer) or shows another brain's
-        run. It used to archive the existing Best first -- in the tracker too,
-        ending its Paradigm Best -- and only then find that the selected layer
-        had no run id, leaving the brain with no Best at all. The marking
-        itself is _mark_run_best, shared with the run list's button.
+        run. Nothing is archived: the previous Best only loses its mark, since
+        archiving it would end its Paradigm Best. The marking itself is
+        _mark_run_best, shared with the run list's button.
         """
         print("[DEBUG] Button clicked: mark_current_as_best")
         import napari
@@ -5050,8 +5045,9 @@ class TuningWidget(QWidget):
         ('det_best' / 'det_recent'), or None and a sentence saying why not.
 
         Found by the brain, run and role recorded on the layer
-        (brain_context.run_layers), never by its name: a Best layer whose name
-        still carried a new run's marker was also found as the recent one."""
+        (brain_context.run_layers), never by its name: a name can carry the
+        marker of another role, and a Best layer would then also be found as the
+        recent one."""
         what = "Best" if role == 'det_best' else "recent"
         found = self._this_brains_run_layers(role)
         if not found:
@@ -5076,7 +5072,7 @@ class TuningWidget(QWidget):
         """Make the run of this brain's 'recent' layer the brain's Best run.
 
         Uses _mark_run_best like both Mark as Best buttons: the previous Best
-        only loses its mark (it used to be archived, ending its Paradigm
+        only loses its mark (it is not archived, which would end its Paradigm
         Best). When the recent layer shows the run that is already Best,
         nothing is done.
         """
@@ -6284,8 +6280,7 @@ class TuningWidget(QWidget):
 
         WHY: the export cuts the SAVED answers. A person who deleted points
         from 'Train: Cells' / 'Train: Non-Cells' before exporting would
-        otherwise get cubes for points they removed, without a word (older
-        versions cut from the layer, so deleted points were left out).
+        otherwise get cubes for points they removed, without a word.
         Whether deleting a point should take its answer back is not decided,
         so nothing is removed: the export stops and says how to go on. Only a
         layer recorded as the selected brain's counts -- a layer emptied when
@@ -6636,7 +6631,7 @@ class TuningWidget(QWidget):
         return widget
 
     def open_curation(self):
-        """Open the curation tool - now embedded in Training tab."""
+        """Open the curation tool, which is embedded in the Training tab."""
         # Switch to training tab where curation is embedded
         self.tabs.setCurrentIndex(4)  # Training tab
         QMessageBox.information(
@@ -8213,11 +8208,10 @@ class TuningWidget(QWidget):
         """Results tab: say which classification region counting will count.
 
         Counting (step 6) always counts the brain's production classification,
-        5_Classified_Cells/cells.xml. The label used to read "Selected: <a
-        run>" after a run was chosen in the Results tab, while the count still
-        used production -- the choice had no effect. Now the label names the
-        production file and the run its record (promoted_from.json) says it
-        came from; choosing a run there promotes it, after confirmation."""
+        5_Classified_Cells/cells.xml, so the label names the production file and
+        the run its record (promoted_from.json) says it came from; choosing a
+        run in the Results tab promotes it, after confirmation. A label reading
+        "Selected: <a run>" would imply a choice that has no effect on counting."""
         label = getattr(self, 'class_selection_status', None)
         if label is None:
             return
@@ -8816,14 +8810,12 @@ class TuningWidget(QWidget):
     def _set_swap_from_metadata(self):
         """Set the Swap checkbox from the selected brain's channel roles.
 
-        Detection read from disk follows the checkbox; it started checked for
-        every brain and was set from the metadata only when the old
-        channels_swapped key existed, and was never reset for the next brain.
-        Now it is set every time a brain is selected, from the folder Load
-        would show (brain_context.channel_roles). For metadata that
-        contradicts itself the checkbox does what it did before the rule
-        (follows channels_swapped when the metadata has it), and the conflict
-        is returned for the status line."""
+        Detection read from disk follows the checkbox, so it is set every time a
+        brain is selected, from the folder Load would show
+        (brain_context.channel_roles), and so reset for the next brain. For
+        metadata that contradicts itself the checkbox follows channels_swapped
+        when the metadata has it, and the conflict is returned for the status
+        line."""
         swap = getattr(self, 'swap_channels', None)
         if swap is None or not self.current_brain:
             return ""
@@ -8853,14 +8845,13 @@ class TuningWidget(QWidget):
         caches, or None after telling the person why there is none.
 
         The images the atlas was fitted to (config.registered_input), the
-        same rule detection-from-disk and classification use. Load used to
-        take the manual crop, else the crop, else the extraction, by which
-        folder existed; on a brain registered on another folder (the crop,
-        with a manual crop made later; or the full extraction) the person
-        then tuned and classified on images the cell positions are not in.
-        A brain whose registration records no folder (not registered, or
-        registered before that was recorded) keeps the old order: manual
-        crop, crop, full extraction."""
+        same rule detection-from-disk and classification use: on a brain
+        registered on another folder (the crop, with a manual crop made later; or
+        the full extraction), taking whichever folder exists would tune and
+        classify on images the cell positions are not in. A brain whose
+        registration records no folder (not registered, or registered without
+        recording it) falls back to the order manual crop, crop, full
+        extraction."""
         from mousebrain.config import RegisteredImagesMissing, registered_input
         try:
             source, folder, _meta = registered_input(
@@ -8944,7 +8935,7 @@ class TuningWidget(QWidget):
     def _zarr_busy(self) -> bool:
         """True while a Zarr conversion is running in this widget.
 
-        Only one runs at a time: two at once on the same brain used to build
+        Only one runs at a time: two at once on the same brain would build
         the same channel twice, deleting each other's planes (see
         ZarrConverterWorker and mousebrain.zarr_cache)."""
         worker = getattr(self, 'zarr_worker', None)
@@ -10070,10 +10061,10 @@ class TuningWidget(QWidget):
             run: optional (exp_id, role) when the file is a calibration run's
                 output: the layer then records the selected brain, the run and
                 its role ('det_best' / 'det_recent'), as every run layer does
-                (brain_context, rule 4). Without it the layer is a plain file.
+                (brain_context). Without it the layer is a plain file.
             z_shift: planes added to every cell's Z -- a partial-scope run's
-                det_z_start for a file saved before run files held
-                whole-stack Z (mousebrain.detection_runs.z_shift_on_load).
+                det_z_start for a file saved without whole-stack Z
+                (mousebrain.detection_runs.z_shift_on_load).
         """
         if not xml_path.exists():
             print(f"  XML file not found: {xml_path}")
@@ -11468,9 +11459,9 @@ class TuningWidget(QWidget):
 
     def _promote_classification_entry(self, entry):
         """A run chosen in the Results tab ("Use" / "Promote Selected to
-        Production..."): promote it, after confirmation. Choosing used to only
-        set a field nothing read and relabel the tab "Selected: ...", while
-        counting kept counting production. An entry with no tracker row is the
+        Production..."): promote it, after confirmation, because counting
+        counts production only; merely choosing a run would not change what is
+        counted. An entry with no tracker row is the
         production file itself."""
         run = entry.get('run')
         if run:
@@ -11779,14 +11770,11 @@ class TuningWidget(QWidget):
                     name, total_cells=None, regions_counted=None)
 
     def _load_region_comparison(self):
-        """Show the selected brain's new region counts in the Results tab.
+        """Show the selected brain's region counts in the Results tab.
 
         Fills the tab's "Allen Atlas" and "eLife Groups" tables from the files
         step 6 wrote (_refresh_all_results_views) and puts the totals on the
-        status line. It used to fill a comparison table that the Results tab
-        no longer has, so every successful count ended in an error, the
-        status stayed at "Loading results..." and the session log entry was
-        skipped. Comparing with the published reference is done by
+        status line. Comparing with the published reference is done by
         util_compare_to_published.py (docs/pipeline/OPTIMIZATION_WORKFLOW.md).
 
         Returns (total cells, regions with cells, counts file) once the file
