@@ -411,15 +411,10 @@ time it was last changed. **The saved suggestions are reused only when the
 folder still holds exactly those images.** If an image was added, removed or
 re-exported since, the button runs DeepSlice again on the whole folder and
 replaces the file (the status line says "Images changed since the cached
-predictions -- running DeepSlice again"). A `deepslice_positions.json` written
-by an older version holds no such list; it is never trusted and is replaced the
-first time the button is pressed.
+predictions -- running DeepSlice again"). A `deepslice_positions.json` that holds no
+such list is never trusted and is replaced the first time the button is pressed.
 
-**Where these files live is not settled.** They are written into the image
-folder because that is where they have always been. Moving them under the
-pipeline folder is waiting on a decision about where per-image and
-folder-wide 2D outputs belong (the same decision as for the per-image analysis
-folders), so do not rely on the location staying as it is. Note that a fresh
+These files are written into the image folder. A fresh
 DeepSlice run may delete and recreate `DeepSlice_Output/` in the image folder
 (it always does when the images had to be converted first -- ND2 or TIFF -- or
 the folder is on a network drive; for a local folder of PNG/JPG images it
@@ -501,16 +496,13 @@ use them. When the run finishes, the row also gets how many nuclei were found be
 filtering (`det_raw_count`) and how many each filter removed (`det_removed_by_size`,
 `_border`, `_morphology`, `_confidence`) -- the same numbers the window shows under
 the result. Detections run by the batch keep their settings in `notes`.
-Rows written before this change have only the StarDist numbers (`0` for a threshold
-run) and cannot be reproduced from the row.
 
 **Which detection a colocalization measured.** A colocalization row's `parent_run`
 is the `run_id` of the detection whose nuclei it measured -- the detection on screen
 when Colocalize was clicked -- for the napari window (single- and dual-channel) as for
 the batch. To see the detection settings behind a colocalization, find the row whose
 `run_id` is that `parent_run`. `parent_run` is blank when those nuclei have no row of
-their own (the tracker could not be opened when they were detected). Colocalization
-rows the window wrote before this change have a blank `parent_run`.
+their own (the tracker could not be opened when they were detected).
 
 **Dual-channel colocalization counts.** A dual-channel run (`coloc_signal_channel` is
 `dual`) puts each nucleus in one of four classes, each counted in its own column:
@@ -518,15 +510,13 @@ rows the window wrote before this change have a blank `parent_run`.
 first, nuclear channel -- red -- only), `coloc_ch2_only_cells` (positive in the second
 channel -- green -- only) and `coloc_neither_cells`. Its `coloc_positive_cells`,
 `coloc_negative_cells` and `coloc_positive_fraction` are blank: those are
-single-channel counts. The Run History shows a dual run as `<n> dual`. **Older dual
-rows** (written before this change) hold the "both" count in `coloc_positive_cells`
-and the "neither" count in `coloc_negative_cells`; never read those two columns of a
-`dual` row as a positive/negative count.
+single-channel counts. The Run History shows a dual run as `<n> dual`. Never read
+those two columns of a `dual` row as a positive/negative count.
 
 **Particle analysis background.** `pa_bg_method` says where the background came from:
 `manual_roi` -- the value in the Background box (measured from drawn rectangles or
-typed in); `percentile_50` -- the box was 0, so the median of the particles' own
-pixels was used. (Older rows say `manual_roi` for both.) `pa_particles_raw` is the
+typed in); `percentile_50` -- the box was 0, so the median of the measurement
+channel's pixels outside the particles was used. `pa_particles_raw` is the
 number of particles before the size and circularity filters, `pa_particles_found`
 after them, and `pa_mean_intensity` the average of the particles' mean intensities.
 
@@ -539,8 +529,7 @@ tab's batch" below) have `notes` starting `GUI batch of folder <folder name>`, a
 the image's file name (without extension) as `sample_id`. When the batch ran with a
 Background of 0 it classified nothing (it does not fall back to the median as a
 single image does): `pa_bg_method` is `none` and `pa_bg_value`,
-`pa_mean_intensity` and `pa_positive_particles` are blank. Older batches left no
-rows at all.
+`pa_mean_intensity` and `pa_positive_particles` are blank.
 
 **Re-classifying particles.** After Run Particle Analysis, changing the Background
 value or pressing Apply next to Min % above BG classifies the SAME particles again
@@ -549,8 +538,7 @@ two values have stayed unchanged for 1.5 seconds, the tracker gets a new
 `particle_analysis` row for it, `completed`, with:
 
 - `parent_run` -- the analysis that found the particles (blank when those particles
-  have no row: the tracker could not be opened, or the saved state was written before
-  this change);
+  have no row: the tracker could not be opened, or the saved state records no run);
 - `pa_bg_method` `manual_reclassify`, the new `pa_bg_value` and `pa_min_pct_above_bg`,
   `pa_particles_found` and the new `pa_positive_particles`;
 - the analysis's particle-finding settings (channels, threshold, size and
@@ -581,8 +569,8 @@ dropped without a word.
 | `completed` | The run finished and its result is in the row. |
 | `failed` | The run did not finish, or finished but its result could not be written. The `notes` column says why (for example `batch stopped at colocalize: RuntimeError: ...`, `colocalization failed: ...`, `colocalization result could not be handled: ...`, `result could not be recorded: ...`). |
 
-`failed` is the only word for a run that did not finish. Older rows written by the
-batch may say `error`; that means the same thing (writing `error` now records `failed`).
+`failed` is the only word for a run that did not finish. A row that says `error`
+means the same thing.
 
 A row that is already `completed` is never changed to `failed` by a later problem.
 The batch analyzes each image in two runs, detection and then colocalization. The
@@ -658,8 +646,7 @@ click Colocalize again. (Detection behaves the same way: it says `Failed to star
 detection` and does not run. So does Run Particle Analysis: a message box and the
 status bar say `Particle analysis not started: the calibration tracker refused its
 row (<the reason>)`, nothing is analyzed or saved, and the button can be clicked
-again at once. The particle analysis never runs anyway and saves its
-results with no row or warning.) A run with no row could never be found,
+again at once.) A run with no row could never be found,
 reloaded or marked best later, so it is not run unrecorded.
 
 **When something goes wrong while the window handles a colocalization's result**
@@ -687,7 +674,7 @@ If the tracker cannot be opened, nothing is logged, and you are told:
 - **In the batch:** every sample prints the same `[!] Runs will NOT be logged ...`
   line. The sample is still analyzed and its CSV and pictures are still written.
 
-The most common reason is that mousebrain does not know where the lab's data lives
+The most common reason is that mousebrain does not know where the pipeline's data lives
 (`CONNECTOME_ROOT` is not set): the tracker then refuses to open rather than
 creating a new, empty tracker in a temporary folder, where runs would look logged
 and be lost. Check with `mousebrain --paths`.
@@ -702,16 +689,14 @@ saying, for example,
 Wait for the first one's result, then click again. Nothing has been logged for the
 refused click, so there is no row to clean up.
 
-WHY: each run writes its result into its own row of the tracker. When two ran at
-once, the window used to write the first one's result into the second one's row: a
-detection's nucleus count landed in a colocalization row (which then said
-`completed` with no colocalization result) and the detection row stayed `started`.
-And a colocalization started while a detection is going would measure the nuclei the
-detection is about to replace.
+WHY: each run writes its result into its own row of the tracker. If two ran at
+once, one's result could land in the other's row (a detection's nucleus count in a
+colocalization row, which would then say `completed` with no colocalization result,
+while the detection row stayed `started`). And a colocalization started while a
+detection is going would measure the nuclei the detection is about to replace.
 
-Rows written before this change may show that mix-up: a colocalization row with a
-`det_nuclei_found` value, or a particle-analysis row with one. Treat such a row as
-not trustworthy and run that analysis again.
+A colocalization or particle-analysis row that holds a `det_nuclei_found` value is
+not trustworthy: run that analysis again.
 
 ### Opening an image in the napari window
 
@@ -751,7 +736,7 @@ Every time, in this order:
 2. **The Sample ID box is set to the new file's name** (the folder's name for a stack).
    Every tracker row and every Quantify export is filed under this name. A reload of
    the same image keeps a Sample ID you typed by hand.
-3. **Prev / Next now walk the folder of the image just opened**, and the position
+3. **Prev / Next walk the folder of the image just opened**, and the position
    label (`2/14: <file name>`) names it.
 4. **The image loads.** Until it has loaded, Browse and the Load buttons are off, and
    Detect Nuclei, Colocalize, Run Quantification and Run Particle Analysis are refused
@@ -773,10 +758,9 @@ which, and nothing changes:
   result is being written to the tracker (the status bar then said `Saving the result
   to the calibration tracker...`): the analysis counts as running until its result
   is on screen and recorded, so the status bar may already show that result by the
-  time you look. Click again. WHY: such a click used to open the next image right
-  then; the image on screen was saved and cleared, and the result was then drawn
-  over the image being loaded, with Colocalize / Run Quantification turned on for
-  it.
+  time you look. Click again. WHY: opening the next image in the middle would save
+  and clear the image on screen, and the result would then be drawn over the image
+  being loaded, with Colocalize / Run Quantification turned on for it.
 - `<file>: not opened -- the batch is waiting for ROIs. Finish it with Count & Next or
   Skip, then open the image.` The batch's ROI drawing has no way back in once left,
   so the image is refused rather than the batch abandoned.
@@ -831,11 +815,11 @@ new name; only the newest load may put its pixels in the window; and a detection
 started during a load is refused instead of drawing the previous image's nuclei on
 the new one.
 
-**Results made with an older version of the window** may carry those mix-ups, and they cannot be found
-automatically. If you used Prev / Next or the image queue, check the recent tracker
-rows and Quantify exports: each row's `sample_id` must be the image it was made on. An
-`_analysis` folder whose particles do not match its image (for example, particle
-positions outside the tissue) should be analyzed again.
+**Checking results for a mix-up.** A result filed under the wrong image cannot be
+found automatically. Check the tracker rows and Quantify exports: each row's
+`sample_id` must be the image it was made on. An `_analysis` folder whose particles do
+not match its image (for example, particle positions outside the tissue) should be
+analyzed again.
 
 ### What is saved with an image, and what comes back when it is opened again
 
@@ -932,8 +916,8 @@ keeps its shape: a channel or z-projection change, a 180 degree turn, a 90 degre
 turn of a square image). If `settings.json` is unreadable, the message says the
 results can be exported (Export CSV), and that a person has to repair that file or
 move it aside before the image can be saved again; reloading the image another way
-does not help then. Results saved beside settings that do not describe them (by an
-earlier version) can be found only by their file times: a result
+does not help then. Results saved beside settings that do not describe them can be
+found only by their file times: a result
 file in an `_analysis` folder last written more than a minute after the `saved_at`
 time in its `settings.json` was very likely written beside settings that do not
 describe it, and should be made again. (A folder that was copied can carry
@@ -950,7 +934,7 @@ bar says `[!] Results on a folder stack are NOT saved ...` after a colocalizatio
 it. Leaving a stack that has results is not stopped, but the red line under the status
 bar then says `[!] The results on the stack <folder> were NOT saved when it was left`
 and stays while the next image loads. Export what you need BEFORE opening another image,
-or open the image on its own. Where a stack's results should be kept is not decided yet.
+or open the image on its own.
 If a save reports a problem while no image and no stack is open, leaving is not
 stopped either, and the red line then says `[!] The results on screen were NOT saved
 when it was left: no image is open to save them under.` with the reason. (Results
@@ -963,17 +947,14 @@ table for the whole folder. Above the table, each sample has its own line,
 `# Settings <sample>: {...}`, with the settings its rows were made with. Appending a
 sample again replaces its rows and its line only -- also when another sample's name
 begins with this one's name and `: ` (sample `A` never replaces the line of a sample
-named `A: x`). (Older files had a single
-`# Settings:` line, rewritten on every append, so it described only the sample
-appended last. It is kept, renamed `# Settings (written before each sample's settings
-were kept; they are the last sample appended then):`.) Spreadsheet programs show the
+named `A: x`). Spreadsheet programs show the
 `#` lines as text rows above the table; skip them when reading the table.
 
 **What is registered.** Saves from this window are also entered in MouseBrain's own
 analysis registry (`<pipeline root>/Registry/`, see
 `docs/pipeline/ANALYSIS_REGISTRY.md`), so whatever pulls the registry sees them, with
-the settings that produced them. The files are still written where they always were;
-the registry keeps copies.
+the settings that produced them. The files are written where they are described
+above; the registry keeps copies.
 
 | What you do | Registered as | Key | What is registered |
 |---|---|---|---|
@@ -1012,13 +993,10 @@ the registry keeps copies.
   derived; the folder-wide CSVs of **Append to Folder CSV**; the single-image
   **Export CSV** / **Export Figure** / **Export TIFF** files (copies of what Save
   State registers); and the measurements CSV a colocalization writes under the
-  subject's `4_Quantified` folder (where those per-image files should live is not
-  decided yet).
+  subject's `4_Quantified` folder.
 
-**Results saved before this change** may hold leftovers: a `particles.csv` or
-`rois.json` from an earlier analysis of the same image, kept when a later analysis
-found nothing or the ROIs were cleared. They cannot be told apart from current ones
-automatically. If an image's saved particles or ROIs look wrong, analyze it again; the
+If an image's saved particles or ROIs look wrong (for example a `particles.csv` or
+`rois.json` left from an earlier analysis of the same image), analyze it again; the
 new save replaces them.
 
 ### The particle tab's batch (Select Batch Folder, Run Batch Analysis)
@@ -1042,9 +1020,9 @@ only between images, and:
   (`..._settings.json`). Load Settings changes the tab only, never what an earlier
   batch is recorded with.
 
-WHY: the run used to keep its folder and results in the window itself while it
-answered clicks, so choosing another folder part-way mixed two batches under the
-first one's file names.
+WHY: if the run kept its folder and results in the window itself while it answered
+clicks, choosing another folder part-way would mix two batches under the first one's
+file names.
 
 **When the run ends**, the status line says how many images were analyzed, and a
 message lists every image that could not be analyzed (`could not be read`, `not
@@ -1098,9 +1076,6 @@ name replaces that entry; the earlier files go to `_archived/<time>/` in the reg
 | `not reviewed` | the ROI drawing never reached this image |
 | `failed: <why>` | the image could not be analyzed |
 
-Older summaries had no `status` column and left out every image that was not
-counted; an image missing from one may have been skipped, not counted, or unreadable.
-
 ### Insets in Run Detection
 
 Insets (tab 3) are high-resolution images of parts of the slice. When an image opens,
@@ -1112,9 +1087,7 @@ what will happen:
   resolution (and on the rest of the slice unless that box is unticked). Its tracker
   row's `det_preprocessing` holds `"insets_used": <n>`.
 - `<n> inset(s) ignored: inset detection works only with StarDist` -- the backend is
-  Threshold, Threshold+LoG or Cellpose: the ordinary detection runs on the slice.
-  (It used to fail with an error instead.)
-- `<n> inset(s) ignored: they were aligned to another image or stack slice -- reload
+  Threshold, Threshold+LoG or Cellpose: the ordinary detection runs on the slice.- `<n> inset(s) ignored: they were aligned to another image or stack slice -- reload
   the image to use them` -- for a folder stack, the insets belong to the slice that
   was on screen when they were loaded. Go back to that slice, or reload.
 
@@ -1124,17 +1097,16 @@ the previous image first, so a detection never uses insets aligned to another im
 ### The nucleus size filter (Min/Max Area, Detect tab)
 
 When an image opens and its pixel size is known, Min/Max Area are set to nuclei of 5
-to 30 um across at that pixel size (and the Cellpose diameter to 12 um). The grey
+to 30 um across at that pixel size (and the Cellpose diameter to 12 um). The gray
 line under them shows the area in um^2.
 
 Once you **type** a Min or Max Area, your values are kept for every image you open
 after it, whatever its pixel size -- check the um^2 line when the pixel size changes.
 Click **Auto size** to go back to setting them from each image's pixel size.
 
-WHY: setting the boxes from the pixel size used to count as typing them, so after
-the first image they were never set from a pixel size again (an image from another
-objective was filtered with the first image's pixel numbers); while Browse File and
-Prev/Next threw away values a person had typed.
+WHY: setting the boxes from the pixel size must not count as typing them (otherwise
+an image from another objective would be filtered with the first image's pixel
+numbers), and Browse File and Prev/Next must not throw away values a person typed.
 
 ### Several windows and the batch at once
 
@@ -1157,7 +1129,7 @@ a row that has more values than the header has columns, writing stops with a
 message asking for the file to be repaired: it is never rewritten in a way that
 would lose those values.
 
-Opening a tracker written by an older version adds the newer columns to its header
+Opening a tracker that lacks columns this version knows adds them to its header
 once: that is one rewrite, under the lock and through a temporary file, with every
 value kept. It also happens on read-only paths, such as the batch looking up the
 tuned parameters, so a read of an old tracker can briefly take the lock.
@@ -1203,10 +1175,10 @@ measured on, and the `coloc_run_id` in `settings.json` is the colocalization tho
 measurements came from (not the last Colocalize click, which may have failed, and
 never a run of the previous image).
 
-An `_analysis` folder written before this change can hold a `measurements.csv` with no
-`nuclei.npz` (a loaded run that was saved). Opening that image says `measurements.csv
-has no saved nuclei to belong to`; the file is kept and new measurements are not saved
-beside it until a person moves that file aside.
+An `_analysis` folder that holds a `measurements.csv` with no `nuclei.npz` is refused
+when its image is opened: the status bar says `measurements.csv has no saved nuclei to
+belong to`; the file is kept and new measurements are not saved beside it until a
+person moves that file aside.
 
 ### Sample Name Parsing
 
@@ -1329,7 +1301,7 @@ entry instead of editing the shared method (step 2).
     "analyses": {"<project>_Detection": { ...the object above... }}}
    ```
 
-   If the file holds the parameters alone (the old form), move them under
+   If the file holds the parameters alone (no `"default"`/`"analyses"` keys), move them under
    `"default"` first so the other analyses keep their method. Writing the
    object as the whole file (or as `"default"`) instead makes it the
    approved method of every analysis that follows the shared method (see
@@ -1519,8 +1491,8 @@ type.
   sample already had a current entry, every file in the sample's own
   registry folder (`exports/<project>_Detection/<sample>/`) is first moved to an
   `_archived/<date_time>/` folder inside it -- not only the files the entry
-  lists, but also any other file there (an older batch copied extra
-  overlays and histograms it never listed); the `_archived/` folder itself
+  lists, but also any other file there (for example extra overlays and
+  histograms the entry never listed); the `_archived/` folder itself
   is left alone. The earlier entry's record is replaced in `registry.json`,
   but not lost: the registry's log (`logs/<project>_Detection.log`) gets one
   `invalidate_entry` line for the retired entry carrying its counts, method
@@ -1656,8 +1628,7 @@ type.
   used), `source_files`, `registered_at`, `invalidated_at`, and
   `archived_to` (the `_archived/<date_time>` folder its files were moved
   to). A sample retired more than once has one such line per retirement;
-  the latest is the last one in the file. (Entries retired before this line
-  was added have only an `invalidate` line with a count, no record.)
+  the latest is the last one in the file.
 
   **If that log line cannot be written** (the log file is open in another
   program, the share drops out at that moment), the entry is still retired
@@ -1723,9 +1694,8 @@ pixel) the image FILE records. An image whose file records no pixel size is
 while pixel size] the image file does not record its pixel size ...`, no
 tracker row is written for it, and its earlier registry entry (if any) stays
 current. Export the image again with its calibration and run the batch
-again. WHY: the batch used to measure such an image at 1.0 um per pixel
-without a word, which counts objects of a size nobody chose and records those
-pixel areas as if measured. (The image reader still fills in 1.0 for display
+again. WHY: measuring such an image at an assumed 1.0 um per pixel would count
+objects of a size nobody chose and record those pixel areas as if measured. (The image reader still fills in 1.0 for display
 and marks it `voxel_size_from_file: false`; the batch refuses that too.)
 
 **What "records a pixel size" means for an ND2 file.** The library that reads
@@ -1740,15 +1710,29 @@ uncalibrated. Anything else is refused as above. If a file you know is
 calibrated is refused, open it in the microscope software, check that its
 calibration (um per pixel) is set, save or export it again, and re-run.
 
-### Open question: recording the measurement region
+### Limitation: the measurement region is not recorded
 
 The batch measures each cell's signal in a ring around its nucleus that
 leaves the nucleus out and does not overlap a neighbor's ring. That choice
-is fixed in the code and is NOT yet among the method parameters a registry
-entry records, so two entries cannot be told apart by it. Adding a name for
-it changes the method hash of every entry, and which name and which approved
-value to use is for a lab to settle; until then nothing about the region is
-recorded.
+is fixed in the code and is not among the method parameters a registry
+entry records, so two entries cannot be told apart by it. Recording it would
+need a new parameter name, which changes the method hash of every entry.
+
+---
+
+## 7. Particle Analysis (Particle tab)
+
+**Source:** `sliceatlas/core/particle_analysis.py` (`ParticleAnalyzer`) and the Particle tab in `sliceatlas/napari_plugin/main_widget.py`
+
+Particle analysis mirrors the hand ImageJ workflow on purpose: threshold the detection channel in a black/white view, take the background from boxes a person draws on empty tissue (averaged), filter by size and circularity with watershed splitting on by default, and count a particle as positive when at least the set fraction of its pixels (default 50%) exceeds the background -- not by its mean intensity. Nothing is done to the pixel values on load (no smoothing, background subtraction or rescaling); a Z-stack is max-projected by default (Load tab, Z-projection: Max Intensity; Mean and First Z only are the alternatives), and the Load tab's Rotation (default 90 degrees counter-clockwise, `None` available) only turns the picture.
+
+1. **Threshold.** Pixels of the detection channel strictly above the threshold form the mask (slider default 500; **Auto (Otsu)** sets it from the image). **Show Binary** displays the mask as white objects on a black background, as ImageJ does, so the threshold can be set by eye.
+2. **Split touching particles** (**Watershed split**, ticked by default). A distance transform of the mask is cut at its local maxima (at least `max(3, int(sqrt(min_area / pi)))` pixels apart) and the cut lines are removed from the mask, so touching objects become separate particles.
+3. **Size and circularity filters.** Connected components are kept when their area in pixels lies between Area min and max (Particle tab defaults 1 and 50000; the `ParticleAnalyzer` API defaults to 10 and 50000) and their circularity (4 x pi x area / perimeter^2) is at least Circ min (default 0, which keeps all). Particles inside Ignore Regions drawn on the image are removed from the results.
+4. **Background.** Draw rectangles on the `Background ROIs` layer over empty tissue of the measurement channel (**Draw Background ROIs**). Each box's mean is taken and the boxes' means are averaged into the BG value; the BG value can also be typed, and **Apply** re-classifies. With BG 0, a single-image run falls back to the median of the non-particle pixels of the measurement channel, and the batch classifies nothing.
+5. **Positive or negative.** For each particle, the share of its measurement-channel pixels strictly above the BG value is its `pct_above_bg`; the particle is positive (`is_positive`) when `pct_above_bg` >= **Min % above BG** (default 50). The mean intensity, median, maximum, integrated intensity, `mean_above_background`, `snr` and `fold_change` (mean / BG) are reported for each particle but do not decide the classification.
+
+The particle settings, the run's tracker row and the saved files are described in section 5.
 
 ---
 
@@ -1773,18 +1757,6 @@ recorded.
 | Signal (green) | 100–300 | 500–5000 |
 
 These vary significantly by exposure, tissue type, and imaging conditions. The percentile normalization and fold-change classification are designed to handle this variation.
-
----
-
-## Version History
-
-| Component | Key Changes |
-|-----------|-------------|
-| Detection | StarDist2D with size/circularity filtering, Windows symlink workaround |
-| Colocalization | Added GMM background estimation with BIC model selection and confidence metrics |
-| Quantification | Centroid-based region assignment with hierarchical aggregation |
-| Visualization | Added annotated overlay with arrows, GMM diagnostic plot, human-readable report |
-| Tracking | Per-run CSV logging with measurements path for historical run reloading |
 
 ---
 
