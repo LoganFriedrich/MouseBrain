@@ -113,12 +113,12 @@ def metadata_save_target(metadata_source) -> Optional[Path]:
 # ---------------------------------------------------------------------------
 #
 # The curation buttons (Mark as Best, Promote Recent, Keep Best, Difference)
-# act on "the Best layer" and "the recent layer". They used to find them by
-# NAME as well as by metadata, and in the whole viewer. A Best layer kept the
-# dot marker of a this-session run in its name, so it was also found as the recent
-# layer: Keep Best hid the Best, and Promote archived the very run it then
-# marked best. And a Best layer of ANOTHER brain still open in the viewer was
-# archived -- in the tracker too -- when this brain's Best was marked.
+# act on "the Best layer" and "the recent layer". Finding them by NAME, or
+# anywhere in the viewer, is wrong: a Best layer keeps the dot marker of a
+# this-session run in its name, so it would also be found as the recent layer
+# (Keep Best would hide the Best, and Promote would archive the very run it
+# then marked best); and a Best layer of ANOTHER brain still open in the viewer
+# would be archived -- in the tracker too -- when this brain's Best was marked.
 #
 # So a detection-run layer is identified only by what was recorded on it when
 # it was made: the brain (``source_brain``, the same tag image layers carry),
@@ -177,7 +177,7 @@ def run_layer_base_name(name: str) -> str:
 def run_points_file(output_path) -> Optional[Path]:
     """The candidates file a detection run's ``output_path`` points at.
 
-    Widget runs used to record their run FOLDER (the file inside it is
+    Widget runs record their run FOLDER (the file inside it is
     ``detected_cells.xml``); scripts record the file itself. Returns None when
     there is no such file, so a caller says so instead of loading nothing."""
     if not output_path:
@@ -199,11 +199,10 @@ def run_points_file(output_path) -> Optional[Path]:
 #     and read by registration, detection and classification (steps 3-5);
 #   * a top-level ``signal_channel`` ("ch1" or 1) -- written by an old crop tool;
 #   * a top-level ``channels_swapped`` (true = ch1 is the signal) -- same.
-# The Setup & Tuning widget used to read them by three different rules: Load
-# took ch1 if ANY of them said so, a detection run read from disk followed a
-# checkbox that started checked whatever the brain said, and classification
-# read only ``channels.signal_channel``. So one brain could be shown with ch1 as
-# its signal, tested on ch0, and classified on ch0.
+# Reading them by separate rules in each widget action (Load taking ch1 if ANY
+# says so, a detection run following a checkbox whatever the brain says,
+# classification reading only ``channels.signal_channel``) would show one brain
+# with ch1 as its signal, test it on ch0, and classify it on ch0.
 #
 # channel_roles reads all three. When those present agree (or only one is
 # present) that is the answer; with none present the signal is ch0. When they
