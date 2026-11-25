@@ -684,9 +684,9 @@ class ManualCropWidget(QWidget):
     def _preset_signal_choice(self):
         """Start the "which channel has the cells" choice on the brain's own answer.
 
-        WHY: the choice used to start on ch0 for every brain, and the crop
-        writes it into the crop's metadata (crop_subprocess.apply_signal_choice)
-        -- so a brain whose extraction says ch1 would be switched to ch0 by a
+        WHY: the crop writes the choice into the crop's metadata
+        (crop_subprocess.apply_signal_choice), so a choice that always started
+        on ch0 would switch a brain whose extraction says ch1 to ch0 for a
         person who only moved the crop line. It starts on what the extraction's
         metadata says (brain_context.channel_roles). When that metadata
         contradicts itself, NEITHER channel is chosen and the crop refuses until

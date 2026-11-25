@@ -5,8 +5,8 @@ Automatically records all actions, parameter changes, and results during a tunin
 Generates markdown reports summarizing what was tried and what worked.
 
 Data Hierarchy:
-    Brain (374) -> Subject (CNT_01_02) -> Cohort (CNT_01) -> Project (CNT)
-    See 2_Data_Summary/DATA_HIERARCHY.md for full documentation.
+    Brain (001) -> Subject (CNT_01_02) -> Cohort (CNT_01) -> Project (CNT)
+    parsed from the brain name (mousebrain.config.get_brain_hierarchy).
 """
 
 import json
@@ -54,7 +54,7 @@ class SessionDocumenter:
         self.hierarchy = parse_brain_name(brain_name)
         self.hierarchy_string = get_brain_hierarchy(brain_name)
 
-        # Save sessions to the project data folder, not C: drive
+        # Save sessions to the shared data-summary folder, not a per-user folder
         if output_dir is None:
             # Try to find the project sessions folder using config
             try:
@@ -205,7 +205,7 @@ class SessionDocumenter:
         Generic event logger for custom event types.
 
         This is the public interface for logging arbitrary events from the
-        tuning widget's new comparison/archival workflow.
+        tuning widget's comparison/archival workflow.
 
         Event types:
             mark_as_best - User marked a detection as best
