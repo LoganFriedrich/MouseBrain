@@ -1,9 +1,9 @@
 """A ch*.zarr cache is used only when it is complete and current.
 
-The widget treated "the cache folder exists" as "converted": an interrupted
-or failed conversion (an empty folder, or a full-size array with planes never
-written) was loaded as the brain, and a re-crop left the previous crop's
-cache in use.
+"The cache folder exists" does not mean "converted": an interrupted or failed
+conversion (an empty folder, or a full-size array with planes never written)
+must not be loaded as the brain, and a re-crop must not leave the previous
+crop's cache in use.
 """
 import os
 import time

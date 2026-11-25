@@ -1,9 +1,9 @@
 """A registration that produced nothing stops the batch at 'register'.
 
-The batch handled only "needs approval" after registration; a registration
-that left no brainreg.json or deformation field fell through to detection,
-which stopped on the missing approval, so the row said the brain failed at
-'detect' -- three steps from the cause.
+The batch must handle a registration that left no brainreg.json or
+deformation field, not only "needs approval". Otherwise it falls through to
+detection, which stops on the missing approval, and the row says the brain
+failed at 'detect' -- three steps from the cause.
 """
 import importlib.util
 from pathlib import Path

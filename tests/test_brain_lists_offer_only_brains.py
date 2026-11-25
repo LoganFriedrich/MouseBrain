@@ -1,11 +1,12 @@
 """Every brain list and brain lookup follows ONE rule for which folders are brains.
 
-The pipeline steps had learned that an archive kept beside a brain (a folder whose
-name starts with an underscore) is not a brain. The napari brain lists and the
-utilities had not: the dashboard, Setup & Tuning, the crop tool and the 3D cell
-viewer offered the archive as a brain, and the utilities could load, crop, draw or
-approve it in the real brain's place. The rule now lives in one function,
-config.iter_brains, and everything that lists or looks up brains uses it.
+An archive kept beside a brain (a folder whose name starts with an
+underscore) is not a brain. The pipeline steps, the napari brain lists
+(dashboard, Setup & Tuning, crop tool, 3D cell viewer) and the utilities all
+apply this rule; a list that offered the archive as a brain would let a
+utility load, crop, draw or approve it in the real brain's place. The rule
+lives in one function, config.iter_brains, and everything that lists or looks
+up brains uses it.
 """
 import importlib.util
 from pathlib import Path
@@ -52,8 +53,8 @@ def _names(pairs):
 
 
 # ---------------------------------------------------------------- the rule itself
-# Checked through entry points that existed before the shared rule, so each
-# test shows the behaviour that changed, not only that a new function exists.
+# Checked through the entry points that list or look up brains, so each test
+# shows the behavior users see, not only that the shared function exists.
 
 def _run_pipeline(monkeypatch, root):
     spec = importlib.util.spec_from_file_location(
@@ -242,7 +243,7 @@ def test_nothing_lists_brains_by_hand():
         for path in sorted((REPO / base).rglob("*.py")):
             rel = path.relative_to(REPO).as_posix()
             if "/plugin_2d/" in rel:
-                continue  # 2D slices are not organised as mouse/brain folders
+                continue  # 2D slices are not organized as mouse/brain folders
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 m = pattern.search(line)
                 if not m or m.group(2).endswith("glob") and m.group(1) not in glob_flagged:
@@ -254,8 +255,9 @@ def test_nothing_lists_brains_by_hand():
 
 
 # ---------------------------------------------------------------- the mousebrain launcher
-# `mousebrain --crop <brain>` used to find the brain with its own glob for
-# "*/*<name>*" and open the first match the folder listing gave.
+# `mousebrain --crop <brain>` must not find the brain with its own glob for
+# "*/*<name>*" and open the first match the folder listing gives; it uses the
+# shared rule.
 
 def _launch_crop(monkeypatch, capsys, root, name):
     """Run the launcher with napari replaced by a stand-in whose Viewer stops

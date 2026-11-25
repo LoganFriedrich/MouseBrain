@@ -1,12 +1,13 @@
 """A Setup & Tuning detection run keeps its own record from start to finish,
 and its file holds positions counted from the first plane of the whole stack.
 
-* The finish handler took the run's folder, tracker id and Z offset from the
-  widget's fields; selecting another brain while the run went resets those,
-  so the cells were not saved and the tracker row stayed 'started'.
-* A test of part of the stack saved positions counted from the first plane
-  TESTED; the offset was added only to the points drawn right after the run,
-  so every reload of the run put its cells too shallow.
+* The finish handler takes the run's folder, tracker id and Z offset from
+  the run itself, not from the widget's fields: selecting another brain while
+  the run goes resets those, so the cells would not be saved and the tracker
+  row would stay 'started'.
+* A test of part of the stack saves positions counted from the first plane of
+  the whole stack. If the offset were added only to the points drawn right
+  after the run, every reload of the run would put its cells too shallow.
 """
 import json
 from types import SimpleNamespace

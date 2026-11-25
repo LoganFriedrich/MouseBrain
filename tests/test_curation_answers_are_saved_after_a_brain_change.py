@@ -1,10 +1,10 @@
 """After another brain is chosen, curation answers are still saved -- or the person is told.
 
-What went wrong: choosing another brain cleared the training folder (so the
-last brain's pool was no longer written to), but the C / X handlers then
-returned without saving anything and without a word, while the tab still
-said "Auto-save: <the last brain's folder>". The curation widget also kept
-the last brain's candidates, so answers given on them showed as answered.
+Choosing another brain clears the training folder (so the last brain's pool
+is no longer written to). The C / X handlers must then not return without
+saving and without a word while the tab still says "Auto-save: <the last
+brain's folder>". The curation widget must also drop the last brain's
+candidates, so answers given on them are not shown as answered.
 """
 from types import SimpleNamespace
 

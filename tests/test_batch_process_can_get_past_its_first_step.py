@@ -1,10 +1,11 @@
 """batch_process starts steps 2 and 3 with arguments they accept, and its QC
-checks recognise what those steps actually write.
+checks recognize what those steps actually write.
 
-It passed a --yes that neither step accepts, so argparse stopped step 2 and
-every brain failed at its first step. Behind that, the extraction check looked
-for TIFFs at the top of 1_Extracted_Full (extraction writes ch0/Z0000.tif ...)
-and the crop check for a downsampled.zarr no crop writer makes.
+It must not pass a --yes that neither step accepts: argparse would stop step 2
+and every brain would fail at its first step. The extraction check looks for
+TIFFs where extraction writes them (ch0/Z0000.tif ..., not the top of
+1_Extracted_Full) and the crop check for what a crop writer makes (not a
+downsampled.zarr).
 """
 import importlib.util
 import json

@@ -1,11 +1,11 @@
 """A registration approval is a person's approval of ONE registration.
 
 Step 4 waits for a person to approve the registration before spending hours of
-detection on it. That gate leaked three ways: re-registering left the old
-approval beside the new, unreviewed registration (the archive skipped
-dot-files); the overnight batch wrote the approval itself; and an approval did
-not say which registration it was for, so nothing could tell. These tests pin
-the fixed behaviour against synthetic brain folders.
+detection on it. The gate holds only if: re-registering archives the old
+approval (dot-files included) instead of leaving it beside the new,
+unreviewed registration; the overnight batch never writes the approval itself;
+and an approval says which registration it is for. These tests pin that on
+synthetic brain folders.
 """
 import importlib.util
 import json

@@ -2,11 +2,11 @@
 
 A brain kept in a mouse folder whose name has a skip word (a backup copy of a
 mouse), or in a folder starting with '_', is not a brain by the one folder
-rule. Steps 4-6 and the utilities that use config.find_brain_folder already
-said so when asked for it by name. The pre-filter, steps 2 and 3,
-util_optimize_crop.py and util_create_training_cubes.py printed only "not
-found" (or nothing), so the operator could not tell a typo from a folder the
-rule passes over.
+rule. Steps 4-6, the pre-filter, steps 2 and 3, util_optimize_crop.py,
+util_create_training_cubes.py and every other lookup that uses
+config.find_brain_folder say so when asked for it by name. Printing only "not
+found" (or nothing) would leave the operator unable to tell a typo from a
+folder the rule passes over.
 """
 import importlib.util
 import sys

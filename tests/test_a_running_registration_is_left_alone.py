@@ -1,12 +1,11 @@
 """A registration that is running right now is left alone.
 
 brainreg writes brainreg.json first and then fits for a long time, so a
-running registration has the same files as one that stopped half-way. Once
-"registered" meant all four output files, step 3 took a running registration
-for an unfinished one: --batch archived it from under the running brainreg and
-started a second brainreg into the same folder. Step 3 now holds
-.registration_running while it registers; while that marker is live nothing
-touches the brain, and a marker whose run is gone counts as did-not-finish.
+running registration has the same files as one that stopped half-way. Step 3
+therefore holds .registration_running while it registers; while that marker is
+live nothing touches the brain (otherwise --batch would archive the
+registration from under the running brainreg and start a second brainreg into
+the same folder), and a marker whose run is gone counts as did-not-finish.
 Identifiers are invented.
 """
 import importlib.util
@@ -172,7 +171,7 @@ def test_a_failure_archiving_the_previous_registration_is_not_called_a_failed_ru
     """Archiving the OLD registration and running brainreg were in one try:
     an error while archiving the old one archived the rest of it as the
     "failed run's output" -- splitting a perhaps-approved registration over two
-    folders, one labelled failed."""
+    folders, one labeled failed."""
     pytest.importorskip("brainreg", reason="3_register_to_atlas checks for brainreg on import")
     step3 = _load("register_archive_fail", "scripts/pipeline/3_register_to_atlas.py")
     b = _brain(tmp_path / "1_Brains")

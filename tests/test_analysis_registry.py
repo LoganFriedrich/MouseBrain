@@ -516,7 +516,7 @@ def test_two_registrations_at_once_both_land(tmp_path, monkeypatch):
     reg_b = AnalysisRegistry(analysis_name="A", registry_root=tmp_path)
 
     # Widen the gap between reading the manifest and writing it back, the
-    # window in which a second writer used to read the same old manifest.
+    # window in which a second writer could read the same old manifest.
     real_write = AnalysisRegistry._write_registry
 
     def slow_write(self, data, *args, **kwargs):
@@ -704,10 +704,10 @@ def test_several_processes_registering_at_once_all_land_promptly(tmp_path):
 
 def test_the_mirrored_exports_folder_holds_only_outputs_and_the_manifest(tmp_path, monkeypatch):
     # An integrator mirrors every file under exports/<analysis>/. The lock,
-    # the server-clock probes and the temporary manifest used to be created
-    # there: one caught by a nightly pull was copied as a result, and one that
-    # vanished between the pull listing the folder and reading it stopped
-    # the pull. Look at the folder at the instant the manifest is swapped in,
+    # the server-clock probes and the temporary manifest must not be created
+    # there: one caught by a nightly pull would be copied as a result, and one
+    # that vanished between the pull listing the folder and reading it would
+    # stop the pull. Look at the folder at the instant the manifest is swapped in,
     # while the lock is held and the temporary manifest exists.
     csv_file, fig_file = _make_source_files(tmp_path)
     reg = AnalysisRegistry(analysis_name="A", registry_root=tmp_path / "Registry")
@@ -1159,7 +1159,7 @@ def test_a_malformed_per_analysis_table_is_refused(tmp_path):
 
 def test_a_malformed_entry_for_another_analysis_stops_only_the_analyses_it_concerns(tmp_path):
     # Every registration resolves its analysis's approved method. A fault in
-    # a part of the file an analysis is not judged by used to stop the
+    # a part of the file an analysis is not judged by must not stop the
     # registrations of every analysis, the 3D ones included.
     root = tmp_path / "Registry"
     (root).mkdir()
@@ -1270,9 +1270,10 @@ def test_a_producer_declaration_reaches_an_existing_manifest(tmp_path):
 
 
 def test_a_file_holding_only_a_default_is_the_per_analysis_form(tmp_path):
-    # {"default": {...}} with no "analyses" table used to be read as the flat
-    # form: a method with one parameter named "default", so every entry of
-    # every analysis following the shared method showed as stale.
+    # {"default": {...}} with no "analyses" table is the per-analysis form, not
+    # the flat form (a method with one parameter named "default"): otherwise
+    # every entry of every analysis following the shared method would show as
+    # stale.
     shared = dict(EXAMPLE_METHOD, soma_dilation=8)
     (tmp_path / "approved_method.json").write_text(
         json.dumps({"default": shared}), encoding="utf-8")

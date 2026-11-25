@@ -1,13 +1,13 @@
 """A brains folder that cannot be read is reported, never passed over quietly.
 
-The shared brain listing (config.iter_brains) treated a brains root that is
-missing or cannot be listed as a root with no brains in it, and a mouse folder
-that cannot be listed as a mouse with no brains. Nothing was printed. With the
-data drive not connected the overnight batch logged "Found 0 brain(s)" and
-ended normally, a step asked for a real brain by name answered "Brain not
-found", and the brains of an unreadable mouse folder dropped out of every list
-without a line anywhere. A brain that silently never runs looks exactly like
-one that is not there.
+The shared brain listing (config.iter_brains) must not treat a brains root that
+is missing or cannot be listed as a root with no brains, nor a mouse folder
+that cannot be listed as a mouse with no brains, without saying so. With the
+data drive not connected, the overnight batch would otherwise log "Found 0
+brain(s)" and end normally, a step asked for a real brain by name would answer
+"Brain not found", and the brains of an unreadable mouse folder would drop out
+of every list without a line anywhere. A brain that silently never runs looks
+exactly like one that is not there.
 """
 import importlib.util
 import json

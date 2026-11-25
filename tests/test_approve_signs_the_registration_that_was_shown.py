@@ -1,11 +1,11 @@
 """Approve in Setup & Tuning signs the registration the person was shown.
 
-The status label on the Registration tab was refreshed only when the brain
-changed and after Approve or Reject; Approve then signed whatever registration
-was in the folder at the moment of the click. A registration finished by a
-script after the person looked was approved unseen. Now the widget remembers
-which registration the label (or the QC view) showed, Approve refuses when the
-folder holds another one, and opening the Registration tab refreshes the label.
+If Approve signed whatever registration was in the folder at the moment of the
+click, a registration finished by a script after the person looked would be
+approved unseen. So the widget remembers which registration the label (or the
+QC view) showed, Approve refuses when the folder holds another one, and
+opening the Registration tab refreshes the label (it is also refreshed when
+the brain changes and after Approve or Reject).
 """
 import os
 import types

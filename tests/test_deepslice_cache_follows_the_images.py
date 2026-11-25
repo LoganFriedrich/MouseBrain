@@ -1,9 +1,9 @@
 """DeepSlice predictions are reused only for the images they were made from.
 
-Before this, the folder's prediction cache was returned whenever it existed.
-An image added to the folder afterwards got no atlas position, and an image
-re-exported under the same name kept the position predicted for its old
-pixels. These tests drive the real predict_folder with a stand-in for the
+The folder's prediction cache is not returned merely because it exists: an
+image added to the folder afterwards must get an atlas position, and an image
+re-exported under the same name must not keep the position predicted for its
+old pixels. These tests drive the real predict_folder with a stand-in for the
 DeepSlice network (which is not needed to show what the cache does).
 """
 import json

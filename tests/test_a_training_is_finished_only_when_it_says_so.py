@@ -1,22 +1,18 @@
 """A training started from Setup & Tuning is finished when it says so, and
 auto-classify then classifies with THAT training's model.
 
-What went wrong:
-* The widget decided a training had finished by counting the model files in
-  the whole models folder: any other model file appearing meanwhile counted,
-  and a training that ended without a model was reported only by count.
-* A second Start replaced the first training's handle and added a second
-  timer; without auto-classify the process was not tracked at all.
-* Auto-classify called a method that does not exist, and before that compared
-  the new model with the model list's first entry (which has no file) in a
-  way that raised; and the "this run is automatic" flag stayed set after an
-  attempt that never started, so the next classification by hand was loaded
-  and compared without asking.
-
-Now the training script writes ``<its output folder>/DONE.json`` naming its
+The training script writes ``<its output folder>/DONE.json`` naming its
 model; the widget names that folder, keeps the process, refuses a second start
 while one runs, and classifies with the recorded model -- only on the brain
-the training was started for.
+the training was started for. Reasons:
+* Counting the model files in the whole models folder cannot tell when a
+  training has finished: any other model file appearing meanwhile would count,
+  and a training that ended without a model would be reported only by count.
+* A second Start must not replace the first training's handle or add a second
+  timer, and a training without auto-classify must still be tracked.
+* The "this run is automatic" flag must be cleared after an attempt that never
+  started, so the next classification by hand is not loaded and compared
+  without asking.
 """
 import importlib.util
 import json

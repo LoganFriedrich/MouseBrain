@@ -1,11 +1,11 @@
 """A registration counts only when it finished.
 
 brainreg writes brainreg.json BEFORE it registers anything, so a run that
-failed or was stopped left that file behind -- and every reader took it as a
-finished registration: step 3 skipped the brain as registered, the dashboards
-moved it on to "approve", a person could approve it, and the overnight batch
-(which checked boundaries.tiff) called it a failure on every retry of every
-night. These tests pin the fixed behaviour on synthetic brain folders.
+failed or was stopped leaves that file behind. If a reader took it as a
+finished registration, step 3 would skip the brain as registered, the
+dashboards would move it on to "approve", a person could approve it, and the
+overnight batch (which checks boundaries.tiff) would call it a failure on every
+retry of every night. These tests pin the rule on synthetic brain folders.
 Identifiers are invented.
 """
 import importlib.util

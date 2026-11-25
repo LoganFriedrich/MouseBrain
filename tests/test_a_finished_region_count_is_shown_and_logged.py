@@ -1,11 +1,11 @@
 """A region count that succeeds is shown in the Results tab and logged.
 
-When step 6 finished from the Results tab ("Run Region Counting"), the finish
-handler filled a comparison table that the tab no longer has: every
-successful count raised an error, the status line stayed at "Complete!
-Loading results..." for good, the tables were not filled and the session log
-entry was skipped. Now the tab's own tables are filled from the files step 6
-wrote, the status line gives the totals, and the count is logged.
+When step 6 finishes from the Results tab ("Run Region Counting"), the finish
+handler fills the tab's own tables from the files step 6 wrote, the status
+line gives the totals, and the count is logged. The handler must not depend on
+tables the tab does not have: that would raise an error on every successful
+count, leave the status line at "Complete! Loading results..." for good, leave
+the tables empty and skip the session log entry.
 """
 import pytest
 

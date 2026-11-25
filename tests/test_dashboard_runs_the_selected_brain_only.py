@@ -1,10 +1,10 @@
 """The pipeline dashboard's Run button acts on the selected brain, and only on it.
 
-It started extraction with no arguments -- step 2's interactive form, which asks
-a question and waits for Enter, while the dashboard captures the output and
-gives no way to answer -- and, once past that, extracted every brain waiting.
-It started registration with --batch only, which registers every brain still
-waiting, not the one selected.
+It must not start extraction with no arguments -- step 2's interactive form,
+which asks a question and waits for Enter, while the dashboard captures the
+output and gives no way to answer -- nor extract every brain waiting. And it
+must not start registration with --batch only, which registers every brain
+still waiting, not the one selected.
 """
 import importlib.util
 import json

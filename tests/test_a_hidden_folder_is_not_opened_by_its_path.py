@@ -2,10 +2,11 @@
 
 By the one folder rule a folder starting with '_' and anything inside a backup
 or archive mouse folder is not a brain: never listed, never processed, never
-found by name. Two lookups still joined whatever name they were given to the
-brains root first, so "<mouse>/_superseded_x" or "<backup mouse>/<brain>"
-returned the hidden folder with no message -- and the pre-filter then wrote
-into an archive, and the training-cube cutter cut cubes from one.
+found by name. Lookups must apply the rule to a given path too. A lookup that
+joins whatever name it is given to the brains root first would return the
+hidden folder ("<mouse>/_superseded_x" or "<backup mouse>/<brain>") with no
+message, and the pre-filter would then write into an archive and the
+training-cube cutter would cut cubes from one.
 Identifiers are invented.
 """
 import importlib.util

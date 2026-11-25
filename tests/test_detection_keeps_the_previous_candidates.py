@@ -1,8 +1,8 @@
 """Step 4 archives the previous candidates and ties the new file to its run.
 
-It wrote the fixed name detected_cells.xml over the previous one on every run,
-and each tracker row named only the folder -- so after a second run nothing
-said which run had written the file that went on to classification.
+Writing the fixed name detected_cells.xml over the previous file on every run
+would lose it, and a tracker row that named only the folder could not say
+which run wrote the file that went on to classification.
 """
 import json
 from pathlib import Path

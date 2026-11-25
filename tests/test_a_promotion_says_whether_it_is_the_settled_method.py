@@ -4,8 +4,8 @@ Paradigm Best one.
 A person may promote any classification run to production; that is never
 refused. But step 5 writes production only with the Paradigm Best method, so a
 production made any other way has to be visible: in promoted_from.json beside
-cells.xml and on the run's tracker row. Before, neither said which method made
-the files. Identifiers are invented.
+cells.xml and on the run's tracker row, which say which method made the files.
+Identifiers are invented.
 """
 import json
 from pathlib import Path

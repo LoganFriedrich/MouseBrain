@@ -2,17 +2,17 @@
 
 brainreg writes brainreg.json BEFORE it fits anything, so that file is left
 behind by a registration that failed, was stopped, or is running right now.
-Step 3, the status readers and step 4 already use the one rule
-(registration_approval). Three places still took the bare file as a finished
-registration:
+Step 3, the status readers and step 4 use one rule (registration_approval) for
+"finished". Three more places must use it too, because each would otherwise
+take the bare file as a finished registration:
 
-* util_backfill_registrations.py wrote a calibration-run row with status
-  'completed' ("Backfilled from existing registration") for it -- also for a
-  rejected registration, or one whose images were re-cropped since;
-* Setup & Tuning's "Run Region Counts" started step 6 on it (and on any
-  registration nobody had approved);
-* util_optimize_crop.py scored a trial whose registration stopped part-way as
-  a successful one.
+* util_backfill_registrations.py must not write a calibration-run row with
+  status 'completed' ("Backfilled from existing registration") for it, also
+  not for a rejected registration or one whose images were re-cropped since;
+* Setup & Tuning's "Run Region Counts" must not start step 6 on it (or on any
+  registration nobody approved);
+* util_optimize_crop.py must not score a trial whose registration stopped
+  part-way as a successful one.
 
 Identifiers are invented; every folder is built in tmp_path.
 """

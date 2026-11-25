@@ -1,9 +1,10 @@
 """A curation answer is kept once, with the label the person gave last.
 
-What went wrong: every C (cell) / X (not a cell) was appended to the training
-files, so an answer the person changed stayed in BOTH curated_cells.xml and
-curated_non_cells.xml -- the classifier was trained on the same point as a
-cell and as a non-cell -- and an answer given twice was written twice.
+Every C (cell) / X (not a cell) must replace the earlier answer for that
+point. If answers were only appended to the training files, an answer the
+person changed would stay in BOTH curated_cells.xml and curated_non_cells.xml
+-- the classifier would be trained on the same point as a cell and as a
+non-cell -- and an answer given twice would be written twice.
 """
 import pytest
 
@@ -59,7 +60,7 @@ def test_points_added_by_hand_move_too(tmp_path, monkeypatch):
 
 
 def test_an_unreadable_answers_file_is_never_replaced(tmp_path, monkeypatch):
-    """A damaged file stops the save; it used to be replaced by a new, nearly empty one."""
+    """A damaged file stops the save; it is never replaced by a new, nearly empty one."""
     w = curation_widget(tmp_path, monkeypatch)
     w.create_training_layers()
     candidates(w, [P], BRAIN_A)

@@ -1,10 +1,11 @@
 """An extraction stopped part-way is extracted again, never reused as complete.
 
 Step 2 reuses planes already in 1_Extracted_Full instead of reading the .ims
-again. It used to reuse them whenever a channel held ANY plane, taking the
-depth from the files it found -- so an extraction stopped part-way came back
-as a complete brain with a short stack, and metadata.json recorded the short
-depth. Identifiers are invented; a small array stands in for the .ims file.
+again, but only when the extraction is complete. Reusing them whenever a
+channel holds ANY plane (taking the depth from the files found) would let an
+extraction stopped part-way come back as a complete brain with a short stack,
+and metadata.json would record the short depth. Identifiers are invented; a
+small array stands in for the .ims file.
 """
 import importlib.util
 import json

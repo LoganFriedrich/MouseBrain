@@ -1,9 +1,9 @@
 """batch_process's pipeline_status.csv survives a crash and two writers at once.
 
-It was rewritten in place with no lock: a crash part-way left it cut short, and
-two batches each read it, changed their own brain's row and wrote it back, so
-the second write dropped the first one's change. It is written before every
-step, so both happened in ordinary use.
+The file is written before every step, so it must not be rewritten in place
+without a lock: a crash part-way would leave it cut short, and two batches
+that each read it, change their own brain's row and write it back would drop
+each other's change.
 """
 import csv
 import importlib.util
@@ -99,11 +99,11 @@ for k in range(n):
 
 
 def test_four_processes_writing_at_once_keep_every_row_and_never_stall(tmp_path):
-    """Real processes, not threads: on Windows a waiter that opened the lock
-    file while polling made the holder's delete fail; the failure was
-    swallowed, the finished holder's lock stayed, and every writer stalled for
-    the two-minute stale takeover -- some updates then timed out and their
-    rows were never written."""
+    """Real processes, not threads: on Windows a waiter that opens the lock
+    file while polling makes the holder's delete fail. If the failure were
+    swallowed, the finished holder's lock would stay, and every writer would
+    stall for the two-minute stale takeover -- some updates would then time out
+    and their rows would never be written."""
     import os
     import subprocess
     import sys

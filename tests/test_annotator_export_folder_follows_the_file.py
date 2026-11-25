@@ -1,8 +1,8 @@
 """The slice annotator's export folder follows the loaded file, unless the
 person chose a folder themselves.
 
-Before this, the folder was filled in only while the box was empty: after the
-first file, every later file exported into the first file's folder.
+The folder is not filled in only while the box is empty: otherwise, after the
+first file, every later file would export into the first file's folder.
 """
 from pathlib import Path
 
