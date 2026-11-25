@@ -132,8 +132,7 @@ def choose_levels(registered_brain, atlas_annotations, num_levels):
 
     brainreg writes both images in the atlas's orientation, and every BrainGlobe
     atlas runs front to back along its first axis, so each slice is a coronal
-    section. (This picture used to call them "dorsal to ventral"; they never
-    were.) The slices are spread over the stretch the atlas covers, not over
+    section. (They are not "dorsal to ventral".) The slices are spread over the stretch the atlas covers, not over
     the whole image: a brain kept with more brainstem than the atlas has -- it
     stops partway down the medulla -- would otherwise get a row drawn where no
     atlas is left to compare with, which looks like a failed registration when

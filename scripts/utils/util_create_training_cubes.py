@@ -299,8 +299,8 @@ def find_brain_path(brain_name: str) -> Optional[Path]:
             return brain_path
 
     # A brain folder placed directly in the brains root (old layout). Only a
-    # ONE-level name the folder rule does not hide. This used to come first
-    # and join ANY name to the root, so "<mouse>/_superseded_x" or
+    # ONE-level name the folder rule does not hide. This must not come first
+    # and join ANY name to the root, or "<mouse>/_superseded_x" or
     # "<backup mouse>/<brain>" -- folders the rule says are not brains --
     # was returned with no message and cubes were cut from an archive.
     direct_path = BRAINS_ROOT / name

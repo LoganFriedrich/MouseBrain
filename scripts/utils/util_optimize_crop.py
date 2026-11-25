@@ -304,7 +304,7 @@ def run_registration(
         # Success only when the registration FINISHED: every output file
         # brainreg writes is there (registration_approval.registration_complete).
         # brainreg.json alone is written before brainreg fits anything, so a
-        # trial that failed part-way used to be scored as a successful one.
+        # trial that failed part-way would be scored as a successful one.
         from mousebrain.registration_approval import (missing_registration_files,
                                                       registration_complete)
         success = result.returncode == 0 and registration_complete(output_folder)
