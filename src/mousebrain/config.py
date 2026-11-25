@@ -9,7 +9,7 @@ Path Resolution Order:
 1. Environment variable CONNECTOME_ROOT (if set)
 2. Environment variable SCI_CONNECTOME_ROOT (legacy, still supported)
 3. Auto-detect from script location (walks up to find 3_Nuclei_Detection)
-4. No drive-letter fallback (removed 2026-08-28): unresolved = loud, invalid root
+4. No drive-letter fallback: when nothing resolves the root is invalid and tools say so
 
 Usage in other scripts:
     from mousebrain.config import BRAINS_ROOT, SCRIPTS_DIR, MODELS_DIR, DATA_SUMMARY_DIR
@@ -147,17 +147,16 @@ def _get_root_path() -> Path:
 
     WHY THE SENTINEL IS ABSOLUTE, AND UNDER THE TEMP DIRECTORY
     ---------------------------------------------------------
-    It used to be ``Path("CONNECTOME_ROOT_NOT_CONFIGURED")`` -- RELATIVE. The
-    reasoning was sound for code that checks `exists()` before reading, but ten
+    A relative sentinel such as ``Path("CONNECTOME_ROOT_NOT_CONFIGURED")``
+    would be safe for code that checks `exists()` before reading, but ten
     places in this package create their directories with
     ``mkdir(parents=True, exist_ok=True)``, which does not check anything. A
-    relative sentinel therefore resolved against whatever the working directory
-    happened to be, and the tracker created
+    relative sentinel resolves against whatever the working directory happens
+    to be, so the tracker would create
     ``<cwd>/CONNECTOME_ROOT_NOT_CONFIGURED/3_Nuclei_Detection/2_Data_Summary/``
-    with a brand-new empty calibration_runs.csv in it. That can land at the
-    root of a shared drive, and the danger was never the stray folder:
-    it was a SECOND, empty tracker that later runs could have appended to,
-    silently orphaning the real record of every calibration run.
+    with a brand-new empty calibration_runs.csv in it. The danger is not the
+    stray folder: it is a SECOND, empty tracker that later runs could append
+    to, silently orphaning the real record of every calibration run.
 
     Absolute, and under the system temp directory, so an unconfigured install
     that writes anyway writes somewhere harmless and self-cleaning instead of
@@ -227,10 +226,10 @@ else:
     # None of the layouts is visible: point at the current layout's place
     # anyway. WHY not the legacy one: the layout is chosen once, at import. If
     # the share answers for the root but not yet for Tissue/MouseBrain_Pipeline
-    # (a reconnecting network drive), the old code chose the legacy folder,
-    # and the tracker then created <root>/3_Nuclei_Detection/2_Data_Summary/
-    # with a new, empty calibration_runs.csv that later runs appended to -- a
-    # fork of the record of every calibration run. Pointing at the expected
+    # (a reconnecting network drive), choosing the legacy folder would make
+    # the tracker create <root>/3_Nuclei_Detection/2_Data_Summary/ with a
+    # new, empty calibration_runs.csv that later runs append to -- a fork of
+    # the record of every calibration run. Pointing at the expected
     # place makes every reader find nothing and the tracker refuse to write
     # (it never creates its own 2_Data_Summary folder; see tracker.py).
     CLEARED_3D_DIR = TISSUE_ROOT / "MouseBrain_Pipeline" / "3D_Cleared"
@@ -247,11 +246,8 @@ DATA_SUMMARY_DIR = CLEARED_3D_DIR / "2_Data_Summary"
 # Where the tool's own scripts live: the repository's scripts/pipeline (steps 1-6)
 # and scripts/utils (util_*.py), beside the package that is running. Found from
 # this file, never from CONNECTOME_ROOT, so what runs is always the code that is
-# installed. Until the reorganization they sat in the pipeline's
-# 3D_Cleared/util_Scripts; that folder is data, is now empty, and is kept only as
-# the marker _find_repo_root looks for. Everything that still looked there -- the
-# napari pipeline dashboard, its registration QC button, batch_process, and
-# registration's own QC picture -- failed with "not found" until this pointed here.
+# installed. The pipeline's 3D_Cleared/util_Scripts folder holds no scripts; it
+# is kept empty only as the marker _find_repo_root looks for.
 TOOL_SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 PIPELINE_SCRIPTS_DIR = TOOL_SCRIPTS_DIR / "pipeline"
 UTIL_SCRIPTS_DIR = TOOL_SCRIPTS_DIR / "utils"
@@ -410,18 +406,17 @@ PROJECT_CODES = {
 def is_pipeline_candidate(folder) -> bool:
     """Whether a directory under a mouse folder should be treated as a brain.
 
-    Every step scans ``<brains root>/<mouse>/<brain>``, and until this existed
-    each step decided for itself what counted -- in practice, anything that was a
-    directory. That is too generous. People put things beside a brain: an archive
+    Every step scans ``<brains root>/<mouse>/<brain>``, so one rule must say
+    what counts; "any directory" is too generous. People put things beside a brain: an archive
     of a superseded delivery, a scratch folder, a copy kept while something is
     checked. Give one of those a ``0_Raw_IMS`` inside it and every step will scan
     it, find it complete, and report the real brain as already done.
 
-    That is not hypothetical. A brain was re-delivered with a better
-    stitch; its previous outputs were archived into a folder beside it, inside the
-    brain folder; and the next extraction found the ARCHIVE, announced "all
-    extractions complete", and did nothing -- leaving the two steps behind it to
-    fail for reasons that pointed nowhere near the cause.
+    Example: a brain is re-delivered with a better stitch and its previous
+    outputs are archived into a folder inside the brain folder. The next
+    extraction finds the ARCHIVE, announces "all extractions complete", and does
+    nothing, leaving the two steps behind it to fail for reasons that point
+    nowhere near the cause.
 
     The rule: a leading underscore means "not a brain". It is already the
     convention one level up (``_incoming``), it needs no registry of special
@@ -440,24 +435,18 @@ def is_pipeline_candidate(folder) -> bool:
 # case (see mouse_folder_skip_word for how each is matched).
 #
 # WHY ONE LIST
-# Each step used to carry its own copy, and the copies differed: extraction and
-# registration skipped script/backup/archive, detection, classification, counting
-# and RUN_PIPELINE also skipped summary, the organizer also skipped old, and the
-# napari widgets, the overnight batch and several utilities skipped nothing. So a
-# folder such as "backup_2" in the brains root was a mouse to some steps and not
-# to others, and the steps disagreed about which brains exist. The list is the
-# union of the old copies: a folder any step already refused to treat as a mouse
-# is refused by all of them, so no step starts touching a folder it used to leave
-# alone -- with one exception: the organizer (step 1) used to skip any name that
-# merely contained the letters o-l-d, and now treats such a name ("GOLD_01",
-# "HOLDOUT_A", "Threshold_Test", "oldbrains") as a mouse folder, so it may move a
-# .ims out of one into the brain layout. See HOW EACH WORD IS MATCHED for why.
-# The organizer also gained two refusals it did not have: it no longer searches
-# a folder in the brains root whose name starts with "_" or ".", nor one whose
-# name holds the word "summary" (it used to search both for .ims files). Both
-# were already "not a mouse" to the later steps, so a .ims the organizer placed
-# from one would have gone nowhere; "_" is the documented way to keep a folder
-# from being searched.
+# Every step and widget uses this one list. With a separate list per step, a
+# folder such as "backup_2" in the brains root would be a mouse to some steps
+# and not to others, and the steps would disagree about which brains exist.
+# A folder any step refuses to treat as a mouse is refused by all of them.
+# The organizer (step 1) does not search a folder in the brains root whose name
+# starts with "_" or ".", nor one whose name holds the word "summary": the later
+# steps treat those as "not a mouse", so a .ims the organizer placed from one
+# would go nowhere. "_" is the documented way to keep a folder from being
+# searched. Names that merely contain the letters o-l-d ("GOLD_01",
+# "HOLDOUT_A", "Threshold_Test", "oldbrains") are mouse folders, so the
+# organizer may move a .ims out of one into the brain layout. See HOW EACH WORD
+# IS MATCHED for why.
 #
 # HOW EACH WORD IS MATCHED
 # - script, backup, archive, summary: ANYWHERE in the name, as every step that
@@ -468,8 +457,8 @@ def is_pipeline_candidate(folder) -> bool:
 #   extracted, registered, detected and counted, and searched by the organizer).
 #   A whole-word plural is also caught ("Summaries", which does not contain the
 #   letters "summary").
-# - old: only as a WHOLE WORD. Only the organizer used to skip it, and matched
-#   anywhere it would drop, from every step and with no message, a mouse folder
+# - old: only as a WHOLE WORD. Matched anywhere it would drop, from every step
+#   and with no message, a mouse folder
 #   whose name merely holds the letters -- a project prefix such as "GOLD" or
 #   "HOLD", or "threshold", "scaffold". A word is a run of letters or of digits
 #   split at "_", "-", spaces, dots and lower-to-upper case changes, so
@@ -553,11 +542,11 @@ def iter_brains(root=None, report_skipped: bool = False, problems=None):
     name, so every listing shows brains in the same order.
 
     WHY IT EXISTS
-    Before it, each listing decided for itself, and most decided "any
-    directory". An archive kept beside a brain (``_superseded_<date>``) was then
-    offered as a brain in the napari brain lists, loaded by name in the
-    utilities, and -- because it looks complete -- reported as the brain being
-    done. A rule written out in twenty places is twenty rules; this is one.
+    If each listing decided for itself ("any directory"), an archive kept
+    beside a brain (``_superseded_<date>``) would be offered as a brain in the
+    napari brain lists, loaded by name in the utilities, and -- because it
+    looks complete -- reported as the brain being done. A rule written out in
+    twenty places is twenty rules; this is one.
 
     ``report_skipped``: print one line for each folder passed over because its
     name holds a skip word, so a brain missing from a list is explained where
@@ -639,8 +628,8 @@ def explain_brain_not_found(brain_name: str, root=None) -> str:
     is passed over (its name has a skip word, or starts with "_" or "."), or it
     itself starts with "_" or ".". "" when no such folder exists.
 
-    WHY: a lookup by name used to fail with only "not found", so a brain kept
-    in a folder the rule passes over was missing with no reason given.
+    WHY: a lookup that fails with only "not found" gives no reason when a
+    brain is kept in a folder the rule passes over.
     """
     from pathlib import Path as _Path
     root = _Path(root) if root is not None else BRAINS_ROOT
@@ -689,9 +678,9 @@ PIPELINE_INPUT_PRIORITY = ("manual", "cropped", "full")
 # WHY IT IS RECORDED RATHER THAN ASSUMED
 # Everything after registration has to work in the SAME space the atlas was
 # fitted to, or cells land in the wrong structures while every number still looks
-# reasonable. Steps used to assume that space was the crop folder, which is true
-# only when a crop was made here. Recording it makes the assumption explicit and
-# lets a later step check instead of guess.
+# reasonable. Assuming that space is the crop folder holds only when a crop was
+# made here. Recording it makes the space explicit and lets a later step check
+# instead of guess.
 REGISTERED_SPACE_FILE = "registered_from.json"
 
 
@@ -701,8 +690,8 @@ class RegisteredImagesMissing(FileNotFoundError):
     did not finish).
 
     WHY THIS IS AN ERROR AND NOT A FALLBACK
-    registered_input used to return the caller's default folder instead, with
-    no message. Cell coordinates are positions in the registered images; read
+    Returning the caller's default folder instead, with no message would be
+    wrong: cell coordinates are positions in the registered images; read
     against another folder's images (a crop of a different size, or the full
     extraction), every cell lands in the wrong place and every count still
     looks plausible. Stopping, with the folder named, is the only safe answer.
