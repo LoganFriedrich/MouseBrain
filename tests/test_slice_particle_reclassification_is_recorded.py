@@ -2,11 +2,11 @@
 
 Changing the Background or Min % above background after a particle analysis
 re-classifies the same particles and rewrites the saved results
-(particles.csv). It used to leave no trace in the tracker: the analysis's row
-still stated the old background and counts, so the saved results no longer
-matched any record. Now each settled change is logged as its own
-particle_analysis row whose parent_run is the analysis that found the
-particles; the analysis's own row is left as it was.
+(particles.csv). Without a tracker row the analysis's row would still state
+the old background and counts, so the saved results would match no record.
+Each settled change is logged as its own particle_analysis row whose
+parent_run is the analysis that found the particles; the analysis's own row
+is left as it was.
 """
 from slice_widget_helpers import Control, make_particle_widget
 

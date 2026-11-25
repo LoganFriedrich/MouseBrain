@@ -1,10 +1,10 @@
 """Export Batch Results registers what it wrote.
 
-Defect covered: Export Batch Results wrote the summary, detail and settings
-files to the path a person chose and made no registry entry, so whatever
-pulls the registry never saw a batch run from the 2D window. Now the files
-stay where they were saved and are also registered, with the batch settings,
-under <project>_Window_Batch, keyed by the batch folder's name.
+Export Batch Results writes the summary, detail and settings files to the
+path a person chose and also registers them, with the batch settings, under
+<project>_Window_Batch, keyed by the batch folder's name; without a registry
+entry, whatever pulls the registry would never see a batch run from the 2D
+window.
 """
 import json
 

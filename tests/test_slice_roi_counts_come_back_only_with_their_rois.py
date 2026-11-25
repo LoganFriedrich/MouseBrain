@@ -1,9 +1,9 @@
 """ROI counts (roi_detail.csv) come back only together with the ROIs they
 were counted in (rois.json).
 
-The restore read roi_detail.csv BEFORE rois.json, so its check "belongs to
-rois.json, which was not restored" could never fire: with rois.json
-unreadable, the counts came back with no ROIs on screen to explain them.
+The restore reads rois.json BEFORE roi_detail.csv, so the check "belongs to
+rois.json, which was not restored" can fire: with rois.json unreadable, the
+counts must not come back with no ROIs on screen to explain them.
 """
 import pandas as pd
 

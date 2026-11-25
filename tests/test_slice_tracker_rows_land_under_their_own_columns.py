@@ -1,10 +1,10 @@
 """A row appended to the 2D tracker lands under its own column names.
 
-Rows used to be appended in the code's column order whatever the file's
-header said. After a version added columns (the particle-analysis ones), the
-first particle row written to a file with the older header put its values
+Rows must not be appended in the code's column order whatever the file's
+header says. If a version adds columns (the particle-analysis ones), the first
+particle row written to a file with the older header would put its values
 under the wrong names -- channel names under input_path, an area under
-output_path -- and the next rewrite made that permanent.
+output_path -- and the next rewrite would make that permanent.
 """
 import csv
 
@@ -50,7 +50,7 @@ def test_a_file_written_before_the_newest_columns_gets_them_before_a_row_is_adde
                           "input_path": "old.nd2"}])
     t = SliceTracker(csv_path=path)
     run_id = _log_particle(t)
-    t.update_status("det_1", status="completed")  # the rewrite that used to fix the damage in place
+    t.update_status("det_1", status="completed")  # the rewrite must not make the damage permanent
     _, rows = _rows(path)
     by_id = {r["run_id"]: r for r in rows}
     _check_particle_row(by_id[run_id])

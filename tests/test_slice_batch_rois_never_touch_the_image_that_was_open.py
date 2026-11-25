@@ -2,10 +2,10 @@
 image that was open before the batch, and leaves no batch image's particles
 in the window's own state.
 
-Entering the batch's ROI drawing used to put the batch image's particles in
-the window's single-image state while the window still named the image
-opened before the batch as the one on screen. The next save -- Save State,
-Count in ROI(s), or opening another image afterwards -- wrote the batch
+Entering the batch's ROI drawing must not put the batch image's particles in
+the window's single-image state while the window still names the image
+opened before the batch as the one on screen: the next save -- Save State,
+Count in ROI(s), or opening another image afterwards -- would write the batch
 image's particles into THAT image's _analysis folder, over its own results.
 """
 import numpy as np

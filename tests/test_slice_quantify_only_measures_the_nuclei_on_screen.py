@@ -1,7 +1,7 @@
 """Colocalize and Quantify are off until the image and nuclei on screen have
 been detected and measured.
 
-Both stayed on across a new image and across a new detection, so the
+If both stayed on across a new image and across a new detection, the
 previous image's nuclei could be colocalized against the new image and the
 previous detection's measurements counted as if they described the new
 nuclei.

@@ -2,9 +2,8 @@
 in the 2D calibration tracker: completed with what it found, or failed with
 why. No row is left 'started'.
 
-Run Batch Analysis used to leave no trace in the tracker at all: a batch's
-results could not be found in the Run History, and nothing said which
-settings had produced them.
+Without these rows, a batch's results could not be found in the Run History,
+and nothing would say which settings had produced them.
 """
 import csv
 
@@ -73,8 +72,8 @@ def test_a_tracker_that_refuses_is_tried_once_and_the_window_says_so(tmp_path, m
 def test_a_failure_building_one_images_row_is_a_tracker_problem_not_the_end_of_the_batch(
         tmp_path, monkeypatch):
     """The row is built from the image's results before it is written. An
-    unexpected failure there used to escape the batch loop, so the images
-    already analyzed lost their in-memory results before export."""
+    unexpected failure there must not escape the batch loop: the images
+    already analyzed would lose their in-memory results before export."""
     import mousebrain.plugin_2d.sliceatlas.napari_plugin.main_widget as mw
 
     images = {f"A_0{k}.tif": two_channel_image(1) for k in range(1, 4)}

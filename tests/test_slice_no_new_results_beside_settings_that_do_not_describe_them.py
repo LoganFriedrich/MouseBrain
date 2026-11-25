@@ -2,10 +2,10 @@
 
 An image's saved analysis is not restored onto the image loaded with
 another rotation, z-projection or channel choice, and its files are kept.
-But a detection or colocalization on the differently loaded pixels then
-wrote NEW files (nuclei.npz, measurements.csv) into the same folder, beside
-the OLD settings.json. Opened again, the image was loaded with the old
-settings, nothing looked amiss, and the new nuclei were restored onto
+A detection or colocalization on the differently loaded pixels must then not
+write NEW files (nuclei.npz, measurements.csv) into the same folder, beside
+the OLD settings.json: opened again, the image would be loaded with the old
+settings, nothing would look amiss, and the new nuclei would be restored onto
 pixels they were not made on whenever the image kept its shape (a channel
 or z-projection change, a 180-degree turn, 90 degrees on a square image).
 """

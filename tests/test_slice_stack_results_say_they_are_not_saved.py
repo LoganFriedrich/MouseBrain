@@ -1,8 +1,8 @@
 """A folder opened as one stack has no single image to file results under,
-so nothing of its analysis is saved -- and the window now says so.
+so nothing of its analysis is saved -- and the window says so.
 
-Its results used to vanish on the next image with only a console line, and
-a run on a stack with the Sample ID box emptied crashed on the missing
+The results must not vanish on the next image with only a console line, and
+a run on a stack with the Sample ID box emptied must not crash on the missing
 image name.
 """
 import numpy as np

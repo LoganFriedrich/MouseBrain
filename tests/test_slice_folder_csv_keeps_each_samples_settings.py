@@ -1,8 +1,9 @@
 """Append to Folder CSV keeps the settings each sample was analyzed with.
 
-The folder-wide CSV carried ONE '# Settings:' line, rewritten with the
-current settings on every append, so every earlier sample's rows were
-labeled with settings they were not made with.
+The folder-wide CSV carries one '# Settings <sample>:' line per sample, not
+ONE '# Settings:' line rewritten with the current settings on every append:
+that would label every earlier sample's rows with settings they were not made
+with.
 """
 import json
 

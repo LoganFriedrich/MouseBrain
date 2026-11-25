@@ -1,12 +1,12 @@
 """A saved analysis is restored only onto pixels loaded the way it was made.
 
-The restore used to apply the saved rotation, z-projection and channel
-numbers AFTER the image had loaded with whatever the controls held, so
-labels saved on a turned image were drawn on an unturned one (a square
-image keeps its shape, so nothing showed it), and the restored settings
-silently carried to the next image's load. Now the saved load settings are
-set before the image loads, and a restore onto pixels loaded another way
-(a reload with channels changed by hand) is refused and its files kept.
+The saved rotation, z-projection and channel numbers are applied BEFORE the
+image loads, not after it has loaded with whatever the controls held: labels
+saved on a turned image would otherwise be drawn on an unturned one (a square
+image keeps its shape, so nothing would show it), and the restored settings
+would silently carry to the next image's load. A restore onto pixels loaded
+another way (a reload with channels changed by hand) is refused and its files
+kept.
 """
 import json
 

@@ -2,9 +2,9 @@
 
 When a run finishes while calibration_runs.csv is held open (a spreadsheet
 program has it), the napari window cannot write the result and -- so as not
-to freeze again -- does not try a second write. It used to drop the result
-there, so the row said 'started' for ever although the run had finished. The
-window now keeps the result and writes it at the next chance (the next run it
+to freeze -- does not try a second write at once. It must not drop the result
+there, or the row would say 'started' for ever although the run had finished.
+The window keeps the result and writes it at the next chance (the next run it
 starts, a timer, the program closing), without waiting on a file that still
 refuses it, and only while the row still says 'started'.
 """
@@ -148,7 +148,7 @@ def test_the_tracker_writes_a_kept_result_only_over_a_started_row(tmp_path):
 
 def test_a_failed_run_the_file_refused_to_mark_is_marked_failed_later(tmp_path, monkeypatch):
     # A detection that FAILS while the file is held open: marking its row
-    # failed is refused too, and the row used to say 'started' for ever.
+    # failed is refused too, and the row must not say 'started' for ever.
     w = _window(tmp_path, monkeypatch)
     w._run_detection()
     run_id = w._detection_run_id

@@ -1,8 +1,8 @@
 """The Sample ID box names the image on screen, however it was opened.
 
-It was set by Browse File only, so after Prev/Next or the image queue every
-tracker row and Quantify export went under the previously browsed image's
-name.
+It must not be set by Browse File only: after Prev/Next or the image queue
+every tracker row and Quantify export would otherwise go under the previously
+browsed image's name.
 """
 from slice_widget_helpers import browse, choose_folder, finish_load, image_files, make_loading_widget
 

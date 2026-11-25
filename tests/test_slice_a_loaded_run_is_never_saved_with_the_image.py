@@ -3,11 +3,11 @@ and the saved settings name the colocalization the saved measurements came
 from.
 
 A loaded run brings back its measurements without its nuclei. Saved with the
-image, it became a measurements.csv with no nuclei.npz beside it; every later
-opening refused it ("has no saved nuclei") and kept it, so no later
-colocalization of that image could be saved again. The settings also named
-whatever run the last Colocalize click had made -- on another image, or a run
-that failed -- instead of the run the measurements came from.
+image, it would become a measurements.csv with no nuclei.npz beside it; every
+later opening would refuse it ("has no saved nuclei") and keep it, so no later
+colocalization of that image could be saved again. The settings name the run
+the measurements came from, not whatever run the last Colocalize click made
+(on another image, or a run that failed).
 """
 import json
 from types import SimpleNamespace

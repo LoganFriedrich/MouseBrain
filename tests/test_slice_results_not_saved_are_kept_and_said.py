@@ -2,11 +2,11 @@
 image does not throw them away without asking, and the window keeps saying
 that they were not saved.
 
-The save made on the way to the next image used to fail with only a status
-line (a file of the _analysis folder open in another program); the results
-were then cleared and the status line overwritten at once by "Loading
-image...", so the only trace was in the console. A folder stack's results,
-which are never saved, vanished the same way.
+If the save made on the way to the next image fails (a file of the _analysis
+folder open in another program), a status line alone is not enough: the
+results would be cleared and the status line overwritten at once by "Loading
+image...", leaving the only trace in the console. A folder stack's results,
+which are never saved, must not vanish the same way.
 """
 import numpy as np
 import pandas as pd

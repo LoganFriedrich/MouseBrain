@@ -1,11 +1,11 @@
 """A 2D tracker saved by a spreadsheet program as "CSV UTF-8" keeps its runs.
 
 Such a file starts with a byte-order mark (BOM). Read as plain UTF-8 the first
-column name became BOM+'run_id': the next open of the tracker added a second,
-empty 'run_id' column, and no existing run could be found by its id again --
-status updates, mark-as-best and failing an unfinished run all missed every
-old row. And a file already damaged that way (two 'run_id' columns, the
-right-hand one empty) must be repaired by the next rewrite, never have its
+column name would become BOM+'run_id': the next open of the tracker would add
+a second, empty 'run_id' column, and no existing run could be found by its id
+again -- status updates, mark-as-best and failing an unfinished run would all
+miss every old row. And a file already damaged that way (two 'run_id' columns,
+the right-hand one empty) must be repaired by the next rewrite, never have its
 ids blanked by it.
 """
 import csv

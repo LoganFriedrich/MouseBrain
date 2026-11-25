@@ -1,9 +1,9 @@
 """Opening another image saves the results of the image on screen and then
 forgets them, whichever way the image is opened.
 
-Browse File used to switch to the new image without saving or clearing, so
-image A's particles stayed in memory and the next Save State wrote them into
-image B's _analysis folder.
+Browse File must not switch to the new image without saving or clearing, or
+image A's particles would stay in memory and the next Save State would write
+them into image B's _analysis folder.
 """
 import pandas as pd
 import numpy as np

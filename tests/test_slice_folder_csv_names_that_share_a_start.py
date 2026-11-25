@@ -1,9 +1,9 @@
 """A folder-wide CSV keeps the settings line of every sample, including one
 whose name begins with another sample's name followed by ': '.
 
-Each sample's line is '# Settings <sample>: {...}'. Saving sample 'A' used to
-drop every line starting '# Settings A: ', which is also how the line of a
-sample named 'A: x' starts, so that sample's settings were lost.
+Each sample's line is '# Settings <sample>: {...}'. Saving sample 'A' must
+drop only its own line, not every line starting '# Settings A: ', which is
+also how the line of a sample named 'A: x' starts.
 """
 import json
 

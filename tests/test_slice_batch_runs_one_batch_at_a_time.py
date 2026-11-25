@@ -2,12 +2,12 @@
 nothing can change that folder or open another image until it is done.
 
 The batch runs on the window's own thread and lets the window answer clicks
-between images. Only the Run button used to be turned off, so choosing
-another batch folder part-way replaced the batch's file list and emptied its
-results while the run kept going: the images analyzed after the click landed
-in the new batch's results under the old batch's file names, and the ones
-before it were lost. An image opened part-way was analyzed against nothing
-the batch knew about.
+between images, so the controls that could interfere must be turned off, not
+only the Run button. Choosing another batch folder part-way would replace the
+batch's file list and empty its results while the run kept going: the images
+analyzed after the click would land in the new batch's results under the old
+batch's file names, and the ones before it would be lost. An image opened
+part-way would be analyzed against nothing the batch knew about.
 """
 from types import SimpleNamespace
 

@@ -1,9 +1,10 @@
 """Prev/Next walk the folder of the image on screen, and the position label
 names that image, however it was opened.
 
-The list Prev/Next walk was built once, from the first image loaded: after
-Browse File or the image queue opened an image in another folder, Prev/Next
-kept walking the first folder and the label named an image not on screen.
+The list Prev/Next walk must not be built once, from the first image loaded:
+after Browse File or the image queue opened an image in another folder,
+Prev/Next would keep walking the first folder and the label would name an
+image not on screen.
 """
 from slice_widget_helpers import browse, finish_load, image_files, make_loading_widget
 

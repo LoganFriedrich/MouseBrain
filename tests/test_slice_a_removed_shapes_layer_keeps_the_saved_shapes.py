@@ -1,10 +1,10 @@
 """Shapes a person drew are not emptied on disk because their layer vanished
 from napari's layer list.
 
-When the ROIs layer of a restored image was removed from the layer list (the
-list's delete button, another plugin), leaving the image overwrote the saved
-rois.json with an empty list: the save could not tell a removed layer from
-ROIs a person deleted, and the polygons were kept nowhere. Now a removed
+When the ROIs layer of a restored image is removed from the layer list (the
+list's delete button, another plugin), leaving the image must not overwrite
+the saved rois.json with an empty list: the save cannot tell a removed layer
+from ROIs a person deleted, and the polygons would be kept nowhere. A removed
 layer leaves the file as it is until shapes are drawn again or the Clear
 button is clicked.
 """
@@ -42,7 +42,7 @@ def test_a_removed_rois_layer_leaves_the_saved_rois_as_they_are(tmp_path, monkey
     w._save_analysis_state()
     assert len(_saved_rois(image)) == 1
 
-    # Leaving the image (the save that used to empty the file) keeps them too.
+    # Leaving the image (a save that must not empty the file) keeps them too.
     w._leave_current_image()
     assert len(_saved_rois(image)) == 1
 
@@ -86,9 +86,9 @@ def test_rois_deleted_inside_the_layer_are_still_saved_as_none_drawn(tmp_path, m
 
 
 # Once shapes drawn on the new layer are saved, the file follows that layer
-# again: deleting those shapes is saved as none drawn. (The removal used to be
-# remembered until a Clear button or another image, so the deleted shapes
-# stayed in the file and came back, and were counted, on the next open.)
+# again: deleting those shapes is saved as none drawn. (If the removal were
+# remembered until a Clear button or another image, the deleted shapes would
+# stay in the file and come back, and be counted, on the next open.)
 
 def test_rois_drawn_after_removal_then_deleted_are_saved_as_none_drawn(tmp_path, monkeypatch):
     w, image = _reopened_with_rois(tmp_path, monkeypatch)

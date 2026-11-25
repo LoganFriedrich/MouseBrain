@@ -1,10 +1,10 @@
 """A detection with insets replaces the nuclei just as a whole-image
 detection does, so it forgets what was measured on the nuclei it replaces.
 
-The whole-image detection already forgot the measurements and turned
-Quantify off; the inset path did not. Quantify then counted the previous
-colocalization as if it described the new nuclei, and leaving the image
-saved the old measurements.csv beside the new nuclei.npz as one pair.
+The whole-image detection forgets the measurements and turns Quantify off; the
+inset path must too. Otherwise Quantify would count the previous colocalization
+as if it described the new nuclei, and leaving the image would save the old
+measurements.csv beside the new nuclei.npz as one pair.
 """
 import numpy as np
 import pandas as pd

@@ -1,9 +1,10 @@
 """The Run History panel always lists a sample's marked-best runs.
 
-Defect covered: the panel listed only the 20 newest completed runs of the
-sample. The 2D batch stops when marked runs of its project disagree and tells
-the person to clear the unwanted mark in this panel; a mark older than those
-20 runs could not be selected, so the stop could not be cleared in the GUI.
+The panel lists the 20 newest completed runs of the sample and, in addition,
+every marked-best run. The 2D batch stops when marked runs of its project
+disagree and tells the person to clear the unwanted mark in this panel; a
+mark older than those 20 runs must still be selectable, or the stop could not
+be cleared in the GUI.
 """
 
 import csv
