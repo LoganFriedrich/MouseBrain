@@ -145,5 +145,5 @@ permissions only an administrator can clear. So:
 - if a run switches it back on anyway (for example with `-o addopts=`), the
   test suite moves the cache into the system temp folder.
 
-Leftover `pytest-cache-files-...` folders from before this was in place are
-skipped by the test run; an administrator can delete them.
+Leftover `pytest-cache-files-...` folders (from a run that had the cache on)
+are skipped by the test run; an administrator can delete them.
