@@ -73,10 +73,10 @@ CSV_COLUMNS = [
     "coloc_negative_cells",  # single-channel runs only
     "coloc_positive_fraction",  # single-channel runs only
     # Dual-channel runs (coloc_signal_channel 'dual'): the four classes each
-    # nucleus falls in. WHY separate columns: these runs used to put the
-    # 'both channels' count in coloc_positive_cells and the 'neither' count
-    # in coloc_negative_cells, where anything reading the column as a
-    # single-channel positive/negative count misread it. ch1 is the
+    # nucleus falls in. WHY separate columns: putting the 'both channels'
+    # count in coloc_positive_cells and the 'neither' count in
+    # coloc_negative_cells would be misread by anything reading those
+    # columns as single-channel positive/negative counts. ch1 is the
     # nuclear (red) channel, ch2 the second signal (green).
     "coloc_dual_cells",
     "coloc_ch1_only_cells",
