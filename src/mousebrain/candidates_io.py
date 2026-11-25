@@ -2,14 +2,13 @@
 
 WHY
 Step 4 writes ``4_Cell_Candidates/detected_cells.xml`` (or the same name under
-``from_<folder>/``) -- a fixed name -- and used to overwrite it on every run.
-Each run's tracker row named only the folder, so after a second run every
-earlier row pointed at a file the later run had replaced: two runs with
-different settings could not be told apart on disk, and a candidates file that
-reached classification and counting could have been written by a run nobody
-could identify.
+``from_<folder>/``) -- a fixed name. Overwriting it on every run would leave
+each run's tracker row, which names only the folder, pointing at a file a later
+run replaced: two runs with different settings could not be told apart on disk,
+and a candidates file that reached classification and counting could have been
+written by a run nobody could identify.
 
-Now, just before a successful run saves its candidates:
+So, just before a successful run saves its candidates:
   * the previous ``detected_cells.xml`` (with its record, below) moves into
     ``_archive/<time>/`` in the same folder -- the pattern registration and
     production classification use. Step 5 and the status readers look only at
