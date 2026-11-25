@@ -2232,7 +2232,7 @@ class TuningWidget(QWidget):
             layer.metadata['is_best'] = is_best
             layer.metadata['cell_type'] = actual_cell_type
             # The brain this run belongs to, so the Best buttons act on it
-            # only while that brain is selected (brain_context, rule 4). A run
+            # only while that brain is selected (brain_context). A run
             # of another brain is left untagged: no Best button acts on it.
             from mousebrain.brain_context import tag_run_layer
             from mousebrain.tracker import same_brain_name
@@ -6089,7 +6089,7 @@ class TuningWidget(QWidget):
 
         ``replace=True``: a person's answer; the last answer wins and the point
         leaves the other file. ``replace=False``: a suggestion; only points
-        with no answer yet are labelled. Returns the counts, or None when
+        with no answer yet are labeled. Returns the counts, or None when
         nothing was saved -- and then the person has been told so: an answer is
         never dropped silently.
         """
@@ -6678,7 +6678,7 @@ class TuningWidget(QWidget):
             cells_xmls = {}
             if cells_dir.exists():
                 for xml_file in sorted(cells_dir.glob("curated_cells_*.xml")):
-                    # Extract timestamp from filename: curated_cells_20260216_082922.xml
+                    # Extract timestamp from filename: curated_cells_<date>_<time>.xml
                     match = re.search(r'(\d{8}_\d{6})', xml_file.name)
                     ts = match.group(1) if match else xml_file.stem
                     cells_xmls[ts] = xml_file
@@ -8246,7 +8246,7 @@ class TuningWidget(QWidget):
         positional 'checked' value.)
 
         Uses cyan for cells and magenta for rejected - these are complementary colors
-        that are easily distinguished on grey background and from each other.
+        that are easily distinguished on gray background and from each other.
         Colors are defined in CELL_COLORS for consistency with legend.
 
         Always creates both layers (cells and rejected) even if empty, so that
@@ -8465,7 +8465,7 @@ class TuningWidget(QWidget):
                     bg_norm = np.clip((bg_data - b_low) / (b_high - b_low + 1e-6), 0, 1)
 
                     # Additive blending of green (signal) + magenta (background)
-                    # Same approach as napari: when balanced, green + magenta = grey
+                    # Same approach as napari: when balanced, green + magenta = gray
                     # Where signal > background → greenish (true cells)
                     # Where background > signal → magentaish
                     #
@@ -8474,7 +8474,7 @@ class TuningWidget(QWidget):
                     #   Magenta = (bg, 0, bg)
                     #   Combined = (bg, signal, bg)
                     #
-                    # When signal == background: (x, x, x) = grey
+                    # When signal == background: (x, x, x) = gray
                     # When signal > background: more green
                     r_channel = (bg_norm * 255).astype(np.uint8)
                     g_channel = (signal_norm * 255).astype(np.uint8)
@@ -8500,7 +8500,7 @@ class TuningWidget(QWidget):
                 draw = ImageDraw.Draw(overlay)
 
                 # High-contrast colors with semi-transparency
-                # Cyan for cells (visible on grey), Magenta for rejected (distinct from cyan)
+                # Cyan for cells (visible on gray), Magenta for rejected (distinct from cyan)
                 cell_color = (0, 255, 255, 180)       # Cyan, semi-transparent
                 rejected_color = (255, 0, 128, 150)  # Magenta-red, semi-transparent
 
