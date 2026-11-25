@@ -5,9 +5,6 @@ drag-drop open any ``.ims`` directly -- no CLI arguments, no pipeline organizing
 Each channel is loaded lazily through the Imaris resolution pyramid (multiscale)
 and scaled to true microns, so the scale bar and 3-D aspect are physically
 correct.
-
-This is the GUI counterpart of the standalone ``view_raw_ims.py`` viewer: the
-same 3-D channel/level adapter, exposed to napari as a reader contribution.
 """
 from __future__ import annotations
 
@@ -86,7 +83,7 @@ def read_ims(path):
             "blending": "additive" if n_chan > 1 else "translucent",
         }
         if len(pyramid) > 1:
-            # multiscale: napari picks the level to fetch based on zoom (lazy over NAS)
+            # multiscale: napari picks the level to fetch based on zoom (lazy: only the data in view is read)
             layers.append((pyramid, {**meta, "multiscale": True}, "image"))
         else:
             layers.append((pyramid[0], meta, "image"))
