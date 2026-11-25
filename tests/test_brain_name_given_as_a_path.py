@@ -1,10 +1,10 @@
 """A brain named by its folder path parses like the brain's own name.
 
 WHY: the calibration-run tracker logs some runs with the brain as
-"<mouse>/<brain>". Splitting that on '_' across the slash made the subject
-"PRJ_01_02/101" and the imaging paradigm "PRJ_01_02_1p625x_z4" -- a paradigm
-per brain -- so "the best settings for this kind of imaging" never matched a
-run on another brain. Identifiers here are synthetic.
+"<mouse>/<brain>". Splitting that on '_' across the slash would make the
+subject "PRJ_01_02/101" and the imaging paradigm "PRJ_01_02_1p625x_z4" -- a
+paradigm per brain -- so "the best settings for this kind of imaging" would
+never match a run on another brain. Identifiers here are synthetic.
 """
 import pytest
 

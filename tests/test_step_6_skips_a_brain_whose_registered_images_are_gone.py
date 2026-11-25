@@ -3,9 +3,9 @@ counts the others.
 
 Cell positions only mean something in the images the atlas was fitted to.
 When those are gone, step 6 must not count the brain against another folder,
-nor fall back to its direct atlas lookup (it used to catch every error and
-write direct-lookup counts). And one such brain must not abort the whole
-batch, leaving every brain after it uncounted. Identifiers are invented.
+nor fall back to its direct atlas lookup by catching every error and writing
+direct-lookup counts. And one such brain must not abort the whole batch,
+leaving every brain after it uncounted. Identifiers are invented.
 """
 import contextlib
 import importlib.util
@@ -103,9 +103,9 @@ def test_the_counting_does_not_fall_back_to_direct_lookup(step6, tmp_path, monke
 def test_a_counted_brain_has_its_result_on_its_tracker_row(step6, tmp_path, monkeypatch,
                                                           succeeded, status):
     """The count's result lands on its tracker row: completed with the cell
-    total when the count worked, failed when it did not. (Once the skip above
-    was added, the update sat unreachable after a ``continue`` and every
-    successful count ended as 'failed: ended without recording a result'.)"""
+    total when the count worked, failed when it did not. (The update must not
+    sit after the skip's ``continue``, or every successful count would end as
+    'failed: ended without recording a result'.)"""
     from mousebrain.tracker import ExperimentTracker
     root = tmp_path / "1_Brains"
     _brain(root, "903_PROJ_09_03_2p5x_z5")

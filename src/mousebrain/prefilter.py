@@ -71,11 +71,11 @@ def _raw_to_downsampled(points_raw, registration_path, orientation, voxel_sizes,
     the atlas's. This is BrainGlobe's own transform for that step, the one step 6
     counts with.
 
-    It replaced a shortcut that only reordered the axes (2026-10-27). With the
-    flips missing, a candidate was looked up ~3 mm away up-down on an 'iar' brain
-    and also ~6 mm front-back on an 'ipr' brain; for 2-3% of candidates or fewer
-    did it give the same region as this transform, so "near the surface" removed
-    an essentially arbitrary set of candidates.
+    A shortcut that only reorders the axes is not enough. With the flips
+    missing, a candidate is looked up millimetres away (up-down on an 'iar'
+    brain, front-back on an 'ipr' brain) and almost never lands in the same
+    region as with this transform, so "near the surface" would remove an
+    essentially arbitrary set of candidates.
     """
     import brainglobe_space as bgs
     from brainglobe_utils.brainreg.transform import (
@@ -657,10 +657,10 @@ def find_brain_path(brain_name: str) -> Optional[Path]:
     over directories that just happen to match the name.
     """
     # Brains are looked up by the one rule every step uses
-    # (config.iter_brains). This used to fall back to a recursive search of
-    # the whole brains root, which also found folders INSIDE a brain -- an
-    # archive of a superseded delivery has the brain's own name and its
-    # numbered folders -- and could pre-filter that instead.
+    # (config.iter_brains). A recursive search of the whole brains root is
+    # avoided: it also finds folders INSIDE a brain -- an archive of a
+    # superseded delivery has the brain's own name and its numbered folders --
+    # and could pre-filter that instead.
     from mousebrain.config import iter_brains
     name = str(brain_name).replace("\\", "/").strip("/")
     matches = [b for m, b in iter_brains(BRAINS_ROOT)
@@ -699,19 +699,18 @@ def find_step5_candidates(brain_path: Path) -> Optional[Path]:
     then the first .xml by name, in the registered-space candidates folders
     (docs/pipeline/README.md, "Which file is 'the candidates'").
 
-    One rule for every reader (pipeline_status.find_candidates). This used to
-    keep its own: a legacy Detected_*.xml first, then ANY subfolder of
-    4_Cell_Candidates -- including _archive/ (an earlier, replaced run) and a
-    from_<folder>/ trial run whose positions are not in the space the atlas was
-    fitted to -- so the pre-filter could filter a file the pipeline would never
-    classify.
+    One rule for every reader (pipeline_status.find_candidates). A rule of its
+    own that searched ANY subfolder of 4_Cell_Candidates would include _archive/
+    (an earlier, replaced run) and a from_<folder>/ trial run whose positions
+    are not in the space the atlas was fitted to, so the pre-filter could
+    filter a file the pipeline would never classify.
     """
     from mousebrain.pipeline_status import find_candidates
     return find_candidates(brain_path)
 
 
-# The old name, kept so scripts that import it keep working. It never meant
-# "newest" since the shared rule took over; use find_step5_candidates.
+# Alias for scripts that import the old name. It does not mean "newest";
+# use find_step5_candidates.
 find_latest_candidates = find_step5_candidates
 
 

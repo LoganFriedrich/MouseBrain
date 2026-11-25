@@ -4,29 +4,29 @@ WHY THIS EXISTS
 Curation (Setup & Tuning, tab "Curate/Train") asks a person, candidate by
 candidate, "is this a cell?". Each answer is training data for a classifier,
 so each answer must be kept exactly once, with the label the person gave
-LAST, and must be tied to the brain whose image it was given on. Before this
-module:
+LAST, and must be tied to the brain whose image it was given on. Avoided
+failures:
 
-* every answer was appended to one pooled pair of files per imaging setup
+* appending every answer to one pooled pair of files per imaging setup
   (``<models>/<setup>/training_data/curated_cells.xml`` and
-  ``curated_non_cells.xml``) with no brain recorded, so the export later cut
-  cubes for every brain's coordinates out of whichever image was on screen,
-  and wrote them under names without a brain, over the cubes of other brains;
-* a changed answer (cell, then not a cell) stayed in BOTH files, and a
-  repeated answer was written twice, so the classifier was trained on the
-  same point with both labels;
-* the files were rewritten in place, so an interrupted save could leave an
-  unreadable file, and an unreadable file was then silently replaced by an
-  empty one -- every earlier answer lost.
+  ``curated_non_cells.xml``) with no brain recorded: the export would cut
+  cubes for every brain's coordinates out of whichever image is on screen,
+  and write them under names without a brain, over the cubes of other brains;
+* leaving a changed answer (cell, then not a cell) in BOTH files, or writing
+  a repeated answer twice: the classifier would be trained on the same point
+  with both labels;
+* rewriting the files in place: an interrupted save could leave an unreadable
+  file, and an unreadable file silently replaced by an empty one loses every
+  earlier answer.
 
-WHAT HOLDS NOW
+WHAT HOLDS
 * Each brain has its own folder inside its imaging setup's pool:
   ``<models>/<setup>/training_data/<brain>/`` holding ``curated_cells.xml``,
   ``curated_non_cells.xml`` (the answers), ``cells/`` and ``non_cells/``
   (the cubes cut from that brain's own image) and ``training.yml``.
 * A point (z, y, x, whole voxels) is in at most one of the two files, once.
   ``set_label`` moves it when the answer changes; ``add_unlabelled`` adds only
-  points that have no answer yet (used for suggestions and old batches, which
+  points that have no answer yet (used for suggestions and earlier batches, which
   must never overwrite what a person answered).
 * Candidates a person SKIPPED (S / Space: "not sure") are kept in a third
   file, ``skipped_candidates.xml``, so a review that resumes does not ask
@@ -40,10 +40,9 @@ WHAT HOLDS NOW
   being replaced.
 * The pool's own ``training.yml`` lists every brain folder's cube folders, so
   training on "the pool" trains on every brain's cubes, each cut from its own
-  brain. Cubes that an older version left directly in the pool's ``cells/``
-  and ``non_cells/`` carry no brain and are still listed (they are what older
-  models were trained on); which brain they came from cannot be told from
-  their names.
+  brain. Cubes directly in the pool's ``cells/`` and ``non_cells/`` (no brain
+  folder) carry no brain and are still listed, because models may have been
+  trained on them; which brain they came from cannot be told from their names.
 
 Coordinates are compared as whole voxels with ``int()``, exactly as they are
 written to the XML, so a point read back from the file matches the
@@ -206,7 +205,7 @@ class CurationRecord:
         """(answers, conflicts) from one read of the two files.
 
         ``answers`` is {'cells': [...], 'non_cells': [...]}, each point once.
-        A point found in BOTH files (left there by an older version) belongs
+        A point found in BOTH files (answered both ways) belongs
         to neither until a person answers it again: it is left out of
         ``answers`` -- so it is neither trained on nor counted as reviewed --
         and listed in ``conflicts``.
@@ -223,7 +222,7 @@ class CurationRecord:
         return self.read_all()[0]
 
     def conflicts(self) -> List[Tuple[int, int, int]]:
-        """Points that sit in both files (answered both ways by an older version)."""
+        """Points that sit in both files (answered both ways)."""
         return self.read_all()[1]
 
     def _write(self, lists, order) -> None:
@@ -242,7 +241,7 @@ class CurationRecord:
         A point that had the other label is moved (taken out of the other
         file); a point that already has this label is not written again.
         Returns counts: added, moved, unchanged. An answered point that was
-        skipped before is no longer skipped.
+        skipped is taken out of the skipped file.
         """
         other = _other(label)
         coords = list(coords)   # read twice: the answers, then the skips
@@ -328,7 +327,7 @@ class CurationRecord:
     def add_unlabelled(self, coords: Iterable, label: str) -> Dict[str, int]:
         """Give ``label`` only to points that have no answer yet.
 
-        For suggestions (pre-filter results) and old answer batches: they
+        For suggestions (pre-filter results) and earlier answer batches: they
         never overwrite an answer a person gave. Returns counts: added,
         already_answered.
         """
@@ -430,7 +429,7 @@ def _has_cubes(d: Path) -> bool:
 def pool_cube_dirs(td) -> List[Tuple[str, Path]]:
     """(label, folder) for every cube folder of a pool or of one brain's folder.
 
-    Covers ``<td>/cells``, ``<td>/non_cells`` (cubes from older versions, no
+    Covers ``<td>/cells``, ``<td>/non_cells`` (cubes with no
     brain) and ``<td>/<brain>/cells``, ``<td>/<brain>/non_cells``.
     """
     td = Path(td)
@@ -454,7 +453,7 @@ def count_cubes(td) -> Tuple[int, int]:
 def write_training_yaml(td) -> Optional[Path]:
     """Write ``<td>/training.yml`` naming every cube folder under ``td`` that holds cubes.
 
-    Used for a pool (one entry pair per brain folder, plus the older brainless
+    Used for a pool (one entry pair per brain folder, plus any brainless
     folders) and for a single brain's folder. Returns None (and removes a
     stale file) when there are no cubes.
     """

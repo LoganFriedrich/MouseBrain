@@ -1,11 +1,12 @@
 """The 2D calibration tracker is rewritten safely.
 
 The 2D tracker is one CSV that the napari widget and the batch script both
-write. Every status change rewrites the whole file, and that rewrite used to
-(1) write in place, so a crash part-way truncated the tracker, (2) take no
-lock, so a writer that had read the file before another writer's change wrote
-it back without that change, and (3) keep only the columns the running code
-knew, so a column added by a newer version vanished on the first status change.
+write. Every status change rewrites the whole file, so the rewrite must not
+(1) write in place (a crash part-way would truncate the tracker), (2) take no
+lock (a writer that had read the file before another writer's change would
+write it back without that change), or (3) keep only the columns the running
+code knows (a column added by a newer version would vanish on the first status
+change).
 """
 import csv
 import os

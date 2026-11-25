@@ -5,7 +5,7 @@ Loads each ND2 file, runs threshold/Otsu nuclei detection on the nuclear
 channel, measures signal colocalization in the other channel, saves CSV
 results + QC overlay images, and records the run in the tracker.
 
-Usage:
+Usage (activate the MouseBrain environment first, then run in a terminal):
     python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project ENCR
     python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project ENCR --threshold 1.5 --dilation 50
     python -m mousebrain.plugin_2d.sliceatlas.batch.batch_encr --project ENCR --output <folder>
@@ -110,12 +110,12 @@ GREEN_IDX = 0
 # each registry entry so an approved method naming something else shows the
 # entry as not produced with it.
 # The nucleus diameter range is NOT here: it is a setting (batch_size_range).
-# NOT recorded yet: the region each cell's signal is measured in. The batch
+# NOT recorded: the region each cell's signal is measured in. The batch
 # measures a non-overlapping ring around each nucleus that leaves the nucleus
 # out (ColocalizationAnalyzer.measure_cytoplasm_intensities). Adding a key for
 # it changes every entry's method hash, and what the key and its approved value
-# should be is the lab's decision: a second open question, written up with the
-# size range in plugin_2d/ALGORITHM_REFERENCE.md, section 6.
+# should be is a decision for the lab (see plugin_2d/ALGORITHM_REFERENCE.md,
+# section 6).
 BATCH_FIXED_METHOD = {
     "detection": "threshold+log",
     "log_decision_tree": True,
@@ -127,12 +127,11 @@ BATCH_FIXED_METHOD = {
 # command-line option that sets it). There are NO built-in values for them.
 # WHY: how bright a nucleus must be, how large a ring is measured and how far
 # above background a cell must be are decisions of the lab that runs the
-# batch, made for its tissue and microscope. The batch used to fall back to
-# values of its own when nothing else gave one, and -- because the registry
-# also fell back to a parameter set of its own when no approved-method file
-# existed -- printed them as "[approved method]". Each must now come from the
-# command line, a marked-best run or the approved-method file; otherwise the
-# batch stops and says which (unset_parameters_message).
+# batch, made for its tissue and microscope. A built-in fallback would be a
+# lab fact compiled into the tool and could be shown as "[approved method]"
+# although nobody approved it. Each must come from the command line, a
+# marked-best run or the approved-method file; otherwise the batch stops and
+# says which (unset_parameters_message).
 BATCH_PARAMETERS = {
     "sigma_threshold": "--threshold",
     "soma_dilation": "--soma-dilation",
@@ -235,9 +234,10 @@ def resolve_parameters(cli: dict, tuned: dict, approved: dict) -> tuple:
     returned dicts -- there is no built-in value (BATCH_PARAMETERS says why);
     unset_parameters() lists the missing ones and main() stops on them.
 
-    WHY "typed" means "not None": the options used to default to a number and
-    a tracker value replaced the option whenever it EQUALLED that number, so
-    typing the default on purpose (e.g. --threshold 0) was overridden.
+    WHY "typed" means "not None": the options default to None. A numeric
+    default would let a tracker value replace the option whenever it EQUALLED
+    that number, so typing the default on purpose (e.g. --threshold 0) would
+    be overridden.
     WHY an approved-method key whose value is null counts as unset: a
     hand-edited approved_method.json can hold ``"sigma_threshold": null``.
     Taken as given, it was labeled "approved method", unset_parameters()
@@ -351,10 +351,10 @@ def batch_size_range(typed, approved: dict, analysis: str) -> tuple:
     the approved method's ``size_filter_um``. There is no built-in range.
 
     WHY a setting and not a constant: which nuclei count is a property of the
-    tissue, stain and magnification a lab works with, not of the code. The
-    batch used to detect at a range fixed in the code while the approved
-    method it is judged by named another, so every entry was registered stale
-    and a lab had no way to make the batch run at its approved range.
+    tissue, stain and magnification a lab works with, not of the code. A range
+    fixed in the code would differ from the one in the approved method the
+    batch is judged by, so every entry would be registered stale and a lab
+    would have no way to make the batch run at its approved range.
     WHY stop instead of falling back: a fallback range would be a lab fact
     compiled into the tool, and nuclei counted at a size nobody chose are
     counts of the wrong thing.
@@ -385,9 +385,9 @@ def batch_method_params(approved: dict, values: dict, size_range: tuple) -> dict
     names and the diameter range (*size_range*, from batch_size_range) --
     nothing else.
 
-    WHY: entries used to record the approved method whatever the run used, so
-    a run with --threshold 1.5 hashed like an approved run and could never be
-    found stale. WHY nothing else: a key of the approved method that the
+    WHY: an entry records what the run used, not the approved method;
+    otherwise a run with --threshold 1.5 would hash like an approved run and
+    could never be found stale. WHY nothing else: a key of the approved method that the
     batch does not control (say an approved-method file naming another
     detection method under its own key) was not used by the run, and copying
     it in would record it as if it had been. Leaving it out makes the entry
@@ -529,14 +529,14 @@ def get_tuned_parameters(verbose: bool = True, project=None, sample_ids=None) ->
 
     Only runs of THIS batch's project count (see _run_belongs_to_batch).
     WHY: the 2D tracker is shared by every project, and a run marked best for
-    one project's slices used to set another project's batch (or stop it with
-    a conflict). main() passes the project and its file stems; called with
-    neither, every marked run counts.
+    one project's slices would otherwise set another project's batch (or stop
+    it with a conflict). main() passes the project and its file stems; called
+    with neither, every marked run counts.
 
-    Only runs a person has marked best count. WHY: the batch used to fall back
-    to the newest completed run of any kind when nothing was marked -- which
-    was usually the previous batch's own row -- so "tuned" parameters were
-    whatever ran last, approved by nobody.
+    Only runs a person has marked best count. WHY: falling back to the newest
+    completed run of any kind when nothing is marked would pick, usually, the
+    previous batch's own row, so "tuned" parameters would be whatever ran
+    last, approved by nobody.
 
     A marked-best run supplies the sigma threshold and the background
     percentile, and only when batch_approval_problem() finds nothing wrong with
@@ -873,9 +873,9 @@ def image_pixel_size_um(metadata: dict) -> float:
     """The pixel size (um/px) the image FILE records, or PixelSizeUnknown.
 
     WHY no fallback: the nucleus diameter range is turned into pixel areas
-    with this number, so it decides which objects count as nuclei. The batch
-    used to take 1.0 um/px when the file gave none, without a word, and
-    recorded the resulting pixel areas in the tracker as if measured. The
+    with this number, so it decides which objects count as nuclei. Taking
+    1.0 um/px silently when the file gives none would record the resulting
+    pixel areas in the tracker as if measured. The
     image readers put 1.0 in themselves when a file has no size and say so
     with ``voxel_size_from_file: False`` (core/io.py); that is refused here
     too. Metadata without that flag is taken at its word only when it holds
@@ -942,10 +942,9 @@ def process_single(
     measure cytoplasmic signal.
 
     Every detection parameter is passed to the detector explicitly, and the
-    same values are written to the tracker rows. WHY: the detector used to run
-    on its own defaults while the banner, tracker and registry stated other
-    values (pixel areas that were never passed, a diameter range it did not
-    use), so the record could not be trusted.
+    same values are written to the tracker rows. WHY: a detector running on
+    its own defaults while the banner, tracker and registry state other
+    values would make the record untrustworthy.
 
     Every parameter after output_dir is required (one left as None raises
     TypeError before any work): there are no built-in values (see
@@ -988,8 +987,8 @@ def process_single(
 
     # Initialize tracker. When it cannot be opened the sample is still
     # analyzed (its CSV and figures are the results), but the reason is
-    # printed for every sample. WHY: this used to set tracker = None in
-    # silence, so a whole batch could run with nothing logged and nobody told.
+    # printed for every sample. WHY: setting tracker = None in silence would
+    # let a whole batch run with nothing logged and nobody told.
     try:
         from ..tracker import SliceTracker
         tracker = SliceTracker()
@@ -1061,9 +1060,8 @@ def process_single(
                 input_path=str(nd2_path),
                 # The detector and every setting it runs with, in the
                 # columns made for them (det_backend, det_preprocessing).
-                # WHY: they used to be kept only as free text in the notes,
-                # which nothing reads back; a row must say on its own what
-                # produced its count.
+                # WHY: free text in the notes is not read back by anything; a
+                # row must say on its own what produced its count.
                 backend="threshold+log",
                 parameters={
                     "min_diameter_um": min_diameter_um,
@@ -1241,10 +1239,10 @@ def process_single(
     finally:
         # Fail whichever run was still in progress -- the colocalization run
         # if it had begun, else the detection run -- and never a run whose
-        # result was already recorded. WHY: this used to set the DETECTION
-        # row to 'error' on any later exception (colocalization, CSV, QC
-        # figures), overwriting a completed detection, while the
-        # colocalization row it was really about stayed 'started' forever.
+        # result was already recorded. WHY: setting the DETECTION row to
+        # 'error' on any later exception (colocalization, CSV, QC figures)
+        # would overwrite a completed detection, while the colocalization
+        # row the failure was really about stayed 'started' forever.
         # In a finally so Ctrl-C, too, leaves no row 'started'.
         # fail_if_unfinished never raises: an exception from here would leave
         # process_single and stop the whole batch, and a tracker that cannot
@@ -1340,8 +1338,8 @@ def main():
     args = parser.parse_args()
 
     # Resolve the input BEFORE the banner so the banner reports what will
-    # actually be read. WHY: it used to print 'Input: None' because the
-    # default root was only filled in after the banner.
+    # actually be read. WHY: the default root is only known after this step,
+    # so a banner printed earlier would show 'Input: None'.
     roots = input_roots(args.project, args.input)
     if not roots:
         parser.error("give --project (or MOUSEBRAIN_2D_PROJECT) and set CONNECTOME_ROOT, "
@@ -1524,9 +1522,9 @@ def main():
         # Printed whatever the numbers came from (typed, a marked run or the
         # defaults): any difference listed above is one a person may copy
         # into the approved-method file, and on a shared registry that edit
-        # changes every analysis's approved method. WHY always: the warning
-        # used to appear only for marked-run numbers, so its absence after a
-        # typed-only run read as "this file is the batch's alone".
+        # changes every analysis's approved method. WHY always: a warning
+        # shown only for marked-run numbers would, by its absence after a
+        # typed-only run, read as "this file is the batch's alone".
         print("    To make these numbers approved, write them into the "
               "approved-method file (see plugin_2d/ALGORITHM_REFERENCE.md, "
               "section 6).")
@@ -1687,9 +1685,9 @@ def main():
 
         # A finished run that found no nuclei is a result, and it is
         # registered like one: 0 nuclei, no files, the parameters it ran with.
-        # WHY: only completed samples used to be registered, so a sample whose
-        # re-run found nothing kept its earlier entry -- with the earlier
-        # count -- marked current, and the registry reported a number the
+        # WHY: registering only completed samples would leave a sample whose
+        # re-run found nothing with its earlier entry -- and the earlier
+        # count -- marked current, and the registry would report a number the
         # newest run contradicts. The earlier entry's files are archived first
         # (invalidate moves them to _archived/<timestamp>/ beside them), and
         # with them EVERY other file in the sample's own registry folder
@@ -1809,11 +1807,11 @@ def main():
             if not finished.intersection(STEP_EVIDENCE.get(failed_step, ())):
                 # Kept current, but the failure is written ON the entry
                 # (newest_attempt_failed) and in the registry's audit log.
-                # WHY: this used to be said only in the summary below, so
-                # whoever pulls the registry saw the earlier count as an
+                # WHY: if it were said only in the summary below, whoever
+                # pulls the registry would see the earlier count as an
                 # unqualified current result although the newest attempt on
                 # the sample failed. Whether such an entry should be retired
-                # outright is not decided here (see the guide).
+                # outright is not decided here.
                 marked = registry.record_failed_attempt(sample_id, {
                     'failed_at': failed_step,
                     'error': failure_errors.get(sample_id),

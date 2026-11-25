@@ -181,7 +181,7 @@ def registration_countable(pipeline_folder: Path) -> tuple:
 
     WHY: counts are cells placed in the regions of ONE atlas fit, and the
     production tables and the analysis registry are what an integrator
-    pulls. Step 6 used to count any brain with a cells.xml, so a registration
+    pulls. Step 6 does not count just any brain with a cells.xml: a registration
     a person had REJECTED, one that never finished (INCOMPLETE), one fitted
     to images made again since (OUT_OF_DATE) or one nobody had looked at yet
     (UNAPPROVED) was counted into them -- including a brain whose counts had
@@ -249,7 +249,7 @@ def run_brainglobe_counts(
     deformation fields and assign atlas regions.
 
     NO SILENT FALLBACK. When the transform cannot run (brainglobe-utils
-    missing, a deformation field missing, any error), this used to switch
+    missing, a deformation field missing, any error), the count must not switch
     quietly to a direct lookup of the cell positions in the registered atlas
     image -- a less accurate method -- and the counts it wrote looked exactly
     like transform counts: nothing recorded which method had counted. Now the
@@ -823,7 +823,7 @@ def register_counts(pipeline_folder: Path, output_csv: Path, total_cells: int,
 
     RAISES when they could not be entered (the registry's manifest set
     aside, its lock held past the wait, a broken approved-method file ...).
-    WHY: this used to print one [!] line and carry on, so the count was
+    WHY: printing one [!] line and carrying on would let the count be
     called finished, its tracker row 'completed', while the brain was
     missing from the registry an integrator mirrors -- with nothing to show
     it outside that console. A count is finished only when it is in the
@@ -1094,8 +1094,8 @@ def update_region_counts_csv(
 
     # The whole read-change-write holds the count-tables lock: two runs at
     # once (two windows, or step 6 while regenerate_derived_counts rebuilds
-    # the eLife table) used to drop one run's row
-    # (region_counts_io.counts_tables_lock).
+    # the eLife table) would drop one run's row without
+    # the lock (region_counts_io.counts_tables_lock).
     with _tables_lock(hold_lock):
         # Read existing data
         existing_rows = []
@@ -1267,8 +1267,8 @@ def update_elife_counts_csv(
 
     # The whole read-change-write holds the count-tables lock: two runs at
     # once (two windows, or step 6 while regenerate_derived_counts rebuilds
-    # the eLife table) used to drop one run's row
-    # (region_counts_io.counts_tables_lock).
+    # the eLife table) would drop one run's row without
+    # the lock (region_counts_io.counts_tables_lock).
     with _tables_lock(hold_lock):
         # Read existing data
         existing_rows = []
@@ -1326,10 +1326,10 @@ def update_elife_counts_csv(
 
 
 # =============================================================================
-# REACHING-RELEVANT REGIONS FOR SCI ANALYSIS
+# FORELIMB-MOTOR-RELEVANT REGIONS
 # =============================================================================
-# Key supraspinal motor regions relevant to skilled reaching behavior
-# and likely affected by midline contusion injury.
+# Supraspinal motor regions relevant to forelimb motor behavior, summarized
+# separately because they are the ones usually reported for it.
 #
 # Reference: Fouad et al. (2021) "The neuroanatomical-functional paradox in SCI"
 # Nature Reviews Neurology. DOI: 10.1038/s41582-020-00436-x
@@ -2495,7 +2495,7 @@ Examples:
     # count failed). WHY: the pipeline dashboard, Setup & Tuning's Run Region
     # Counts, batch_process and overnight_batch judge step 6 by its exit code
     # (RUN_PIPELINE shows its output in the terminal instead), and a count
-    # that failed used to end with 0, so they reported it as done.
+    # that failed must not end with 0, or they would report it as done.
     return 1 if failed_count else 0
 
 

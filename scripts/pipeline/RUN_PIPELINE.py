@@ -277,9 +277,8 @@ def show_brain_status(brain):
 
         if choice == 0:
             # The person said yes just now, so the approval is written here,
-            # naming the registration they looked at. (This used to run the
-            # approval script with a --yes it does not accept, so it never
-            # approved anything.)
+            # naming the registration they looked at. (The approval script is not
+            # run: it accepts no --yes.)
             from mousebrain.registration_approval import approve
             try:
                 approve(brain['path'] / "3_Registered_Atlas",
@@ -294,8 +293,8 @@ def show_brain_status(brain):
             input("Press Enter to continue...")
         elif choice == 1:
             # "No" is a rejection, recorded so that every reader shows the
-            # brain back at "Register" -- it used to be forgotten as soon as
-            # this menu closed, and the brain was offered for approval again.
+            # brain back at "Register" -- otherwise it would be forgotten as soon as
+            # this menu closed, and the brain offered for approval again.
             from mousebrain.registration_approval import reject
             try:
                 reject(brain['path'] / "3_Registered_Atlas",
@@ -334,7 +333,7 @@ def show_brain_status(brain):
         # No choice to make: step 5 classifies with the settled method of this
         # imaging setup (the classification run marked Paradigm Best) and its
         # own pre-filter. A pre-filter saved or tuned by hand is tuning, and
-        # step 5 refuses it (it used to be offered here).
+        # step 5 refuses it, so it is not offered here.
         print("\nClassification checks each candidate cell, using the settled")
         print("classification method for this kind of imaging.")
         run_script('5_classify_cells.py', ['--brain', brain_name])

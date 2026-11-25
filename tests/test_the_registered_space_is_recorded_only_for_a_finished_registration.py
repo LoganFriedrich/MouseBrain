@@ -1,10 +1,11 @@
 """registered_from.json names images a FINISHED registration was fitted to.
 
-Step 3 used to write the record before brainreg started, so a failed run left a
-record naming images no registration had been fitted to. And when a recorded
-folder held no images, config.registered_input quietly returned the caller's
-default folder instead -- another image space, in which every cell position is
-wrong while the counts still look plausible. Identifiers are invented.
+Step 3 writes the record only after brainreg has finished: a record written
+before it starts would, after a failed run, name images no registration had
+been fitted to. And when a recorded folder holds no images,
+config.registered_input must not quietly return the caller's default folder
+-- another image space, in which every cell position is wrong while the
+counts still look plausible. Identifiers are invented.
 """
 import importlib.util
 import sys

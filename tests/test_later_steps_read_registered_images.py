@@ -1,11 +1,11 @@
 """Classification and counting read the images the atlas was fitted to.
 
 A brain delivered already cut is registered on its full extraction and has an
-empty 2_Cropped_For_Registration. Steps 5 and 6 used to read the crop folder by
-name, and step 5 looked for detection results only at the top of
-4_Cell_Candidates, where step 4 does not put a run on the full extraction made
-before registration recorded that space -- so such a brain could not be
-classified or counted.
+empty 2_Cropped_For_Registration. Steps 5 and 6 must not read the crop folder
+by name, and step 5 must find detection results not only at the top of
+4_Cell_Candidates: step 4 does not put a run on the full extraction made
+before registration recorded that space there. Otherwise such a brain could
+not be classified or counted.
 """
 import importlib.util
 import json

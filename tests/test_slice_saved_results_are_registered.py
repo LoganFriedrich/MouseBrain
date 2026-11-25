@@ -1,12 +1,11 @@
 """What the 2D window and run_coloc save is registered in MouseBrain's own registry.
 
-Defect covered: Save State / Count in ROI(s) (and the automatic save when
-another image is opened) in the 2D window, and run_coloc --save, wrote their
-results only beside the images or into the --save folder; nothing reached
-the analysis registry, so whatever pulls the registry never saw them and
-nothing recorded the settings that produced them. Now each registers what
-it saved under its own analysis (<project>_Window_Results,
-<project>_Coloc_CLI), never under the detection batch's analysis.
+Save State / Count in ROI(s) (and the automatic save when another image is
+opened) in the 2D window, and run_coloc --save, write results beside the images
+or into the --save folder and also register them, with the settings that
+produced them, under their own analysis (<project>_Window_Results,
+<project>_Coloc_CLI), never under the detection batch's analysis. Without
+registration, whatever pulls the registry would never see them.
 """
 import json
 from argparse import Namespace

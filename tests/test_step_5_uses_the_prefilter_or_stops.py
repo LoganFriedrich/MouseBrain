@@ -1,11 +1,11 @@
 """Step 5 classifies pre-filtered candidates or nothing, and only with its
 own (settled) pre-filter.
 
-When its own pre-filter failed, step 5 printed a warning and classified the
-UNFILTERED candidates into the production classification. Since 2026-11-19
-step 5 writes production with the settled method only, so a pre-filter saved
-or tuned by hand (--candidates) is refused there, and RUN_PIPELINE no longer
-offers one. Identifiers are invented.
+When its own pre-filter fails, step 5 must not print a warning and classify
+the UNFILTERED candidates into the production classification. Step 5 writes
+production with the settled method only, so a pre-filter saved or tuned by
+hand (--candidates) is refused there, and RUN_PIPELINE does not offer one.
+Identifiers are invented.
 """
 import builtins
 import importlib.util

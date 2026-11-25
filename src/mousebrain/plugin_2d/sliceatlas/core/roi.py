@@ -70,7 +70,7 @@ def load_rois_json(path, require_image_shape=False):
         OSError: If the file cannot be opened.
 
     WHY the polygons are always checked here: a file that loads but lacks
-    'vertices' used to pass this check, be listed as "has ROIs", and then
+    'vertices' would otherwise pass, be listed as "has ROIs", and then
     crash the counting of every sample after it. One check here lets every
     caller tell a usable file from an unreadable one up front.
 

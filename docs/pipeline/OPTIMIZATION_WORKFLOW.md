@@ -111,11 +111,11 @@ and leave the brain with no classification). What a promotion does:
 2. The run's `cells.xml` and `rejected.xml` are copied into `5_Classified_Cells`,
    with `promoted_from.json` naming the run, its folder, who promoted it and when.
    The copies carry the time of the promotion, not the time the run was made.
-   Why: the copies used to keep the run's own, older time, so counts made after
-   the run but before the promotion looked newer than the classification and
-   were never shown as stale.
+   Why: with the run's own, older time, counts made after the run but before
+   the promotion would look newer than the classification and never be shown as
+   stale.
 3. The run's tracker row is tagged `promoted_to_production`.
-   **Update 2026-11-19 (promotion records its method):** a promotion is never
+   A promotion is never
    refused for using a different method -- that is your choice -- but it is
    recorded. Before you confirm, the dialog says whether the run is the
    **Paradigm Best** classification method (the one step 5 uses) and, if not,
@@ -311,7 +311,7 @@ Atlas" and "eLife Groups" tables from the selected brain's count files in
 `6_Region_Analysis/`. Opening any other tab does not touch them.
 
 "Run Region Counting" runs step 6 in the background with no time limit (a
-whole brain takes far longer than the five minutes it used to be allowed). Meanwhile napari stays usable, the
+whole brain takes far longer than a short limit would allow). Meanwhile napari stays usable, the
 status line shows step 6's latest message, the brain list is held, and a second
 click says "Counting Running". When it ends the counts are loaded into the
 Results tab's "Allen Atlas" and "eLife Groups" tables (only if the counted

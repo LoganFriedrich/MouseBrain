@@ -1,12 +1,12 @@
 """Asking the tracker for one brain's runs returns that brain's runs -- all of them.
 
-tracker.search(brain=...) used to match PART of the brain name and return only
-the 50 newest rows. So a brain's run list in the tuning widget also showed the
-runs of every brain whose name merely contained this one, and once a brain had
-more than 50 runs its older ones -- its marked Best among them -- silently fell
-out of the list and out of the widget's "has this detection been classified"
-lookups. A person typing part of a name into a search box still gets the
-substring search, by asking for it (brain_contains).
+tracker.search(brain=...) matches the whole brain name and is not capped at
+the 50 newest rows. Otherwise a brain's run list in the tuning widget would
+also show the runs of every brain whose name merely contains this one, and
+once a brain had more than 50 runs its older ones -- its marked Best among
+them -- would fall out of the list and out of the widget's "has this detection
+been classified" lookups. A person typing part of a name into a search box
+still gets the substring search, by asking for it (brain_contains).
 """
 import csv
 

@@ -1,13 +1,13 @@
 """A run that will never finish does not stay at 'started', and the leftovers are listed.
 
-Steps 3-6 already mark their run failed when they stop part-way. Training
-(util_train_model.py) and the tuning widget's detection and classification runs
-did not: a training that crashed, or a widget run cut off by closing napari, left
-a row at 'started' forever -- indistinguishable from a run still going. And
-nothing listed such rows, so a person could not find them. Now training is
-wrapped like the steps, the widget marks its unfinished runs failed when it
-closes, and tracker.unfinished() / `util_experiments.py unfinished` lists what
-is still 'started' (a process killed outright can still leave one).
+Steps 3-6, training (util_train_model.py) and the tuning widget's detection
+and classification runs all mark their run failed when they stop part-way. A
+row left at 'started' forever -- a training that crashed, or a widget run cut
+off by closing napari -- is indistinguishable from a run still going, so the
+widget marks its unfinished runs failed when it closes, and
+tracker.unfinished() / `util_experiments.py unfinished` lists what is still
+'started' so a person can find it (a process killed outright can still leave
+one).
 """
 import csv
 import importlib.util

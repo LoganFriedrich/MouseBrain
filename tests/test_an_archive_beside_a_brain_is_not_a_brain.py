@@ -1,17 +1,16 @@
 """A folder beside a brain is not automatically a brain.
 
-Every pipeline step scans <brains root>/<mouse>/<brain>, and each step used to
-decide for itself what counted -- in practice, any directory. People put things
+Every pipeline step scans <brains root>/<mouse>/<brain>, and every step must
+use the same rule for what counts, not "any directory". People put things
 beside a brain: an archive of a superseded delivery, a scratch copy, a folder
-kept while something is checked. Give one of those a 0_Raw_IMS and every step
-scans it, finds it complete, and reports the real brain as already done.
+kept while something is checked. Give one of those a 0_Raw_IMS and a step that
+scans it finds it complete and reports the real brain as already done.
 
-Observed in practice: a brain was re-delivered with a better stitch, its previous
-outputs were archived into a folder inside the brain folder, and the next
-extraction found the ARCHIVE, announced "all extractions complete", and did
-nothing. The two steps queued behind it then failed for reasons that pointed
-nowhere near the cause -- which is the expensive part: the symptom was three
-steps away from the mistake.
+For example, if a brain is re-delivered with a better stitch and its previous
+outputs are archived into a folder inside the brain folder, extraction would
+find the ARCHIVE, announce "all extractions complete" and do nothing. The two
+steps queued behind it would then fail for reasons that point nowhere near the
+cause: the symptom would be three steps away from the mistake.
 """
 from pathlib import Path
 

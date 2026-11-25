@@ -1,10 +1,10 @@
 """Marking a run the batch refuses never silently clears a mark the batch uses.
 
-Defect covered: "Mark Selected as Best" marked the run first and checked it
-afterwards. Marking clears the sample's previous mark, so marking a run the
-batch refuses (a fold-change run, say) over a usable mark left the batch with
-no mark to use: it silently took other numbers, and the message did not say
-the earlier mark was gone.
+"Mark Selected as Best" checks the run before marking it. Marking clears the
+sample's previous mark, so marking a run the batch refuses (a fold-change run,
+say) over a usable mark would leave the batch with no mark to use: it would
+silently take other numbers, and the message would not say the earlier mark
+was gone.
 """
 
 from types import SimpleNamespace

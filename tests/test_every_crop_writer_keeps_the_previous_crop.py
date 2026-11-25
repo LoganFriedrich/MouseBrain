@@ -1,13 +1,13 @@
 """Every tool that writes a crop builds it aside and swaps it in when complete.
 
-The napari crop already wrote the new crop to 2_Cropped_For_Registration.partial
-and swapped it in, archiving the previous crop. Step 2's --auto-crop and
-util_apply_crop_from_reference.py (--force) still wrote over the crop already
-there, plane by plane: stopped part-way, the folder held old and new planes
-(of different heights when the crop line moved) under the old metadata.json,
-the registration then read as out of date, and the batches registered the
-mixed folder unattended. Identifiers are invented; a small array stands in for
-the .ims file.
+The napari crop writes the new crop to 2_Cropped_For_Registration.partial and
+swaps it in, archiving the previous crop. Step 2's --auto-crop and
+util_apply_crop_from_reference.py (--force) do the same. Writing over the crop
+already there, plane by plane, would leave a folder with old and new planes
+(of different heights when the crop line moved) under the old metadata.json
+if stopped part-way, the registration would then read as out of date, and the
+batches would register the mixed folder unattended. Identifiers are invented;
+a small array stands in for the .ims file.
 """
 import importlib.util
 import json

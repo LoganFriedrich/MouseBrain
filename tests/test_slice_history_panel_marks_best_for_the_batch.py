@@ -1,9 +1,9 @@
 """A person can mark a 2D run best, and clear a mark, in the Run History panel,
 and the batch then uses (or stops using) that run's numbers.
 
-Defect covered: nothing in the widget could mark a 2D run best, so the batch
-could never be given a person's choice; and a mark on another sample that
-disagreed (which stops the batch) could only be cleared from a terminal.
+The widget must be able to mark a 2D run best, or the batch could never be
+given a person's choice; and a mark on another sample that disagrees (which
+stops the batch) must be clearable in the GUI, not only from a terminal.
 """
 
 from types import SimpleNamespace

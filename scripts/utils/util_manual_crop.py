@@ -241,8 +241,8 @@ Examples:
         # The crop itself is the napari tool's own (crop_subprocess.do_crop):
         # the new crop is built beside the old one and swapped in only when
         # complete, the previous crop kept in 2_Cropped_For_Registration/_archive.
-        # This used to be a copy of that code that wrote over the old crop
-        # plane by plane, so an interrupted crop mixed old and new planes
+        # A separate copy of that code writing over the old crop
+        # plane by plane would let an interrupted crop mix old and new planes
         # under the old metadata.
         from mousebrain.plugin_3d.crop_subprocess import do_crop
         if not do_crop(pipeline_folder):

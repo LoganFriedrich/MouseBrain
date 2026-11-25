@@ -1,10 +1,10 @@
 """A candidate a person skipped (S / Space) is not asked again when the review resumes.
 
-What went wrong: answered candidates were restored after a restart of napari
-(or choosing the layer again), but skips were kept only in memory, so every
-skipped candidate came up as unreviewed again. Skips are now saved in the
-brain's own folder, apart from the answers: a skip is never training data,
-never overrides an answer, and ends when the candidate is answered.
+Answered candidates are restored after a restart of napari (or choosing the
+layer again), and so must skips, or every skipped candidate would come up as
+unreviewed again. Skips are saved in the brain's own folder, apart from the
+answers: a skip is never training data, never overrides an answer, and ends
+when the candidate is answered.
 """
 from types import SimpleNamespace
 

@@ -1,8 +1,8 @@
 """Closing the ROI editor never deletes an ROI file.
 
-Closing the window with no ROIs used to delete the sample's ROI file -- after
-Clear, and also when the file could not be read and the editor had opened
-empty. The file is a person's drawing and the only copy of it.
+Closing the window with no ROIs must not delete the sample's ROI file -- after
+Clear, or when the file could not be read and the editor opened empty. The
+file is a person's drawing and the only copy of it.
 """
 
 from mousebrain.plugin_2d.sliceatlas.cli import run_roi

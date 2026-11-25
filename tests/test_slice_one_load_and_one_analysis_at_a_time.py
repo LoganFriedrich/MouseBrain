@@ -1,10 +1,10 @@
 """The 2D window opens one image at a time, and never opens an image while an
 analysis runs, or runs an analysis while an image opens.
 
-A second load could be started while one was running; if the older one
-finished last, its pixels were shown under the newer file's name. A
-detection started during a load returned nuclei of the previous image and
-drew them on the new one.
+A second load started while one is running could finish first, so that the
+older one's pixels would be shown under the newer file's name. A detection
+started during a load would return nuclei of the previous image and draw
+them on the new one.
 """
 import numpy as np
 

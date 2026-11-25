@@ -1,10 +1,10 @@
 """A curation review resumes where it stopped: answered candidates are not asked again.
 
-What went wrong: the curation widget kept which candidates were answered only
-in memory, keyed by their position in the layer, and emptied that record
-whenever a layer was chosen (again) with "Use Selected Layer". After a
-restart of napari, or simply choosing the layer again, every candidate came
-up as unanswered although the answers were saved.
+Which candidates are answered must not be kept only in memory, keyed by their
+position in the layer, and emptied whenever a layer is chosen (again) with
+"Use Selected Layer". After a restart of napari, or simply choosing the layer
+again, every candidate would come up as unanswered although the answers were
+saved.
 """
 from types import SimpleNamespace
 

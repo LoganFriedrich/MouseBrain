@@ -34,14 +34,16 @@ from .schema import CSV_COLUMNS, RUN_TYPES
 #
 # The 2D tracker is one CSV that the napari widget and the batch script write,
 # possibly at the same time and from different machines. Every status change
-# rewrites the whole file. That rewrite used to:
-#   * write in place, so a crash part-way left a truncated tracker;
-#   * take no lock, so the widget and the batch each wrote back the rows they
-#     had read, and one of them lost the other's new rows and updates.
-# Now every write holds an exclusive lock file beside the CSV
-# (mousebrain.file_lock), and a rewrite goes through a temporary file swapped
-# in with os.replace, keeping every column the file has (known to this
-# version or not) in the file's own order.
+# rewrites the whole file. Two rules keep that safe:
+#   * a rewrite goes through a temporary file swapped in with os.replace,
+#     because writing in place would leave a truncated tracker after a crash
+#     part-way;
+#   * every write holds an exclusive lock file beside the CSV
+#     (mousebrain.file_lock), because without one the widget and the batch
+#     each write back the rows they had read, and one loses the other's new
+#     rows and updates.
+# A rewrite keeps every column the file has (known to this version or not)
+# in the file's own order.
 LOCK_STALE_SECONDS = 120
 LOCK_WAIT_SECONDS = 300
 REPLACE_RETRY_SECONDS = 30  # a reader on Windows can hold the file open briefly
@@ -52,9 +54,9 @@ REPLACE_RETRY_SECONDS = 30  # a reader on Windows can hold the file open briefly
 
 # HOW THE CSV IS READ: every read opens it as 'utf-8-sig'. WHY: a spreadsheet
 # program saving the tracker as "CSV UTF-8" puts a byte-order mark (BOM) in
-# front of the first column name. Read as plain 'utf-8', the first column was
-# then called BOM+'run_id', not 'run_id': the next open "added" a second, empty
-# run_id column, and from then on no existing run could be found by its id
+# front of the first column name. Read as plain 'utf-8', the first column is
+# then called BOM+'run_id', not 'run_id': the next open "adds" a second, empty
+# run_id column, and from then on no existing run can be found by its id
 # (status updates, mark-as-best, failing an unfinished run, the batch's
 # marked-best lookup all missed every old row). 'utf-8-sig' drops the mark
 # and reads a file without one exactly as 'utf-8' does. Writes stay plain
@@ -62,9 +64,9 @@ REPLACE_RETRY_SECONDS = 30  # a reader on Windows can hold the file open briefly
 READ_ENCODING = "utf-8-sig"
 
 
-# The one word for a run that did not finish. WHY: the batch used to write
-# 'error' and the widget 'failed' for the same state, so anything looking for
-# failed runs missed the batch's. update_status turns 'error' into this.
+# The one word for a run that did not finish. WHY: if the batch wrote
+# 'error' and the widget 'failed' for the same state, anything looking for
+# failed runs would miss one of them. update_status turns 'error' into this.
 FAILED = "failed"
 
 
@@ -300,9 +302,9 @@ class SliceTracker:
         """Generate a unique run ID.
 
         The id keeps its readable form (type, second, 6 hex digits), but the
-        hash includes a random part. WHY: it used to hash only the type,
-        sample, second and process id, so two runs of one sample started in
-        the same second got the same id -- and update_status() then changed
+        hash includes a random part. WHY: hashing only the type, sample,
+        second and process id would give two runs of one sample started in
+        the same second the same id -- and update_status() would then change
         the first matching row, i.e. the wrong run.
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -409,8 +411,8 @@ class SliceTracker:
         """Set a run that is still 'started' to 'failed', adding `why` to its
         notes. A run that already finished (completed, or failed) is never
         touched. WHY: a problem in a LATER step must not overwrite a result
-        that was recorded -- the batch used to turn a completed detection row
-        into 'error' when its colocalization step crashed. Never raises: it
+        that was recorded (a completed detection row stays 'completed' when
+        the colocalization step after it crashes). Never raises: it
         runs on error paths, where it must not hide the original error.
         True when the row was changed."""
         if not run_id:
@@ -665,8 +667,8 @@ class SliceTracker:
 
         WHY its own row, not an edit of the analysis's row: re-classifying
         rewrites the saved results (particles.csv) without finding the
-        particles again, and used to leave no trace at all -- the analysis's
-        row still stated the old background and counts. The original row
+        particles again, so without its own row it would leave no trace --
+        the analysis's row would still state the old background and counts. The original row
         keeps describing what the analysis produced; this row says what the
         results were changed to and when, and its parent_run is that
         analysis (blank when the particles on screen have no tracker row).
@@ -756,9 +758,9 @@ class SliceTracker:
             quant_total_regions: int - Number of regions with cells
 
         A keyword that is not one of RESULT_FIELDS raises ValueError, before
-        anything is written. WHY: an unknown keyword used to be dropped
-        without a word, so a caller recording a result under a misspelt or
-        unsupported name believed it was recorded when nothing was. A value
+        anything is written. WHY: an unknown keyword dropped without a word
+        would let a caller recording a result under a misspelled or
+        unsupported name believe it was recorded when nothing was. A value
         of None is left out (the column keeps what it has).
         """
         unknown = sorted(k for k in kwargs if k not in RESULT_FIELDS)
@@ -958,8 +960,8 @@ class SliceTracker:
         run_type = run.get('run_type', '')
 
         # Clear the previous best for this sample+type and mark this one in
-        # ONE locked rewrite (it used to be one rewrite per cleared row plus
-        # one), so the move can never be left half done.
+        # ONE locked rewrite (not one rewrite per cleared row plus one), so
+        # the move can never be left half done.
         def mutate(rows):
             found = False
             for row in rows:

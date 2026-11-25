@@ -1,9 +1,10 @@
 """Step 3 takes a brain given as <mouse folder>/<brain folder>.
 
 Steps 4 to 6 print and accept a brain as "<mouse folder>/<brain folder>".
-Step 3 compared --brain with the brain folder name alone, so that form fitted
-nothing: a brain waiting to be registered was answered with "No pending
-registration found" and nothing was registered. Identifiers are invented.
+Step 3 accepts that form too: comparing --brain with the brain folder name
+alone would fit nothing, a brain waiting to be registered would be answered
+with "No pending registration found" and nothing would be registered.
+Identifiers are invented.
 """
 import importlib.util
 import sys

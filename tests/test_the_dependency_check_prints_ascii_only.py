@@ -2,9 +2,9 @@
 
 WHY: a Windows console whose code page cannot show a character stops the
 whole command with UnicodeEncodeError, so a dependency check meant to tell a
-person what is missing would itself crash. The section headings carried an em
-dash. The dependency imports are answered "missing" here, so the test is fast
-and does not depend on what this environment has installed.
+person what is missing would itself crash (an em dash in a section heading is
+enough). The dependency imports are answered "missing" here, so the test is
+fast and does not depend on what this environment has installed.
 """
 import builtins
 

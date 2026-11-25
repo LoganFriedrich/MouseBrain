@@ -1,10 +1,9 @@
 """Rotate and flip in the slice annotator move the annotations with the image
 and keep each channel's display settings.
 
-Before this, rotate/flip turned only the image: every text label, box and
-arrow stayed at its old screen position, now over a different part of the
-tissue, and every channel's contrast, color and visibility went back to the
-defaults.
+If rotate/flip turned only the image, every text label, box and arrow would
+stay at its old screen position, now over a different part of the tissue, and
+every channel's contrast, color and visibility would go back to the defaults.
 """
 import numpy as np
 import pytest

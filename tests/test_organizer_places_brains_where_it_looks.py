@@ -1,17 +1,17 @@
 """A brain must be placed where this script's own scanner then looks for it.
 
-The bug: a newly delivered .ims dropped into the brains root -- the normal way a brain
-arrives -- was placed FLAT, as <brains root>/008_CNT_04_01_1p625x_z4/, because the code
-assumed its parent directory was already the mouse folder. The scanner looks for
-mouse/pipeline/0_Raw_IMS, so the brain then vanished from the listing entirely: not
-"ready", not "needs work, just absent. The delivery sat in the pipeline invisible
-to every later step, and the flat name also collides with the
-training_data folders, which use that shape already.
+A newly delivered .ims dropped into the brains root -- the normal way a brain
+arrives -- must not be placed FLAT, as <brains root>/008_CNT_04_01_1p625x_z4/,
+on the assumption that its parent directory is already the mouse folder. The
+scanner looks for mouse/pipeline/0_Raw_IMS, so such a brain would vanish from
+the listing entirely: not "ready", not "needs work", just absent, invisible to
+every later step. The flat name also collides with the training_data folders,
+which use that shape already.
 
 PANOs are a separate case: preliminary low-resolution overview scans that the pipeline
-does not use. Refusing them is correct; what was wrong was telling the operator to rename
-one into the production form, which would have pulled a volume at roughly double the
-voxel size into a pipeline calibrated for production scans.
+does not use. Refusing them is correct; telling the operator to rename one
+into the production form would pull a volume at roughly double the voxel size
+into a pipeline calibrated for production scans.
 """
 import importlib.util
 import sys
@@ -51,7 +51,7 @@ def test_a_newly_delivered_brain_is_nested_under_its_mouse_folder(organizer, tmp
 
 
 def test_the_scanner_then_finds_what_was_just_placed(organizer, tmp_path):
-    """The actual regression: placing and finding must agree."""
+    """Placing and finding must agree."""
     f = _drop(tmp_path, "008_CNT_04_01_1.625x_z4.ims")
     organizer.organize_ims_file(f)
     results = organizer.scan_and_report(tmp_path)

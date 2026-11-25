@@ -1,9 +1,9 @@
 """Step 5 archives the production classification before writing a new one,
 and each tracker row names the file its run wrote.
 
-Step 5 wrote over 5_Classified_Cells/cells.xml with no copy kept, and every
-step 5 row named the shared folder, so no row could be matched to its file.
-Identifiers are invented.
+Writing over 5_Classified_Cells/cells.xml with no copy kept would lose the
+previous classification, and a step 5 row that named only the shared folder
+could not be matched to its file. Identifiers are invented.
 """
 import builtins
 import importlib.util

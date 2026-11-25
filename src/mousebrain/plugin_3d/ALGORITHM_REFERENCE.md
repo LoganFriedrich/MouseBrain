@@ -1,7 +1,7 @@
 # 3D Cleared Brain Algorithm Reference
 
-> Auto-generated reference for the 3D cleared brain analysis pipeline algorithms.
-> For the most current parameter values, see the source files referenced in each section.
+> Reference for the algorithms of the 3D cleared brain analysis pipeline.
+> For the current parameter values, see the source files named in each section.
 
 ## Pipeline Overview
 
@@ -59,7 +59,7 @@ The algorithm detects where the brain transitions to spinal cord by analyzing ti
 | `CROP_DROP_THRESHOLD` | 0.85 | Width must drop to 85% of plateau to trigger |
 | `MIN_BRAIN_HEIGHT_FRACTION` | 0.5 | Keep at least 50% of Y dimension |
 | `MIN_GRADIENT_FOR_CROP` | -5 px/row | Minimum gradient to detect transition |
-| `CAMERA_PIXEL_SIZE` | 6.5 µm | Andor Neo/Zyla sCMOS pixel size |
+| `CAMERA_PIXEL_SIZE` | 6.5 µm | Pixel size of the camera, used to compute the voxel size |
 | `DEFAULT_ORIENTATION` | `"iar"` | inferior-anterior-right |
 
 ### Voxel Size Calculation
@@ -172,9 +172,8 @@ tracker stores all eight settings of that run, and step 4, the Pipeline
 Dashboard and Setup & Tuning all read them from there
 (`ExperimentTracker.get_paradigm_detection_settings`). With no Paradigm Best run
 for a setup, or one that does not record all eight, detection refuses to run
-rather than substitute built-in values. The four generic presets that used to be
-offered were placeholders from before detection was tuned on real brains, and
-were removed.
+rather than substitute built-in values: generic numbers that were never tuned
+on real brains would give plausible but wrong counts.
 
 ### Parameters
 
@@ -186,7 +185,7 @@ All eight come from the settled method; none has a built-in default in step 4.
 | `ball_z_size` | `det_ball_z` | Ball filter size in Z |
 | `soma_diameter` | `det_soma_diameter` | Expected soma diameter. Used for connected component grouping |
 | `n_sds_above_mean_thresh` | `det_threshold` | Detection threshold in standard deviations. Higher = fewer, brighter detections |
-| `ball_overlap_fraction` | `det_ball_overlap` | Fraction of the ball filter that must be filled by foreground voxels, centred on a voxel, to keep that voxel |
+| `ball_overlap_fraction` | `det_ball_overlap` | Fraction of the ball filter that must be filled by foreground voxels, centered on a voxel, to keep that voxel |
 | `soma_spread_factor` | `det_soma_spread` | Spread factor used to set the largest volume treated as one cell before a cluster is split up |
 | `log_sigma_size` | `det_log_sigma` | Width of the in-plane Laplacian-of-Gaussian filter, as a fraction of soma diameter |
 | `max_cluster_size` | `det_max_cluster` | Largest cluster (cubic µm) that splitting is attempted on; bigger ones are treated as artifacts |
@@ -231,15 +230,14 @@ For each candidate cell at position (z, y, x):
 | Model format | `.keras` (preferred) or `.h5` (weights only) |
 | Inference batch size | 32 |
 
-### Model Selection (the settled method, since 2026-11-19)
+### Model Selection (the settled method)
 
 Step 5 takes no model choice. It classifies with the classification run marked
 **Paradigm Best** for the brain's imaging setup (`ExperimentTracker.get_paradigm_classification`):
 that run's model file, cube size, batch size, and whether it was a **selective** or a
 **full** classification (and, selective, its tracing type). With none marked, a part not
 recorded, or the model file missing, step 5 stops and classifies nothing. It never takes
-"the newest model" (it used to, when nothing was marked), and `--model` with any other file
-is refused. Mark the method with `scripts/utils/util_mark_paradigm_classifier.py`
+"the newest model", and `--model` with any other file is refused. Mark the method with `scripts/utils/util_mark_paradigm_classifier.py`
 (docs/pipeline/README.md, "The settled classification method").
 
 ### Selective classification
@@ -255,7 +253,7 @@ The selective method classifies only the candidates the network is needed for:
    `selective_report.json` holds every count; `trust_cells.xml` and `classify_input.xml` are the
    two groups.
 
-Why: classifying every candidate removed real labelled cells deep in the brain along with the
+Why: classifying every candidate removed real labeled cells deep in the brain along with the
 surface artifacts, and its counts moved a lot between model checkpoints; artifacts concentrate
 near surfaces and fluid spaces, so only those candidates are checked. If the network cannot run,
 step 5 stops instead of keeping only the trusted cells.
@@ -379,20 +377,6 @@ Only a run a person marked **Paradigm Best** defines the settled method of its i
 |----------|---------------|--------|----------|-------|
 | `1p625x_z4` | 1.625× | 4 µm | 4.0 µm | Standard, near-isotropic |
 | `1p9x_z3p37` | 1.9× | 3.37 µm | 3.42 µm | Higher resolution |
-
----
-
-## Version History
-
-| Component | Version | Key Changes |
-|-----------|---------|-------------|
-| Organization | v1.0.1 | Folder structure creation |
-| Extraction | v1.4.0 | Gradient-based crop detection, channel identification by sparsity+texture |
-| Registration | v2.0.2 | brainreg with archiving, QC generation, approval gating |
-| Detection | v1.0.1 | Python API (replaces deprecated CLI), settled method (all eight settings) from the tracker |
-| Classification | v1.0.0 | ResNet50 with .keras support, paradigm-best model lookup |
-| Region Counting | v1.0.1 | brainglobe-utils coordinate transformation, per-region CSV |
-| Tracking | — | 76-column CSV with paradigm-best retrieval |
 
 ---
 

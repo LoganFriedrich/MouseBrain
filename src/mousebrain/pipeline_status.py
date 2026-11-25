@@ -160,7 +160,7 @@ def find_candidates(pipeline_dir) -> Optional[Path]:
 def _prefiltered(det: Path) -> bool:
     if not det.is_dir():
         return False
-    if (det / "prefilter_report.json").exists():  # where an old version looked
+    if (det / "prefilter_report.json").exists():  # legacy location
         return True
     if any(det.glob("prefilter*/prefilter_report.json")):
         return True

@@ -1,10 +1,10 @@
 """Step 6 writes the production count files correctly, with provenance.
 
-The archive append wrote each old row in the sorted union of all columns but
-never rewrote the header, so every archived row after the first had its values
-under the wrong names. The det_* and voxel columns were never filled, the
-subject column was built from "<mouse>/<brain>", and nothing was entered in
-the analysis registry.
+The archive append writes each old row in the sorted union of all columns and
+rewrites the header to match (otherwise every archived row after the first
+would have its values under the wrong names). The det_* and voxel columns are
+filled, the subject column is built correctly (not from "<mouse>/<brain>"),
+and the count is entered in the analysis registry.
 """
 import csv
 import importlib.util

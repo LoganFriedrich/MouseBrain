@@ -1,8 +1,8 @@
 """brainslice-roi says which samples it leaves out, and why.
 
 A sample with no measurements.csv, or whose ND2 is not in the dataset folder,
-used to be dropped without a word; the totals then counted only what was
-left, so a missing image looked like a smaller dataset.
+must not be dropped without a word; the totals would then count only what was
+left, so a missing image would look like a smaller dataset.
 """
 
 from mousebrain.plugin_2d.sliceatlas.cli import run_roi

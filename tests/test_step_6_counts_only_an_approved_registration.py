@@ -1,13 +1,14 @@
 """Step 6 counts a brain only while its registration is approved, and --all
 counts every approved brain that has no row in the production table.
 
-What went wrong: step 6 counted any brain with a cells.xml, so a rejected,
-unfinished, out of date or unapproved registration was written straight back
-into region_counts.csv, elife_counts.csv and the analysis registry -- even
-right after its counts had been withdrawn for that reason. And --all judged
-"already counted" by the brain's own 6_Region_Analysis files, which a
-withdrawal leaves in place, so it never counted a withdrawn brain again and
-said "No brains need counting". Identifiers are invented.
+Step 6 must not count any brain with a cells.xml: a rejected, unfinished, out
+of date or unapproved registration would be written straight back into
+region_counts.csv, elife_counts.csv and the analysis registry -- even right
+after its counts had been withdrawn for that reason. And --all judges
+"already counted" by the production row, not by the brain's own
+6_Region_Analysis files, which a withdrawal leaves in place: otherwise it would
+never count a withdrawn brain again and say "No brains need counting".
+Identifiers are invented.
 """
 import os
 import sys

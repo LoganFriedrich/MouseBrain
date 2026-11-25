@@ -1,10 +1,10 @@
 """A re-crop makes the registration fitted to the earlier crop out of date.
 
-A re-crop rewrote 2_Cropped_For_Registration in place: an interrupted one
-mixed old and new planes under the old metadata. And afterwards the
-registration fitted to the earlier crop stayed "registered" and "approved", so
-step 4's approval gate let detection run on images the atlas was never fitted
-to. Identifiers are invented.
+A re-crop does not rewrite 2_Cropped_For_Registration in place (an
+interrupted one would mix old and new planes under the old metadata). And the
+registration fitted to the earlier crop must stop counting as "registered"
+and "approved": otherwise step 4's approval gate would let detection run on
+images the atlas was never fitted to. Identifiers are invented.
 """
 import importlib.util
 import json

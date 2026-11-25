@@ -8,49 +8,49 @@ person has looked at the registration's QC pictures and said it is good. The
 approval is the file ``3_Registered_Atlas/.registration_approved``.
 
 WHY THE APPROVAL NAMES ITS REGISTRATION
-The marker used to hold only a date (or nothing). That made it an approval of
+A marker that held only a date (or nothing) would be an approval of
 "whatever registration is in this folder", not of the one the person looked at:
 
-* Re-registering moved the old registration into ``_archive/<time>/`` but left
-  the marker behind (the archive skipped every file starting with a dot), so
-  the NEW, never-reviewed registration was shown as approved and step 4 ran on
-  it.
-* The overnight batch wrote the marker itself straight after registering, so
-  a registration nobody had looked at went on to detection, classification
-  and region counts.
-* The tuning widget's Approve button could be pressed before any registration
-  existed; the registration made later inherited the approval.
+* Re-registering moves the old registration into ``_archive/<time>/``; a
+  marker left behind (an archive that skips files starting with a dot) would
+  show the NEW, never-reviewed registration as approved, and step 4 would run
+  on it.
+* A batch that wrote the marker itself straight after registering would send
+  a registration nobody had looked at on to detection, classification and
+  region counts.
+* An Approve button pressed before any registration exists would be inherited
+  by the registration made later.
 
-Now the marker records the registration it approves -- the size and
+So the marker records the registration it approves -- the size and
 modification time of the registration's own output files -- and every reader
 compares that record with what is in the folder. A marker for a different
-registration, or an old marker that does not say which registration it was
-for, counts as NOT approved. Approving needs a person (the util script, the
+registration, or a plain-text marker that does not say which registration it
+was for, counts as NOT approved. Approving needs a person (the util script, the
 Approve buttons); no automated run writes one.
 
 WHEN A REGISTRATION COUNTS AS A REGISTRATION AT ALL
 brainreg writes ``brainreg.json`` FIRST, before it fits anything, so that file
 alone proves only that a registration STARTED. A run that failed or was killed
-left it behind and every reader took the brain as registered: step 3 skipped
-it as done, the overnight batch called it a failure every night, and a person
-could approve it. A registration is complete only when every one of its output
+leaves it behind; a reader that trusted it would take the brain as registered:
+step 3 would skip it as done, the overnight batch would call it a failure every
+night, and a person could approve it. A registration is complete only when every one of its output
 files (FINGERPRINT_FILES) is there -- registration_complete(), the one test
 every reader uses. An incomplete registration cannot be approved.
 
 A REGISTRATION WHOSE IMAGES CHANGED IS OUT OF DATE
 The atlas is fitted to one set of images (``registered_from.json`` names the
 folder). A re-crop rewrites those images; the registration then describes
-images that are no longer there, yet it stayed "registered" and "approved" and
-step 4 ran on it. Now a registration older than the newest image it was fitted
+images that are no longer there; it must not stay "registered" and "approved"
+for step 4 to run on. A registration older than the newest image it was fitted
 to, or whose recorded images are gone, is OUT_OF_DATE: no reader counts it as
 registered, nobody can approve it, step 4's approval gate is closed, and the
 brain is at "register" again (step 3's --batch registers it).
 
 A REGISTRATION THAT IS RUNNING IS NOT "INCOMPLETE"
 Because brainreg.json comes first, a registration that is running right now
-looks exactly like one that stopped half-way. Step 3 used to take it for the
-latter: its --batch archived the running brainreg's folder and started a
-second brainreg into it. Step 3 now writes ``.registration_running`` (which
+looks exactly like one that stopped half-way. Taking it for the latter would
+make step 3's --batch archive the running brainreg's folder and start a
+second brainreg into it. So step 3 writes ``.registration_running`` (which
 computer, which process, when) before brainreg starts and removes it when it
 ends, however it ends. While that marker is LIVE every reader says RUNNING and
 step 3 refuses to archive or register the brain. A marker whose process has
@@ -61,20 +61,20 @@ for how "live" is decided.
 The marker names TWO processes: step 3 itself and, once it has started it,
 brainreg. Killing step 3 (a batch's time limit, a closed dashboard) does not
 stop brainreg, which goes on writing into the folder. Judged by step 3's
-process alone, the marker then looked dead, a retry archived the folder under
-the still-running brainreg and started a second one into it. The marker stays
-live while EITHER process is alive.
+process alone, the marker would look dead, and a retry would archive the folder
+under the still-running brainreg and start a second one into it. The marker
+stays live while EITHER process is alive.
 
 Step 3's own check after brainreg passes its claim (``own=``): the marker is
 its own, so to that check the brain is not "being registered by someone
-else". Without that, every finished registration read as RUNNING to the run
-that made it, failed its verification and was archived as failed.
+else". Without that, every finished registration would read as RUNNING to the
+run that made it, fail its verification and be archived as failed.
 
 A REJECTED REGISTRATION STAYS REJECTED
-Rejecting used to only move an existing approval away (and do nothing at all
-for a registration never approved), so the next reader showed the
-registration as merely "waiting for approval" and anyone could approve what a
-person had just turned down. reject() now writes ``.registration_rejected``
+Rejecting by only moving an existing approval away (and doing nothing for a
+registration never approved) would let the next reader show the registration
+as merely "waiting for approval", and anyone could approve what a person had
+just turned down. So reject() writes ``.registration_rejected``
 naming the registration (who, when, its fingerprint). Every reader then shows
 it as REJECTED, the brain is back at the register step, and approve() refuses
 it -- except the approval script, which asks the person whether they mean to
@@ -104,8 +104,8 @@ What happens to approvals:
 WHY EVERY WINDOW PASSES THE REGISTRATION IT SHOWED
 A person approves or rejects what they LOOKED AT: the status line, the QC
 picture. Between looking and clicking, a batch can finish registering the
-brain again. Without ``expected_id`` the click signed (or turned down) the new
-registration nobody had seen. Every window that asks (Setup & Tuning, the
+brain again. Without ``expected_id`` the click would sign (or turn down) the
+new registration nobody had seen. Every window that asks (Setup & Tuning, the
 pipeline dashboard, RUN_PIPELINE, the approval script) records
 fingerprint_id() of the registration at the moment it shows it, and passes it
 here; a registration that changed since is refused with RegistrationChanged
@@ -244,7 +244,7 @@ def registration_time(reg_folder) -> Optional[float]:
 
 def read_marker(reg_folder) -> Optional[dict]:
     """The approval marker's content, or None when there is no marker. An
-    old-style marker (plain text or empty) comes back as {'legacy': text}."""
+    plain-text marker (a date, or empty) comes back as {'legacy': text}."""
     marker = _reg(reg_folder) / APPROVAL_MARKER
     if not marker.is_file():
         return None

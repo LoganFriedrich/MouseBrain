@@ -153,9 +153,9 @@ def archive_existing(csv_path: Path, archive_path: Path) -> int:
     """Append the current rows of csv_path to archive_path with an archived_at stamp.
 
     Through region_counts_io.append_archive_rows, in the ARCHIVE'S OWN column
-    order. This used to write each row in its own sorted-key order under a
-    header written once by the first row ever archived, so an archived row with
-    different group columns had its values under the wrong names -- and the
+    order. Writing each row in its own sorted-key order under a
+    header written once by the first row ever archived would put an archived
+    row with different group columns under the wrong names -- and the
     labels cannot be recovered afterwards. The caller holds the count-tables
     lock.
     """
@@ -178,9 +178,9 @@ def regenerate(summary_dir: Path, dry_run: bool = False, log=print) -> dict:
 
     The whole read-rebuild-write holds the count-tables lock (the one step 6
     holds while it updates these files), and each table is written through a
-    temporary file swapped in at the end. WHY: this used to rewrite
-    elife_counts.csv in place with no lock, so a step 6 run at the same moment
-    could have its new row dropped, and a crash part-way left a cut-off file
+    temporary file swapped in at the end. WHY: rewriting
+    elife_counts.csv in place with no lock could drop the new row of a step 6
+    run at the same moment, and a crash part-way would leave a cut-off file
     for an integrator to pull.
     """
     from mousebrain.region_mapping import aggregate_to_elife, ELIFE_GROUPS

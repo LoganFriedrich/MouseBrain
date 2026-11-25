@@ -1,11 +1,12 @@
 """A colocalization row from the napari window names the detection whose
 nuclei it measured, and a dual-channel row keeps its four classes apart.
 
-The window's colocalization rows had no parent_run, so a colocalization could
-not be traced back to the detection settings behind it. Dual-channel runs
-stored the 'both channels' count in coloc_positive_cells and the 'neither'
-count in coloc_negative_cells -- the columns a single-channel run uses for
-positive/negative -- so the row read as a single-channel result it never was.
+The window's colocalization rows carry parent_run, so a colocalization can be
+traced back to the detection settings behind it. Dual-channel runs must not
+store the 'both channels' count in coloc_positive_cells and the 'neither' count
+in coloc_negative_cells -- the columns a single-channel run uses for
+positive/negative -- or the row would read as a single-channel result it never
+was.
 """
 import pandas as pd
 

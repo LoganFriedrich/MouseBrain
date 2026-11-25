@@ -3,11 +3,11 @@
 "Merge Selected -> Shared Pool", "Merge Selected into Training Layers" (XML
 batches), "Suspicious -> Non-Cells Training", "Start Training Data Fresh" and
 the training sources table all read or write the same per-brain answers and
-cubes as curation. What went wrong before: merging to the pool put every
-brain's cubes in one folder under names without a brain, so a second brain's
-cube at the same coordinates was skipped as "already exists"; XML batches of
-other brains were loaded and then cut from this brain's image; suspicious
-points went only into a layer, never into the answers.
+cubes as curation. Rules: merging to the pool keeps each brain's cubes apart
+under names with the brain, so a second brain's cube at the same coordinates
+is not skipped as "already exists"; XML batches of other brains are not cut
+from this brain's image; suspicious points go into the answers, not only into
+a layer.
 """
 from pathlib import Path
 

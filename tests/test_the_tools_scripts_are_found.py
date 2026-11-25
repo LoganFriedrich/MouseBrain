@@ -1,12 +1,12 @@
 """mousebrain finds its own scripts.
 
-The reorganization moved the pipeline steps to scripts/pipeline and the
-utilities to scripts/utils, but everything that started a script by name still
-looked in the pipeline's 3D_Cleared/util_Scripts -- a data folder, now empty.
-The napari pipeline dashboard, its registration QC button and batch_process all
-stopped with "not found", and registration finished every brain without its QC
-picture (it printed a warning nobody saw). Scripts are now found beside the
-installed package, by name.
+The pipeline steps live in scripts/pipeline and the utilities in
+scripts/utils. Everything that starts a script by name looks beside the
+installed package, not in the pipeline's 3D_Cleared/util_Scripts (a data
+folder). Otherwise the napari pipeline dashboard, its registration QC button
+and batch_process would stop with "not found", and registration would finish
+every brain without its QC picture (it would only print a warning nobody
+sees).
 """
 import importlib.util
 import json
@@ -32,7 +32,7 @@ def test_every_script_the_tool_starts_by_name_exists():
     for caller in CALLERS:
         names |= set(ASKED_FOR.findall(caller.read_text(encoding="utf-8")))
     # the dashboard's steps and the tuning widget's own buttons. (Approval is
-    # no longer started as a script: the dashboard records it in-process,
+    # not started as a script: the dashboard records it in-process,
     # mousebrain.registration_approval.approve.)
     assert {"3_register_to_atlas.py",
             "util_registration_qc.py", "6_count_regions.py"} <= names

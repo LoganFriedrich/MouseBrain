@@ -2,11 +2,11 @@
 
 The settled method is the classification run a person marked Paradigm Best
 for the brain's imaging setup: its model file, cube and batch size, and -- for
-a selective classification -- its tracing type. Before 2026-11-19 step 5 took
-"the newest model file" when nothing was marked, any --model or pre-filter
-choice went straight into production, and a selective classification could
-only write files beside production (cells_selective.xml), never be counted.
-Identifiers are invented.
+a selective classification -- its tracing type. Without a marked run step 5
+must not take "the newest model file", and any --model or pre-filter choice
+must not go straight into production; a selective classification writes
+production like any other run and can be counted, not only files beside
+production (cells_selective.xml). Identifiers are invented.
 """
 import builtins
 import csv

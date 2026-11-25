@@ -119,9 +119,9 @@ def apply_crop(source_folder: Path, output_folder: Path, y_crop: int,
     once every plane, cache and metadata.json are written; the crop that was
     there goes into ``<output_folder>/_archive/<time>/`` (kept, not deleted)
     -- crop_subprocess.new_partial / swap_in, the rule every crop tool
-    follows. WHY: this used to write over the existing crop plane by plane
-    (with --force), so a run stopped part-way left old and new planes mixed
-    under the old metadata, which the batches then registered unattended.
+    follows. WHY: writing over the existing crop plane by plane
+    (with --force) would let a run stopped part-way leave old and new planes
+    mixed under the old metadata, which the batches would register unattended.
     """
     if dry_run:
         print(f"  [DRY RUN] Would crop to Y={y_crop}")

@@ -1,11 +1,11 @@
 """A load that finishes after another brain was selected serves the brain it
 loaded, and puts nothing of the selected brain over it.
 
-The layers were already named and tagged for the brain whose load started,
-but the rest of the finish handler served the brain selected NOW: it loaded
-that brain's Best and recent detections and classifications over the other
-brain's images, reported "Loaded: <selected brain>", and started a Zarr
-conversion for it.
+The layers are named and tagged for the brain whose load started, so the rest
+of the finish handler must serve that brain too. Serving the brain selected
+NOW would load that brain's Best and recent detections and classifications
+over the other brain's images, report "Loaded: <selected brain>", and start a
+Zarr conversion for it.
 """
 import numpy as np
 import pytest

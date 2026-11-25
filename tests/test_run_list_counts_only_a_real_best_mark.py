@@ -2,8 +2,9 @@
 
 The tracker writes 'True' for a Best and every tracker reader compares with
 'True'. The run list's 'Best only' filter, its star, its sort and the layer
-colors tested the value for truth instead, so a row holding the text 'False'
-showed as Best in the list while Load best and the tracker did not count it.
+colors must do the same: testing the value for truth would show a row holding
+the text 'False' as Best in the list while Load best and the tracker did not
+count it.
 """
 import pytest
 

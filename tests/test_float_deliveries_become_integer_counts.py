@@ -5,10 +5,8 @@ vignetting correction applied in the imaging software arrives as float, because
 that correction multiplies each count by a gain and multiplication produces
 fractions. Cell detection refuses a floating-point image outright -- which is the
 good case, since the alternative would be detecting on something it cannot
-interpret.
-
-Observed in practice: a re-delivered brain was extracted and cached at length,
-and detection then declined it in under a second with
+interpret. Without conversion, a re-delivered brain would be extracted and
+cached at length and then declined by detection in under a second with
 "signal_array must be integer datatype, but has datatype float32".
 
 The underlying quantity is a photon count, so rounding recovers the integer the

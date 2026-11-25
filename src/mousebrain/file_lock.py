@@ -24,10 +24,10 @@ Several waiters usually judge the same abandoned lock stale at the same
 moment. If each were free to remove "the stale lock", the slower one would
 remove the FRESH lock the quicker one had just taken in its place, and two
 writers would be inside the read-change-write at once -- the lost update this
-lock exists to prevent. (An earlier version moved the lock aside, looked at
-it, and put it back when it turned out to be a fresh one; while it was aside
-the lock's name was free, a third writer could create it, and the put-back
-then failed.) So:
+lock exists to prevent. (Moving the lock aside, looking at it, and putting it
+back when it turns out to be a fresh one fails the same way: while it is aside
+the lock's name is free, a third writer can create it, and the put-back
+then fails.) So:
 
 - a waiter that wants to break a lock first creates ``<lock>.break`` with
   O_EXCL -- only one waiter on one machine can hold it;
@@ -86,7 +86,7 @@ round the waiting loop that does not sleep is bounded by ``wait_seconds``.
 RELEASING ON WINDOWS
 Windows refuses to delete a file while another process has it open, and a
 waiter opens the lock for a moment several times a second to read who holds
-it. A release that tried the delete once would fail now and then, leave the
+it. A release that tried the delete once would fail at times, leave the
 lock behind, and make every waiter sit out ``stale_seconds`` and then "take
 over" a lock whose holder had finished long ago. So the release retries
 the delete for up to RELEASE_RETRY_SECONDS, re-reading the lock before each
@@ -112,9 +112,9 @@ All three are safe to delete when nothing is holding the lock.
 
 Every lock in this package goes through this module: the calibration
 tracker (mousebrain.tracker, calibration_runs.csv), the 2D slice tracker and
-the analysis registry. (The calibration tracker used to keep its own, older
-copy of this algorithm, without the background refresh, with the move-aside
-takeover described above, and with a single-attempt release.)
+the analysis registry. A private copy is avoided because it tends to lack the
+background refresh, to take over by moving the lock aside, and to release with
+a single attempt (the failures described above).
 """
 
 import os

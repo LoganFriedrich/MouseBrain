@@ -1,7 +1,7 @@
 """Selecting another brain in Setup & Tuning drops everything held for the last one.
 
-Before this, changing brain changed only current_brain: detection could run on
-the previous brain's pixels and be logged under the new one, Save wrote the
+If changing brain changed only current_brain, detection could run on the
+previous brain's pixels and be logged under the new one, Save would write the
 previous brain's metadata into the new brain's folders (and into every image
 folder, forging "cropped"), and a pre-filter result could be saved into the
 wrong brain.

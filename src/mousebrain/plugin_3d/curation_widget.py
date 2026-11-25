@@ -593,9 +593,9 @@ class CurationWidget(QWidget):
                 sizes.append(8)
 
         self.candidates_layer.face_color = face_colors
-        self.candidates_layer.border_color = edge_colors  # Updated from deprecated edge_color
+        self.candidates_layer.border_color = edge_colors  # edge_color is deprecated
         self.candidates_layer.size = sizes
-        self.candidates_layer.border_width = 0.1  # Updated from deprecated edge_width
+        self.candidates_layer.border_width = 0.1  # edge_width is deprecated
         self.candidates_layer.refresh()
 
     def update_stats(self):

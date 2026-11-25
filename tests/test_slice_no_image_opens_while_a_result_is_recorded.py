@@ -1,11 +1,12 @@
 """No image opens while a detection or colocalization result is being
 handled -- including while it is written to the tracker.
 
-The result handlers freed the window first thing, then wrote the tracker on
-the window's own thread, which lets the window answer clicks that were
-waiting. A queued Browse / Load was honored right then: the image on screen
-was saved and cleared, and the handler went on to draw its nuclei on the
-image being loaded and to turn Colocalize / Quantify back on for it.
+The result handlers must not free the window first thing and then write the
+tracker on the window's own thread, which lets the window answer clicks that
+were waiting. A queued Browse / Load would be honored right then: the image on
+screen would be saved and cleared, and the handler would go on to draw its
+nuclei on the image being loaded and to turn Colocalize / Quantify back on for
+it.
 """
 import numpy as np
 import pandas as pd

@@ -1,8 +1,8 @@
 """'Load Previous' on the Pre-filter tab loads the pre-filter run chosen in
 the list, and only a run of the brain selected.
 
-It looked the run up with tracker.search(exp_id=...), which search() does
-not accept; the error was caught and every press ended in "Could not load
+The run is looked up with an argument tracker.search() accepts; a lookup that
+raised (caught by the button) would end every press in "Could not load
 previous result" with nothing loaded.
 """
 from types import SimpleNamespace

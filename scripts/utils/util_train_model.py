@@ -126,10 +126,10 @@ def discover_training_yamls(paradigm: str) -> list:
 
 
 # The file a finished training writes into its output folder. WHY: the napari
-# Setup & Tuning widget used to decide that a training had finished by counting
-# the model files in the whole models folder -- so a model written by another
-# training, or copied in by hand, counted as "done", and so did a training
-# that failed after saving a checkpoint. The widget now reads this file from
+# Setup & Tuning widget does not decide that a training has finished by counting
+# the model files in the whole models folder -- a model written by another
+# training, or copied in by hand, would count as "done", and so would a training
+# that failed after saving a checkpoint. The widget reads this file from
 # the folder IT told the training to write into (--output): present = finished,
 # with the model file named; absent once the process has ended = not finished.
 DONE_RECORD = "DONE.json"

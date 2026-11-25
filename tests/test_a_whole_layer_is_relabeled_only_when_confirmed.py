@@ -1,12 +1,11 @@
 """'Add Confirmed / Add Rejected' with no points selected asks before using the whole layer.
 
-What went wrong: with no point selected in the chosen layer, the buttons took
-EVERY point of the layer, without a word. Since the last answer wins, choosing
-'Train: Non-Cells' and clicking 'Add Confirmed to Cells Bucket' turned every
-saved rejection of the brain into a cell. Now the whole layer is used only
-after the person confirms a question that says how many points that is and
-how many answers it would change (default No). Selected points are saved
-without a question, as before.
+With no point selected in the chosen layer, the buttons would take EVERY
+point of the layer. Since the last answer wins, choosing 'Train: Non-Cells'
+and clicking 'Add Confirmed to Cells Bucket' would turn every saved rejection
+of the brain into a cell. So the whole layer is used only after the person
+confirms a question that says how many points that is and how many answers it
+would change (default No). Selected points are saved without a question.
 """
 import mousebrain.plugin_3d.tuning_widget as tw
 

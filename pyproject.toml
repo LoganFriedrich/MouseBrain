@@ -40,8 +40,9 @@ Repository = "https://github.com/LoganFriedrich/MouseBrain"
 "BrainGlobe" = "https://github.com/brainglobe"
 "cellfinder" = "https://github.com/brainglobe/cellfinder"
 
-# NOTE: PyTorch is NOT listed here because it requires special installation.
-# Run install.ps1 which handles torch installation from the correct index.
+# NOTE: PyTorch is NOT listed here because the right build depends on the machine
+# (with or without an NVIDIA graphics card). Install it after the package, with the
+# pip command from https://pytorch.org (README, Installation, step 3).
 
 [project.optional-dependencies]
 3d = [

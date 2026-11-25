@@ -1,12 +1,13 @@
 """Only the run a person marked Paradigm Best is the settled method of an imaging setup.
 
-With no Paradigm Best (never marked, or archived by mistake) the tracker used to
-fall back to the newest run marked Best for any ONE brain of the setup and hand
-it to step 4 as the settled method -- so a single brain's tuning silently became
-the detection of every brain imaged that way, logged as 'paradigm_best'. The same
-lookup chose the classification model. Now no Paradigm Best means no settled
-method, and step 4 stops and says how to settle one. The per-brain Best is still
-shown where the widget only displays it.
+With no Paradigm Best (never marked, or archived by mistake) the tracker must
+not fall back to the newest run marked Best for any ONE brain of the setup and
+hand it to step 4 as the settled method: a single brain's tuning would
+silently become the detection of every brain imaged that way, logged as
+'paradigm_best'. The same holds for the lookup that chooses the classification
+model. No Paradigm Best means no settled method, and step 4 stops and says
+how to settle one. The per-brain Best is still shown where the widget only
+displays it.
 """
 import csv
 
@@ -62,8 +63,8 @@ def test_the_paradigm_best_is_the_method_even_beside_a_newer_brain_best(tmp_path
 
 def test_the_display_lookup_still_shows_a_brain_best(tmp_path):
     t = _tracker(tmp_path, [_brain_best("det_one_brain", **EIGHT)])
-    # Display lookup, called without the new keyword: behaviour that must hold
-    # on both sides of the change.
+    # Display lookup, called without the strict keyword: it still shows a
+    # brain's Best.
     assert t.get_best_for_paradigm(SETUP)["exp_id"] == "det_one_brain"
     # The settled-method lookup refuses it.
     assert t.get_best_for_paradigm(SETUP, strict=True) is None

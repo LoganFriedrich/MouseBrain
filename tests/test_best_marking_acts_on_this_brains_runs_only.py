@@ -1,19 +1,19 @@
 """Marking a Best detection run in Setup & Tuning changes only what it should.
 
-The curation tab's Mark as Best / Promote Recent / Keep Best buttons used to
-find "the Best layer" and "the recent layer" by name as well as metadata, and
-in the whole viewer, and they ARCHIVED the previous Best in the tracker (which
-also ends its Paradigm Best). Four ways that went wrong, each pinned here:
+The curation tab's Mark as Best / Promote Recent / Keep Best buttons find "the
+Best layer" and "the recent layer" by metadata, within this brain, and
+ARCHIVE the previous Best in the tracker (which also ends its Paradigm Best).
+Four failure modes, each pinned here:
 
-* the Best layer kept the session marker of a new run in its name, so it was
-  also found as the "recent" layer: Keep Best hid the Best, and Promote
-  archived the very run it then marked best;
-* the Best layer of ANOTHER brain open in the viewer was archived (tracker
-  included) when this brain's Best was marked;
-* the run list's "Mark as Best" and the curation tab's left the tracker in
-  different states;
-* marking a layer that is not a tracked run archived the real Best and marked
-  nothing.
+* the Best layer must not keep the session marker of a new run in its name,
+  or it is also found as the "recent" layer: Keep Best would hide the Best,
+  and Promote would archive the very run it then marks best;
+* the Best layer of ANOTHER brain open in the viewer must not be archived
+  (tracker included) when this brain's Best is marked;
+* the run list's "Mark as Best" and the curation tab's must leave the tracker
+  in the same state;
+* marking a layer that is not a tracked run must not archive the real Best
+  and mark nothing.
 
 The widget is driven through its own methods on a stand-in object (no Qt
 window), with real napari points layers and a real tracker CSV in tmp_path.

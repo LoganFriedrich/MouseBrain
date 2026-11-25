@@ -1,10 +1,10 @@
 """Runs are never left unlogged in silence, and never logged to a stand-in.
 
-When the 2D tracker could not be opened, the napari widget and the batch set
-it to None and carried on with nothing logged and no warning a person would
+When the 2D tracker cannot be opened, the napari widget and the batch must not
+set it to None and carry on with nothing logged and no warning a person would
 see. And on an install that does not know where the lab's data lives, the
 default tracker path sits under a temporary stand-in folder: SliceTracker()
-created a tracker there, so runs looked logged and were lost.
+must not create a tracker there, or runs would look logged and be lost.
 """
 import types
 from types import SimpleNamespace

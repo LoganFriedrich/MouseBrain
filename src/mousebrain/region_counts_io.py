@@ -1,22 +1,22 @@
 """Writing the production region-count CSVs, and where their provenance comes from.
 
-Used by step 6 (6_count_regions.py). Three things this module fixes:
+Used by step 6 (6_count_regions.py). Three rules:
 
 1. THE ARCHIVE APPEND. When a brain is counted again its previous row moves to
    region_counts_archive.csv (elife_counts_archive.csv for the eLife groups).
-   The append wrote the row with column names = the sorted union of every
-   column seen, but never rewrote the archive's header. Region columns differ
-   from brain to brain, so every row after the first was written in an order
-   that was not the header's -- its values sat under the wrong names, and the
-   labels cannot be recovered from the file. Now a row is written in the
-   archive's own header order; when it brings new columns, the whole archive
-   is rewritten with the header extended (temporary file + os.replace).
+   Region columns differ from brain to brain, so a row must be written in the
+   archive's own header order; a row written in another order (for example
+   the sorted union of every column seen, with the header never rewritten)
+   leaves its values under the wrong names, and the labels cannot be
+   recovered from the file. A row that brings new columns makes the whole
+   archive be rewritten with the header extended (temporary file +
+   os.replace).
 
-2. THE MAIN FILE was rewritten in place, so a crash part-way truncated the file
-   an integrator pulls. It is now written to a temporary file and swapped in.
+2. THE MAIN FILE is written to a temporary file and swapped in, never rewritten
+   in place: a crash part-way would truncate the file an integrator pulls.
 
-3. PROVENANCE. The det_* and voxel columns of region_counts.csv were never
-   filled ("should come from parent experiment"). detection_provenance()
+3. PROVENANCE. The det_* and voxel columns of region_counts.csv come from the
+   parent experiment. detection_provenance()
    follows the tracker from the classification that wrote cells.xml, through
    a pre-filter if there was one, to the detection run that produced the
    candidates, and returns that run's settings. When the chain cannot be
@@ -56,8 +56,8 @@ def counts_tables_lock(region_counts_csv):
     read, changed and written back -- by step 6 after every brain, by
     regenerate_derived_counts, and when a brain's counts are withdrawn. Two of
     those at once (two step 6 windows, or step 6 while the derived tables are
-    rebuilt) used to lose an update: both read the old file, and the second
-    write dropped the first one's row. Every reader-writer of these tables
+    rebuilt) would lose an update: both read the old file, and the second
+    write would drop the first one's row. Every reader-writer of these tables
     holds this lock around its whole read-change-write. It is a file
     ``region_counts.csv.lock`` beside region_counts.csv
     (mousebrain.file_lock says how a lock left by a crashed run is taken over).
@@ -78,7 +78,7 @@ def append_archive_rows(archive_path, new_rows: List[dict]) -> Path:
     New columns are appended to the header (whole file rewritten through a
     temporary file); existing rows keep every value under its own name. An
     archive whose rows already have more values than its header (written by
-    the old code) cannot be extended safely: it is renamed aside, kept as it
+    a version that did not extend the header) cannot be extended safely: it is renamed aside, kept as it
     is, a fresh archive is started with these rows, and a warning is printed.
     Returns the archive path.
     """
@@ -235,14 +235,13 @@ def withdraw_counts(brain_folder: str, reason: str, summary_dir=None,
 
     WHY: region_counts.csv and elife_counts.csv are what an integrator pulls,
     and the registry's ``3D_Region_Counts`` entries are what it mirrors. When
-    a brain's registration was archived (step 3 registers it again), rejected
-    by a person, or made out of date by a re-crop, or its classification was
-    replaced (step 5, a promotion), its counts stayed in all three until
+    a brain's registration is archived (step 3 registers it again), rejected
+    by a person, or made out of date by a re-crop, or its classification is
+    replaced (step 5, a promotion), its counts would stay in all three until
     somebody counted the brain again -- counts of a registration or a
     classification that no longer stands for the brain, indistinguishable
-    from current ones. Withdrawing only the tables (as an earlier version
-    did) left the registry entry current, so the integrator kept mirroring
-    it.
+    from current ones. Withdrawing only the tables would leave the registry
+    entry current, so the integrator would keep mirroring it.
 
     What happens:
       * the brain's row in each table moves to that table's archive
@@ -523,7 +522,7 @@ def detection_provenance(tracker_rows: List[dict], brain_folder: str, cells_xml,
         "classification_exp_id": (classification or {}).get("exp_id", ""),
         "model": (classification or {}).get("class_model_path", ""),
         # 'selective' or 'full': which kind of classification made cells.xml
-        # (both are production methods since 2026-11-19; a count must say).
+        # (both are production methods; a count must say which).
         "classification_method": {"selective_classification": "selective",
                                   "classification": "full"}.get(
                                       (classification or {}).get("exp_type", ""), ""),

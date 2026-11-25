@@ -1,8 +1,8 @@
 """ROI counts record the detection run whose measurements they were counted against.
 
-They used to be registered with the APPROVED method and without the
-measurements file, so a re-detection (new measurements, new method) left the
-old counts looking current.
+They are registered with the method and the measurements file they were
+counted against, not the APPROVED method alone: otherwise a re-detection (new
+measurements, new method) would leave the old counts looking current.
 """
 
 from example_method import write_example_approved_method

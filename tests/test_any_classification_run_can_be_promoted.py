@@ -1,17 +1,15 @@
 """Any completed classification run of a brain can be promoted to production,
 and the Results tab says what region counting will count.
 
-What went wrong:
-* "Promote to production" took only the last run made in the window since the
-  brain was selected; after a restart or a brain change an earlier run had to
-  be made again to be promoted.
-* The Results tab's classification choice set fields nothing read and
-  relabelled the tab "Selected: <run>", while counting always counted the
-  production 5_Classified_Cells/cells.xml.
+* "Promote to production" is not limited to the last run made in the window
+  since the brain was selected: after a restart or a brain change an earlier
+  run can be promoted without making it again.
+* The Results tab's classification choice must drive what is promoted, and
+  the tab names the production 5_Classified_Cells/cells.xml and the run it came
+  from, because counting always counts that production file.
 
-Now a run chosen in the run list or in the Results tab is promoted (after the
-same confirmation), and the Results tab names the production file and the run
-it came from. Promoting must not harm production: a run whose folder IS the
+A run chosen in the run list or in the Results tab is promoted (after the same
+confirmation). Promoting must not harm production: a run whose folder IS the
 production folder, or another brain's run, is refused.
 """
 import json

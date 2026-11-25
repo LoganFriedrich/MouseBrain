@@ -4,13 +4,13 @@ Subprocess script for performing the actual crop operation.
 Called by the napari plugin after crop position is selected.
 
 WHY THE NEW CROP IS BUILT BESIDE THE OLD ONE AND SWAPPED IN
-A crop used to be written straight into 2_Cropped_For_Registration, plane by
-plane, over the crop already there, with metadata.json last. An interrupted
-re-crop (the window closed, the computer restarted) then left a folder of
-mixed planes -- some cut at the new line, some at the old -- under the OLD
-metadata, which every reader took for a finished crop. Now the new crop is
-written to 2_Cropped_For_Registration.partial; only when every plane and the
-metadata are written is the previous crop moved into
+Writing a crop straight into 2_Cropped_For_Registration, plane by plane, over
+the crop already there would let an interrupted re-crop (the window closed,
+the computer restarted) leave a folder of mixed planes -- some cut at the new
+line, some at the old -- under the OLD metadata, which every reader takes for
+a finished crop. So the new crop is written to
+2_Cropped_For_Registration.partial; only when every plane and the metadata
+are written is the previous crop moved into
 2_Cropped_For_Registration/_archive/<time>/ (kept, not deleted) and the new
 one moved in, metadata.json last. An interrupted crop leaves the old crop
 untouched (or, if it stops during the swap itself, a crop folder without
@@ -23,9 +23,8 @@ registry at once (swap_in does it), not when the brain is next registered.
 
 EVERY tool that writes a crop uses this rule (new_partial() + swap_in()):
 this napari crop, step 2's --auto-crop, util_apply_crop_from_reference.py and
-the manual crop widget's own writers. Step 2 and the reference-crop script
-used to write in place and leave mixed planes when stopped, which the batches
-then registered unattended.
+the manual crop widget's own writers. A crop written in place and stopped
+part-way would be registered unattended by the batches.
 
 This module imports only the standard library at the top, so the pipeline
 scripts can import these two functions without loading napari or Qt.
@@ -94,10 +93,10 @@ def _withdraw_counts_if_registration_out_of_date(brain_folder: Path) -> None:
     DATE (fitted to images made before this crop), its region counts leave
     production (registration_approval.withdraw_counts_from_production).
 
-    WHY: the counts were made from the atlas fit to the earlier crop. Before,
-    they stayed in region_counts.csv / elife_counts.csv and the analysis
-    registry until the brain was registered again (and the registry entry
-    even after that), so an integrator imported them as current. Decided by
+    WHY: the counts were made from the atlas fit to the earlier crop. Left in
+    region_counts.csv / elife_counts.csv and the analysis registry until the
+    brain is registered again, they would be imported as current by an
+    integrator. Decided by
     the one rule every reader uses, approval_state(), never by which crop
     folder was written: a re-crop of a folder the registration was NOT
     fitted to (the automatic crop of a brain registered on its manual crop)
@@ -130,9 +129,10 @@ def apply_signal_choice(crop_meta: dict, crop_data: dict) -> None:
     crop's metadata, under the keys every later step reads.
 
     WHY: the crop window asks the person which channel shows the cells and
-    puts the answer in .crop_position.json, but this process used to copy the
-    extraction's metadata unchanged, so the answer was dropped and steps 3-5
-    went on reading the extraction's ``channels.signal_channel``. The window
+    puts the answer in .crop_position.json. This process writes it into the
+    crop's metadata; copying the extraction's metadata unchanged would drop
+    the answer and steps 3-5 would keep reading the extraction's
+    ``channels.signal_channel``. The window
     starts on the extraction's own answer (manual_crop_widget), so a person who
     leaves the choice alone writes back what was there.
 
@@ -144,9 +144,9 @@ def apply_signal_choice(crop_meta: dict, crop_data: dict) -> None:
       * the answer is the other channel: ``channels.signal_channel`` becomes
         the answer and, if ``channels.background_channel`` was the answer,
         it becomes the previous signal channel (the two roles swap);
-      * no answer (the window was left with nothing chosen, or an older
-        window that did not ask): nothing is changed.
-    The old top-level ``signal_channel`` / ``channels_swapped`` keys are
+      * no answer (the window was left with nothing chosen, or the position
+        file carries none): nothing is changed.
+    The legacy top-level ``signal_channel`` / ``channels_swapped`` keys are
     removed from the crop's copy only when they disagree with the answer, so
     they cannot contradict it.
     """
@@ -160,7 +160,7 @@ def apply_signal_choice(crop_meta: dict, crop_data: dict) -> None:
         channels = {}
     current = _channel_number(channels.get('signal_channel'))
     if current is None:
-        # No integer key yet: what the old keys said, else ch0 (the rule's default)
+        # No integer key yet: what the legacy keys said, else ch0 (the rule's default)
         old = _channel_number(crop_meta.get('signal_channel'))
         if old is None and crop_meta.get('channels_swapped') is not None:
             old = 1 if crop_meta.get('channels_swapped') else 0

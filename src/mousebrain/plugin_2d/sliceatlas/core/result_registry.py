@@ -2,13 +2,13 @@
 
 WHY: the 2D window (Save State, Count in ROI(s), the automatic save when
 another image is opened, Export Batch Results) and ``run_coloc --save``
-wrote their results only to files beside the images or to a path a person
-chose. Nothing reached the analysis registry, so whatever pulls the
-registry never saw them and nothing recorded which settings produced them.
-Now each of those saves also registers what it wrote -- the files (copied
-into the registry), the settings as ``method_params``, the image or folder
-as ``source_files`` -- with the registry's usual provenance (time, machine,
-method hash). WHERE the files themselves are written is unchanged.
+write their results to files beside the images or to a path a person
+chose. Without registration, whatever pulls the registry never sees them
+and nothing records which settings produced them. So each of those saves
+also registers what it wrote -- the files (copied into the registry), the
+settings as ``method_params``, the image or folder as ``source_files`` --
+with the registry's usual provenance (time, machine, method hash). WHERE
+the files themselves are written is not affected.
 
 WHICH ANALYSIS. Each producer has its own analysis, named after the project:
 

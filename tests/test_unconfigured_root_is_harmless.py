@@ -1,13 +1,14 @@
 """An unconfigured install must not create files where it happens to be standing.
 
-The root used to be a RELATIVE stand-in, `Path("CONNECTOME_ROOT_NOT_CONFIGURED")`. That
-is safe for code which checks `exists()` before reading -- and ten places in this
-package instead call `mkdir(parents=True, exist_ok=True)`, which checks nothing. So an
-unconfigured run created
+The unconfigured root is not a RELATIVE stand-in such as
+`Path("CONNECTOME_ROOT_NOT_CONFIGURED")`. That would be safe for code which
+checks `exists()` before reading -- but ten places in this package call
+`mkdir(parents=True, exist_ok=True)`, which checks nothing. An unconfigured run
+would then create
 `<cwd>/CONNECTOME_ROOT_NOT_CONFIGURED/3_Nuclei_Detection/2_Data_Summary/` containing a
 brand-new empty calibration_runs.csv, which can land at the root of a shared drive.
 
-The stray folder was never the real danger. A SECOND empty tracker is: it looks like a
+The stray folder is not the real danger. A SECOND empty tracker is: it looks like a
 working one, later runs append to it, and the actual record of every calibration run is
 orphaned while nothing appears to be wrong.
 

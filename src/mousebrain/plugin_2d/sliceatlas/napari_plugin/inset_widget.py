@@ -221,8 +221,8 @@ class InsetWidget(QWidget):
 
         The previous manager and its insets are dropped FIRST, whatever
         happens next. WHY: when no base image could be built, or building
-        failed, the old manager used to stay, bound to the previous image,
-        and the next detection used it."""
+        failed, the old manager would stay, bound to the previous image,
+        and the next detection would use it."""
         from ..core.insets import InsetManager
 
         self.forget_base()
@@ -255,8 +255,8 @@ class InsetWidget(QWidget):
     def forget_base(self):
         """Drop the inset manager and the insets listed: the image they were
         aligned to is no longer on screen (a failed load, the batch's ROI
-        drawing). WHY: a manager left in place was used by the next
-        detection on whatever image was then on screen."""
+        drawing). WHY: a manager left in place would be used by the next
+        detection on whatever image is then on screen."""
         self.inset_manager = None
         self._built_for = None
         self.insets_table.setRowCount(0)

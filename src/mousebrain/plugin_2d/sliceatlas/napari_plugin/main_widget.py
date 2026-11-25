@@ -183,9 +183,9 @@ def write_folder_csv(master_path, combined, sample_name: str,
     <folder>_roi_results.csv) with one '# Settings <sample>: {...}' line per
     sample above the table.
 
-    WHY one line per sample: the file used to carry ONE '# Settings:' line,
-    rewritten with the current settings on every append, so every earlier
-    sample's rows were labeled with settings they were not made with. Lines
+    WHY one line per sample: a single '# Settings:' line rewritten with the
+    current settings on every append would label every earlier sample's
+    rows with settings they were not made with. Lines
     of the other samples are kept as they are; this sample's is replaced."""
     import json
     import os
@@ -268,9 +268,9 @@ def analyze_batch_image(fpath, settings: Dict[str, Any]) -> Dict[str, Any]:
     (the particle tab's settings, as _pa_get_settings returns them).
 
     A plain function of the file and the settings, holding nothing of the
-    window. WHY: the batch used to keep its work in the window's own
-    attributes while the window answered clicks between images, so a click
-    could change what the rest of the run worked on (see _batch_run_analysis).
+    window. WHY: the batch's work kept in the window's own attributes
+    would let a click between images change what the rest of the run works
+    on (see _batch_run_analysis).
 
     Returns {'particles', 'labels', 'channels', 'n_particles', 'n_raw'}.
     Raises BatchImageFailed (or whatever the analysis raised) when the image
@@ -506,9 +506,9 @@ class BrainSliceWidget(QWidget):
         # handler reads it: see the per-kind ids below.
         self.last_run_id: Optional[str] = None
         # The tracker row of each kind of run, kept apart. WHY: detection,
-        # colocalization and particle analysis used to share last_run_id, so
-        # a run started while another was going re-pointed it, and the first
-        # run's result was then written into the second run's row (a
+        # colocalization and particle analysis must not share one id: a run
+        # started while another is going would re-point it, and the first
+        # run's result would be written into the second run's row (a
         # detection's nucleus count landing in a colocalization row, the
         # detection row left 'started'). Each result handler reads its own.
         self._detection_run_id: Optional[str] = None
@@ -536,8 +536,7 @@ class BrainSliceWidget(QWidget):
         # (None when they have no row: tracker off, or nothing detected
         # yet). WHY kept: a colocalization measures THOSE nuclei, and its row
         # names this run as its parent_run so it can be traced back to the
-        # detection settings behind it; the GUI's colocalization rows used to
-        # have no parent at all.
+        # detection settings behind it.
         self._labels_run_id: Optional[str] = None
         # Which analysis worker is going ('detection' / 'colocalization'),
         # None when none is. Set just before the worker starts and cleared
@@ -649,7 +648,7 @@ class BrainSliceWidget(QWidget):
         # Results that were NOT saved. A separate label for the same reason:
         # the status bar is overwritten at once ("Loading image...", the
         # load's progress, the restore), and a message about results that
-        # were not saved used to vanish before anyone could read it. It
+        # were not saved would vanish before anyone could read it. It
         # stays until the next image is left with everything saved.
         self.not_saved_label = QLabel("")
         self.not_saved_label.setStyleSheet("color: #c0392b; font-weight: bold;")
@@ -2365,8 +2364,8 @@ class BrainSliceWidget(QWidget):
 
     def _create_particle_tab(self) -> QWidget:
         """Particle UI has been merged into the Signal tab."""
-        # All particle UI is now created in _create_coloc_tab() particle container.
-        # This method is kept as a stub for reference.
+        # All particle UI is created in _create_coloc_tab() particle container.
+        # This method is only a stub.
         widget = QWidget()
         layout = QVBoxLayout()
         widget.setLayout(layout)
@@ -2411,9 +2410,9 @@ class BrainSliceWidget(QWidget):
             self._update_roi_names_label()
 
         # Ignore regions are drawn on one image (they are saved with it, in
-        # ignore_regions.json). WHY cleared: the layer and its handle used to
-        # survive, so the previous image's ignore regions were applied to,
-        # and saved with, the next image.
+        # ignore_regions.json). WHY cleared: the layer and its handle would
+        # otherwise carry the previous image's ignore regions over, to be
+        # applied to and saved with the next image.
         self._pa_ignore_shapes_layer = None
 
         # Clear colocalization state. The run ids go with what they name.
@@ -2431,9 +2430,9 @@ class BrainSliceWidget(QWidget):
         self._coloc_summary = None
         # What a colocalization worked out about THIS image's tissue and
         # background, and the region counts quantification made from it.
-        # WHY cleared: they used to survive, so the diagnostic plot, the QC
-        # images and an export after the next image's colocalization could
-        # show the previous image's tissue mask and background.
+        # WHY cleared: otherwise the diagnostic plot, the QC images and an
+        # export after the next image's colocalization could show the
+        # previous image's tissue mask and background.
         self._tissue_mask = None
         self._background_diagnostics = None
         self._tissue_pixels = None
@@ -2458,10 +2457,10 @@ class BrainSliceWidget(QWidget):
     # ----- The image's saved analysis (<image name>_analysis/) -----
     #
     # The folder holds ONE state: what the window holds for the image when it
-    # is saved. WHY: saving used to only ever add files -- a re-analysis that
-    # found 0 particles, or ROIs that were cleared, left the earlier
-    # particles.csv / rois.json in place, and the next restore brought them
-    # back as current. Now every save writes each file from what is in
+    # is saved. WHY: a save that only added files would leave the earlier
+    # particles.csv / rois.json in place after a re-analysis that found 0
+    # particles or after ROIs were cleared, and the next restore would bring
+    # them back as current. So every save writes each file from what is in
     # memory, removes a machine-made file whose result is gone, and writes a
     # person-drawn file (ROIs, background ROIs, ignore regions) as an empty
     # list rather than deleting it.
@@ -2526,10 +2525,10 @@ class BrainSliceWidget(QWidget):
         makes the file follow the new layer again, see _save_analysis_state).
 
         WHY: a removed layer says nothing about what the person wanted --
-        the delete button, another plugin, a mistaken click. A save used to
-        read it as "nothing drawn" and overwrite the saved ROIs with an
-        empty list, so polygons that may have taken an hour to draw were
-        kept nowhere. Clear ROIs (or drawing new shapes) is how a person
+        the delete button, another plugin, a mistaken click. Reading it as
+        "nothing drawn" would overwrite the saved ROIs with an empty list,
+        so polygons that may have taken an hour to draw would be kept
+        nowhere. Clear ROIs (or drawing new shapes) is how a person
         says what the file should hold now."""
         kept = set()
         for name, attr in DRAWN_LAYER_ATTRS:
@@ -2648,7 +2647,7 @@ class BrainSliceWidget(QWidget):
             if getattr(self, "is_folder_load", False) and has_results:
                 # A folder opened as one stack has no single image to file
                 # its results under. WHY said, not silent: these results
-                # used to vanish on the next image with only a console line.
+                # vanish on the next image, and a console line alone is not seen.
                 msg = STACK_RESULTS_NOT_SAVED
                 self.status_label.setText(msg)
                 print(f"[BrainSlice] {msg}")
@@ -2667,11 +2666,11 @@ class BrainSliceWidget(QWidget):
         # settings above all). When it was not restored -- unreadable, or
         # made on the image loaded with another rotation, z-projection or
         # channel choice -- it is kept as it is, so no result may be saved
-        # beside it either. WHY: new nuclei or measurements used to be
-        # written next to the OLD settings.json; the next time the image
-        # was opened, the old settings were applied, nothing looked amiss,
-        # and results made on differently loaded pixels were restored onto
-        # it whenever the image kept its shape.
+        # beside it either. WHY: new nuclei or measurements written next to
+        # the OLD settings.json would, the next time the image is opened,
+        # be restored with the old settings applied, nothing looking amiss,
+        # and results made on differently loaded pixels would be restored
+        # onto it whenever the image kept its shape.
         settings_kept = "settings.json" in blocked
         drawn_kept = self._drawn_files_kept_as_they_are()
         not_saved = []
@@ -3010,9 +3009,9 @@ class BrainSliceWidget(QWidget):
             except Exception as e:
                 problems.append(f"particle table not drawn ({e})")
 
-        # Nuclei and their colocalization measurements. WHY restored: they
-        # used to be neither saved nor restored, so an image analyzed only
-        # by colocalization showed as analyzed with nothing to bring back.
+        # Nuclei and their colocalization measurements. WHY restored: an
+        # image analyzed only by colocalization would otherwise show as
+        # analyzed with nothing to bring back.
         nuclei = load_labels("nuclei.npz")
         if nuclei is not None:
             self.nuclei_labels = nuclei
@@ -3294,9 +3293,9 @@ class BrainSliceWidget(QWidget):
         folder open in another program, or a folder holding an earlier
         analysis that is never overwritten), the person is asked; unless
         they choose to leave, the image and its results stay on screen.
-        WHY: the results used to be cleared the moment the save failed, so
-        the advice to export them could not be followed, and the message
-        was overwritten at once by "Loading image...". A folder stack's
+        WHY: clearing the results the moment the save fails would make the
+        advice to export them impossible to follow, and the message would
+        be overwritten at once by "Loading image...". A folder stack's
         results are never saved (STACK_RESULTS_NOT_SAVED); leaving a stack
         is not stopped, and the red line under the status bar says what
         was not kept."""
@@ -3377,9 +3376,9 @@ class BrainSliceWidget(QWidget):
         self._set_analysis_buttons(False)
         if fpath != self.current_file:
             # The Sample ID box names the image every tracker row and export
-            # is filed under. WHY here: it used to be set by Browse File only,
-            # so after Prev/Next or the queue the rows went under the
-            # previous image's name. A reload of the same image keeps a
+            # is filed under. WHY here, not only in Browse File: after
+            # Prev/Next or the queue the rows would go under the previous
+            # image's name. A reload of the same image keeps a
             # Sample ID typed by hand.
             self.sample_id_edit.setText(fpath.stem)
         self._chosen_file = fpath
@@ -3403,10 +3402,10 @@ class BrainSliceWidget(QWidget):
         """Set the Load tab to the rotation, z-projection and channels the
         image's saved analysis was made with, BEFORE the image loads.
 
-        WHY before: they used to be applied by the restore, after the image
-        had loaded with whatever the controls held, so restored labels could
-        sit on a differently turned image and the settings silently carried
-        to the next image's load. Not on a reload with the Load button
+        WHY before: applied by the restore, after the image had loaded with
+        whatever the controls held, restored labels could sit on a
+        differently turned image and the settings would silently carry to
+        the next image's load. Not on a reload with the Load button
         (peek=False), which keeps channels chosen by hand; the restore then
         refuses a saved analysis that does not fit (_saved_load_mismatch)."""
         import json
@@ -3428,7 +3427,7 @@ class BrainSliceWidget(QWidget):
             if changed:
                 # Said in the status bar once the image has loaded (see
                 # _restore_analysis_state). WHY: these choices stay set for
-                # the next image opened, which used to happen with no word.
+                # the next image opened, and that must not happen unannounced.
                 self._load_settings_note = (
                     "Load tab set to what its saved analysis was made with: "
                     + ", ".join(changed) + " (kept for the next image)")
@@ -3857,9 +3856,9 @@ class BrainSliceWidget(QWidget):
                 settings = json.load(f)
             self._pa_apply_settings(settings)
             # Not copied into the batch's settings: a batch records the
-            # settings it actually ran with, when it runs. WHY: loading a
-            # file after a batch had run used to make Export Batch Results
-            # write the loaded file as the batch's settings.
+            # settings it actually ran with, when it runs. WHY: otherwise
+            # loading a file after a batch had run would make Export Batch
+            # Results write the loaded file as the batch's settings.
             source = settings.get('source_image', 'unknown')
             self.status_label.setText(
                 f"Settings loaded from {Path(path).name} (tuned on: {source})")
@@ -3970,9 +3969,9 @@ class BrainSliceWidget(QWidget):
 
         WHY: the batch runs on the window's thread and lets the window answer
         clicks between images (_batch_run_analysis). Choosing another batch
-        folder part-way used to replace the file list and empty the results
-        while the run kept going, so the two batches were mixed under the
-        first one's file names; during the ROI drawing it threw away the
+        folder part-way would replace the file list and empty the results
+        while the run kept going, mixing the two batches under the first
+        one's file names; during the ROI drawing it would throw away the
         images not yet counted."""
         if self._analysis_running == BATCH_RUNNING:
             return "the batch analysis is still running"
@@ -3998,7 +3997,7 @@ class BrainSliceWidget(QWidget):
         (_analysis_running), so -- like any analysis -- it refuses to open an
         image or start another analysis, and _batch_busy refuses a new batch
         folder. WHY: the loop lets the window answer clicks between images
-        (QApplication.processEvents), and a click used to be able to change
+        (QApplication.processEvents), and a click could otherwise change
         the folder, the file list or the image on screen part-way through.
         It still runs on the window's thread: the window answers only
         between images."""
@@ -4094,9 +4093,8 @@ class BrainSliceWidget(QWidget):
                        f"tracker ({tracker_problem})")
         self._batch_status_label.setText(status)
         if failed:
-            # WHY a message, not only the console: the batch used to print
-            # these and go on, so an image that failed looked like one that
-            # was never in the folder.
+            # WHY a message, not only the console: an image that failed
+            # must not look like one that was never in the folder.
             lines = [f"{name}: {why}" for name, why in failed.items()]
             shown = lines[:20] + ([f"... and {len(lines) - 20} more"]
                                   if len(lines) > 20 else [])
@@ -4120,9 +4118,8 @@ class BrainSliceWidget(QWidget):
         then stops logging, so the window is not frozen again by every
         image waiting on a file that is held open).
 
-        WHY: the batch used to leave no row at all, so its results could not
-        be found in the Run History and nothing recorded which settings had
-        produced them. Written after the image is analyzed, in one write,
+        WHY: without a row the batch's results cannot be found in the Run
+        History and nothing records which settings produced them. Written after the image is analyzed, in one write,
         so no batch row can be left 'started'."""
         if not self.tracker:
             return None
@@ -4190,10 +4187,10 @@ class BrainSliceWidget(QWidget):
 
         The image on screen is saved and cleared first, and the window is
         left with no image of its own (current_file None) while the batch's
-        images are shown. WHY: the batch image's particles used to be put in
-        the window's single-image state while current_file still named the
-        image opened before the batch, so the next save (Save State, Count
-        in ROI(s), opening another image) wrote them into THAT image's
+        images are shown. WHY: the batch image's particles in the window's
+        single-image state, with current_file still naming the image opened
+        before the batch, would be written by the next save (Save State,
+        Count in ROI(s), opening another image) into THAT image's
         _analysis folder over its own results."""
         if not self._leave_current_image():
             # The person chose to keep the image on screen (its results
@@ -4390,10 +4387,10 @@ class BrainSliceWidget(QWidget):
         order, its ROI rows when counted, else ONE row saying what happened
         to it (no ROI drawn / skipped / not reviewed / failed: <why>).
 
-        WHY: the summary used to hold the counted images only. A skipped
+        WHY: a summary of the counted images only would let a skipped
         image, one counted with no ROI drawn and one that could not be read
-        all simply vanished from it, indistinguishable from an image that
-        was never in the folder."""
+        vanish from it, indistinguishable from an image that was never in
+        the folder."""
         failed = getattr(self, "_batch_failed", None) or {}
         order = getattr(self, "_batch_order", None) or (
             list(self._batch_results) + [n for n in failed if n not in self._batch_results])
@@ -4972,8 +4969,8 @@ class BrainSliceWidget(QWidget):
             sample_id = self.current_file.stem if self.current_file else ""
             # The background the run will really use (see below): the value
             # in the Background box when it is above 0, otherwise the median
-            # (50th percentile) of the particles' own pixels. WHY: every row
-            # used to say 'manual_roi', also for the median.
+            # (50th percentile) of the particles' own pixels. WHY: the row must
+            # not say 'manual_roi' when the median is used.
             bg_method = 'manual_roi' if self._pa_get_bg() > 0 else 'percentile_50'
             try:
                 pa_run_id = self.tracker.log_particle_analysis(
@@ -4995,17 +4992,17 @@ class BrainSliceWidget(QWidget):
                 self.session_run_ids.append(pa_run_id)
             except Exception as e:
                 # Refused, like detection and colocalization (see
-                # _coloc_could_not_start). WHY: the error used to be
-                # swallowed, and the analysis ran and saved its results with
-                # no tracker row and no word to the person.
+                # _coloc_could_not_start). WHY: a swallowed error would let
+                # the analysis run and save its results with no tracker row
+                # and no word to the person.
                 self._pa_could_not_start(e)
                 return
 
         # Particle analysis runs on the window's own thread, but its tracker
         # write lets the window answer clicks (_saving_to_tracker). WHY
-        # marked as running: a Load or Browse click waiting then used to
+        # marked as running: a Load or Browse click waiting then would
         # open the next image in the middle of the analysis, and the
-        # analysis's auto-save then ran against the image being left.
+        # analysis's auto-save would run against the image being left.
         # Opening an image and every other analysis are refused while it
         # runs (_analysis_in_progress).
         self._analysis_running = PARTICLE_ANALYSIS_RUNNING
@@ -5839,8 +5836,8 @@ class BrainSliceWidget(QWidget):
                 self._pixel_size_um = voxel['x']
                 # The size filter follows this image's pixel size unless a
                 # person typed it (_size_manually_set). WHY the mark is not
-                # cleared here: opening an image used to clear it, so Browse
-                # File and Prev/Next overwrote a value a person had typed.
+                # cleared here: clearing it on opening an image would let
+                # Browse File and Prev/Next overwrite a value a person typed.
                 self._calibrate_from_pixel_size()
                 # Auto-populate LoG pixel_um spinner
                 if hasattr(self, 'log_pixel_um_spin'):
@@ -5892,8 +5889,8 @@ class BrainSliceWidget(QWidget):
 
         # Signals blocked: these boxes report a change as a person's edit
         # (_on_area_spin_changed marks the filter typed by hand). WHY: setting
-        # them here used to mark the filter typed, so after the first image
-        # it was never set from a pixel size again.
+        # them here would mark the filter typed, so after the first image
+        # it would never be set from a pixel size again.
         for spin, value in ((self.min_area_spin, min_area_px),
                             (self.max_area_spin, max_area_px),
                             (self.diameter_spin, diameter_px)):
@@ -6206,10 +6203,10 @@ class BrainSliceWidget(QWidget):
         self.load_btn.setEnabled(True)
 
         if success:
-            # Only now does the window's image change. WHY: current_file
-            # used to be set when the image was chosen, so a load that then
-            # failed left it naming the new file while the previous image's
-            # pixels stayed on screen, and later results were saved and
+            # Only now does the window's image change. WHY: setting
+            # current_file when the image is chosen would, if the load then
+            # failed, leave it naming the new file while the previous image's
+            # pixels stay on screen, and later results would be saved and
             # logged under the wrong name.
             self.current_file = fpath
             # The settings the load started with, not the controls now: a
@@ -6484,10 +6481,10 @@ class BrainSliceWidget(QWidget):
             if self.tracker:
                 sample_id = self.sample_id_edit.text() or fallback_sample_id(self)
                 # Every setting goes in the row (det_backend, and all of
-                # params as JSON). WHY: only the StarDist numbers used to be
-                # recorded -- 0.0 for a threshold run's probability and
-                # overlap -- so no run made with another backend could be
-                # reproduced from its row. A number the backend does not use
+                # params as JSON). WHY: recording only the StarDist numbers
+                # (0.0 for a threshold run's probability and overlap) would
+                # make a run made with another backend impossible to
+                # reproduce from its row. A number the backend does not use
                 # is left blank rather than written as 0.
                 run_id = self.tracker.log_detection(
                     sample_id=sample_id,
@@ -6546,9 +6543,9 @@ class BrainSliceWidget(QWidget):
         Insets are used only when they are switched on and loaded, the
         backend is StarDist, and they were aligned to the image (and stack
         slice) now on screen. WHY StarDist only: the inset pipeline runs a
-        StarDist model; a threshold backend used to fail with a KeyError
-        whenever matching inset files happened to sit beside the image, and
-        Cellpose would have been run as StarDist under a Cellpose row. WHY
+        StarDist model; a threshold backend would fail with a KeyError
+        whenever matching inset files happen to sit beside the image, and
+        Cellpose would be run as StarDist under a Cellpose row. WHY
         the image check: the inset manager is built when an image loads;
         one built on another image or slice would put that image's nuclei
         on this one."""
@@ -6705,10 +6702,10 @@ class BrainSliceWidget(QWidget):
         measured on the nuclei they replace.
 
         Measurements belong to the nuclei they were measured on. WHY
-        forgotten here: after a new detection Quantify stayed on and counted
+        forgotten here: after a new detection Quantify would stay on and count
         the previous detection's colocalization as if it described these
-        nuclei, and leaving the image saved the old measurements.csv beside
-        the new nuclei.npz as one pair that would be restored together. Both
+        nuclei, and leaving the image would save the old measurements.csv
+        beside the new nuclei.npz as one pair that would be restored together. Both
         ways of detecting (the whole image, and the image with insets) come
         through here, so neither can keep the old measurements. Run
         Colocalization again to measure the new nuclei."""
@@ -6728,10 +6725,10 @@ class BrainSliceWidget(QWidget):
 
         WHY: the handler writes the tracker on the window's own thread, and
         that write lets the window answer clicks waiting meanwhile. With the
-        window already free, a queued Browse / Load opened the next image
-        right then: the image on screen was saved and cleared, and the
-        handler went on to draw this detection's nuclei over the image being
-        loaded and to turn Colocalize back on. Such a click is now refused
+        window already free, a queued Browse / Load would open the next image
+        right then: the image on screen would be saved and cleared, and the
+        handler would go on to draw this detection's nuclei over the image
+        being loaded and turn Colocalize back on. Such a click is refused
         with "detection is still running" (click again once it is done)."""
         try:
             self._handle_detect_result(success, message, count, labels, metrics)
@@ -7225,7 +7222,7 @@ class BrainSliceWidget(QWidget):
                 self._fail_run_if_unfinished(run_id, f"colocalization failed: {message}")
         except Exception as e:
             # WHY caught here: an error while handling the result (a summary
-            # missing a value, a layer that cannot be drawn) used to escape
+            # missing a value, a layer that cannot be drawn) would escape
             # this Qt slot with the run's row left 'started' forever.
             import traceback
             traceback.print_exc()
@@ -7257,7 +7254,7 @@ class BrainSliceWidget(QWidget):
 
                 # Save the measurements CSV, then record the result. Each guarded
                 # on its own: an unhandled error here (a full disk, the tracker
-                # CSV open elsewhere) used to end this handler with the run's row
+                # CSV open elsewhere) would end this handler with the run's row
                 # left 'started' forever, and the two failures need different
                 # words -- a CSV that was not saved is not a tracker problem.
                 measurements_path = None
@@ -7341,7 +7338,7 @@ class BrainSliceWidget(QWidget):
                 self._fail_run_if_unfinished(run_id, f"dual colocalization failed: {message}")
         except Exception as e:
             # WHY caught here: an error while handling the result (a summary
-            # missing a value, a layer that cannot be drawn) used to escape
+            # missing a value, a layer that cannot be drawn) would escape
             # this Qt slot with the run's row left 'started' forever.
             import traceback
             traceback.print_exc()
@@ -7581,7 +7578,7 @@ class BrainSliceWidget(QWidget):
         if self._analysis_running:
             return self._analysis_running
         if self._loading_file is not None:
-            # Nothing is analysed while the image is being replaced: the
+            # Nothing is analyzed while the image is being replaced: the
             # result would come back after the new image is on screen.
             return "image loading"
         quant = self.quant_worker
@@ -7592,7 +7589,7 @@ class BrainSliceWidget(QWidget):
     def _refuse_if_analysis_running(self, wanted: str) -> bool:
         """Say so and return True when another analysis is still going.
 
-        WHY: the window runs one analysis at a time. Two at once used to
+        WHY: the window runs one analysis at a time. Two at once would
         write one run's result into the other's tracker row, and an analysis
         started while detection is going would work on the nuclei that
         detection is about to replace. Particle analysis runs on the window's
@@ -7614,7 +7611,7 @@ class BrainSliceWidget(QWidget):
         WHY the reason is kept and shown: when the tracker could not be
         opened (mousebrain not configured, the CSV unreadable, its folder
         missing) every detection, colocalization and particle run in this
-        window used to go unlogged with no warning but one console line. Now
+        window would go unlogged with no warning but one console line. So
         the reason stays in a red line under the status bar
         (_tracker_warning_text) and the atlas fit at Run Quantification says
         so too.
@@ -7644,7 +7641,7 @@ class BrainSliceWidget(QWidget):
         the person is told why. WHY not run it unlogged: a run with no row
         cannot be found, reloaded or marked best later, and detection already
         refuses to start for the same reason; WHY not let the error escape:
-        it used to leave the Colocalize button disabled for good."""
+        it would leave the Colocalize button disabled for good."""
         print(f"[BrainSlice] [!] Colocalization not started: the tracker refused its row: {error}")
         self.status_label.setText(
             f"[!] Colocalization not started: the calibration tracker refused its row "
@@ -7675,7 +7672,7 @@ class BrainSliceWidget(QWidget):
     def _fail_run_if_unfinished(self, run_id, why: str) -> bool:
         """Set this window's run `run_id` to 'failed' if it is still
         'started'. WHY: every way a run can end without its result -- an
-        error, a result that could not be written -- used to leave its
+        error, a result that could not be written -- would leave its
         tracker row 'started' forever, indistinguishable from a run still
         going. A completed row is never changed. Never raises. True when the
         row was set to failed.
@@ -7737,8 +7734,8 @@ class BrainSliceWidget(QWidget):
         now would wait out the same budget again, with the window frozen, and
         be refused the same way. The result is KEPT and written later, once
         the file takes it (_retry_unrecorded_results). WHY: the run did
-        finish and its result is real; it used to be dropped here, and its
-        row then said 'started' for ever. Otherwise (a failure that is not
+        finish and its result is real; dropping it would leave its row
+        saying 'started' for ever. Otherwise (a failure that is not
         the file's) the row is marked failed with the reason."""
         why = f"result could not be recorded: {error}"
         print(f"[BrainSlice] [!] Run {run_id}: {why}")
@@ -8311,7 +8308,7 @@ class BrainSliceWidget(QWidget):
         if self.cell_measurements is not None and self._pa_results is not None:
             # Both available -- prefer the most recently computed
             # (cell_measurements from nuclei mode, _pa_results from particle mode)
-            # For now, prefer particle results since it's the primary mode
+            # Prefer particle results since it's the primary mode
             return self._pa_results
         if self._pa_results is not None:
             return self._pa_results
@@ -8660,7 +8657,8 @@ class BrainSliceWidget(QWidget):
                     )
 
         # Record what these counts are made with, in two halves (see
-        # core/atlas_fit.py). Now, BEFORE the worker can touch a count file:
+        # core/atlas_fit.py). The first half goes BEFORE the worker can touch
+        # a count file:
         # any earlier fit file is replaced by an 'in progress' record and the
         # tracker row is logged as 'started'. WHY now: the worker exports the
         # counts in its own thread and the finished fit file is written only

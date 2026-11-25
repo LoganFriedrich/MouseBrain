@@ -3,12 +3,12 @@ and on the image (and stack slice) they were aligned to. Otherwise it runs
 the ordinary detection and says the insets were ignored.
 
 Insets beside an image are loaded automatically and 'use insets' is on by
-default, so detection used to switch to the inset pipeline whenever such
-files existed. That pipeline runs a StarDist model: with a threshold backend
-it failed with a KeyError, and Cellpose would have been run as StarDist. The
-inset manager also stayed bound to an earlier image when the next image
-could not give it a base, and to the stack slice on screen when it was
-built, so a detection could use another image's alignment.
+default, so detection must not switch to the inset pipeline just because such
+files exist. That pipeline runs a StarDist model: with a threshold backend
+it would fail with a KeyError, and Cellpose would be run as StarDist. The
+inset manager must also not stay bound to an earlier image when the next image
+cannot give it a base, nor to the stack slice on screen when it was built, or
+a detection could use another image's alignment.
 """
 from types import SimpleNamespace
 

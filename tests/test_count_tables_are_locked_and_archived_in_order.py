@@ -1,11 +1,11 @@
 """The production count tables are changed under one lock, and archived rows
 keep their values under their own column names.
 
-regenerate_derived_counts appended old eLife rows to the archive in each
-row's own sorted-key order under a header written once, so a row with other
-columns had its values under the wrong names. It rewrote elife_counts.csv in
-place, and neither it nor step 6 held any lock, so two runs at once could drop
-a row. Identifiers are invented.
+regenerate_derived_counts appends archived rows under the archive's header in
+that header's column order, not in each row's own sorted-key order (a row with
+other columns would have its values under the wrong names), and it rewrites
+elife_counts.csv under a lock that step 6 also holds, so two runs at once
+cannot drop a row. Identifiers are invented.
 """
 import csv
 import importlib.util

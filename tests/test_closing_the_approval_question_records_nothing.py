@@ -1,11 +1,12 @@
 """In the pipeline dashboard only an explicit Reject rejects a registration.
 
-The approval question was Yes/No, and anything but Yes recorded a rejection:
-closing the dialog (Esc, the close button) to look at the QC picture wrote
-.registration_rejected under the person's name and sent the brain back to
-"Register". Now there are three buttons -- Approve, Reject, Not yet -- and
-closing is Not yet. A rejected brain's Run button asks before registering it
-again (--reprocess) and can overrule the rejection. Identifiers are invented.
+The approval question has three buttons -- Approve, Reject, Not yet -- and
+closing it is Not yet. With a Yes/No question, anything but Yes would record
+a rejection: closing the dialog (Esc, the close button) to look at the QC
+picture would write .registration_rejected under the person's name and send
+the brain back to "Register". A rejected brain's Run button asks before
+registering it again (--reprocess) and can overrule the rejection.
+Identifiers are invented.
 """
 import os
 from pathlib import Path

@@ -3,9 +3,9 @@
 Closing the Setup & Tuning panel while a detection or classification run is
 still going marks the run failed ("napari was closed before the run
 finished"). With napari still open, the run's thread can finish afterwards;
-its result used to set the row to 'completed', so the row said completed while
-its notes said it had been cut off. A run's end is recorded once: the late
-result is kept in the notes and the row stays failed.
+its late result must not set the row to 'completed', because the row would
+then say completed while its notes said it had been cut off. A run's end is
+recorded once: the late result is kept in the notes and the row stays failed.
 """
 from pathlib import Path
 from types import SimpleNamespace

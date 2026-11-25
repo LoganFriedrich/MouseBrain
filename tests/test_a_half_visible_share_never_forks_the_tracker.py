@@ -1,12 +1,12 @@
 """A data drive that is only half visible never gets a second, empty tracker.
 
-mousebrain picks its folder layout once, at import, by which folders exist. When
-the configured root answered but its Tissue/MouseBrain_Pipeline folder did not
-(a network share still reconnecting), it fell to the legacy layout, and the
-tracker created <root>/3_Nuclei_Detection/2_Data_Summary/calibration_runs.csv --
-a fresh, empty tracker that later runs appended to while the real record of every
-calibration run sat unseen. Now the legacy layout is chosen only when its folder
-exists, and the default tracker is created only inside an existing
+mousebrain picks its folder layout once, at import, by which folders exist. If
+the configured root answers but its Tissue/MouseBrain_Pipeline folder does not
+(a network share still reconnecting), falling back to the legacy layout would
+create <root>/3_Nuclei_Detection/2_Data_Summary/calibration_runs.csv -- a
+fresh, empty tracker that later runs would append to while the real record of
+every calibration run sat unseen. So the legacy layout is chosen only when its
+folder exists, and the default tracker is created only inside an existing
 2_Data_Summary folder; otherwise it refuses and names the folder.
 """
 import os

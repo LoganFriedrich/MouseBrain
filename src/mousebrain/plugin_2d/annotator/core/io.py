@@ -151,9 +151,9 @@ def load_nd2(
         # ND2 files commonly have dimensions in order specified by sizes dict
         data = _normalize_dimensions(data, sizes, n_t, n_z, n_c)
 
-        # Handle T dimension if present (take first timepoint for now)
+        # Handle T dimension if present (only the first timepoint is used)
         if n_t > 1 and data.ndim == 5:
-            data = data[0]  # Take first timepoint, now (Z, C, Y, X)
+            data = data[0]  # First timepoint -> (Z, C, Y, X)
             metadata['timepoint_selected'] = 0
 
         # Apply z-projection if requested, or squeeze singleton Z dimension
@@ -232,7 +232,7 @@ def _normalize_dimensions(
         data = data[np.newaxis, np.newaxis, :, :]  # -> (Z, C, Y, X)
 
     elif data.ndim == 5:
-        # (T, Z, C, Y, X) or similar - keep as is for now
+        # (T, Z, C, Y, X) or similar - kept as is
         pass
 
     return data

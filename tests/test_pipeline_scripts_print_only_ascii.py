@@ -2,13 +2,11 @@
 
 A Windows console is cp1252. One non-ASCII character in a print() raises
 UnicodeEncodeError and takes the whole script down -- not at the end, but at the
-moment it tries to say something, which is usually in the middle of work.
-
-This is not hypothetical. A tick character in a progress line once
-stopped the extraction of a brain before it read a single slice, and the
-two steps queued behind it then failed for a second, unrelated-looking reason.
-The project has stated this rule for a long time; the scripts drifted anyway,
-because a rule nobody checks is a suggestion.
+moment it tries to say something, which is usually in the middle of work. A
+tick character in a progress line, for instance, would stop the extraction of a
+brain before it read a single slice, and the two steps queued behind it would
+then fail for a second, unrelated-looking reason. A rule nobody checks is a
+suggestion, so this test checks it.
 
 Comments, docstrings, matplotlib text and Qt widget text are all exempt and are
 deliberately not searched: those are rendered by something that handles Unicode,

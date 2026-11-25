@@ -1,12 +1,12 @@
 """overnight_batch --force registers the brain again -- or says it did not.
 
---force called step 3 with --batch --brain, and step 3 only takes brains that
-are not registered: it printed "already registered" and ended normally. The
-batch logged "Registration complete" and, the approval still being valid,
-redid detection, classification and counting on the unchanged registration.
-Step 3 now has --reprocess (one named brain, registered again, the old
-registration and its approval archived); --force passes it, and the brain then
-waits for a new approval. Identifiers are invented.
+--force passes --reprocess to step 3. Step 3 otherwise only takes brains that
+are not registered: it would print "already registered" and end normally, the
+batch would log "Registration complete" and, the approval still being valid,
+redo detection, classification and counting on the unchanged registration.
+--reprocess registers one named brain again and archives the old registration
+and its approval; the brain then waits for a new approval.
+Identifiers are invented.
 """
 import importlib.util
 import os

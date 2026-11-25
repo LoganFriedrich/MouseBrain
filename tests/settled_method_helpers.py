@@ -2,9 +2,9 @@
 stand-in pre-filter.
 
 Step 5 classifies only with the classification run marked Paradigm Best for
-the brain's imaging setup, and always pre-filters first (2026-11-19). Tests
-that exercise what step 5 does with its files settle a method here instead of
-passing --model / --no-prefilter, which step 5 now refuses.
+the brain's imaging setup, and always pre-filters first. Tests that exercise
+what step 5 does with its files settle a method here instead of passing
+--model / --no-prefilter, which step 5 refuses.
 """
 from pathlib import Path
 

@@ -1,9 +1,9 @@
 """The run history shows this slice's runs only, and loads only those.
 
-Runs were matched to the sample by substring, so slice S1's history also
-listed S10-S19, and Load Selected Run loaded the chosen run's measurements
-with no check that the run belonged to the image on screen -- drawing
-another slice's cells over this one and enabling Run Quantification on them.
+Runs are matched to the sample exactly, not by substring (slice S1's history
+must not also list S10-S19), and Load Selected Run checks that the chosen
+run belongs to the image on screen: otherwise it would draw another slice's
+cells over this one and enable Run Quantification on them.
 """
 import types
 from types import SimpleNamespace

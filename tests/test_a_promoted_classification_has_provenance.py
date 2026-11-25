@@ -1,10 +1,11 @@
 """Counts of a classification promoted from Setup & Tuning can be traced to
 the detection run behind them.
 
-A promoted run wrote into its own run folder, so its tracker row never named
-5_Classified_Cells and the provenance search found no classification at all:
-the det_* columns of its counts stayed empty. The production record beside
-cells.xml now names the run. Identifiers are invented.
+A promoted run is written into its own run folder, so its tracker row never
+names 5_Classified_Cells and the provenance search would find no
+classification at all: the det_* columns of its counts would stay empty. The
+production record beside cells.xml therefore names the run.
+Identifiers are invented.
 """
 from mousebrain.classification_runs import promote_to_production
 from mousebrain.region_counts_io import detection_provenance

@@ -1,14 +1,14 @@
 """Resuming a brain does not redo the steps it already finished -- and only
 resuming skips anything.
 
-Every resumed attempt ran every step from extraction on. Extraction and
-registration skip a finished brain themselves, detection does not: resuming a
-brain stopped at counting re-ran hours of detection (archiving the finished
-candidates) and classification.
+Extraction and registration skip a finished brain themselves, detection does
+not: if every resumed attempt ran every step from extraction on, resuming a
+brain stopped at counting would re-run hours of detection (archiving the
+finished candidates) and classification.
 
 What must still run: the step the batch was stopped IN (it may have written
 its first files and not the rest), a step that failed, every step after
-either, and -- on a run started with --input -- every step, as before.
+either, and -- on a run started with --input -- every step.
 
 The tests drive batch_process's own command line (main), so they check what an
 operator gets from ``--resume`` and ``--input``.
@@ -170,9 +170,9 @@ def test_processing_a_brain_with_input_runs_every_step(bp, tmp_path, monkeypatch
 
 
 def test_a_step_that_raised_is_run_again_on_retry(bp, tmp_path, monkeypatch):
-    """A step that raises (rather than reporting failure) used to leave the
-    row FAIL with no failed step, so --retry-failed skipped the step that
-    raised whenever its files looked finished."""
+    """A step that raises (rather than reporting failure) leaves the row FAIL
+    with the failed step recorded; otherwise --retry-failed would skip the step
+    that raised whenever its files looked finished."""
     brain = _classified_brain(tmp_path)
     _write(brain / "6_Region_Analysis" / "counts.csv", "a\n1\n")
     _row(bp, brain, bp.QCStatus.PENDING, current_step="classify")

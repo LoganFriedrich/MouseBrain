@@ -1,10 +1,10 @@
 """Best and Paradigm Best marks stay consistent.
 
 Paradigm Best is the settled detection method for every brain imaged the same
-way (step 4 runs it). Three ways it went wrong: archiving a run cleared its
-brain-level best but left it Paradigm Best; marking a Paradigm Best gave its
-brain a second best without clearing the first; and the napari "load best"
-loaded the newest run and called it the best.
+way (step 4 runs it). Rules: archiving a run clears its brain-level best and
+its Paradigm Best; marking a Paradigm Best clears the brain's earlier best
+instead of leaving two; and the napari "load best" loads the run marked best,
+not the newest run.
 """
 import csv
 from pathlib import Path
@@ -37,7 +37,7 @@ def test_archiving_a_run_ends_its_paradigm_best(tmp_path):
 
 
 def test_an_archived_run_is_never_the_settled_method(tmp_path):
-    # A row archived by hand (or by the old code) that still carries the mark.
+    # A row archived by hand that still carries the mark.
     t = _tracker(tmp_path, [{"exp_id": "old", "brain": "B1", "paradigm_best": "True",
                              "archived_at": "2000-02-01T00:00:00"},
                             {"exp_id": "new", "brain": "B1", "marked_best": "True"}])

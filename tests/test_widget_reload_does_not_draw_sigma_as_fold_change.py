@@ -1,12 +1,12 @@
 """The napari widget records a background_mean run's sigma as its threshold,
 and reloading such a run does not draw that sigma as a fold-change threshold.
 
-Defects covered:
-- the widget logged the fold-change spin box as the threshold of a
-  background_mean run, so a row a person marked best carried the wrong number;
-- a background_mean run records its SIGMA in coloc_threshold_value, but "Load
-  selected run" read that column as the fold-change threshold the diagnostic
-  plots draw.
+- the widget must not log the fold-change spin box as the threshold of a
+  background_mean run, or a row a person marked best would carry the wrong
+  number;
+- a background_mean run records its SIGMA in coloc_threshold_value, so "Load
+  selected run" must not read that column as the fold-change threshold the
+  diagnostic plots draw.
 """
 
 from types import MethodType, SimpleNamespace

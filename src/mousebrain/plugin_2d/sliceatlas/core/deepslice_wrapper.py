@@ -39,10 +39,10 @@ IMAGE_SUFFIXES = ('.png', '.jpg', '.jpeg', '.nd2', '.tif', '.tiff')
 def image_fingerprint(folder_path: Path) -> Dict[str, List[int]]:
     """Name -> [size in bytes, modification time in ns] of every image in a folder.
 
-    WHY: the predictions cache sits in the image folder and used to be returned
-    whenever it existed. After an image was added, removed or re-exported, the
-    folder was answered from the old prediction run: a new image got no
-    position, and a re-exported one kept the position predicted for its old
+    WHY: the predictions cache sits in the image folder. Returning it whenever
+    it exists would, after an image is added, removed or re-exported, answer
+    the folder from the old prediction run: a new image would get no position,
+    and a re-exported one would keep the position predicted for its old
     pixels. Storing this fingerprint with the predictions lets a later run see
     that the folder is no longer the one the predictions describe.
     """
@@ -134,7 +134,7 @@ class DeepSliceWrapper:
 
         # Check cache. It is used only when it was made from exactly the images
         # now in the folder (same names, sizes and modification times). A cache
-        # written before fingerprints were stored has none and is never trusted.
+        # without a stored fingerprint is never trusted.
         if use_cache and cache_path.exists():
             if self.cache_matches(cache_path, source_images):
                 if progress_callback:

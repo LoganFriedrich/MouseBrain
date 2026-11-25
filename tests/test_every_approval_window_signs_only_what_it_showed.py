@@ -1,14 +1,14 @@
 """Every window that asks about a registration acts only on the one it showed.
 
-Setup & Tuning's Approve already passed the registration it showed. The
-pipeline dashboard (Approve button, Run Next Step's approve/reject question,
-Overrule), RUN_PIPELINE's approve/reject question, the approval script and
-Setup & Tuning's Reject did not: they approved or rejected whatever
-registration was in the folder at the moment of the answer. A batch that
-registered the brain again while the person was looking at the QC picture had
-its new, unseen registration approved -- or turned down -- under that person's
-name. Each test below re-registers the brain between "shown" and "answered"
-and checks that nothing was recorded. Identifiers are invented.
+Setup & Tuning's Approve, the pipeline dashboard (Approve button, Run Next
+Step's approve/reject question, Overrule), RUN_PIPELINE's approve/reject
+question, the approval script and Setup & Tuning's Reject all pass the
+registration they showed. Acting on whatever registration is in the folder at
+the moment of the answer would let a batch that registered the brain again
+while the person was looking at the QC picture have its new, unseen
+registration approved -- or turned down -- under that person's name. Each
+test below re-registers the brain between "shown" and "answered" and checks
+that nothing was recorded. Identifiers are invented.
 """
 import builtins
 import importlib.util

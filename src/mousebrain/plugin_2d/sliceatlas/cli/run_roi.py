@@ -5,7 +5,8 @@ run_roi.py - CLI for ROI drawing, cell counting, and visualization.
 Draw ROI polygons on brain slice images, count cells within ROIs,
 and visualize saved ROIs.
 
-Usage:
+Usage (activate the MouseBrain environment first, then run in a terminal;
+`brainslice-roi <command> --help` lists every option):
     brainslice-roi batch /path/to/ENCR --region DCN       # Draw/edit all DCN
     brainslice-roi batch /path/to/ENCR --region DCN --skip-done  # Only new images
     brainslice-roi batch /path/to/ENCR --count-only        # Just recount
@@ -14,6 +15,15 @@ Usage:
 
 Also accessible as:
     mousebrain roi batch/draw/count/view ...
+
+What happens: `batch` and `draw` open a napari window per image with
+buttons to draw and clear the left and right ROI polygons and "Save & Next";
+saved ROIs are written beside the image as <image name>.rois.json. After the last image,
+`batch` counts the detected cells inside the ROIs and writes a summary CSV
+(into the ROI analysis folder of the registry, or <folder>/roi_counts/ when no
+registry is configured). `batch` counts measurements made by the detection
+batch (batch_encr), so run that first; samples it cannot draw or count are
+listed with the reason at the end.
 """
 
 import argparse
@@ -625,7 +635,7 @@ def _detection_search_dirs(base_folder, project=None, detection_dir=None):
        the registry;
     4. <dataset folder>/batch_results/, where older batches wrote.
 
-    WHY 2-3 come from the same definitions the batch uses: the counter used to
+    WHY 2-3 come from the same definitions the batch uses: the counter must not
     look under '<folder name>_Detection' while the batch registered under one
     fixed name, and its fallback folder was not where the batch writes; it
     found results only while the project and the folder happened to share
@@ -677,9 +687,8 @@ def _discover_samples(base_folder, region=None, project=None, detection_dir=None
         measurements_path, nd2_path, rois_path, sorted by sample name.
         left_out: list of (sample name, reason) for every sample in the
         detection folder that cannot be drawn or counted. WHY it is returned:
-        these samples used to be dropped without a word, and the totals then
-        counted only what survived, so a missing ND2 looked like a smaller
-        dataset. A sample excluded by --region is not "left out" -- the
+        samples dropped without a word would leave the totals counting only
+        what survived, so a missing ND2 would look like a smaller dataset. A sample excluded by --region is not "left out" -- the
         operator asked for that.
     """
     base = Path(base_folder)
@@ -797,9 +806,9 @@ def _roi_file_state(rois_path):
     """(state, roi data or None, error text or None) for one sample's ROI file.
 
     WHY the file is READ, not only checked for existence: an existing but
-    unreadable file used to count as "already has ROIs", so --skip-done never
-    opened it for redrawing and the counting step then skipped the sample --
-    the sample silently had no counts. Reading it here lets the lists say
+    unreadable file counted as "already has ROIs" would never be opened for
+    redrawing by --skip-done, and the counting step would then skip the
+    sample -- the sample would silently have no counts. Reading it here lets the lists say
     which files need a person.
 
     ROI_NO_SHAPE is a file whose polygons read fine but which records no image
@@ -866,9 +875,9 @@ def _store_edited_rois(rois_path, rois, image_name, image_shape, previous_state)
       (it could not be shown, so it was not cleared by anyone).
     * No ROIs and no file: nothing to do.
 
-    WHY: closing the window with nothing drawn used to DELETE the existing
-    file -- after a Clear, but also when the file merely could not be read
-    and the editor had opened empty.
+    WHY: closing the window with nothing drawn must not DELETE the existing
+    file when the file merely could not be read and the editor opened empty;
+    only an explicit Clear removes it.
     """
     from mousebrain.plugin_2d.sliceatlas.core.roi import save_rois_json
 
@@ -938,10 +947,10 @@ def _detection_provenance(det_registry, sample, meas_file, meas_sha):
     Otherwise method_params is UNTIED_METHOD, the hash is None, and problem
     says why.
 
-    WHY: ROI counts used to be registered with the APPROVED method, whatever
-    run produced the measurements they were counted against, and without
-    naming the measurements file. A re-detection then left the old counts
-    looking current. Recording the detection run's own parameters (hence its
+    WHY: registering ROI counts with the APPROVED method, whatever run
+    produced the measurements they were counted against, and without naming
+    the measurements file, would leave the old counts looking current after
+    a re-detection. Recording the detection run's own parameters (hence its
     method hash) makes the counts go stale exactly when the detection they
     rest on does.
     """
@@ -1131,9 +1140,9 @@ def cmd_batch(args):
     registry = None
     det_registry = None
     if exports_dir is None:
-        # WHY not batch_results/ (where this used to write): that folder is
-        # searched for DETECTION results, so counts written there were read
-        # back on the next run as samples without measurements.
+        # WHY not batch_results/: that folder is searched for DETECTION
+        # results, so counts written there would be read back on the next
+        # run as samples without measurements.
         exports_dir = base_folder / NO_REGISTRY_OUTPUT
         print("[!] registry: no registry root configured (set MOUSEBRAIN_REGISTRY_ROOT "
               f"or CONNECTOME_ROOT). Saving to {exports_dir} instead; nothing is registered.")
@@ -1267,7 +1276,7 @@ def cmd_batch(args):
 def _warn_if_judged_differently(roi_registry, det_registry):
     """Say so when the ROI counts and the detection are judged by different methods.
 
-    ROI counts now carry the detection run's method (see
+    ROI counts carry the detection run's method (see
     _detection_provenance), and each analysis compares its entries with its
     OWN approved method. If approved_method.json gives the detection analysis
     an entry and the ROI analysis none (or a different one), every ROI count

@@ -26,9 +26,7 @@ mousebrain --check
 
 `mousebrain --check` lists each part and says whether it was found; anything
 missing is named there. To install only one half, use `".[3d]"` or `".[2d]"`
-instead of `".[all]"`. Do not run `install.ps1`: it is out of date and stops
-with an error (it expects an environment of another name and installs things
-this package no longer uses).
+instead of `".[all]"`.
 
 ## Usage
 
@@ -169,16 +167,27 @@ pictures never land beside a different file's images.
 
 ## Troubleshooting
 
-If something breaks, reinstall: in the activated environment, from this folder,
-```powershell
-pip install -e ".[all]"
-```
-then run `mousebrain --check`.
-
-Or check what's wrong:
+If something breaks, run:
 ```powershell
 mousebrain --check
 ```
+It names what is missing. To reinstall, in the activated environment, from this
+folder, run `pip install -e ".[all]"` and then `mousebrain --check` again.
+
+Common problems:
+
+- **TensorFlow fails to import with a NumPy error.** The TensorFlow versions
+  MouseBrain uses do not support NumPy 2. Install NumPy 1:
+  ```powershell
+  pip install "numpy<2"
+  ```
+- **`OSError: [WinError 127]` naming `torch\lib\shm.dll`.** The installed PyTorch
+  does not match this machine. Reinstall it from the build for this machine:
+  `pip uninstall torch torchvision torchaudio -y`, then the pip command shown
+  at https://pytorch.org for your system.
+- **A crash naming "need at most 63 handles".** Windows cannot wait on more than
+  63 worker processes at once. MouseBrain caps the cellfinder workers itself
+  (at 60), so this message means some code path bypassed the cap: report it.
 
 ## Running the tests
 

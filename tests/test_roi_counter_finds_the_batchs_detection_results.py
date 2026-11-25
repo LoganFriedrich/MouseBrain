@@ -1,9 +1,9 @@
 """brainslice-roi finds the detection results where the detection batch puts them.
 
-The batch used to register every project's results under one fixed analysis
-name, while the ROI counter looked under '<folder name>_Detection', and the
-counter's fallback folder was not the batch's output folder. Results were
-found only while a project's folder happened to carry that one name.
+The batch must not register every project's results under one fixed analysis
+name while the ROI counter looks under '<folder name>_Detection', and the
+counter's fallback folder is the batch's output folder: otherwise results
+would be found only while a project's folder happened to carry that one name.
 """
 
 import json

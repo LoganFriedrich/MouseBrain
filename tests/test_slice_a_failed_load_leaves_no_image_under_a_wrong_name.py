@@ -1,10 +1,10 @@
 """A load that fails leaves the window with no image, never the previous
 image's pixels under the new file's name.
 
-current_file was set when the image was chosen, so after a failed load it
-named the new file while the previous image's pixels stayed on screen; a
-detection or a save then filed the previous image's results under the new
-name.
+If current_file named the new file as soon as the image is chosen, then after
+a failed load it would name the new file while the previous image's pixels
+stayed on screen; a detection or a save would file the previous image's
+results under the new name.
 """
 from slice_widget_helpers import browse, finish_load, image_files, make_loading_widget, StubWorker
 

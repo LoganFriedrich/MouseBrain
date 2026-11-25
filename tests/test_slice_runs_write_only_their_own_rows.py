@@ -1,11 +1,11 @@
 """Each 2D run's result is written into that run's own tracker row.
 
-Detection, colocalization and particle analysis in the napari window used to
-share one "last run id". A run started while another was still going
-re-pointed it, and the first run's result was then written into the second
-run's row: a detection's nucleus count in a colocalization row (marked
-'completed' with no colocalization result), the detection row left
-'started'. Now each kind of run keeps its own row id, and the window runs one
+Detection, colocalization and particle analysis in the napari window must not
+share one "last run id": a run started while another is still going would
+re-point it, and the first run's result would be written into the second
+run's row (a detection's nucleus count in a colocalization row marked
+'completed' with no colocalization result, the detection row left
+'started'). So each kind of run keeps its own row id, and the window runs one
 analysis at a time: a second one is refused, with a message, until the first
 one's result has been recorded.
 """

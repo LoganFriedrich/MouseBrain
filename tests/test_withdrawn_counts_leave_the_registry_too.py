@@ -2,10 +2,10 @@
 registry -- whenever the registration or classification they were made from
 no longer stands for the brain.
 
-What went wrong: no withdrawal ever touched the brain's 3D_Region_Counts
-entry in the analysis registry, so it stayed current and an integrator kept
-mirroring it; and rejecting a registration, or a re-crop that made it out of
-date, withdrew nothing at all. Identifiers are invented.
+A withdrawal must also touch the brain's 3D_Region_Counts entry in the
+analysis registry, or it would stay current and an integrator would keep
+mirroring it; rejecting a registration, or a re-crop that makes it out of
+date, withdraws the counts as well. Identifiers are invented.
 """
 import os
 import time

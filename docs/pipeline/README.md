@@ -73,9 +73,81 @@ is not activated.
 **How long steps may take.** The code states no expected run times, only
 limits after which the batch runners give up: `batch_process.py` stops any one
 step after 2 hours; `overnight_batch.py` stops registration after 2 hours,
-detection after 4 hours, classification after 1 hour and counting after 30
+detection after 4 hours, classification after 3 hours and counting after 30
 minutes, and tries each step up to 3 times. A script run by hand, from
 RUN_PIPELINE or from the dashboard has no time limit.
+
+## Running steps 1 to 6 by hand
+
+This section is the whole route for one brain, in order, for someone who only
+types commands. Every step can be started three ways (the menu, the napari
+Run Next Step button, or the command below); the command is the one that shows
+everything the step says, so use it when something goes wrong.
+
+**Before the first step (once).** Every command below is typed in an Anaconda
+Prompt after
+
+```
+conda activate <your MouseBrain environment>
+cd <path to the MouseBrain repository>\scripts\pipeline
+```
+
+(the `util_*.py` commands are typed from `scripts\utils` instead). The programs
+find your data through the environment variable `CONNECTOME_ROOT`: the folder
+that contains `Tissue\MouseBrain_Pipeline`. If it is not set, the scripts stop
+with `CONNECTOME_ROOT is not set ...` or `Path not found`. Set it for the
+window with `set CONNECTOME_ROOT=<folder>` (permanently: Windows environment
+variable settings), then open a new window. `mousebrain --paths` prints where
+the programs look. The brains are the folders under
+`<CONNECTOME_ROOT>\Tissue\MouseBrain_Pipeline\3D_Cleared\1_Brains`.
+
+Every step takes `--brain <brain folder name>` (for example
+`001_CNT_01_01_1p625x_z4`; the folder name only, without the mouse folder,
+works for every step). Run a step without `--brain` to get a numbered list or a
+list of what is waiting.
+
+| Step | Command | What it needs | What you get | What happens next |
+|---|---|---|---|---|
+| 1. Organize | `python 1_organize_pipeline.py` (add `--inspect` to only look, `--yes` to skip the question) | the `.ims` file sitting in a mouse folder under `1_Brains`, named `NUMBER_PROJECT_COHORT_ANIMAL_MAGx_zSTEP.ims` (for example `001_CNT_01_01_1.625x_z4.ims`) | it lists what it found, asks `Organize N file(s)? [Enter to continue, q to quit]`, then makes the brain folder (dots in the magnification become `p`) with the numbered subfolders and moves the `.ims` into `0_Raw_IMS` | ends with `[OK] Ready for Script 2`; go to step 2 |
+| 2. Extract | `python 2_extract_and_analyze.py --brain <brain>` (add `--batch` to skip the question; `--inspect` to only look) | step 1 done | asks `Extract N pipeline(s)?`, then writes every channel as `Z0000.tif ...` planes plus `metadata.json` into `1_Extracted_Full`. It does NOT crop (`--auto-crop` exists but cuts into tissue; do not use it) | prints `NEXT STEPS`: crop by hand, then register. Crop in napari (`mousebrain`, then Plugins -> BrainTools -> 3D: 3. Manual Crop; or `mousebrain --crop <brain>`), saving the crop there. A brain that arrived already cut needs no crop: step 3 then registers the full extraction |
+| 3. Register | `python 3_register_to_atlas.py --batch --brain <brain>` (without `--batch` it shows a menu: type the number, `all`, `reprocess` or `q`; `--inspect` only looks) | step 2 done, and a crop made unless the brain arrived cut. Step 3 takes the hand crop if there is one, else the automatic crop, else the full extraction, so crop BEFORE registering | brainreg registers the brain to the atlas (it can take more than an hour). First it draws `3_Registered_Atlas/QC_orientation_check.png`, afterwards `QC_registration_detailed.png` | prints `WHAT TO DO NEXT`: look at both pictures, then approve: `python ..\utils\util_approve_registration.py --brain <brain>` (or the Approve button in the dashboard or Setup & Tuning). Answer `yes` to approve, `no` to reject. Only an approved registration lets step 4 run |
+| 4. Detect cells | `python 4_detect_cells.py --brain <brain>` | an approved registration (see "Registration QC & Approval") and a run marked Paradigm Best for the brain's imaging setup (see "The Settled Detection Method") | cell candidates in `4_Cell_Candidates/detected_cells.xml`; it asks for an optional 1-5 rating (Enter skips) | prints `WHAT TO DO NEXT`: step 5 |
+| 5. Classify | `python 5_classify_cells.py --brain <brain>` (add `--dry-run` to see what it would use) | step 4 done and a classification run marked Paradigm Best (see "The settled classification method") | `5_Classified_Cells/cells.xml` (the cells kept), `rejected.xml` and `promoted_from.json`; hours of work, results appear only when it finishes | prints `WHAT TO DO NEXT`: step 6 |
+| 6. Count regions | `python 6_count_regions.py --brain <brain>` (or `--all` for every brain that is waiting; `--dry-run` to only look) | step 5 done and the registration still approved | `6_Region_Analysis/cell_counts_by_region.csv` and the eLife-grouped counts for the brain, plus one row per brain in `2_Data_Summary/region_counts.csv` and `elife_counts.csv`, a `comparison_report.txt` for the brain and cross-brain graphs in `2_Data_Summary/reports` | ends with `[OK] Completed - N cells counted`; the brain is finished |
+
+**When a step fails.** The step prints why on lines that start with `[FAIL]`,
+`[FAILED]`, `ERROR:` or `Error:`; a block that starts `Traceback (most recent
+call last):` is a crash and its last line names the error. Once the cause is
+fixed, type the same command again. The usual causes, by step:
+
+- Any step, `Path not found` or `Could not read the brains folder`: the data
+  drive is not connected or `CONNECTOME_ROOT` points to the wrong place (see
+  above and "When a folder cannot be read").
+- Any step, `<brain> is in <folder>, which is not treated as a mouse folder`:
+  rename the mouse folder (see "Which folders are brains?").
+- 1: `[FAIL]` beside a `.ims` file name, with `rename to: NUMBER_PROJECT_COHORT_ANIMAL_MAGx_zSTEP.ims`
+  under the list: the name does not follow that pattern. Rename the file and
+  run step 1 again. Any other `[FAIL]` line gives its own reason. A file marked `[skip]` with PANO in its
+  name is an overview scan and is skipped on purpose.
+- 2: `No organized pipelines found`: run step 1 first. `[!] The planes already in
+  1_Extracted_Full are not a finished extraction`: not an error; step 2
+  extracts again by itself.
+- 3: `[FAIL]` and a folder `3_Registered_Atlas/_archive/<time>_failed/`: the
+  registration failed and was set aside; run step 3 again. `being registered
+  right now`: another run is working on the brain; wait for it. `NOT registered
+  again -- rejected ...`: see "Rejecting is recorded".
+- 4: `STOPPING: REGISTRATION NOT YET APPROVED`: look at the pictures and
+  approve (step 3 row). `No run in the tracker is marked Paradigm Best ...`:
+  a person has to settle the method first ("The Settled Detection Method").
+- 5: `ERROR: no classification run is marked Paradigm Best ...` or `ERROR: The
+  pre-filter failed: ...` or `Refused: ...`: see the Script 5 section; the
+  previous classification is left as it was.
+- 6: `[FAILED] Not counted: its registration is not approved (...)`: approve it,
+  registering it again first if it says so. Any other `Not counted:` line says
+  its own reason.
+
+If the same message keeps coming back and its section here does not explain it,
+copy the last lines of the window and ask whoever maintains the installation.
 
 ## Which step is a brain at?
 
@@ -107,9 +179,10 @@ extracts the brain again from the `.ims` (slow; nothing is lost). Each plane is
 written under a hidden temporary name and renamed when whole, so a plane named
 `Z####.tif` is never half-written. Planes beyond the brain's depth, left by an
 earlier different extraction, are moved to
-`1_Extracted_Full/_archive/<date>_<time>_extra_planes/`. (Before, any plane on
-disk counted: an extraction stopped part-way came back as a "complete" brain
-with its back planes missing, and every later step used the short stack.)
+`1_Extracted_Full/_archive/<date>_<time>_extra_planes/`. Why every plane is
+checked: counting any plane on disk would let a stopped extraction pass as a
+complete brain with its back planes missing, and every later step would use the
+short stack.
 
 **Stale outputs.** A file that exists but was made from something replaced since
 is shown as `[!] ... STALE: <why>` and its step is offered again (nothing is
@@ -193,8 +266,6 @@ run has been chosen it filters the same file and records no parent run.
 result of the run picked in that list, so it can be looked at, saved or sent
 to training again. It loads only a run of the brain selected now; a run of
 another brain stops with "Run Belongs To Another Brain" and loads nothing.
-(Before this was corrected the button always ended in "Could not load previous
-result" and loaded nothing.)
 
 **The Setup & Tuning Classify button and a chosen run.** Classify always
 classifies the file step 5 classifies, whatever run is chosen. The tracker row
@@ -209,8 +280,8 @@ it writes names, as the classification's parent, the detection run that wrote
 - otherwise no parent at all. An empty parent means "not known", which is
   true; naming the chosen run for a file it did not write would not be.
 
-A classification of a pre-filter output still names the pre-filter run as its
-parent, as before.
+A classification of a pre-filter output names the pre-filter run as its
+parent.
 
 ## Which folders are brains?
 
@@ -225,9 +296,9 @@ always agree on which brains exist. A brain is a folder two levels down,
   case) does not contain a skip word:
   - `script`, `backup`, `archive` or `summary` **anywhere** in the name, even
     glued to other letters: `Mouse_Backup`, `brainbackup`, `archivedmice`,
-    `Archive2024`, `scripts` and `Summaries` are all passed over. This is how
-    the steps have always matched these words, and it keeps a backup copy of a
-    whole mouse from being processed as brains.
+    `Archive2024`, `scripts` and `Summaries` are all passed over. These words
+    match anywhere in the name so that a backup copy of a whole mouse is not
+    processed as brains.
   - `old` only as a whole **word**: `old_deliveries`, `Old copies` and
     `mouseOld` are passed over, but `GOLD_01`, `HOLDOUT_A`, `Threshold_Test`
     and `scaffold-3` (which only contain the letters) are mice. The words of a
@@ -245,7 +316,7 @@ found by name -- not by its own name and not by its full
 backup or archive copy of a mouse: asking for it by `<backup folder>/<brain>`
 prints why it is not a brain and does nothing.
 
-**The exception: training data.** The places that gather labelled training
+**The exception: training data.** The places that gather labeled training
 cubes for the classifier do not use this rule: Setup & Tuning's list of training
 sources (each per-brain source is shown as `Brain: <folder name>`), its table of
 saved training batches, and `scripts/utils/util_train_model.py`. They look in
@@ -315,8 +386,8 @@ and so on.
 The same rule decides what the napari brain lists offer (the Pipeline Dashboard,
 Setup & Tuning, Manual Crop, the 3D cell viewer and the cross-brain comparison)
 and which folder a utility acts on when you give it a brain by name
-(the scripts named above). Before this, those lists offered an archive kept beside a brain
-as if it were a brain, and a utility could act on it instead of the real one.
+(the scripts named above). Using one rule keeps an archive stored beside a brain
+from being offered as a brain, or acted on instead of the real one.
 
 **Giving a brain by name.** The exact brain folder name always works. The
 form `<mouse folder>/<brain folder>` (the way steps 3 to 6 print a brain) works
@@ -371,10 +442,6 @@ If the brains folder itself cannot be read, the batch logs
 a failure; if one mouse folder cannot be read, it logs a warning naming it and
 carries on with the others (see "When a folder cannot be read" above).
 
-(It used to take only brains with images in `2_Cropped_For_Registration`, so a
-hand-cropped brain, or one registered uncropped, never ran overnight and nothing
-said so.)
-
 **`overnight_batch.py --force` registers the brain again.** `--force` redoes
 every step, registration included: for a registered brain it runs
 `3_register_to_atlas.py --batch --brain <brain> --reprocess`, which moves the
@@ -389,9 +456,6 @@ REFUSED: it would register every registered brain again (hours each) and set
 aside every approval, so the batch stops before touching anything, prints how
 many brains that would have been, and ends with an error. If every brain really
 should be registered again, add `--all-brains` (`--force --all-brains`).
-(Before, `--force` never registered anything -- step 3 said
-"already registered" -- yet the batch logged "Registration complete" and redid
-every later step on the old registration.)
 
 **The overnight batch never registers a REJECTED brain again** -- not even with
 `--force` -- and never starts a second registration of a brain that is being
@@ -448,19 +512,16 @@ runs, run the same command from a terminal instead.
 **The "Registration" button under BrainGlobe Tools** opens brainreg's own
 registration widget with the brain's voxel sizes filled in -- for trying
 settings, nothing more. It does NOT fill in an output folder or an orientation:
-choose both yourself, and choose an output folder OUTSIDE the brain's folder.
+choose both yourself, and choose an output folder OUTSIDE the brain's folder
+(a run into `3_Registered_Atlas` would replace the pipeline registration without
+archiving it or its approval).
 A registration made with that widget is not the brain's pipeline registration
 (nothing archives the old one or its approval, nothing records which images it
 used, the tracker has no row of it). The brain's registration is made only by
-**Run Next Step** (step 3). (It used to point the widget at the brain's
-`3_Registered_Atlas` with a fixed orientation, so a run there replaced the
-pipeline registration without any of that.)
+**Run Next Step** (step 3).
 
-(Before this, Extract started step 2 in its interactive form, which waits for
-an answer the dashboard cannot give, and then extracted every brain waiting;
-Register registered every brain waiting, not the selected one. Step 3 given an
-exact brain folder name now registers that brain only, even when its name is
-part of another brain's name.)
+Step 3 given an exact brain folder name registers that brain only, even when
+its name is part of another brain's name.
 
 ## Utility Scripts
 
@@ -511,12 +572,9 @@ REJECTED is not registered again: the brain stops as REVIEW at `register`, and
 `qc_register` says who rejected it, when, and what to change (see "Rejecting is
 recorded"). A brain another run is registering right now stops as FAILED at
 `register` with "being registered right now"; run it again later.
-(Until this was fixed every brain failed at extraction: the batch passed steps 2
-and 3 an option they do not accept, and the checks looked for files the steps do
-not write.)
 
 `--brain` on step 2 takes the exact folder name. Without it step 2 extracts every
-brain that still needs it, as before.
+brain that still needs it.
 
 **The status file is safe to share.** Every change to `pipeline_status.csv` is
 made holding `pipeline_status.csv.lock` (beside it) and written to a temporary
@@ -594,8 +652,8 @@ failed step's output is what failed). This holds whether the step reported a
 failure or crashed with an error: a crash is recorded as a failure AT the step
 the brain was in (`failed_step` in `batch_process.py --status`), so that step is
 run again too. Each new attempt clears the previous attempt's failure fields.
-Older versions recorded a crash as a failure with an empty `failed_step`, and a
-status file can still hold such rows: for those, the step named in
+A failure row with an empty `failed_step` (a status file can hold such rows):
+for those, the step named in
 `current_step` (the step the brain was in when it crashed) and every step after
 it run again, and if `current_step` is empty too, every step runs again.
 
@@ -604,17 +662,15 @@ it run again, and if `current_step` is empty too, every step runs again.
 The scripts come with the MouseBrain code; nothing is copied anywhere. The
 numbered steps are in the repository's `scripts/pipeline/`, the `util_*.py`
 scripts in `scripts/utils/`. The napari pipeline dashboard, the tuning
-widget's buttons (registration QC, crop optimisation, pipeline comparison,
+widget's buttons (registration QC, crop optimization, pipeline comparison,
 region counting) and `batch_process.py` find each script by name beside the
 installed code, so they always run the version that is installed. To run one
 by hand, go into its folder and run it by name, e.g. from `scripts/utils`:
 `python util_registration_qc.py --brain 001_CNT_01_01_1p625x_z4` (see "How to
 start the pipeline" above).
 
-(Before the reorganisation the scripts were copied into the pipeline's
-`3D_Cleared/util_Scripts/`. That folder is data, is empty now, and nothing runs
-from it; until this was corrected the dashboard and those buttons answered
-"script not found", and registration finished without its QC picture.)
+A `util_Scripts` folder inside the pipeline's `3D_Cleared` data folder is not
+used: nothing runs from it, and a copy placed there is never run.
 
 The experiment tracker creates its CSV at:
 ```
@@ -627,14 +683,14 @@ exists, and it never creates that folder. If you see
 the data drive is not connected (reconnect it and run again) or
 `CONNECTOME_ROOT` points at the wrong place (`mousebrain --paths` shows what is
 seen). On a brand-new installation, create that one folder by hand. WHY: when
-the drive answered for the root but not yet for `Tissue\MouseBrain_Pipeline` (a
-network share reconnecting), the tools used to fall back to the old
-`3_Nuclei_Detection` layout and start a second, empty tracker there, which later
-runs appended to while the real one sat unseen. The old layout is now used only
-where its `3_Nuclei_Detection` folder really exists.
+the drive answers for the root but not yet for `Tissue\MouseBrain_Pipeline` (a
+network share reconnecting), falling back to the older `3_Nuclei_Detection`
+layout would start a second, empty tracker there, which later runs would append
+to while the real one sat unseen. The older layout is used only where its
+`3_Nuclei_Detection` folder really exists.
 
-**In napari** the same situation no longer stops the Setup & Tuning panel from
-opening (it used to fail to open at all). The panel opens, and a red line at
+**In napari** the same situation does not stop the Setup & Tuning panel from
+opening. The panel opens, and a red line at
 its top says `[!] Runs will NOT be logged to the calibration tracker: ...`
 with the reason. While that line shows, nothing you run in the panel is
 recorded, and the run list, *Best detection (highest-rated)* and the Best buttons have
@@ -692,7 +748,7 @@ with **the settled classification method** of the brain's imaging setup -- see
 "The settled classification method" below. There is no model to choose: with no
 settled method it stops (`ERROR: no classification run is marked Paradigm Best
 for imaging setup '...'`), classifies nothing and leaves the production files as
-they were. It never takes "the newest model file" any more.
+they were. It never takes "the newest model file".
 
 **What a run does, in order (selective method):**
 
@@ -707,8 +763,8 @@ they were. It never takes "the newest model file" any more.
    production files stay in place until it has finished.
 5. When it finished with at least one cell: the previous production files
    (`cells.xml`, `rejected.xml`, the record, and any selective files, including
-   the old side files `cells_selective.xml` / `selective_rejected.xml` from
-   before 2026-11-19) move to `5_Classified_Cells/_archive/<time>/`, and the new
+   the side files `cells_selective.xml` / `selective_rejected.xml` of an
+   earlier layout) move to `5_Classified_Cells/_archive/<time>/`, and the new
    ones move in: `cells.xml` (trusted + classifier-approved), `rejected.xml`
    (what the classifier rejected), `selective_report.json` (every count),
    `trust_cells.xml`, `classify_input.xml`, and `promoted_from.json`.
@@ -738,12 +794,12 @@ saved or tuned by hand), and `--model` / `--cube-size` / `--batch-size` /
 `Refused: ...` and nothing is classified. Giving the settled values again is
 accepted (a check). Trying another model or setting is tuning: do it in Setup &
 Tuning, which writes to `2_Data_Summary/optimization_runs/<brain>/` and never to
-`5_Classified_Cells`. `--selective` and `--routine` are still accepted so old
-command lines work; they change nothing.
+`5_Classified_Cells`. `--selective` and `--routine` are accepted and change
+nothing (whether the method is selective or full comes from the Paradigm Best run).
 
 **The pre-filter (always on).** Before classifying, step 5 removes candidates
 within 100 um of the brain's edge (surface glow, damage, uncleared tissue --
-labelled neurons are not at the tissue edge) and candidates far outside the
+labeled neurons are not at the tissue edge) and candidates far outside the
 atlas. Its settings are written out in step 5 (`PREFILTER_SETTINGS`: method
 `atlas_erosion`, surface and withdrawal depth 100 um, ventricle walls and fiber
 tracts included, filter depth 100 um, dark percentile 5, extreme out-of-bounds
@@ -751,35 +807,33 @@ tracts included, filter depth 100 um, dark percentile 5, extreme out-of-bounds
 in the pre-filter module can never change production quietly. What is left is
 written to `4_Cell_Candidates/prefiltered/interior_candidates.xml` and is what
 gets classified; the file that was there before moves to
-`prefiltered/_archive/<time>/` first (it used to be overwritten with no copy).
+`prefiltered/_archive/<time>/` first (nothing is overwritten without a copy).
 Candidates that land inside the brain outline but in no atlas region are kept
 (and go to the classifier).
 
 **If the pre-filter fails, step 5 stops.** It prints `ERROR: The pre-filter
 failed: <why>`, records a failed pre-filter run in the tracker, classifies
 nothing and leaves the production classification as it was. Fix the cause and
-run step 5 again. Why: step 5 used to print a warning and classify the
-unfiltered candidates -- surface glow included -- into the production
-classification, and nothing on the run said so.
+run step 5 again. Why: classifying the unfiltered candidates -- surface glow
+included -- into the production classification would leave nothing on the run
+to say so.
 
 **Saved pre-filters are for tuning.** A pre-filter run from RUN_PIPELINE's
 "Pre-filter candidates" step, from `python -m mousebrain.prefilter`, or tuned in
 Setup & Tuning (6. Pre-Filter tab, **Save Filtered Lists**) is saved as
-`4_Cell_Candidates/prefiltered_<date>_<time>/interior_candidates.xml`. Since
-2026-11-19 step 5 does not classify those into production (`--candidates` is
-refused) and RUN_PIPELINE no longer asks which candidates to classify: the
-settled method includes its own pre-filter, and a tuned one is a different
-method. To make a tuned pre-filter part of the method, it has to become the
+`4_Cell_Candidates/prefiltered_<date>_<time>/interior_candidates.xml`. Step 5
+does not classify those into production (`--candidates` is refused) and
+RUN_PIPELINE does not ask which candidates to classify: the settled method
+includes its own pre-filter, and a tuned one is a different method. To make a tuned pre-filter part of the method, it has to become the
 settled method's pre-filter (a code change to `PREFILTER_SETTINGS`, decided on
 purpose).
 
 To decide where a candidate is, the pre-filter uses BrainGlobe's own transform
 from the detection images into the registration -- the same transform step 6
-counts with. Since 2026-10-27; before that it used a shortcut that reordered the
-image axes but did not reverse them, so on every brain it looked candidates up
-millimetres from where they are (up-down on brains imaged `iar`, front-back as
-well on `ipr`) and removed an essentially arbitrary set as "surface". Any
-classification made before that date went through that wrong pre-filter.
+counts with. Why not a shortcut that only reorders the image axes: without
+reversing them, candidates are looked up millimeters from where they are
+(up-down on brains imaged `iar`, front-back as well on `ipr`) and an
+essentially arbitrary set is removed as "surface".
 
 **The previous classification is kept.** Step 5 writes the brain's production
 classification, `5_Classified_Cells/cells.xml` and `rejected.xml` -- the files
@@ -803,9 +857,9 @@ either set back into `5_Classified_Cells`.) Beside the new files,
 with **Promote to production**), when, and where the previous files went. In
 the tracker, the run's `output_path` is the new `cells.xml`, and the run that
 wrote the previous files has its `output_path` moved to their folder in the
-archive -- the same as step 4 does with candidates. Why: step 5 used to write
-over the previous classification with no copy, and every step 5 row named the
-same folder, so no row could be matched to the file it had written. To go back
+archive -- the same as step 4 does with candidates. Why: a row that kept
+pointing at a replaced file could not be matched to the file it had written, and
+the previous classification must stay recoverable. To go back
 to an earlier classification, move its files from the archive folder back into
 `5_Classified_Cells` (moving the current ones aside first) and count again.
 
@@ -847,27 +901,25 @@ or is still waiting for approval is **not counted**:
 What to do: look at the brain's QC pictures and approve it (pipeline
 dashboard, Setup & Tuning, or `python util_approve_registration.py --brain
 <brain>`), registering it again first if it needs that; then count it.
-Why: step 6 used to count any brain with a `cells.xml`, so a rejected,
-unfinished, out-of-date or never-reviewed registration went into the
-production tables and the analysis registry -- even right after its counts
-had been withdrawn for exactly that reason.
+Why: counting any brain with a `cells.xml` would put a rejected, unfinished,
+out-of-date or never-reviewed registration into the production tables and the
+analysis registry -- even right after its counts had been withdrawn for exactly
+that reason.
 
 **What `--all` counts.** Every brain with an approved registration, a
 `5_Classified_Cells/cells.xml` and NO row in `2_Data_Summary/region_counts.csv`.
 A brain whose counts were withdrawn (below) has no row there, so `--all`
 counts it again, even though its own `6_Region_Analysis` files are still
-there. Why: `--all` used to judge "already counted" by those files, which a
-withdrawal leaves in place on purpose, so it skipped every withdrawn brain and
-said `No brains need counting. All done!`. `--dry-run` shows what would and
+there. Why: judging "already counted" by those files, which a withdrawal leaves
+in place on purpose, would skip every withdrawn brain and say `No brains need
+counting. All done!`. `--dry-run` shows what would and
 would not be counted, and why. When every brain left is waiting for a
 person to approve its registration, `--all` says `Nothing to count; N brain(s)
 are waiting for approval (listed above)` rather than `All done!`.
 
 **Exit code.** Step 6 ends with 1 when any brain it was asked to count was not
-counted (refused, or its count failed), else 0. Before, a count that failed
-still ended with 0, and the pipeline dashboard, Setup & Tuning, batch_process
-and overnight_batch -- which judge step 6 by its exit code -- reported it as
-done.
+counted (refused, or its count failed), else 0. The pipeline dashboard, Setup &
+Tuning, batch_process and overnight_batch judge step 6 by this exit code.
 
 **How the cells are placed in regions, and no quiet second method.** Step 6
 places each cell in an atlas region with BrainGlobe's own transform through the
@@ -885,11 +937,10 @@ python 6_count_regions.py --brain <brain_id> --allow-direct-lookup
 Every count records which method placed its cells, in the `count_method` column
 of `region_counts.csv` and `elife_counts.csv` and in the analysis registry's
 method parameters: `brainglobe_transform` (the normal one) or
-`direct_atlas_lookup`. Why: step 6 used to switch to the direct lookup by
-itself, and the counts it wrote looked like any others, so nobody could tell
-which brains had been counted the less accurate way. Rows written before this
-change have an empty `count_method`; they cannot be told apart, so count those
-brains again if it matters.
+`direct_atlas_lookup`. Why: counts from the less accurate method look like any
+others, so without the column nobody could tell which brains were counted that
+way. A row with an empty `count_method` cannot be told apart; count that brain
+again if it matters.
 
 What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
 
@@ -899,10 +950,9 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   crash never leaves a cut-off file.
 - When a brain is counted again, its previous row moves to
   `region_counts_archive.csv` / `elife_counts_archive.csv`, written in the
-  archive's own column order; new columns extend the archive's header. (Before
-  this was fixed, archived rows after the first were written in a different
-  order from the header, so their values sat under the wrong column names. If
-  step 6 finds an archive like that, it renames it to
+  archive's own column order; new columns extend the archive's header, so values
+  never sit under the wrong column name. If step 6 finds an archive whose rows do
+  not match its header, it renames it to
   `region_counts_archive.malformed-<date>_<time>.csv`, keeps it untouched, prints
   a warning and starts a new archive.)
 - **Out-of-date counts leave production at once -- the tables AND the
@@ -949,13 +999,12 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   exit code 1, and batch_process and overnight_batch stop the brain at the
   count step with `Not counted: region_counts.csv could not be read ...`
   instead of counting it again. Check that the file opens, then run again.
-  Why: the readers used to judge "counted" by the brain's own files, so such
-  a brain showed as Complete everywhere with no counts in production.
+  Why "counted" means a row in the table: judging it by the brain's own files
+  would show a brain as Complete everywhere with no counts in production.
 
-  Why withdrawals exist at all: the rows used to stay
-  until someone counted the brain again -- and the registry entry stayed
-  current even then, for rejections and re-crops always -- and nothing told
-  them apart from current counts. If a withdrawal cannot be done (the tables
+  Why withdrawals exist at all: rows that stay until someone counts the brain
+  again, and a registry entry that stays current, cannot be told apart from
+  current counts. If a withdrawal cannot be done (the tables
   locked by a run that does not finish, a registry file that will not move),
   the step that triggered it is not undone; it prints `[!] The counts of
   <brain> could NOT all be withdrawn ...`: count the brain again once its
@@ -973,11 +1022,10 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   manifest set aside, its lock held too long) -- what was written is withdrawn
   again into the archives, the run is marked failed with the reason in its
   tracker notes, and step 6 ends with exit code 1; `--all` counts the brain
-  again next time. Why: a count that started before `cells.xml` was replaced
-  used to be written after the withdrawal, and its files were newer than the
-  new `cells.xml`, so it looked current; and a count that could not be
-  entered in the registry was called finished, with the problem only in the
-  console. Two things to know: the brain's own `6_Region_Analysis` files of
+  again next time. Why: a count that started before `cells.xml` was replaced,
+  if written after the withdrawal, would have files newer than the new
+  `cells.xml` and look current; and a count that could not be entered in the
+  registry must not be called finished. Two things to know: the brain's own `6_Region_Analysis` files of
   such a run were already written, but with no row in `region_counts.csv` the
   dashboard, RUN_PIPELINE and batch_process `--resume` show the brain at
   "Count", and `6_count_regions.py --all` counts it again. The overnight
@@ -993,8 +1041,8 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   `region_counts.csv.lock` beside the tables, while they read and rewrite
   them. A second run started meanwhile prints `Waiting for the lock on
   region_counts.csv (held by ...)` and carries on when the first one is done.
-  Why: two runs at once used to read the same old file, and the second write
-  dropped the first run's row. The lock file exists only while a run holds it;
+  Why: two runs at once would read the same old file, and the second write
+  would drop the first run's row. The lock file exists only while a run holds it;
   one left by a run that crashed is taken over after two minutes. If a run
   says it waited five minutes and gave up, and nothing else is counting, delete
   `region_counts.csv.lock` and run it again. The rebuild also archives the old
@@ -1004,9 +1052,8 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   the brain's `cells.xml`, found by following the tracker from the
   classification that wrote `cells.xml` -- the run named in
   `5_Classified_Cells/promoted_from.json` when there is one (step 5 and
-  **Promote to production** write it; before that, counts of a promoted
-  Setup & Tuning run could not be traced at all, because that run's row names
-  its own run folder). The record is believed only while `cells.xml` is not
+  **Promote to production** write it; a promoted Setup & Tuning run could not
+  be traced without it, because that run's row names its own run folder). The record is believed only while `cells.xml` is not
   newer than the record itself: if something wrote `cells.xml` without
   writing the record (an older installed copy of step 5, a file put back by
   hand), the record names a run that did not make the file, so step 6 instead
@@ -1014,7 +1061,7 @@ What step 6 writes, besides the per-brain files in `6_Region_Analysis`:
   `5_Classified_Cells` and started before `cells.xml` was written. From the
   classification the chain goes through the pre-filter if there was
   one, to the detection run whose output those candidates are. If the chain
-  cannot be followed (runs from before the tracker recorded these links), the
+  cannot be followed (runs whose tracker rows do not record these links), the
   `det_*` columns stay empty and step 6 prints `[!] The detection run behind
   this cells.xml could not be traced`; the voxel size then comes from the
   images' `metadata.json`. The `subject`, `cohort` and `brain_id` columns come
@@ -1050,9 +1097,7 @@ python util_experiments.py stats
 brain's runs -- the run list in Setup & Tuning, "has this detection been
 classified", the Best lookups -- the brain is matched by its whole name
 (`<brain>` or `<mouse>/<brain>`) and every run is returned, however many the
-brain has. (Until this was fixed, a brain's run list also showed brains whose
-name merely contained it, and only its 50 newest runs, so an older Best could
-silently drop out of the list.)
+brain has, so an older Best cannot drop out of the list.
 
 ### Utility: Manual Crop
 ```bash
@@ -1066,10 +1111,10 @@ python util_manual_crop.py --brain 001_CNT_01_01_1p625x_z4
 
 **Cropping a brain again.** This holds for every way of making a crop: the
 napari Manual Crop tool, `util_manual_crop.py`, step 2 run with `--auto-crop`,
-and `util_apply_crop_from_reference.py --force`. (Step 2's `--auto-crop` and
-the reference-crop script used to write over the existing crop plane by plane;
-stopped part-way, they left a mix of old and new planes that the batches then
-registered without anyone looking.) The new crop is first written to
+and `util_apply_crop_from_reference.py --force`. Writing a crop over the old one
+plane by plane would, if stopped part-way, leave a mix of old and new planes
+that the batches then register without anyone looking, so the new crop is first
+written to
 `2_Cropped_For_Registration.partial` beside the brain's other folders. Only
 when every plane and its `metadata.json` are written is the previous crop moved
 into `2_Cropped_For_Registration/_archive/<date>_<time>/` (kept, not deleted)
@@ -1077,9 +1122,7 @@ and the new one moved in. If the crop is stopped part-way, the previous crop is
 untouched and the `.partial` folder is left behind; the next crop deletes it and
 starts again. A registration made on the previous crop is then OUT OF DATE (see
 "Which step is a brain at?"): register the brain again and approve the new
-registration. (Before, a crop wrote over the old one plane by plane: a crop
-stopped part-way left old and new planes mixed under the old `metadata.json`,
-and the old registration and its approval stayed valid for detection.)
+registration.
 
 ### The orientation check (drawn by registration, or on demand)
 
@@ -1094,7 +1137,7 @@ So **before it starts, registration draws `3_Registered_Atlas/QC_orientation_che
 BrainGlobe's own "Check orientation" (the button in its registration window), as
 a picture. The stack is turned into the atlas's orientation as declared and
 averaged three ways -- seen from the front, from above and from the side -- under
-the same three views of the atlas, each drawn at its real size in millimetres.
+the same three views of the atlas, each drawn at its real size in millimeters.
 
 **How to read it:** if the declared orientation is right, each picture of the
 brain (bottom row) lies the same way as the atlas above it -- same way up, front at
@@ -1151,7 +1194,7 @@ STARTED. A brain counts as registered only when all four output files are there
   looks into the failure can see it. The brain is back at "Register".
   Only a run that got as far as starting brainreg is archived as `_failed`. If
   step 3 cannot move the PREVIOUS registration aside before it starts (a file
-  in use, a full disk), nothing is registered, nothing is labelled `_failed`,
+  in use, a full disk), nothing is registered, nothing is labeled `_failed`,
   and step 3 says that moving the previous registration failed part-way: what
   was moved is in the newest `_archive/` folder, the rest is still in
   `3_Registered_Atlas`. Put it back together before registering again.
@@ -1172,15 +1215,12 @@ STARTED. A brain counts as registered only when all four output files are there
     finish, being registered, rejected, out of date, or waiting for
     approval) and starts nothing: approve it on the 3. Registration tab (or
     with `util_approve_registration.py --brain <brain>`), registering it again
-    first if it has to be. (Before, the button only looked for
-    `brainreg.json`, so it counted cells on a registration that had not
-    finished, had been rejected, or no longer fit its re-cropped images.)
+    first if it has to be.
   - `util_backfill_registrations.py` (adds calibration-run rows for
     registrations made before runs were recorded) records only a finished
     registration that still fits its images and was not rejected. Every other
     brain is listed under "Not backfilled" with the reason, at the end of the
-    run too; register it again (step 3) if you need it. (Before, any
-    `brainreg.json` became a row with status `completed`.)
+    run too; register it again (step 3) if you need it.
   - `util_optimize_crop.py` scores a trial crop as `SUCCESS` only when all
     four registration files were written; otherwise the trial is `FAILED`
     and the line above it names the missing files.
@@ -1224,8 +1264,8 @@ folder now. What that means for you:
   moved into `3_Registered_Atlas/_archive/` together with the registration it
   was for. The brain shows "Approve" again until you look at the new QC
   pictures and approve them.
-- **Approvals written before this rule** (an empty file, or one holding only
-  "Approved: <date>") do not say which registration they were for, so they do
+- **An approval file that is empty, or holds only
+  "Approved: <date>",** does not say which registration it was for, so it does
   **not** count. Such a brain shows "Approve" with the explanation "the approval
   on file does not say which registration it was for". Look at its current QC
   pictures and approve it again -- one click or one command.
@@ -1259,9 +1299,9 @@ folder now. What that means for you:
   "Registered again since you looked" and redraws the status;
   RUN_PIPELINE and the script print `[FAIL] Nothing approved: ...` (or
   `Nothing rejected`) and stop. Look at the new registration's QC picture and
-  answer again. (Before, the answer was written for whatever registration
-  was in the folder at that moment, so a registration nobody had looked at
-  could be approved, or turned down, under your name.)
+  answer again. Why: an answer written for whatever registration is in the
+  folder at that moment would let a registration nobody looked at be approved,
+  or turned down, under your name.
 - **Rejecting is recorded.** Saying the registration is NOT good -- the Reject
   button in Setup & Tuning, the **Reject** button in the pipeline dashboard's
   "Does the registration look good?", "No, reject it (recorded)" in
@@ -1379,7 +1419,7 @@ subfolder.
 | `full` | `1_Extracted_Full` | only if the atlas was fitted to the whole stack (see below) |
 
 A folder only counts as available if it actually contains `ch0/*.tif`. The crop
-folders are created empty when the brain is first organised, and an empty folder
+folders are created empty when the brain is first organized, and an empty folder
 is not data.
 
 **What you get, and what you don't**
@@ -1406,7 +1446,7 @@ and from then on the whole stack IS the atlas's space: steps 5 and 6 read their
 images from `1_Extracted_Full`, and step 5 picks up a run in
 `from_1_Extracted_Full/` (after anything at the top level). Nothing needs moving
 or re-running. A brain whose registration has no `registered_from.json`
-(registered before it was written) is treated as registered on the crop.
+is treated as registered on the crop.
 
 `registered_from.json` is written only when registration FINISHED (all its
 output files are there); a failed run writes none. If the folder it names no
@@ -1467,11 +1507,9 @@ every brain detected after that; no code changes.
 | LoG sigma size | `det_log_sigma` |
 | max cluster size | `det_max_cluster` |
 
-All eight matter. Changing only the last four, with the first four held fixed,
-moved most of the cells a run found (see the `det_ball_overlap` comment in
-`src/mousebrain/tracker.py`). Runs logged before the last four columns existed
-recorded only the first four; such a run cannot be used as the settled method
-until its other four are filled in.
+All eight matter: changing only the last four, with the first four held fixed,
+moves most of the cells a run finds. A run that records only the first four
+cannot be used as the settled method until its other four are filled in.
 
 **Who uses it.** Step 4, the Pipeline Dashboard (`3D: 1. Pipeline Dashboard`:
 the "Detection settings" box shows "Settled method (from tracker)" with the
@@ -1482,26 +1520,23 @@ selected brain's eight numbers and the run they came from), Setup & Tuning's
 **When there is none.** If no run is marked Paradigm Best for a brain's imaging
 setup, or that run does not record all eight settings, detection does not run:
 the dashboard shows the reason in red and step 4 stops with a message saying
-what to do. It never falls back to built-in numbers. (Four generic presets --
-sensitive, balanced, conservative, large_cells -- used to fill that gap. They
-were never tuned on real brains, and the counts they produced looked plausible
-and were not, so they were removed.)
+what to do. It never falls back to built-in numbers: generic presets not tuned
+on real brains give plausible-looking counts that are wrong.
 
 A run marked only **Best** (for its one brain) is never taken in place of a
-missing Paradigm Best. It used to be: with no Paradigm Best -- never marked, or
-archived by mistake -- the newest brain-level Best of the imaging setup quietly
-became the detection method of every brain imaged that way, and step 4 logged it
-as the settled method. Now step 4 stops with the message above until someone
-marks a Paradigm Best. The same rule applies to the classification model step 5
-takes from the tracker: only a classification run marked Paradigm Best for the
-imaging setup counts, and with none step 5 stops (see "The settled
-classification method" below; until 2026-11-19 it fell back to the newest model
-file). (Setup & Tuning still shows a brain's Best; it just never runs it for
-other brains.)
+missing Paradigm Best (never marked, or archived by mistake). Otherwise the
+newest brain-level Best of the imaging setup would quietly become the detection
+method of every brain imaged that way. Step 4 stops with the message above
+until someone marks a Paradigm Best. The same rule applies to the classification
+model step 5 takes from the tracker: only a classification run marked Paradigm
+Best for the imaging setup counts, and with none step 5 stops (see "The settled
+classification method" below; it never falls back to the newest model file).
+(Setup & Tuning still shows a brain's Best; it just never runs it for other
+brains.)
 
 ### The settled classification method
 
-*Update 2026-11-19 (settled classifier): step 5 production = the Paradigm Best classification only.*
+Production classification (step 5) uses the Paradigm Best classification only.
 
 Step 5 classifies every brain with the **classification run marked Paradigm
 Best** for its imaging setup -- one run, with its own model file and settings,
@@ -1530,7 +1565,7 @@ and names it.
 # 1. Look: what the run records, what is settled now, what would change. Writes nothing.
 python scripts/utils/util_mark_paradigm_classifier.py --run <exp_id> --dry-run
 
-# 2. Mark it. Runs made before the tracker recorded cube and batch size need
+# 2. Mark it. A run that did not record cube and batch size needs
 #    them given (they are written only into empty columns, with the reason in
 #    the run's notes; a value the run recorded is never replaced):
 python scripts/utils/util_mark_paradigm_classifier.py --run <exp_id> \
@@ -1553,12 +1588,11 @@ person's explicit choice); it is recorded in `promoted_from.json` (`method`,
 their files until step 5 is run on them again; their `promoted_from.json` says
 which method made them.
 
-**Why.** Two models on the same brain gave counts several-fold apart, and
-"newest model" meant a training run nobody had judged could become production
-by being saved. A selective classification (trust deep regions, classify only
-the uncertain ones) was found to keep real interior cells that classifying
-every candidate throws out; it could only write files beside production, which
-step 6 never counted. Now it is a production method like any other.
+**Why.** Two models on the same brain can give counts several-fold apart, and
+"newest model" would let a training run nobody had judged become production by
+being saved. A selective classification (trust deep regions, classify only the
+uncertain ones) keeps real interior cells that classifying every candidate
+throws out, so it is a production method like any other.
 
 **Changing one setting for a trial.** Give it to step 4 on the command line,
 e.g. `--threshold 9`. The run is logged as `custom`, never as the settled method.
@@ -1571,10 +1605,9 @@ run type), and each imaging setup at most one Paradigm Best:
   Tuning do exactly this and nothing else: **Mark as Best** in the run list,
   **Mark Selected Layer as Best** and **Promote Recent to Best** in the
   detection comparison. The run that was Best only loses its Best mark: it is
-  NOT archived, and it keeps its Paradigm Best if it had one. (The comparison
-  buttons used to archive it, which also ended its Paradigm Best -- the
-  settled method of every brain imaged the same way.) If you want a run
-  archived, that is a separate decision.
+  NOT archived, and it keeps its Paradigm Best if it had one (archiving would
+  end its Paradigm Best -- the settled method of every brain imaged the same
+  way). If you want a run archived, that is a separate decision.
 - **The comparison buttons act only on the selected brain's layers.** Every
   points layer that shows a detection run remembers which brain and which run
   it is, and whether it was loaded as the Best or as the run to compare
@@ -1600,16 +1633,14 @@ run type), and each imaging setup at most one Paradigm Best:
   its brain's Best; the brain's previous Best is cleared (a brain never has two),
   and the previous Paradigm Best of that imaging setup loses that mark.
 - *Archiving* a run clears both its Best and its Paradigm Best (no Best
-  button archives a run any more; see above). An archived run is never used as
+  button archives a run; see above). An archived run is never used as
   the settled method, even if an old tracker row still carries the mark.
 - "The brain" means the brain whichever way a run names it. A run made in
   Setup & Tuning is logged under the brain's own name (`<brain>`), a run made
   by a pipeline step under `<mouse>/<brain>`; both are the same brain. Marking
-  either kind Best (or Paradigm Best) clears the Best of the other kind too.
-  (It used to clear only a Best logged under exactly the same text, so a brain
-  could end up with two Bests -- two stars in the run list -- and *Load best
-  detection* loaded the older one. Marking the run you want Best again puts
-  that right.)
+  either kind Best (or Paradigm Best) clears the Best of the other kind too, so
+  a brain never has two Bests (two stars in the run list). If it does, marking
+  the run you want Best again puts that right.
 - A run counts as Best only when its `marked_best` cell in the tracker holds
   exactly `True` (what the Best buttons write). The run list's star, its
   *Best only* filter, its order and the green layer color follow the same
@@ -1622,12 +1653,12 @@ run type), and each imaging setup at most one Paradigm Best:
   highest-rated run that has not been archived and labels it "highest rated --
   none is marked best"; if there is none of those either, it loads nothing.
   A run made in Setup & Tuning records the candidates file it wrote
-  (`detected_cells.xml` in its run folder); older widget runs recorded only
-  the folder, and the file inside it is found and loaded. If that file is
+  (`detected_cells.xml` in its run folder); a run that recorded only the
+  folder has the file inside it found and loaded. If that file is
   missing, the terminal says "Run ... has no candidates file at ..." and
   nothing is loaded.
 
-## Folder Structure (Updated)
+## Folder Structure
 
 ```
 1_Brains/
@@ -1661,7 +1692,7 @@ All runs are logged to `2_Data_Summary/calibration_runs.csv` with:
 - User ratings (1-5 stars)
 - Notes
 
-This eliminates the months-long manual optimization cycles by keeping a complete record of what was tried and what worked.
+The record keeps what was tried and what worked.
 
 **How the tracker file is written** (`2_Data_Summary/calibration_runs.csv`). Several
 machines write it, and every status change rewrites the whole file, so each write:
@@ -1715,8 +1746,7 @@ python util_experiments.py view <ID>         # which machine ran it (Machine)
 
 (or choose `8` in the interactive `python util_experiments.py` menu). Each run
 listed is either still running on the machine shown, or was killed and will
-never finish -- check that machine. Before this list existed, such rows could
-only be found by opening the CSV.
+never finish -- check that machine.
 
 ## Requirements
 

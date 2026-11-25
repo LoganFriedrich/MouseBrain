@@ -2,13 +2,12 @@
 
 Step 5 has one rule for which candidates file it classifies
 (pipeline_status.find_candidates: the registered-space candidates folders, the
-standard name first). Four other readers kept their own: the batch's detection
-check took the newest .xml at the top of the folder, the pre-filter a legacy
-Detected_*.xml first and then any subfolder (an archived run, or a trial run in
-a space the atlas was never fitted to), and the tuning widget's pre-filter and
-classification buttons each a rule of their own. So a check could pass a brain
-on one file while the next step used another, and the widget could filter or
-classify candidates the pipeline would never use.
+standard name first). Every other reader uses that rule instead of its own
+(the newest .xml at the top of the folder, a legacy Detected_*.xml first and
+then any subfolder, or a rule per widget button). Otherwise a check could pass
+a brain on one file while the next step used another, and the widget could
+filter or classify candidates the pipeline would never use (an archived run,
+or a trial run in a space the atlas was never fitted to).
 """
 import importlib.util
 import json
@@ -69,9 +68,10 @@ def test_the_prefilter_takes_the_standard_file_not_a_legacy_name(tmp_path):
 def test_the_prefilter_help_describes_the_step_5_file_not_the_latest():
     """The command-line help must say which file is used without --candidates.
 
-    It used to promise "latest in 4_Cell_Candidates", while the code takes the
-    file step 5 classifies (the standard name first, not the newest file). An
-    operator reading the help would expect a newer run to be filtered.
+    The help must not promise "latest in 4_Cell_Candidates", because the code
+    takes the file step 5 classifies (the standard name first, not the newest
+    file). An operator reading such a promise would expect a newer run to be
+    filtered.
     """
     import subprocess
     import sys

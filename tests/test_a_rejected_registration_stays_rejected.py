@@ -1,14 +1,13 @@
 """A person's "no" to a registration is recorded and kept.
 
-Rejecting used to only move an existing approval away -- and for a
-registration never approved it wrote nothing at all. The next reader showed
-the registration as "waiting for approval", and anyone could approve what had
-just been turned down. Now the "no" of every path (the approval script, the
-RUN_PIPELINE menu, the dashboard, Setup & Tuning) is recorded, every reader
-puts the brain back at "register", and nothing unattended registers it again:
-a person asks for that (--reprocess), or re-crops it. Only an explicit "no"
-rejects -- closing a dialog or pressing Enter does not. Identifiers are
-invented.
+Rejecting records the "no" even for a registration never approved. Otherwise
+the next reader would show the registration as "waiting for approval", and
+anyone could approve what had just been turned down. The "no" of every path
+(the approval script, the RUN_PIPELINE menu, the dashboard, Setup & Tuning) is
+recorded, every reader puts the brain back at "register", and nothing
+unattended registers it again: a person asks for that (--reprocess), or
+re-crops it. Only an explicit "no" rejects -- closing a dialog or pressing
+Enter does not. Identifiers are invented.
 """
 import builtins
 import importlib.util

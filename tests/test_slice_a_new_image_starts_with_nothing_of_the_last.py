@@ -2,9 +2,9 @@
 regions, tissue mask, background diagnostics or region counts; and a saved
 run loaded from the history brings none of the last live run's.
 
-Clearing for a new image missed these, so the previous image's ignore
-regions were applied to and saved with the next image, and its tissue mask
-and background were drawn in the next image's diagnostic plot.
+If clearing for a new image missed these, the previous image's ignore
+regions would be applied to and saved with the next image, and its tissue mask
+and background would be drawn in the next image's diagnostic plot.
 """
 from types import SimpleNamespace
 

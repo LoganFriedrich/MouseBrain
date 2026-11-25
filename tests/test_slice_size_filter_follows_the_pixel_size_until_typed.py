@@ -2,12 +2,12 @@
 image's pixel size, until a person types a value; a typed value is then kept
 for every image opened after it, until Auto size is clicked.
 
-Setting the filter from the pixel size used to mark it as typed by hand
-(setting the boxes fired the same signal a person's edit does), so after the
-first image it was never set from a pixel size again: an image with another
-pixel size was filtered with the first image's numbers. And opening an image
-with Browse File or Prev/Next cleared the mark, overwriting what a person
-had really typed.
+Setting the filter from the pixel size must not mark it as typed by hand
+(setting the boxes fires the same signal a person's edit does): otherwise
+after the first image it would never be set from a pixel size again and an
+image with another pixel size would be filtered with the first image's
+numbers. Opening an image with Browse File or Prev/Next must not clear the
+mark, or it would overwrite what a person had really typed.
 """
 from qtpy.QtWidgets import QApplication, QSpinBox
 

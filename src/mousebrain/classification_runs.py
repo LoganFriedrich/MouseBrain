@@ -1,15 +1,15 @@
 """Where a classification is written, and how one becomes production.
 
-WHY A TUNING RUN NO LONGER WRITES 5_Classified_Cells
+WHY A TUNING RUN DOES NOT WRITE 5_Classified_Cells
 ``<brain>/5_Classified_Cells/cells.xml`` is THE brain's classification: step 6
-counts it, and every status reader treats it as "classified". The napari
-Setup & Tuning widget used to write each of its classification runs straight
-into that folder, so trying a model in the GUI silently replaced the production
-classification (step 5's output), with no copy kept. Every tuning run's tracker
-row also pointed at that one shared folder, so "load the previous run" loaded
-the newest file and a comparison compared a run with itself.
+counts it, and every status reader treats it as "classified". A napari
+Setup & Tuning run written straight into that folder would silently replace the
+production classification (step 5's output), with no copy kept, and every
+tuning run's tracker row would point at that one shared folder, so "load the
+previous run" would load the newest file and a comparison would compare a run
+with itself.
 
-Now each GUI run gets its own folder, beside the GUI's detection runs:
+So each GUI run gets its own folder, beside the GUI's detection runs:
 ``<2_Data_Summary>/optimization_runs/<brain>/class_<time>/`` (cells.xml +
 rejected.xml), and that folder is the run's ``output_path`` in the tracker.
 Production changes only when a person promotes a run (promote_to_production,
@@ -17,10 +17,10 @@ the "Promote to production" button), which first moves the current production
 files into ``5_Classified_Cells/_archive/<time>/``.
 
 STEP 5 KEEPS THE PREVIOUS PRODUCTION CLASSIFICATION TOO
-Step 5 writes the production classification itself, and it used to write over
-the files already there with no copy kept, while every step 5 tracker row
-named the same shared folder -- so no row could be matched to the file it
-wrote. Step 5 now goes through the same helpers as a promotion:
+Step 5 writes the production classification itself. Writing over the files
+already there with no copy kept, with every step 5 tracker row naming the same
+shared folder, would leave no row that matches the file it wrote. Step 5 goes
+through the same helpers as a promotion:
 
 * staging_folder: step 5 runs cellfinder into
   ``5_Classified_Cells/_in_progress/<time>/``, NOT into the production folder.
@@ -47,7 +47,7 @@ The run that wrote the files has its tracker ``output_path`` set to the new
 record) has its ``output_path`` moved to their place in the archive -- as step
 4 does with candidates (mousebrain.candidates_io).
 
-SELECTIVE CLASSIFICATION IS A PRODUCTION METHOD (2026-11-19)
+SELECTIVE CLASSIFICATION IS A PRODUCTION METHOD
 Step 5 runs the method of the run marked Paradigm Best for the brain's imaging
 setup (tracker.get_paradigm_classification). When that is a selective
 classification, its merged result is installed as ``cells.xml`` and the
@@ -55,12 +55,11 @@ classifier's rejects as ``rejected.xml``, exactly like a full classification,
 so step 6 and every status reader need nothing new. Its audit files are
 installed beside them (SELECTIVE_FILES: the report with every count, the
 trusted candidates, the candidates sent to the classifier) and are archived
-with them when a later run replaces them. The names a selective run wrote
-before it was a production method (``cells_selective.xml``,
-``selective_rejected.xml``, written straight into 5_Classified_Cells beside
-the production files) are archived too, so after one step 5 run the folder
-holds one classification and its own audit files, never a second, older
-result next to it. The record (``promoted_from.json``) carries the whole
+with them when a later run replaces them. Files named ``cells_selective.xml``
+and ``selective_rejected.xml`` (a standalone selective run writes them straight
+into 5_Classified_Cells beside the production files) are archived too, so after
+one step 5 run the folder holds one classification and its own audit files,
+never a second result next to it. The record (``promoted_from.json``) carries the whole
 method that made the files (``method``): which Paradigm Best run, the model
 file with its size and time, every setting, the pre-filter and its settings.
 """
@@ -74,13 +73,13 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 PRODUCTION_FOLDER = "5_Classified_Cells"
-# The record of which run the production files came from. The name is kept
-# from when only a promotion wrote it; step 5 writes the same record.
+# The record of which run the production files came from; both a promotion
+# and step 5 write it.
 PRODUCTION_RECORD = "promoted_from.json"
 # Audit files a selective classification installs beside cells.xml.
 SELECTIVE_FILES = ("selective_report.json", "trust_cells.xml", "classify_input.xml")
-# Names a selective run wrote straight into 5_Classified_Cells before step 5
-# made it a production method; archived with the production files.
+# Names a standalone selective run writes straight into 5_Classified_Cells;
+# archived with the production files.
 LEGACY_SELECTIVE_FILES = ("cells_selective.xml", "selective_rejected.xml")
 PRODUCTION_FILES = (("cells.xml", "rejected.xml", PRODUCTION_RECORD)
                     + SELECTIVE_FILES + LEGACY_SELECTIVE_FILES)
@@ -350,8 +349,8 @@ def follow_files_into_archive(tracker, prev_id: Optional[str], archived: Optiona
 
 def follow_selective_rows(tracker, brain_folder, archived: Optional[Path]) -> List[str]:
     """Point the rows of selective classifications that wrote their files
-    straight into 5_Classified_Cells (before step 5 made selective a
-    production method) at the archive those files just moved to.
+    straight into 5_Classified_Cells (standalone selective runs) at the archive
+    those files just moved to.
 
     Only when this archive holds such files (LEGACY_SELECTIVE_FILES), and only
     rows of this brain that name the production folder itself. Several such

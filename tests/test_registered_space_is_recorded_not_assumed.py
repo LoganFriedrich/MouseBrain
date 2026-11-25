@@ -4,11 +4,11 @@ Cells placed in the wrong space land in the wrong structures, and every number
 downstream still looks perfectly reasonable -- a region count does not announce
 that it counted the wrong voxels. So this is not a tidiness question.
 
-The steps used to assume that space was the crop folder. That holds only when the
-crop was made here. A delivery that arrives already cut has nothing for the crop
-step to do, and is registered on the full extraction -- at which point the full
-extraction IS registered space, and the assumption is wrong in the direction that
-hides itself.
+The steps must not assume that space is the crop folder. That holds only when
+the crop was made here. A delivery that arrives already cut has nothing for the
+crop step to do, and is registered on the full extraction -- at which point the
+full extraction IS registered space, and the assumption is wrong in the
+direction that hides itself.
 
 So registration records what it used, and later steps ask.
 """
@@ -50,7 +50,7 @@ def test_a_delivery_that_arrived_already_cut_can_still_be_registered(tmp_path):
 
 
 def test_an_empty_crop_folder_is_not_data(tmp_path):
-    """It exists from the moment a brain is organised. That is not a crop."""
+    """It exists from the moment a brain is organized. That is not a crop."""
     p = brain_with(tmp_path, ("1_Extracted_Full",),
                    empty=("2_Cropped_For_Registration",
                           "2_Cropped_For_Registration_Manual"))

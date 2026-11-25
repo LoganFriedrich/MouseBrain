@@ -6,11 +6,10 @@ reads back as "8.0" as soon as anything has rewritten the file -- pandas does
 it, Excel does it, and so does an ordinary later run. Parsing that with int()
 raises ValueError.
 
-That mattered more than it looks. The crash was not in some reporting corner:
-it was in the one function that answers "what settings worked for this kind of
-imaging?". So asking for a paradigm's proven settings raised, and the pipeline
-step that asks fell through to a generic preset -- running expensive detection
-with parameters nobody had validated, while reporting nothing wrong.
+That matters because the parse is in the one function that answers "what
+settings worked for this kind of imaging?". If it raised, the pipeline step
+that asks would fall through to a generic preset -- running expensive
+detection with parameters nobody had validated, while reporting nothing wrong.
 """
 import csv
 

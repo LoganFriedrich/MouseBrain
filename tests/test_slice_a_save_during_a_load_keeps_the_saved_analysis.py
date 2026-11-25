@@ -4,9 +4,9 @@ saved analysis of the image being left.
 Opening image B saves image A's results and clears them from memory, but
 the window keeps naming A until B has loaded. A save in between -- Save
 State, or the auto-save at the end of a particle analysis whose tracker
-write let a waiting Load click through -- saw A's folder as the window's
-own with nothing in memory, and deleted A's particles, labels, nuclei and
-measurements and emptied its ROIs, while the window said 'State saved'.
+write lets a waiting Load click through -- must not see A's folder as the
+window's own with nothing in memory and delete A's particles, labels, nuclei
+and measurements and empty its ROIs while the window says 'State saved'.
 """
 import json
 

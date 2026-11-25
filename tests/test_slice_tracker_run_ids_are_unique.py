@@ -1,8 +1,8 @@
 """Two runs of one sample started in the same second get different run ids.
 
-The id used to hash only type, sample, second and process id, so a second
-run in the same second got the first run's id, and update_status() on the
-second run changed the first run's row.
+An id hashing only type, sample, second and process id would give a second
+run in the same second the first run's id, and update_status() on the second
+run would change the first run's row.
 """
 import csv
 

@@ -1,10 +1,10 @@
 """Region counting from the Results tab runs step 6 off napari's thread, with
 no time limit.
 
-It ran ``subprocess.run(..., timeout=300)`` on napari's own thread: the window
-froze for the whole count, and a whole brain takes far longer than five
-minutes, so the count was killed part-way and its tracker row stayed
-'started'. Now step 6 runs in a worker thread to its end, its printed lines
+Running ``subprocess.run(..., timeout=300)`` on napari's own thread would
+freeze the window for the whole count, and a whole brain takes far longer than
+five minutes, so the count would be killed part-way and its tracker row would
+stay 'started'. Step 6 runs in a worker thread to its end, its printed lines
 feed the status line, a second start is refused meanwhile, and the results
 are shown only for the brain that was counted.
 """

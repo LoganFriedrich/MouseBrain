@@ -1,8 +1,9 @@
 """batch_process --resume finds a brain whose batch was interrupted.
 
-The status file was written only when a brain finished, failed or stopped for
-review, so a batch killed mid-step left nothing marked PENDING and --resume
-(which looks for PENDING rows) never found the brain.
+The status file is written when a brain starts, not only when it finishes,
+fails or stops for review: otherwise a batch killed mid-step would leave
+nothing marked PENDING and --resume (which looks for PENDING rows) would never
+find the brain.
 """
 import importlib.util
 import sys

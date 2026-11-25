@@ -1,10 +1,10 @@
 """Export Batch Results lists every image of the batch, each with what
 happened to it: counted, no ROI drawn, skipped, or failed and why.
 
-The summary CSV used to hold only the images whose ROIs were counted. An
+The summary CSV must hold more than the images whose ROIs were counted. An
 image that was skipped, counted with no ROI drawn, or could not be read at
-all simply was not there -- indistinguishable from an image that was never
-in the folder -- and the read failures were printed to the console only.
+all would otherwise be missing -- indistinguishable from an image that was
+never in the folder -- and read failures would be printed to the console only.
 """
 from slice_batch_helpers import (draw_roi_around_everything, export_batch,
                                  make_batch_widget, two_channel_image)

@@ -9,8 +9,8 @@ Only a FINISHED registration that still fits its images and was not turned
 down is back-filled (mousebrain.registration_approval.approval_state). WHY:
 brainreg writes brainreg.json before it fits anything, so that file alone is
 left behind by a registration that failed, was stopped, or is running right
-now. This script used to record every such folder as status 'completed'
-("Backfilled from existing registration"), and a tracker row is read as a
+now. This script must not record every such folder as status 'completed'
+("Backfilled from existing registration"): a tracker row is read as a
 finished registration by everything that lists runs. Skipped folders are
 listed with the reason; register those brains again (step 3), and a person
 approves the new registration before anything is counted on it.

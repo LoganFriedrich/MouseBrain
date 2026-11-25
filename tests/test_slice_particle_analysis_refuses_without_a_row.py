@@ -1,11 +1,11 @@
 """A particle analysis whose tracker row cannot be written is not run.
 
-When the tracker refused the new particle-analysis row (calibration_runs.csv
+When the tracker refuses the new particle-analysis row (calibration_runs.csv
 open in a spreadsheet program, another writer's lock not freed in time) the
-error was swallowed: the analysis ran and saved its results with no row and
-no word to the person -- while detection and colocalization refuse to start
-in the same case. It must refuse the same way: say so, run nothing, and give
-the Run button back.
+error must not be swallowed: the analysis would run and save its results with
+no row and no word to the person -- while detection and colocalization refuse
+to start in the same case. It refuses the same way: says so, runs nothing, and
+gives the Run button back.
 """
 from types import SimpleNamespace
 

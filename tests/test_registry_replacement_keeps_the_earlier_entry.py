@@ -1,10 +1,10 @@
 """Registering a sample again keeps the entry it replaces.
 
-Defect covered: a completed re-run of a sample (other parameters, say)
-replaced its registry entry and DELETED the files it replaced, so the
-earlier counts, parameters and files were kept nowhere -- the audit log got
-only a "register" line with the new hash -- while retiring an entry through
-invalidate keeps both. Now a replacement moves the earlier files to
+A completed re-run of a sample (other parameters, say) replaces its registry
+entry but must not DELETE the files it replaces: the earlier counts,
+parameters and files would then be kept nowhere (the audit log would get only
+a "register" line with the new hash), whereas retiring an entry through
+invalidate keeps both. So a replacement moves the earlier files to
 _archived/<time>/ beside them, writes a "replace_entry" log line holding the
 earlier entry's record, and the new entry says what it replaced. A
 registration identical to the current entry replaces nothing.

@@ -3,11 +3,11 @@
 A withdrawal (a rejection, an approval taken back, a re-crop or
 re-registration, a replaced classification) takes the brain's row out of
 region_counts.csv and leaves the brain's own 6_Region_Analysis files. The
-status readers judged "counted" by those files. So when a person rejected a
-registration and then overruled the rejection, approving the SAME
-registration again, every reader showed the brain as Complete, and
-batch_process --resume and the overnight batch skipped it. The brain had no
-counts in production, and nothing said so.
+status readers therefore judge "counted" by the production row, not by those
+files. Otherwise, when a person rejected a registration and then overruled the
+rejection, approving the SAME registration again, every reader would show the
+brain as Complete, and batch_process --resume and the overnight batch would
+skip it although it has no counts in production and nothing says so.
 
 Identifiers are invented.
 """

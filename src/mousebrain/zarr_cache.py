@@ -2,18 +2,18 @@
 
 WHY
 The napari widget keeps a Zarr copy of each channel (``ch0.zarr`` beside
-``ch0/``) because it loads in seconds where the TIFFs take minutes. It used to
-treat "the folder exists" as "the cache is complete", and it created the
-full-size array at its final name and filled it plane by plane. So:
+``ch0/``) because it loads in seconds where the TIFFs take minutes. Treating
+"the folder exists" as "the cache is complete", and creating the full-size
+array at its final name and filling it plane by plane, would mean:
   * a conversion cut short (napari closed, a crash, a failed whole-volume save)
-    left a cache that looked finished. Its missing planes read as zeros, and
-    every later load showed -- and every detection on the loaded layers ran
+    leaves a cache that looks finished. Its missing planes read as zeros, and
+    every later load shows -- and every detection on the loaded layers runs
     on -- a partly blank brain, with no message;
-  * an empty cache folder made the widget skip conversion for good;
-  * a re-crop rewrote the TIFFs but left the old cache, so loads showed the
+  * an empty cache folder makes the widget skip conversion for good;
+  * a re-crop rewrites the TIFFs but leaves the old cache, so loads show the
     previous crop.
 
-The rules now:
+The rules:
   * A cache is written under ``<name>.zarr.partial`` and renamed to its real
     name only when every plane is in; then a completion record,
     ``<name>.zarr.complete.json``, is written LAST, beside it.
@@ -24,13 +24,13 @@ The rules now:
   * Rebuilding removes the unusable cache folder first. It is a copy made from
     the TIFFs, which are never touched.
   * Every build writes into a partial folder of its OWN,
-    ``<name>.zarr.partial-<random>``. All builds used to share
-    ``<name>.zarr.partial`` and each started by deleting it, so a second build
-    of the same channel (a second Load, or Convert pressed during the automatic
-    conversion) deleted the first one's planes under it; the first could then
-    rename a folder with planes missing and record it as complete. Now two
-    builds never touch each other's planes, and the last one to finish wins
-    with a complete cache.
+    ``<name>.zarr.partial-<random>``. Builds sharing one partial folder, each
+    starting by deleting it, would let a second build of the same channel (a
+    second Load, or Convert pressed during the automatic conversion) delete
+    the first one's planes under it; the first could then rename a folder with
+    planes missing and record it as complete. With separate folders two builds
+    never touch each other's planes, and the last one to finish wins with a
+    complete cache.
   * A partial folder left by a build that was cut short is removed by the
     next build of the same channel that completes, but only when nothing has
     been written into it for ABANDONED_AFTER_S (a running build writes a chunk

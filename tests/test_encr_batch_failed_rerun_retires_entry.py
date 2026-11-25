@@ -1,9 +1,9 @@
 """A re-run that fails because of the sample retires the sample's earlier entry;
 a failure of the machinery around it does not.
 
-Defect covered: a sample whose re-run ended in an error kept its earlier
-registry entry -- with the earlier count, still marked current -- so the
-registry reported a result whose newest attempt had failed on the sample.
+A sample whose re-run ended in an error must not keep its earlier registry
+entry -- with the earlier count, still marked current -- because the registry
+would then report a result whose newest attempt had failed on the sample.
 Guarded the other way: a share or tracker failure, a missing or broken
 library, or a defect in the code says nothing about the sample, so it must
 never retire a good result -- and neither may a failure at a step that no

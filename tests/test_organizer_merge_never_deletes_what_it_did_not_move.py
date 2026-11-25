@@ -2,10 +2,10 @@
 
 Older layouts named a brain's folder by its imaging setup only (``2p5x_z5``).
 When both that folder and the full-name pipeline folder exist, step 1 merges
-the old one in. It moved each item that had no counterpart and then removed the
-old folder WHATEVER WAS LEFT. The full-name folder's numbered subfolders exist
-(empty) before the merge, so the old 0_Raw_IMS -- with the brain's raw file in
-it -- was never moved, and was deleted with the folder.
+the old one in. It must remove the old folder only when nothing is left in
+it: the full-name folder's numbered subfolders exist (empty) before the merge,
+so the old 0_Raw_IMS -- with the brain's raw file in it -- is not moved, and
+deleting the folder whatever was left would delete the raw file.
 """
 import importlib.util
 import sys

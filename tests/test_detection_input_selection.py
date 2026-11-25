@@ -85,7 +85,7 @@ def test_the_uncropped_stack_is_used_when_nothing_has_been_cropped(detect, tmp_p
 
 
 def test_an_empty_crop_folder_is_not_data(detect, tmp_path):
-    """The folder exists from the moment the brain is organised; that is not data.
+    """The folder exists from the moment the brain is organized; that is not data.
 
     If an existing-but-empty crop folder counted, detection would be pointed at
     a folder with no images in it and fail deep inside cellfinder, long after the
@@ -140,10 +140,10 @@ def test_detecting_on_the_uncropped_stack_is_explained_not_just_allowed(detect):
 
 def test_registration_is_reported_for_unregistered_brains_not_used_to_hide_them(
         detect, tmp_path):
-    """Listing used to require registration, so this path was unreachable by CLI.
+    """Listing must not require registration, or this path would be unreachable by CLI.
 
-    The consequence was not that people did not do it -- they did it in napari --
-    but that those runs were never logged in the tracker.
+    People would then run detection in napari instead, and those runs would
+    never be logged in the tracker.
     """
     root = tmp_path / "1_Brains"
     mouse = root / "101_PROJ_01_02"

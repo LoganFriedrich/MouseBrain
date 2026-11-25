@@ -1,11 +1,11 @@
 """A 2D run's tracker row holds every setting it ran with and the counts it
 reported, so the run can be reproduced and its result explained from the row.
 
-The napari window recorded only StarDist's numbers for a detection (0.0 for a
-threshold run's probability and overlap, nothing of its thresholds), never
-the counts its filters removed, and every particle analysis said its
-background came from drawn rectangles even when it was the particles' median.
-update_status() dropped any result it did not know without a word.
+For a detection that means more than StarDist's numbers (a threshold run's
+probability and overlap are not 0.0, its thresholds are recorded) and the
+counts its filters removed; a particle analysis says where its background
+came from (drawn rectangles or the particles' median). update_status() must
+not drop a result it does not know without a word.
 """
 import json
 

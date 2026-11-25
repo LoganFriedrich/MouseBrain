@@ -1,12 +1,12 @@
 """Curation answers are kept per brain, and cubes are cut only from that brain's image.
 
-What went wrong: answers of every brain with the same imaging setup were
-appended to one pooled pair of files with no brain recorded, and all of them
-were loaded into the training layers of whichever brain was selected next.
-"Create Training Dataset" then cut a cube for EVERY pooled coordinate out of
-whatever image layer was called 'Signal' -- another brain's coordinates cut
-from this brain's pixels, written under names without a brain over that
-brain's own cubes.
+Answers of every brain with the same imaging setup must not be appended to one
+pooled pair of files with no brain recorded and loaded into the training
+layers of whichever brain is selected next. And "Create Training Dataset" must
+not cut a cube for EVERY pooled coordinate out of whatever image layer is
+called 'Signal': that would cut another brain's coordinates from this brain's
+pixels and write them under names without a brain over this brain's own
+cubes.
 """
 from pathlib import Path
 

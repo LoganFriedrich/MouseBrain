@@ -1,12 +1,12 @@
 """A failed re-run that keeps the earlier entry current says so in the registry.
 
-Defect covered: a re-run of one sample (a run where no other sample gets
-past the step that failed) whose image raises a data error keeps the
-sample's earlier entry current -- the failure may be the software's -- and
-that was said only in a console summary line. Whoever pulled the registry
-saw the earlier count as an unqualified current result although the newest
-attempt on the sample failed. Now the entry carries newest_attempt_failed,
-the audit log has an attempt_failed line, and the registry CLI lists it.
+A re-run of one sample (a run where no other sample gets past the step that
+failed) whose image raises a data error keeps the sample's earlier entry
+current -- the failure may be the software's. That must not be said only in a
+console summary line: whoever pulls the registry would see the earlier count
+as an unqualified current result although the newest attempt on the sample
+failed. So the entry carries newest_attempt_failed, the audit log has an
+attempt_failed line, and the registry CLI lists it.
 """
 import json
 

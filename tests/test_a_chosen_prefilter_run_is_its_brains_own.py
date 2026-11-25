@@ -1,12 +1,13 @@
 """The Setup & Tuning pre-filter uses a chosen detection run only on its own
 brain, and only a candidates file that is that run's own.
 
-A run chosen with Load Best / Load Selected was never forgotten when another
-brain was loaded, and nothing checked that it belonged to the loaded brain: the
-button filtered brain A's candidates against brain B's atlas, wrote them into
-brain B's folder and recorded them as brain B's. And a run whose tracker row
-names a folder (old step-4 runs, runs that never finished) took whatever
-detected_cells.xml sat in that folder, which can be a newer run's file.
+A run chosen with Load Best / Load Selected is forgotten when another brain is
+loaded, and the button checks that the run belongs to the loaded brain: otherwise
+it would filter brain A's candidates against brain B's atlas, write them into
+brain B's folder and record them as brain B's. And for a run whose tracker row
+names a folder (old step-4 runs, runs that never finished), the button must
+not take whatever detected_cells.xml sits in that folder, which can be a newer
+run's file.
 """
 import json
 from pathlib import Path

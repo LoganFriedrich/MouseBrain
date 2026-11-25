@@ -1,9 +1,9 @@
 """A Setup & Tuning classification run finishes as the run it started as.
 
-The finish handler found the run's results through the widget's
+The finish handler must not find the run's results through the widget's
 _last_class_output, which selecting another brain resets: the run's own
-results were then never offered, and "Load classified cells" loaded the newly
-selected brain's production cells as if they were the run's result.
+results would then never be offered, and "Load classified cells" would load
+the newly selected brain's production cells as if they were the run's result.
 """
 from types import SimpleNamespace
 

@@ -1,10 +1,11 @@
 """The dashboard's native brainreg button never registers into the brain.
 
-It opened brainreg's own widget with the output folder preset to the brain's
-3_Registered_Atlas and a fixed orientation. A registration run from there
-bypassed step 3: no archive of the previous registration and its approval, no
-record of the images used, no tracker row. The widget is for trying settings;
-only step 3 makes the brain's registration. Identifiers are invented.
+It opens brainreg's own widget, which must not have its output folder preset
+to the brain's 3_Registered_Atlas with a fixed orientation: a registration run
+from there would bypass step 3 (no archive of the previous registration and
+its approval, no record of the images used, no tracker row). The widget is for
+trying settings; only step 3 makes the brain's registration. Identifiers are
+invented.
 """
 from pathlib import Path
 from types import SimpleNamespace

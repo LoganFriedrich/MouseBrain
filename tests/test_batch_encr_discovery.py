@@ -1,9 +1,9 @@
 """batch_encr ND2 discovery: both slice layouts, priority between them, and the
 not-found exit.
 
-WHY these exist: the documented invocation once searched only the 1_Subjects
-layout, found 0 files at a site whose raw slices still sat in the legacy
-per-project folder, and exited 0 as if the batch had run.
+WHY these exist: an invocation that searched only the 1_Subjects layout would
+find 0 files at a site whose raw slices sit in the legacy per-project folder,
+and must not exit 0 as if the batch had run.
 """
 import sys
 from pathlib import Path

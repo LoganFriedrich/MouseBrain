@@ -3,21 +3,20 @@
 The ROI counter (cli/run_roi.py) registers each sample's counts in
 ``<project>_ROI_Analysis`` with the measurements file it counted, that
 file's SHA-256 (``source_files.measurements_sha256``) and the detection
-entry's method. That tie used to be checked only at counting time. So when
-the detection batch registered NEW measurements for the sample (a re-run
-with the same settings, a corrected re-export of the image), found no
-nuclei in it, or retired its detection entry after a failure, the ROI
-counts -- counted against measurements that are no longer the current ones
--- stayed current, with their row in the region summary, until someone
-happened to count again.
+entry's method. Checking that tie only at counting time would leave ROI
+counts current in the region summary after the detection batch registers
+NEW measurements for the sample (a re-run with the same settings, a
+corrected re-export of the image), finds no nuclei in it, or retires its
+detection entry after a failure: they would be counted against measurements
+that are no longer the current ones, until someone happened to count again.
 
 retire_roi_counts_of() is called by the detection batch at each of those
 moments. It retires the sample's ROI entries (AnalysisRegistry.invalidate:
 files to _archived/<time>/, the row taken out of roi_summary_<region>.csv,
 an invalidate_entry log line holding the counts) unless the new detection
 registered measurements with exactly the bytes the counts were made from.
-Entries that record no fingerprint (registered by an earlier ROI producer,
-before the tie existed) are retired only when the detection is known to
+Entries that record no fingerprint (registered by an ROI producer that did
+not record one) are retired only when the detection is known to
 have changed -- its newly registered measurements differ from the ones it
 registered before -- or no longer has measurements: what they were counted
 against is unknown, and an unchanged re-run must not retire them.
@@ -113,8 +112,8 @@ def retire_roi_counts_of(registry_root, project: str, sample: str,
         counted = (e.get("source_files") or {}).get("measurements_sha256")
         if counted:
             return counted == new_measurements_sha
-        # Counted before the tie existed: it records no fingerprint, so
-        # what it was counted against is unknown. It is retired only when
+        # The entry records no fingerprint, so what it was counted against
+        # is unknown. It is retired only when
         # the detection itself is known to have changed (the measurements
         # registered before this run differ from the new ones); an unchanged
         # re-run, or a first registration, leaves it as it was.

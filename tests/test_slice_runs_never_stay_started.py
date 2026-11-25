@@ -1,11 +1,12 @@
 """No 2D tracker row stays 'started', and a recorded result is never overwritten.
 
 A row left at 'started' forever cannot be told apart from a run still going.
-The widget logged rows before its input checks and abandoned them there, and
-let errors in its result handlers end with the row still 'started'. The batch
-set the DETECTION row to 'error' on any later exception -- overwriting a
-detection that had completed -- and left the colocalization row it was really
-about 'started'. And 'error' and 'failed' were two words for one state.
+So the widget does not log rows before its input checks and abandon them
+there, and errors in its result handlers must not end with the row still
+'started'. The batch must not set the DETECTION row to 'error' on any later
+exception (that would overwrite a detection that had completed), and must
+mark the colocalization row it is really about. 'error' and 'failed' are one
+state.
 """
 import contextlib
 import csv
@@ -397,8 +398,8 @@ class _AppendRefused(SliceTracker):
 
 def test_a_colocalization_whose_row_the_tracker_refuses_does_not_start_and_frees_the_button(
         tmp_path, monkeypatch):
-    # The error used to escape the button's handler with the Colocalize
-    # button left disabled for the rest of the session.
+    # The error must not escape the button's handler and leave the Colocalize
+    # button disabled for the rest of the session.
     box = _Box()
     monkeypatch.setattr(main_widget, "QMessageBox", box)
     started = []

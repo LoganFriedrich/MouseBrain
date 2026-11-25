@@ -1,11 +1,10 @@
 """A tracker that cannot be written is one sample's error, not the batch's end.
 
-Defect covered: when a sample's detection failed AFTER its tracker row was
-logged, the error handler marked the row 'error' with no protection of its
-own. If the tracker could not be rewritten (its CSV held open by another
-program), the same exception was raised again from the handler, left
-process_single, and stopped the whole batch: no summary.csv, and no result
-for any later sample.
+When a sample's detection fails AFTER its tracker row was logged, the error
+handler marks the row 'error' with protection of its own. If the tracker
+cannot be rewritten (its CSV held open by another program), an unprotected
+handler would raise the same exception again, leave process_single, and stop
+the whole batch: no summary.csv, and no result for any later sample.
 """
 
 import csv

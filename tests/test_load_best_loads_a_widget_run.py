@@ -1,11 +1,10 @@
 """'Load best detection' in Setup & Tuning loads a Best run made in the widget.
 
-A widget detection run recorded its run FOLDER as its output, and Load best
-read that as a candidates file, so it loaded nothing when the Best was a widget
-run (and the layer it did load for a script run carried no run id). Now a
-finished widget run records the file it wrote, an older row's folder is
-resolved to the file inside it, and the loaded layer records the brain, the
-run and its role like every run layer.
+A finished widget detection run records the file it wrote (not its run
+FOLDER) as its output; an older row's folder is resolved to the file inside
+it. Load best reads that as a candidates file, so it loads the Best run
+whether it came from the widget or from a script, and the loaded layer records
+the brain, the run and its role like every run layer.
 """
 from pathlib import Path
 

@@ -1,11 +1,11 @@
 """An image's <image name>_analysis folder holds ONE state: what the window
 holds for the image when it is saved.
 
-Saving used to only ever add files. A re-analysis that found 0 particles, or
-ROIs that were cleared, left the earlier particles.csv / rois.json in place,
-and the next time the image was opened they came back as current. A saved
-file the window could not bring back (unreadable) must still never be
-overwritten or removed: its contents are not in memory.
+Saving must not only ever add files. A re-analysis that found 0 particles, or
+ROIs that were cleared, would leave the earlier particles.csv / rois.json in
+place, and the next time the image was opened they would come back as
+current. A saved file the window could not bring back (unreadable) must still
+never be overwritten or removed: its contents are not in memory.
 """
 import json
 

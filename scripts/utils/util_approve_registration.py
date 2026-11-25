@@ -44,7 +44,7 @@ def find_brain(brain_name: str, root: Path = DEFAULT_BRAINGLOBE_ROOT):
 
     An exact folder name wins. Otherwise the name must match exactly ONE brain
     folder: a part of a name that fits several brains (two imaging setups of one
-    mouse share its number) used to approve whichever was listed first.
+    mouse share its number) must not approve whichever is listed first.
     """
     from mousebrain.config import find_brain_folder
     found, partial = find_brain_folder(brain_name, root)
@@ -66,8 +66,8 @@ def ask_yes_no(question: str):
     there is nobody to answer (end of input) -- nothing is recorded then.
 
     WHY IT ASKS AGAIN: "no" RECORDS A REJECTION under the person's name. A
-    bare Enter or a typo used to count as "no", so a person who only pressed
-    Enter rejected the registration and sent the brain back to "Register"."""
+    bare Enter or a typo must not count as "no", or a person who only pressed
+    Enter would reject the registration and send the brain back to "Register"."""
     while True:
         try:
             response = input(question).strip().lower()

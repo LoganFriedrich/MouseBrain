@@ -2,9 +2,10 @@
 metadata, under the key every later step reads -- and the window starts on the
 brain's own answer, so leaving it alone changes nothing.
 
-The window wrote the answer into .crop_position.json, but the process that
-does the crop copied the extraction's metadata unchanged: the answer was
-dropped and steps 3-5 kept reading channels.signal_channel from extraction.
+The window writes the answer into .crop_position.json, and the process that
+does the crop must carry it into the crop's metadata too: copying the
+extraction's metadata unchanged would drop the answer, and steps 3-5 would
+keep reading channels.signal_channel from the extraction.
 """
 import importlib.util
 import json

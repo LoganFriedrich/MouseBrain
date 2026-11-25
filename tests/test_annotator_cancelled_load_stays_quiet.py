@@ -1,10 +1,10 @@
 """Starting a new load in the slice annotator while another is running
 cancels the old one quietly.
 
-Before this, the cancelled worker's "Loading cancelled" report was handled as
-an ordinary result: a "Load Error" box appeared for a load the person had
-replaced on purpose, and both load buttons were switched back on while the
-new file was still loading.
+The canceled worker's "Loading cancelled" report must not be handled as an
+ordinary result: that would show a "Load Error" box for a load the person
+replaced on purpose, and switch both load buttons back on while the new file
+is still loading.
 """
 import threading
 from pathlib import Path
@@ -16,7 +16,7 @@ from annotator_helpers import RecordingMessageBox, make_widget, process_events
 
 
 class FakeLoader(QThread):
-    """Behaves like the real loader: blocks until released or cancelled,
+    """Behaves like the real loader: blocks until released or canceled,
     and reports a cancellation through `finished` exactly as it does."""
 
     progress = Signal(str)

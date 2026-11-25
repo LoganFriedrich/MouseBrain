@@ -1,8 +1,9 @@
 """Opening the Results tab refreshes the Results tab, and only that tab.
 
-The tab-change handler compared the new tab with a hard-coded index (8). Tabs
-were added since, so index 8 became "9. Curate/Train": opening Results never
-refreshed it, and opening Curate/Train ran the Results refresh instead.
+The tab-change handler must not compare the new tab with a hard-coded index:
+tabs get added, and the index would then point at another tab (index 8 is
+"9. Curate/Train"), so opening Results would not refresh it and opening
+another tab would run the Results refresh.
 """
 import pytest
 

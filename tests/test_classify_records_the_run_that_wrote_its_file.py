@@ -2,10 +2,10 @@
 the detection run that wrote the file it classifies -- never just the run that
 happens to be chosen.
 
-The button classifies the file step 5 would classify. It used to record the run
-chosen with Load Best / Load Selected as the parent whatever that run's own file
-was, so a classification of a newer run's file was filed under an older run.
-Now the chosen run is the parent only when its own file is the one classified;
+The button classifies the file step 5 would classify. Recording the run chosen
+with Load Best / Load Selected as the parent whatever that run's own file was
+would file a classification of a newer run's file under an older run. So the
+chosen run is the parent only when its own file is the one classified;
 otherwise the provenance record beside the file names the parent, and with no
 record the parent is left empty.
 """
