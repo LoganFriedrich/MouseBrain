@@ -22,7 +22,7 @@ try:
         SLICES_2D_DIR, SLICES_2D_SUBJECTS, SLICES_2D_DATA_SUMMARY,
         SLICES_2D_TRACKER_CSV, PIPELINE_ROOT, TISSUE_ROOT,
     )
-    DATA_DIR = SLICES_2D_SUBJECTS  # samples live here now
+    DATA_DIR = SLICES_2D_SUBJECTS  # samples live here
     TRACKER_CSV = SLICES_2D_TRACKER_CSV
     MODELS_DIR = TISSUE_ROOT / "MouseBrain" / "models" if TISSUE_ROOT else Path("models")
 except ImportError:
@@ -34,7 +34,7 @@ except ImportError:
     PIPELINE_ROOT = None
     TISSUE_ROOT = None
 
-    # Legacy path detection
+    # Path detection for a standalone install
     _env_root = os.environ.get("BRAINSLICE_ROOT")
     if _env_root:
         _root = Path(_env_root)
@@ -52,11 +52,10 @@ BRAINSLICE_ROOT = SLICES_2D_DIR or Path(__file__).resolve().parent.parent.parent
 # WHERE THE 2D BATCH TOOLS PUT AND FIND THEIR RESULTS
 # =============================================================================
 # The detection batch (batch/batch_encr.py) writes these and the ROI counter
-# (cli/run_roi.py) reads them. WHY both take them from here: they used to be
-# written out separately and drifted apart -- the batch registered every
-# project's results under one fixed analysis name while the ROI counter looked
-# under '<project>_Detection', and the counter's fallback folder was not the
-# folder the batch writes to. Defined once, they cannot disagree.
+# (cli/run_roi.py) reads them. WHY both take them from here: written out
+# separately they could drift apart (different analysis names, different
+# fallback folders), and counts would not be found. Defined once, they cannot
+# disagree.
 
 # Default --output folder of the detection batch (one sub-folder per sample,
 # each holding measurements.csv, plus summary.csv). None when no data root is
